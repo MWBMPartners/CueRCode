@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Letter "X" in a rounded square -->
+  <rect x="4" y="4" width="56" height="56" rx="12" ry="12"/>
+  <path d="M18 16L28.5 30.5L17 48h4l8.5-12.5L37 48h10L35.5 33L46 16h-4l-7.5 11L28 16z" fill="white" stroke="white" stroke-width="1" stroke-linejoin="round"/>
+</svg>

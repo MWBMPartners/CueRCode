@@ -1,0 +1,1301 @@
+/**
+ * ==============================================================================
+ * 🎨 CueRCode - Main Custom Stylesheet
+ * ==============================================================================
+ *
+ * Custom styles for the CueRCode QR code generator web application.
+ * Built on top of Bootstrap 5.3, using CSS custom properties for theming
+ * and the Bootstrap `data-bs-theme` attribute for dark/light mode toggling.
+ *
+ * Sections:
+ *   1. CSS Custom Properties
+ *   2. Global / Base Styles
+ *   3. Navigation Bar Overrides
+ *   4. Page Layout (Generator Page)
+ *   5. QR Type Selector Grid
+ *   6. Pattern / Marker / Logo Grids
+ *   7. Frame Selector Grid
+ *   8. Colour Picker Inputs
+ *   9. Customisation Tabs
+ *  10. QR Preview Container
+ *  11. Download Controls
+ *  12. Footer
+ *  13. Utility & Helper Classes
+ *  14. Dark Mode Overrides
+ *  15. Responsive Breakpoints
+ *
+ * @package     CueRCode
+ * @subpackage  Styles
+ * @version     1.0.0
+ * @since       Phase 1
+ * @see         https://getbootstrap.com/docs/5.3/customize/css-variables/
+ */
+
+
+/* =============================================================================
+   1. 🎨 CSS Custom Properties
+   ============================================================================= */
+
+/**
+ * 🎨 Global design tokens used throughout the application.
+ * These map to the CueRCode brand palette and provide a single source
+ * of truth for colours, radii, and transition timing.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/Using_CSS_custom_properties
+ */
+:root {
+    /* 🎨 Brand Palette */
+    --cuercode-primary: #2c7a7b;
+    --cuercode-primary-light: #38a89d;
+    --cuercode-primary-dark: #1a4a4a;
+    --cuercode-accent: #4fd1c5;
+
+    /* 📐 Layout & Spacing */
+    --cuercode-border-radius: 0.5rem;
+
+    /* 🔄 Animation */
+    --cuercode-transition: all 0.2s ease;
+
+    /* 🖼️ Preview Checkerboard (light mode) */
+    --cuercode-checker-light: #f0f0f0;
+    --cuercode-checker-dark: #e0e0e0;
+
+    /* 🔘 Selection Button Tokens */
+    --cuercode-btn-bg: transparent;
+    --cuercode-btn-border: var(--bs-border-color, #dee2e6);
+    --cuercode-btn-hover-bg: rgba(44, 122, 123, 0.06);
+    --cuercode-btn-hover-border: var(--cuercode-primary-light);
+    --cuercode-btn-active-bg: rgba(44, 122, 123, 0.1);
+    --cuercode-btn-active-border: var(--cuercode-primary);
+    --cuercode-btn-active-shadow: 0 0 0 0.2rem rgba(44, 122, 123, 0.2);
+}
+
+
+/* =============================================================================
+   2. 🌍 Global / Base Styles
+   ============================================================================= */
+
+/**
+ * 🌍 Base body and typography adjustments.
+ * Bootstrap provides the majority of global reset; these are additive tweaks.
+ *
+ * @see https://getbootstrap.com/docs/5.3/content/reboot/
+ */
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/**
+ * 📄 <main> stretches to fill remaining vertical space so the footer
+ * always sits at the bottom of the viewport even on short-content pages.
+ */
+main {
+    flex: 1 0 auto;
+}
+
+/**
+ * 🔗 Links inherit the brand primary colour by default.
+ */
+a {
+    color: var(--cuercode-primary);
+    transition: var(--cuercode-transition);
+}
+
+a:hover {
+    color: var(--cuercode-primary-dark);
+}
+
+/**
+ * 🖱️ Smooth scrolling for anchor navigation.
+ * Only applied when the user has no preference for reduced motion.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/scroll-behavior
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion
+ */
+@media (prefers-reduced-motion: no-preference) {
+    html {
+        scroll-behavior: smooth;
+    }
+}
+
+
+/* =============================================================================
+   3. 🧭 Navigation Bar Overrides
+   ============================================================================= */
+
+/**
+ * 🧭 Navbar gradient and shadow.
+ * The teal gradient is applied inline (header.php), but the shadow and
+ * transition refinements are handled here.
+ *
+ * @see https://getbootstrap.com/docs/5.3/components/navbar/
+ */
+.navbar {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🏠 Brand text styling. Uses slightly larger weight for prominence.
+ */
+.navbar-brand {
+    font-size: 1.25rem;
+    letter-spacing: 0.02em;
+}
+
+/**
+ * 🔗 Navbar link hover effect - subtle underline offset.
+ */
+.navbar .nav-link {
+    transition: var(--cuercode-transition);
+    position: relative;
+}
+
+.navbar .nav-link::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background-color: rgba(255, 255, 255, 0.8);
+    transition: width 0.2s ease, left 0.2s ease;
+}
+
+.navbar .nav-link:hover::after,
+.navbar .nav-link.active::after {
+    width: 60%;
+    left: 20%;
+}
+
+/**
+ * 🌙 Theme toggle button should not appear as a standard link.
+ */
+#theme-toggle {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    transition: var(--cuercode-transition);
+}
+
+#theme-toggle:hover {
+    opacity: 0.8;
+    transform: rotate(15deg);
+}
+
+/**
+ * ⌨️ Focus-visible state for theme toggle so keyboard users can see focus.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible
+ */
+#theme-toggle:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.8);
+    outline-offset: 2px;
+    border-radius: var(--cuercode-border-radius);
+}
+
+
+/* =============================================================================
+   4. 📐 Page Layout (Generator Page)
+   ============================================================================= */
+
+/**
+ * 📐 Generator page body class. Ensures the page has enough breathing
+ * room and the two-column grid aligns correctly.
+ */
+.page-generator {
+    background-color: var(--bs-body-bg);
+}
+
+/**
+ * 📌 Cards used throughout the generator page receive consistent
+ * border-radius and transition treatment.
+ */
+.page-generator .card {
+    border-radius: var(--cuercode-border-radius);
+    transition: var(--cuercode-transition);
+    overflow: hidden;
+}
+
+/**
+ * 📌 Card headers inside the generator are clean with no heavy background.
+ */
+.page-generator .card-header {
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+    font-weight: 600;
+}
+
+
+/* =============================================================================
+   5. 📱 QR Type Selector Grid
+   ============================================================================= */
+
+/**
+ * 📱 QR type grid displays type selector buttons in a responsive CSS grid.
+ * Desktop: 4 columns, Tablet: 3 columns, Mobile: 2 columns.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_grid_layout
+ */
+.qr-type-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+
+/**
+ * 🔘 Individual QR type buttons. Each button shows an icon stacked above
+ * a label and responds to hover, focus, and active states.
+ */
+.qr-type-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.6rem 0.4rem;
+    border: 1.5px solid var(--cuercode-btn-border);
+    border-radius: var(--cuercode-border-radius);
+    background-color: var(--cuercode-btn-bg);
+    color: var(--bs-body-color);
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: center;
+    cursor: pointer;
+    transition: var(--cuercode-transition);
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/**
+ * 🔤 Icon inside the type button is sized slightly larger than the label.
+ */
+.qr-type-btn i {
+    font-size: 1.15rem;
+    color: var(--cuercode-primary);
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🔤 Label text below the icon.
+ */
+.qr-type-btn span {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/**
+ * 🖱️ Hover state - light teal background and border highlight.
+ */
+.qr-type-btn:hover {
+    background-color: var(--cuercode-btn-hover-bg);
+    border-color: var(--cuercode-btn-hover-border);
+}
+
+.qr-type-btn:hover i {
+    transform: scale(1.1);
+}
+
+/**
+ * ⌨️ Focus state for accessibility - visible focus ring.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible
+ */
+.qr-type-btn:focus-visible {
+    outline: 2px solid var(--cuercode-primary);
+    outline-offset: 2px;
+}
+
+/**
+ * ✅ Active (selected) state - prominent border, background tint, and shadow.
+ */
+.qr-type-btn.active {
+    background-color: var(--cuercode-btn-active-bg);
+    border-color: var(--cuercode-btn-active-border);
+    box-shadow: var(--cuercode-btn-active-shadow);
+    font-weight: 600;
+}
+
+.qr-type-btn.active i {
+    color: var(--cuercode-primary-dark);
+}
+
+
+/* =============================================================================
+   6. 🔲 Pattern / Marker / Logo Selection Grids
+   ============================================================================= */
+
+/**
+ * 🔲 Shared base styles for all design-selection grids. Each grid is a
+ * CSS grid of small clickable buttons with SVG icons or images.
+ */
+.pattern-grid,
+.marker-grid,
+.logo-grid {
+    display: grid;
+    gap: 0.5rem;
+}
+
+/**
+ * 🔲 Pattern grid: 6 items per row on desktop (see responsive overrides below).
+ * Mobile default: 3 per row.
+ */
+.pattern-grid {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+/**
+ * 🔲 Marker grid: 4 items per row.
+ * Mobile default: 4 per row (markers are smaller, 4 fits comfortably).
+ */
+.marker-grid {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+/**
+ * 🖼️ Logo grid: 3 per row on mobile (see responsive overrides for larger).
+ */
+.logo-grid {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+/**
+ * 🔘 Shared button styles for pattern, marker, and logo selectors.
+ * Mirrors the type-btn approach: icon/image above a small label.
+ */
+.pattern-btn,
+.marker-btn,
+.logo-btn,
+.frame-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    padding: 0.5rem 0.3rem;
+    border: 1.5px solid var(--cuercode-btn-border);
+    border-radius: var(--cuercode-border-radius);
+    background-color: var(--cuercode-btn-bg);
+    color: var(--bs-body-color);
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-align: center;
+    cursor: pointer;
+    transition: var(--cuercode-transition);
+    -webkit-user-select: none;
+    user-select: none;
+    line-height: 1.2;
+}
+
+/**
+ * 🔤 Labels beneath the icon/image in selection buttons.
+ */
+.pattern-btn span,
+.marker-btn span,
+.logo-btn span,
+.frame-btn span {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/**
+ * 🖼️ SVG icons inside pattern and marker buttons inherit colour
+ * and are constrained to a consistent size.
+ */
+.pattern-btn svg,
+.marker-btn svg {
+    display: block;
+    width: 40px;
+    height: 40px;
+    color: var(--cuercode-primary);
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🖼️ Logo images inside logo buttons are constrained to a square and
+ * use object-fit to prevent distortion.
+ */
+.logo-btn img {
+    display: block;
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🖼️ Logo button icon (for the "None" option with FontAwesome icon).
+ */
+.logo-btn i {
+    font-size: 1.5rem;
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🖱️ Hover state for all selection buttons.
+ */
+.pattern-btn:hover,
+.marker-btn:hover,
+.logo-btn:hover,
+.frame-btn:hover {
+    background-color: var(--cuercode-btn-hover-bg);
+    border-color: var(--cuercode-btn-hover-border);
+}
+
+.pattern-btn:hover svg,
+.marker-btn:hover svg {
+    transform: scale(1.1);
+}
+
+.logo-btn:hover img {
+    transform: scale(1.1);
+}
+
+/**
+ * ⌨️ Focus state for accessibility on all selection buttons.
+ */
+.pattern-btn:focus-visible,
+.marker-btn:focus-visible,
+.logo-btn:focus-visible,
+.frame-btn:focus-visible {
+    outline: 2px solid var(--cuercode-primary);
+    outline-offset: 2px;
+}
+
+/**
+ * ✅ Active (selected) state for pattern, marker, and logo buttons.
+ */
+.pattern-btn.active,
+.marker-btn.active,
+.logo-btn.active,
+.frame-btn.active {
+    background-color: var(--cuercode-btn-active-bg);
+    border-color: var(--cuercode-btn-active-border);
+    box-shadow: var(--cuercode-btn-active-shadow);
+    font-weight: 600;
+}
+
+.pattern-btn.active svg,
+.marker-btn.active svg {
+    color: var(--cuercode-primary-dark);
+}
+
+
+/* =============================================================================
+   7. 🖼️ Frame Selector Grid
+   ============================================================================= */
+
+/**
+ * 🖼️ Frame grid layout. Uses a responsive grid similar to pattern grid.
+ * Mobile default: 3 per row (compact frame previews).
+ */
+.frame-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+}
+
+/**
+ * 🖼️ Frame preview container inside each frame button. Shows a
+ * miniature visual representation of the frame style.
+ */
+.frame-preview {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/**
+ * 🚫 "None" frame preview shows just the ban icon, centred.
+ */
+.frame-preview.frame-none {
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: 1.3rem;
+}
+
+/**
+ * 🔲 "Simple" frame: thin solid border around the QR placeholder.
+ */
+.frame-preview.frame-simple {
+    border: 2px solid var(--cuercode-primary);
+    padding: 3px;
+}
+
+/**
+ * 🔲 "Rounded" frame: rounded border around the QR placeholder.
+ */
+.frame-preview.frame-rounded {
+    border: 2px solid var(--cuercode-primary);
+    border-radius: 8px;
+    padding: 3px;
+}
+
+/**
+ * 📋 "Bottom Label" frame: border with a coloured label bar at the bottom.
+ */
+.frame-preview.frame-bottom-label {
+    border: 2px solid var(--cuercode-primary);
+    padding: 2px;
+    justify-content: space-between;
+}
+
+/**
+ * 📋 "Top Label" frame: border with a coloured label bar at the top.
+ */
+.frame-preview.frame-top-label {
+    border: 2px solid var(--cuercode-primary);
+    padding: 2px;
+    justify-content: space-between;
+}
+
+/**
+ * 🏷️ "Banner Bottom" frame: full-width banner bar below the QR area.
+ */
+.frame-preview.frame-banner-bottom {
+    border: 2px solid var(--cuercode-primary);
+    padding: 2px;
+    justify-content: space-between;
+}
+
+/**
+ * 💊 "Pill" frame: border with a pill-shaped label bar at the bottom.
+ */
+.frame-preview.frame-pill {
+    border: 2px solid var(--cuercode-primary);
+    padding: 2px;
+    justify-content: space-between;
+}
+
+/**
+ * ⬜ QR placeholder inside frame preview - represents the QR code area.
+ */
+.frame-qr-placeholder {
+    width: 28px;
+    height: 28px;
+    background: repeating-conic-gradient(
+        var(--cuercode-primary) 0% 25%,
+        transparent 0% 50%
+    ) 50% / 8px 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+/**
+ * 📏 Frame label bar - thin coloured strip representing a text label area.
+ */
+.frame-label-bar {
+    width: 100%;
+    height: 6px;
+    background-color: var(--cuercode-primary);
+    border-radius: 1px;
+    flex-shrink: 0;
+}
+
+/**
+ * 🏷️ Frame banner bar - slightly taller than label bar for the banner style.
+ */
+.frame-banner-bar {
+    width: 110%;
+    height: 8px;
+    background-color: var(--cuercode-primary);
+    margin: 0 -5%;
+    flex-shrink: 0;
+}
+
+/**
+ * 💊 Frame pill bar - rounded pill shape for the pill frame style.
+ */
+.frame-pill-bar {
+    width: 70%;
+    height: 7px;
+    background-color: var(--cuercode-primary);
+    border-radius: 10px;
+    flex-shrink: 0;
+}
+
+
+/* =============================================================================
+   8. 🎨 Colour Picker Inputs
+   ============================================================================= */
+
+/**
+ * 🎨 Colour picker input (`type="color"`) is constrained to a small fixed
+ * width so it sits neatly beside the hex text input in an input-group.
+ *
+ * @see https://getbootstrap.com/docs/5.3/forms/form-control/#color
+ */
+.input-group .form-control-color {
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
+    flex: 0 0 48px;
+    padding: 0.25rem;
+    cursor: pointer;
+}
+
+/**
+ * 🔤 Hex text input adjustments. Ensures the font is monospace for
+ * hex values and prevents the field from expanding to fill the group.
+ */
+.color-hex-input {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.875rem;
+    letter-spacing: 0.04em;
+}
+
+
+/* =============================================================================
+   9. 🔖 Customisation Tabs
+   ============================================================================= */
+
+/**
+ * 🔖 Tab navigation inside the customisation card header.
+ * Overrides Bootstrap's default tab spacing for a tighter fit
+ * within the card header context.
+ *
+ * @see https://getbootstrap.com/docs/5.3/components/navs-tabs/
+ */
+#customize-tabs {
+    border-bottom: none;
+}
+
+#customize-tabs .nav-link {
+    color: var(--bs-body-color);
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🖱️ Hover state for inactive tabs - subtle bottom border hint.
+ */
+#customize-tabs .nav-link:hover {
+    color: var(--cuercode-primary);
+    border-bottom-color: var(--cuercode-primary-light);
+    background-color: transparent;
+}
+
+/**
+ * ✅ Active tab - strong bottom border in brand colour.
+ */
+#customize-tabs .nav-link.active {
+    color: var(--cuercode-primary);
+    border-bottom-color: var(--cuercode-primary);
+    background-color: transparent;
+    font-weight: 600;
+}
+
+/**
+ * 📱 Tab icons are always visible; labels are hidden on small screens
+ * (handled by Bootstrap's `d-none d-sm-inline` classes in the HTML).
+ * Add a small margin between icon and label when label is visible.
+ */
+#customize-tabs .nav-link i {
+    font-size: 0.9rem;
+}
+
+
+/* =============================================================================
+   10. 👁️ QR Preview Container
+   ============================================================================= */
+
+/**
+ * 👁️ The preview container provides a visually distinct area where the
+ * generated QR code is displayed. Uses a checkerboard background pattern
+ * so transparent QR codes are clearly visible against the pattern.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/conic-gradient
+ */
+.qr-preview-container {
+    min-height: 260px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--cuercode-border-radius);
+    background-color: var(--bs-body-bg);
+    background-image: repeating-conic-gradient(
+        var(--cuercode-checker-light) 0% 25%,
+        var(--cuercode-checker-dark) 0% 50%
+    );
+    background-size: 16px 16px;
+    padding: 1.5rem;
+    transition: var(--cuercode-transition);
+    position: relative;
+}
+
+/**
+ * 📌 Placeholder state (before QR generation) hides the checkerboard
+ * and shows a solid background so the placeholder icon/text is readable.
+ */
+.qr-preview-container:has(#qr-preview-placeholder:not(.d-none)) {
+    background-image: none;
+    background-color: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+/**
+ * 📌 Loading state also hides the checkerboard.
+ */
+.qr-preview-container:has(#qr-preview-loading:not(.d-none)) {
+    background-image: none;
+    background-color: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+/**
+ * 📌 Error state also hides the checkerboard.
+ */
+.qr-preview-container:has(#qr-preview-error:not(.d-none)) {
+    background-image: none;
+    background-color: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+/**
+ * 🖼️ The generated QR preview image scales responsively within its
+ * container and uses a subtle drop shadow for visual definition.
+ */
+#qr-preview-image {
+    max-width: 300px;
+    width: 100%;
+    height: auto;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.1));
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🔄 Loading spinner inherits brand colour.
+ */
+.qr-preview-container .spinner-border {
+    color: var(--cuercode-primary) !important;
+    width: 2.5rem;
+    height: 2.5rem;
+}
+
+/**
+ * 📌 Preview card sticky positioning for desktop.
+ * The `sticky-lg-top` class is handled by Bootstrap, but we set the
+ * `top` offset to account for the fixed navbar height (via inline style
+ * in HTML: `top: 80px`). A z-index ensures it layers correctly.
+ */
+#preview-card {
+    z-index: 10;
+}
+
+
+/* =============================================================================
+   11. ⬇️ Download Controls
+   ============================================================================= */
+
+/**
+ * ⬇️ Primary download button uses the brand colour for a cohesive look.
+ *
+ * @see https://getbootstrap.com/docs/5.3/components/buttons/
+ */
+.page-generator .btn-primary {
+    background-color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+    transition: var(--cuercode-transition);
+}
+
+.page-generator .btn-primary:hover {
+    background-color: var(--cuercode-primary-dark);
+    border-color: var(--cuercode-primary-dark);
+}
+
+.page-generator .btn-primary:focus-visible {
+    box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.4);
+}
+
+.page-generator .btn-primary:active {
+    background-color: var(--cuercode-primary-dark);
+    border-color: var(--cuercode-primary-dark);
+}
+
+/**
+ * ⬇️ Disabled download button reduced opacity and no pointer events
+ * (Bootstrap handles this, but we ensure brand consistency).
+ */
+.page-generator .btn-primary:disabled {
+    background-color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+    opacity: 0.55;
+}
+
+/**
+ * ⬇️ Outline variants for secondary actions.
+ */
+.page-generator .btn-outline-primary {
+    color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+    transition: var(--cuercode-transition);
+}
+
+.page-generator .btn-outline-primary:hover {
+    background-color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+    color: #fff;
+}
+
+.page-generator .btn-outline-primary:focus-visible {
+    box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.4);
+}
+
+
+/* =============================================================================
+   12. 🦶 Footer
+   ============================================================================= */
+
+/**
+ * 🦶 Footer styling. The footer is a simple bar that sits at the bottom
+ * of the viewport thanks to the flexbox layout on the body.
+ */
+footer {
+    flex-shrink: 0;
+}
+
+footer a {
+    transition: var(--cuercode-transition);
+}
+
+footer a:hover {
+    color: var(--cuercode-primary) !important;
+    text-decoration: underline !important;
+}
+
+
+/* =============================================================================
+   13. 🔧 Utility & Helper Classes
+   ============================================================================= */
+
+/**
+ * 🔧 Text using the primary brand colour.
+ */
+.text-cuercode-primary {
+    color: var(--cuercode-primary) !important;
+}
+
+/**
+ * 🔧 Background using the primary brand colour.
+ */
+.bg-cuercode-primary {
+    background-color: var(--cuercode-primary) !important;
+}
+
+/**
+ * 🔧 Fade-in animation for dynamically loaded content.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/animation
+ */
+@keyframes cuercodeFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.cuercode-fade-in {
+    animation: cuercodeFadeIn 0.3s ease forwards;
+}
+
+/**
+ * 🔧 Subtle pulse animation used on the loading spinner or status indicators.
+ */
+@keyframes cuercodePulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.cuercode-pulse {
+    animation: cuercodePulse 1.5s ease-in-out infinite;
+}
+
+/* ==================================================================
+   ♿ Reduced Motion: Disable animations for users who prefer
+   @see https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion
+   ================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+    .cuercode-fade-in {
+        animation: none;
+        opacity: 1;
+    }
+
+    .cuercode-pulse {
+        animation: none;
+    }
+}
+
+/**
+ * 🔧 Badge used in the preview header for status indication.
+ */
+#preview-status {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    transition: var(--cuercode-transition);
+}
+
+/**
+ * 🔧 Logo upload preview thumbnail styling.
+ */
+#logo-upload-img {
+    border-radius: var(--cuercode-border-radius);
+}
+
+/**
+ * 🔧 Ensure form-range (slider) uses the brand colour for the track fill.
+ * Note: vendor-prefixed selectors cannot be combined into one rule.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/::-webkit-slider-thumb
+ */
+.page-generator .form-range::-webkit-slider-thumb {
+    background-color: var(--cuercode-primary);
+}
+
+.page-generator .form-range::-moz-range-thumb {
+    background-color: var(--cuercode-primary);
+}
+
+/**
+ * 🔧 Focus state for form-range.
+ */
+.page-generator .form-range:focus::-webkit-slider-thumb {
+    box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.25);
+}
+
+.page-generator .form-range:focus::-moz-range-thumb {
+    box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.25);
+}
+
+/**
+ * 🔧 Form switch toggle uses brand colour when checked.
+ *
+ * @see https://getbootstrap.com/docs/5.3/forms/checks-radios/#switches
+ */
+.page-generator .form-check-input:checked {
+    background-color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+}
+
+.page-generator .form-check-input:focus {
+    border-color: var(--cuercode-primary-light);
+    box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.25);
+}
+
+/**
+ * 🔧 btn-check (radio button groups) uses brand colour when checked.
+ */
+.page-generator .btn-check:checked + .btn-outline-secondary {
+    background-color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+    color: #fff;
+}
+
+.page-generator .btn-check:focus + .btn-outline-secondary {
+    box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.25);
+}
+
+
+/* =============================================================================
+   14. 🌙 Dark Mode Overrides
+   ============================================================================= */
+
+/**
+ * 🌙 Dark mode adjustments applied via Bootstrap's data-bs-theme attribute.
+ * These overrides ensure sufficient contrast and adjust colours that
+ * appear too bright or too muted in dark mode.
+ *
+ * @see https://getbootstrap.com/docs/5.3/customize/color-modes/
+ */
+[data-bs-theme="dark"] {
+    /* 🖼️ Checkerboard pattern colours for dark mode */
+    --cuercode-checker-light: #2a2a2a;
+    --cuercode-checker-dark: #222222;
+
+    /* 🔘 Selection button tokens adjusted for dark backgrounds */
+    --cuercode-btn-bg: transparent;
+    --cuercode-btn-border: var(--bs-border-color, #495057);
+    --cuercode-btn-hover-bg: rgba(79, 209, 197, 0.08);
+    --cuercode-btn-hover-border: var(--cuercode-accent);
+    --cuercode-btn-active-bg: rgba(79, 209, 197, 0.12);
+    --cuercode-btn-active-border: var(--cuercode-accent);
+    --cuercode-btn-active-shadow: 0 0 0 0.2rem rgba(79, 209, 197, 0.25);
+}
+
+/**
+ * 🌙 Card backgrounds in dark mode use a slightly lighter shade than the
+ * page background for visual separation between cards and background.
+ */
+[data-bs-theme="dark"] .page-generator .card {
+    background-color: var(--bs-body-bg);
+    border-color: var(--bs-border-color, #495057);
+}
+
+/**
+ * 🌙 QR type button icon colour in dark mode uses the lighter accent
+ * for better contrast against dark backgrounds.
+ */
+[data-bs-theme="dark"] .qr-type-btn i {
+    color: var(--cuercode-accent);
+}
+
+[data-bs-theme="dark"] .qr-type-btn.active i {
+    color: var(--cuercode-primary-light);
+}
+
+/**
+ * 🌙 Pattern/marker SVG icons use lighter accent colour in dark mode.
+ */
+[data-bs-theme="dark"] .pattern-btn svg,
+[data-bs-theme="dark"] .marker-btn svg {
+    color: var(--cuercode-accent);
+}
+
+[data-bs-theme="dark"] .pattern-btn.active svg,
+[data-bs-theme="dark"] .marker-btn.active svg {
+    color: var(--cuercode-primary-light);
+}
+
+/**
+ * 🌙 Frame preview border colour in dark mode.
+ */
+[data-bs-theme="dark"] .frame-preview.frame-simple,
+[data-bs-theme="dark"] .frame-preview.frame-rounded,
+[data-bs-theme="dark"] .frame-preview.frame-bottom-label,
+[data-bs-theme="dark"] .frame-preview.frame-top-label,
+[data-bs-theme="dark"] .frame-preview.frame-banner-bottom,
+[data-bs-theme="dark"] .frame-preview.frame-pill {
+    border-color: var(--cuercode-accent);
+}
+
+[data-bs-theme="dark"] .frame-label-bar,
+[data-bs-theme="dark"] .frame-banner-bar,
+[data-bs-theme="dark"] .frame-pill-bar {
+    background-color: var(--cuercode-accent);
+}
+
+[data-bs-theme="dark"] .frame-qr-placeholder {
+    background: repeating-conic-gradient(
+        var(--cuercode-accent) 0% 25%,
+        transparent 0% 50%
+    ) 50% / 8px 8px;
+}
+
+/**
+ * 🌙 Preview container placeholder/loading/error states in dark mode.
+ */
+[data-bs-theme="dark"] .qr-preview-container:has(#qr-preview-placeholder:not(.d-none)),
+[data-bs-theme="dark"] .qr-preview-container:has(#qr-preview-loading:not(.d-none)),
+[data-bs-theme="dark"] .qr-preview-container:has(#qr-preview-error:not(.d-none)) {
+    background-color: var(--bs-tertiary-bg, #2b3035);
+}
+
+/**
+ * 🌙 QR preview image drop shadow is lighter in dark mode.
+ */
+[data-bs-theme="dark"] #qr-preview-image {
+    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+}
+
+/**
+ * 🌙 Tab active/hover colours in dark mode.
+ */
+[data-bs-theme="dark"] #customize-tabs .nav-link:hover {
+    color: var(--cuercode-accent);
+    border-bottom-color: var(--cuercode-accent);
+}
+
+[data-bs-theme="dark"] #customize-tabs .nav-link.active {
+    color: var(--cuercode-accent);
+    border-bottom-color: var(--cuercode-accent);
+}
+
+/**
+ * 🌙 Primary button in dark mode uses the lighter primary.
+ */
+[data-bs-theme="dark"] .page-generator .btn-primary {
+    background-color: var(--cuercode-primary-light);
+    border-color: var(--cuercode-primary-light);
+}
+
+[data-bs-theme="dark"] .page-generator .btn-primary:hover {
+    background-color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+}
+
+/**
+ * 🌙 Navbar shadow is heavier in dark mode for definition.
+ */
+[data-bs-theme="dark"] .navbar {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+
+/* =============================================================================
+   15. 📱 Responsive Breakpoints
+   ============================================================================= */
+
+/**
+ * 📱 Small screens (sm: 576px+)
+ * Tab labels become visible (Bootstrap utility handles display).
+ * Slight increase in type grid columns.
+ *
+ * @see https://getbootstrap.com/docs/5.3/layout/breakpoints/
+ */
+@media (min-width: 576px) {
+    /* 📱 QR type grid: 3 columns on small tablets */
+    .qr-type-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    /* 🖼️ Frame grid: 4 columns on small tablets */
+    .frame-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+/**
+ * 📱 Medium screens (md: 768px+)
+ * More generous grid columns and slightly larger button sizing.
+ */
+@media (min-width: 768px) {
+    /* 📱 QR type grid: 3 columns on tablet */
+    .qr-type-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    /* 🔲 Pattern grid: 6 columns on tablet */
+    .pattern-grid {
+        grid-template-columns: repeat(6, 1fr);
+    }
+
+    /* 🖼️ Logo grid: 4 columns on tablet */
+    .logo-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+
+    /* 🖼️ Frame grid: 4 columns on tablet (unchanged but explicit) */
+    .frame-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+/**
+ * 📱 Large screens (lg: 992px+)
+ * Two-column layout activates. Preview card becomes sticky.
+ * Type grid expands to 4 columns.
+ */
+@media (min-width: 992px) {
+    /* 📱 QR type grid: 4 columns on desktop */
+    .qr-type-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+
+    /* 🖼️ Logo grid: 5 columns on desktop */
+    .logo-grid {
+        grid-template-columns: repeat(5, 1fr);
+    }
+
+    /* 🖼️ Frame grid: 4 columns on desktop (unchanged but explicit) */
+    .frame-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+
+    /* 👁️ Preview container minimum height is larger on desktop */
+    .qr-preview-container {
+        min-height: 300px;
+    }
+}
+
+/**
+ * 📱 Extra large screens (xl: 1200px+)
+ * Minor refinements for very wide viewports.
+ */
+@media (min-width: 1200px) {
+    /* 📱 QR type grid: still 4 columns, but with wider buttons */
+    .qr-type-btn {
+        padding: 0.75rem 0.5rem;
+        font-size: 0.8rem;
+    }
+
+    /* 🔲 Pattern/marker buttons get a touch more padding */
+    .pattern-btn,
+    .marker-btn,
+    .logo-btn,
+    .frame-btn {
+        padding: 0.6rem 0.4rem;
+    }
+}
+
+/**
+ * 📱 Print styles. When printing, hide interactive elements and
+ * display only the QR preview at full resolution.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/@media/print
+ */
+@media print {
+    /* 📌 Hide non-essential elements */
+    .navbar,
+    footer,
+    #qr-type-card,
+    #qr-content-card,
+    #qr-customize-card,
+    #btn-download,
+    #preview-status,
+    .card-footer {
+        display: none !important;
+    }
+
+    /* 📌 Make preview full width */
+    .col-lg-5 {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    .col-lg-7 {
+        display: none !important;
+    }
+
+    /* 📌 Remove sticky positioning for print */
+    #preview-card {
+        position: static !important;
+    }
+
+    /* 📌 Remove checkerboard background for print */
+    .qr-preview-container {
+        background-image: none !important;
+        background-color: #fff !important;
+        min-height: auto !important;
+    }
+
+    /* 📌 QR image prints at full size */
+    #qr-preview-image {
+        max-width: 100% !important;
+        filter: none !important;
+    }
+}

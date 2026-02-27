@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Bitcoin "B" symbol with vertical lines -->
+  <circle cx="32" cy="32" r="28"/>
+  <!-- B shape -->
+  <path d="M22 16h10c6 0 10 3 10 8c0 3-1.5 5-4 6.5c3.5 1.5 5.5 4 5.5 7.5c0 5.5-4.5 9-11 9H22V16z" fill="white"/>
+  <path d="M28 21v8h4c3 0 5-1.5 5-4s-2-4-5-4h-4z"/>
+  <path d="M28 33v9h5c3.5 0 5.5-1.8 5.5-4.5S36.5 33 33 33h-5z"/>
+  <!-- Vertical lines through B -->
+  <rect x="26" y="12" width="2.5" height="6"/>
+  <rect x="33" y="12" width="2.5" height="6"/>
+  <rect x="26" y="46" width="2.5" height="6"/>
+  <rect x="33" y="46" width="2.5" height="6"/>
+</svg>

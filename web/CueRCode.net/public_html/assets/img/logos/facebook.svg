@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Letter "f" in a rounded square -->
+  <rect x="4" y="4" width="56" height="56" rx="12" ry="12"/>
+  <path d="M36 18h6v-6c0 0-2.5 0-6 0c-5.5 0-9 3.5-9 9v5h-6v8h6v18h8V34h6l1-8h-7v-4c0-2.2 0.8-4 4-4z" fill="white"/>
+</svg>

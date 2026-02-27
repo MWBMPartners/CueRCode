@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Pin/thumbtack icon -->
+  <circle cx="32" cy="22" r="16"/>
+  <circle cx="32" cy="22" r="8" fill="white"/>
+  <circle cx="32" cy="22" r="4"/>
+  <path d="M28 34l-4 22h8l-0.5-14z"/>
+  <path d="M36 34l4 22h-8l0.5-14z"/>
+  <rect x="29" y="34" width="6" height="6" rx="1"/>
+</svg>

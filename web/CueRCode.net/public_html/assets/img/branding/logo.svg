@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" role="img" aria-labelledby="title desc">
+  <title id="title">CueRCode Logo</title>
+  <desc id="desc">CueRCode wordmark paired with a QR-inspired cue ring icon.</desc>
+
+  <g transform="translate(24,24)">
+    <g fill="#0f172a">
+      <rect x="0" y="0" width="112" height="112" rx="14"/>
+      <rect x="184" y="0" width="112" height="112" rx="14"/>
+      <rect x="0" y="184" width="112" height="112" rx="14"/>
+
+      <rect x="24" y="24" width="64" height="64" rx="8" fill="#ffffff"/>
+      <rect x="208" y="24" width="64" height="64" rx="8" fill="#ffffff"/>
+      <rect x="24" y="208" width="64" height="64" rx="8" fill="#ffffff"/>
+
+      <rect x="43" y="43" width="26" height="26" rx="5"/>
+      <rect x="227" y="43" width="26" height="26" rx="5"/>
+      <rect x="43" y="227" width="26" height="26" rx="5"/>
+
+      <rect x="128" y="34" width="19" height="19" rx="4"/>
+      <rect x="152" y="34" width="19" height="19" rx="4"/>
+      <rect x="34" y="128" width="19" height="19" rx="4"/>
+      <rect x="34" y="152" width="19" height="19" rx="4"/>
+      <rect x="152" y="249" width="19" height="19" rx="4"/>
+      <rect x="176" y="249" width="19" height="19" rx="4"/>
+      <rect x="249" y="152" width="19" height="19" rx="4"/>
+      <rect x="249" y="176" width="19" height="19" rx="4"/>
+    </g>
+
+    <path fill="#06b6d4" d="M148 87c35.8 0 64 28.2 64 64s-28.2 64-64 64c-35.3 0-64-28.7-64-64s28.7-64 64-64zm0 28c-20 0-36 16-36 36s16 36 36 36c9.7 0 18.4-3.9 24.9-10.5l20.4 20.5C181.7 210.2 165.6 218 148 218c-35.3 0-64-28.7-64-64s28.7-64 64-64c17.6 0 33.7 7.8 45.3 21l-20.4 20.5C166.4 118.9 157.7 115 148 115z"/>
+    <circle cx="199" cy="99" r="12" fill="#06b6d4"/>
+  </g>
+
+  <text x="360" y="140" fill="#0f172a" font-size="112" font-family="Avenir Next, Montserrat, Poppins, Segoe UI, sans-serif" font-weight="700" letter-spacing="0.5">CueRCode</text>
+  <text x="364" y="196" fill="#334155" font-size="34" font-family="Avenir Next, Montserrat, Poppins, Segoe UI, sans-serif" font-weight="500" letter-spacing="0.8">Advanced QR Code Generator</text>
+</svg>

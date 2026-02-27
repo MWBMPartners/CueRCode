@@ -1,0 +1,45 @@
+# ==============================================================================
+# 🧪 CueRCode - Beta Development Environment Access Control
+# ==============================================================================
+# This .htaccess restricts access to the beta development version.
+# Only authorised users with valid credentials can access this environment.
+#
+# @package     CueRCode
+# @subpackage  Development
+# @version     1.0.0
+# @since       Phase 1
+# @see         https://httpd.apache.org/docs/2.4/howto/auth.html
+# ==============================================================================
+
+# 🔒 Basic Authentication for Beta Access
+# ⚠️ Create .htpasswd file using: htpasswd -c /path/to/.htpasswd username
+AuthType Basic
+AuthName "CueRCode Beta - Authorised Access Only"
+# 📌 Update this path to your actual .htpasswd file location on the server
+# AuthUserFile /home/username/.htpasswd
+# Require valid-user
+
+# ==============================================================================
+# 🔄 URL Rewriting (same as production)
+# ==============================================================================
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # 🚫 Block access to hidden files
+    RewriteCond %{REQUEST_URI} "!(^|/)\.well-known/([^./]+./?)+$" [NC]
+    RewriteCond %{SCRIPT_FILENAME} -d [OR]
+    RewriteCond %{SCRIPT_FILENAME} -f
+    RewriteRule "(^|/)\." - [F]
+
+    # 📄 Remove .php extension from URLs
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME}.php -f
+    RewriteRule ^(.+)$ $1.php [L,QSA]
+
+    DirectoryIndex index.php index.html
+</IfModule>
+
+# 📁 Disable directory listing
+Options -Indexes

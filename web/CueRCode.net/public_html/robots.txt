@@ -1,0 +1,19 @@
+# ==============================================================================
+# 🤖 CueRCode - Robots.txt
+# ==============================================================================
+# Controls which pages search engine crawlers can access.
+# @see https://developers.google.com/search/docs/crawling-indexing/robots/intro
+# ==============================================================================
+
+User-agent: *
+
+# ✅ Allow all public pages
+Allow: /
+
+# 🚫 Disallow private/API paths
+Disallow: /api/
+Disallow: /install/
+Disallow: /error/
+
+# 📍 Sitemap location (uncomment when sitemap is available)
+# Sitemap: https://cuercode.net/sitemap.xml

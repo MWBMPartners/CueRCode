@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Envelope icon -->
+  <rect x="4" y="12" width="56" height="40" rx="4" ry="4"/>
+  <!-- Envelope flap (V shape) -->
+  <path d="M4 14l28 20L60 14" fill="none" stroke="white" stroke-width="3" stroke-linejoin="round"/>
+  <!-- Bottom fold lines -->
+  <path d="M4 52l20-16" fill="none" stroke="white" stroke-width="2"/>
+  <path d="M60 52l-20-16" fill="none" stroke="white" stroke-width="2"/>
+</svg>

@@ -1,0 +1,211 @@
+# ==============================================================================
+# 🌐 CueRCode - Master .htaccess Configuration
+# ==============================================================================
+# This file controls URL rewriting, security headers, PHP settings,
+# and access control for the CueRCode public web root.
+#
+# @package     CueRCode
+# @version     1.0.0
+# @since       Phase 1
+# @see         https://httpd.apache.org/docs/2.4/mod/mod_rewrite.html
+# @see         https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers
+# ==============================================================================
+
+# ==============================================================================
+# 🔄 URL Rewriting
+# @see https://httpd.apache.org/docs/2.4/mod/mod_rewrite.html
+# ==============================================================================
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 📌 Set the RewriteBase (adjust if installed in a subdirectory)
+    RewriteBase /
+
+    # 🔒 Force HTTPS (uncomment for production)
+    # RewriteCond %{HTTPS} !=on
+    # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # 🚫 Block access to hidden files and directories (except .well-known for SSL)
+    RewriteCond %{REQUEST_URI} "!(^|/)\.well-known/([^./]+./?)+$" [NC]
+    RewriteCond %{SCRIPT_FILENAME} -d [OR]
+    RewriteCond %{SCRIPT_FILENAME} -f
+    RewriteRule "(^|/)\." - [F]
+
+    # 🚫 Block access to sensitive file types
+    RewriteRule \.(htaccess|htpasswd|ini|log|sh|sql|bak|config|dist|fla|inc|psd|swp|git|svn)$ - [F]
+
+    # 📄 Remove .php extension from URLs (clean URLs)
+    # Checks if the requested URL without .php exists as a file
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME}.php -f
+    RewriteRule ^(.+)$ $1.php [L,QSA]
+
+    # 🌐 API v1 routing - all /api/v1/* requests go to the API router
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^api/v1/(.+)$ api/v1/index.php?route=$1 [QSA,L]
+
+    # 📄 Default directory index
+    DirectoryIndex index.php index.html
+</IfModule>
+
+# ==============================================================================
+# 🔒 Security Headers
+# @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers
+# @see https://owasp.org/www-project-secure-headers/
+# ==============================================================================
+<IfModule mod_headers.c>
+    # 🛡️ Prevent MIME type sniffing
+    # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
+    Header set X-Content-Type-Options "nosniff"
+
+    # 🛡️ Clickjacking protection
+    # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options
+    Header set X-Frame-Options "SAMEORIGIN"
+
+    # 🛡️ XSS protection (legacy browsers)
+    # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-XSS-Protection
+    Header set X-XSS-Protection "1; mode=block"
+
+    # 🛡️ Referrer policy - send origin only for cross-origin requests
+    # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Referrer-Policy
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # 🛡️ Permissions policy - restrict browser features
+    # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Permissions-Policy
+    Header set Permissions-Policy "camera=(), microphone=(), geolocation=(self), payment=(self)"
+
+    # 🛡️ Content-Security-Policy - Restrict resource loading sources
+    # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self';"
+
+    # 🛡️ HSTS - Force HTTPS for 1 year
+    # ⚠️ PRODUCTION ONLY: Uncomment AFTER confirming HTTPS works correctly.
+    #    Once enabled, browsers will refuse HTTP connections for the max-age period.
+    # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
+    # Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+    # 🚫 Remove server version information
+    Header unset X-Powered-By
+    Header unset Server
+</IfModule>
+
+# ==============================================================================
+# 📁 Directory Listing Protection
+# @see https://httpd.apache.org/docs/2.4/mod/core.html#options
+# ==============================================================================
+Options -Indexes -ExecCGI +FollowSymLinks
+
+# ==============================================================================
+# 🐘 PHP Settings (can be overridden by individual scripts)
+# @see https://www.php.net/manual/en/configuration.changes.php
+# ==============================================================================
+<IfModule mod_php.c>
+    # 🚫 Hide PHP version from response headers
+    php_flag expose_php Off
+
+    # 🚫 Disable error display in production (errors logged to database instead)
+    php_flag display_errors Off
+    php_flag display_startup_errors Off
+
+    # 📝 Enable error logging
+    php_flag log_errors On
+
+    # 📏 Set reasonable upload limits
+    php_value upload_max_filesize 10M
+    php_value post_max_size 12M
+
+    # ⏱️ Set execution time limit (seconds)
+    php_value max_execution_time 60
+
+    # 💾 Memory limit
+    php_value memory_limit 128M
+
+    # 🔤 Default charset
+    php_value default_charset "UTF-8"
+
+    # 🍪 Session security settings
+    # @see https://www.php.net/manual/en/session.security.ini.php
+    php_value session.cookie_httponly 1
+    # ⚠️ Set to 1 in production (requires HTTPS). Set to 0 only for local HTTP dev.
+    php_value session.cookie_secure 0
+    php_value session.use_only_cookies 1
+    php_value session.use_strict_mode 1
+    php_value session.cookie_samesite "Lax"
+</IfModule>
+
+# ==============================================================================
+# 📄 Default Character Encoding
+# @see https://httpd.apache.org/docs/2.4/mod/core.html#adddefaultcharset
+# ==============================================================================
+AddDefaultCharset UTF-8
+
+# ==============================================================================
+# 📦 MIME Types
+# @see https://developer.mozilla.org/en-US/docs/Web/HTTP/MIME_types
+# ==============================================================================
+<IfModule mod_mime.c>
+    # 🖼️ Modern image formats
+    AddType image/webp .webp
+    AddType image/avif .avif
+    AddType image/jxl .jxl
+    AddType image/svg+xml .svg .svgz
+
+    # 📄 Web fonts
+    AddType font/woff2 .woff2
+    AddType font/woff .woff
+    AddType application/font-sfnt .ttf .otf
+
+    # 📄 JSON
+    AddType application/json .json
+
+    # 📄 Web manifest
+    AddType application/manifest+json .webmanifest
+</IfModule>
+
+# ==============================================================================
+# ⚡ Compression (Gzip/Brotli)
+# @see https://httpd.apache.org/docs/2.4/mod/mod_deflate.html
+# ==============================================================================
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml text/javascript
+    AddOutputFilterByType DEFLATE application/javascript application/json application/xml
+    AddOutputFilterByType DEFLATE application/xhtml+xml application/rss+xml
+    AddOutputFilterByType DEFLATE image/svg+xml application/font-sfnt font/woff2
+</IfModule>
+
+# ==============================================================================
+# ⏱️ Browser Caching
+# @see https://httpd.apache.org/docs/2.4/mod/mod_expires.html
+# ==============================================================================
+<IfModule mod_expires.c>
+    ExpiresActive On
+
+    # 📄 HTML - no cache (always fetch latest)
+    ExpiresByType text/html "access plus 0 seconds"
+
+    # 🎨 CSS and JavaScript - cache for 1 week
+    ExpiresByType text/css "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+
+    # 🖼️ Images - cache for 1 month
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 month"
+    ExpiresByType image/webp "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+    ExpiresByType image/x-icon "access plus 1 month"
+
+    # 📄 Fonts - cache for 1 year
+    ExpiresByType font/woff2 "access plus 1 year"
+    ExpiresByType font/woff "access plus 1 year"
+    ExpiresByType application/font-sfnt "access plus 1 year"
+</IfModule>
+
+# ==============================================================================
+# 🔧 Custom Error Pages
+# @see https://httpd.apache.org/docs/2.4/custom-error.html
+# ==============================================================================
+ErrorDocument 404 /error/404.php
+ErrorDocument 500 /error/500.php

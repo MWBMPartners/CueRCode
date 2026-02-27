@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Calendar page icon with date -->
+  <!-- Calendar body -->
+  <rect x="6" y="10" width="52" height="48" rx="6" ry="6"/>
+  <!-- Top bar -->
+  <rect x="6" y="10" width="52" height="14" rx="6" ry="6"/>
+  <!-- Rings -->
+  <rect x="18" y="4" width="5" height="14" rx="2.5"/>
+  <rect x="41" y="4" width="5" height="14" rx="2.5"/>
+  <!-- Calendar grid area -->
+  <rect x="10" y="28" width="44" height="26" rx="2" fill="white"/>
+  <!-- Date numbers (grid dots) -->
+  <rect x="14" y="32" width="6" height="6" rx="1"/>
+  <rect x="24" y="32" width="6" height="6" rx="1"/>
+  <rect x="34" y="32" width="6" height="6" rx="1"/>
+  <rect x="44" y="32" width="6" height="6" rx="1"/>
+  <rect x="14" y="42" width="6" height="6" rx="1"/>
+  <rect x="24" y="42" width="6" height="6" rx="1"/>
+  <rect x="34" y="42" width="6" height="6" rx="1"/>
+  <rect x="44" y="42" width="6" height="6" rx="1"/>
+</svg>

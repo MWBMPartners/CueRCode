@@ -1,0 +1,904 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "CueRCode API",
+        "description": "REST API for generating, customising, and downloading QR codes. Supports multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours, patterns, logos, and frames.\n\n## Authentication\n\nThe API supports two authentication methods:\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Obtain an API key from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the CSRF token in the `X-CSRF-Token` header.\n\nPublic endpoints (`/types`, `/formats`, `/health`) do not require authentication.\n\n## Rate Limiting\n\nAll endpoints (except `/health`) are rate limited. Rate limit headers are included in responses:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `Retry-After` - Seconds to wait before retrying (when rate limited)\n\n## Response Format\n\nBy default, responses are in JSON format. To receive XML responses, either:\n- Set the `Accept` header to `application/xml`\n- Add `?format=xml` to the query string",
+        "version": "1.0.0",
+        "contact": {
+            "name": "CueRCode Support",
+            "url": "https://cuercode.net"
+        },
+        "license": {
+            "name": "Proprietary",
+            "url": "https://cuercode.net/terms"
+        }
+    },
+    "servers": [
+        {
+            "url": "/api/v1",
+            "description": "CueRCode API v1"
+        }
+    ],
+    "tags": [
+        {
+            "name": "Generation",
+            "description": "QR code generation and preview"
+        },
+        {
+            "name": "Download",
+            "description": "Download previously generated QR codes"
+        },
+        {
+            "name": "Metadata",
+            "description": "QR code types and format information"
+        },
+        {
+            "name": "System",
+            "description": "Health checks and system status"
+        }
+    ],
+    "paths": {
+        "/generate": {
+            "post": {
+                "tags": ["Generation"],
+                "summary": "Generate a QR code",
+                "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.",
+                "operationId": "generateQRCode",
+                "security": [
+                    { "ApiKeyAuth": [] },
+                    { "CsrfAuth": [] }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/GenerateRequest"
+                            },
+                            "examples": {
+                                "simple_url": {
+                                    "summary": "Simple URL QR code",
+                                    "value": {
+                                        "type": "url",
+                                        "input": {
+                                            "url": "https://example.com"
+                                        }
+                                    }
+                                },
+                                "custom_url": {
+                                    "summary": "URL with full customisation",
+                                    "value": {
+                                        "type": "url",
+                                        "input": {
+                                            "url": "https://example.com"
+                                        },
+                                        "customization": {
+                                            "format": "png",
+                                            "size": 800,
+                                            "ecc": "H",
+                                            "fg_color": "#2c7a7b",
+                                            "bg_color": "#ffffff",
+                                            "pattern": "round",
+                                            "logo": 5,
+                                            "logo_size_pct": 20,
+                                            "frame_style": "banner-bottom",
+                                            "frame_label": "SCAN ME",
+                                            "frame_color": "#2c7a7b",
+                                            "transparent": false
+                                        }
+                                    }
+                                },
+                                "wifi": {
+                                    "summary": "WiFi QR code",
+                                    "value": {
+                                        "type": "wifi",
+                                        "input": {
+                                            "ssid": "MyNetwork",
+                                            "password": "secret123",
+                                            "encryption": "WPA"
+                                        },
+                                        "customization": {
+                                            "format": "svg",
+                                            "ecc": "M"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "QR code generated successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenerateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request (missing fields, invalid values)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required or invalid credentials",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "QR code generation failed (e.g., invalid payload data)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limit exceeded",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Limit": {
+                                "description": "Maximum requests per minute",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Remaining": {
+                                "description": "Remaining requests in the current window",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/preview": {
+            "post": {
+                "tags": ["Generation"],
+                "summary": "Generate a QR code preview",
+                "description": "Generate a smaller (300px) PNG preview of a QR code. The preview is not saved to the database or filesystem. Use this for real-time previews in the UI before generating the final QR code.",
+                "operationId": "previewQRCode",
+                "security": [
+                    { "ApiKeyAuth": [] },
+                    { "CsrfAuth": [] }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/GenerateRequest"
+                            },
+                            "examples": {
+                                "preview": {
+                                    "summary": "Preview a URL QR code",
+                                    "value": {
+                                        "type": "url",
+                                        "input": {
+                                            "url": "https://example.com"
+                                        },
+                                        "customization": {
+                                            "fg_color": "#333333",
+                                            "pattern": "dot"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Preview generated successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PreviewResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Preview generation failed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limit exceeded",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/download/{uuid}": {
+            "get": {
+                "tags": ["Download"],
+                "summary": "Download a generated QR code",
+                "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.",
+                "operationId": "downloadQRCode",
+                "security": [
+                    { "ApiKeyAuth": [] },
+                    { "CsrfAuth": [] }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "required": true,
+                        "description": "The UUID v4 identifier of the QR code, returned by the generate endpoint",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid",
+                            "example": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "QR code file",
+                        "headers": {
+                            "Content-Disposition": {
+                                "description": "Attachment filename for download",
+                                "schema": {
+                                    "type": "string",
+                                    "example": "attachment; filename=\"cuercode-url-a1b2c3d4.png\""
+                                }
+                            }
+                        },
+                        "content": {
+                            "image/png": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/jpeg": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/gif": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/webp": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/svg+xml": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "application/pdf": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid UUID format",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "QR code not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limit exceeded",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/types": {
+            "get": {
+                "tags": ["Metadata"],
+                "summary": "List available QR code types",
+                "description": "Returns all active QR code types with their form field schemas. Use this endpoint to dynamically build QR code creation forms or validate input data structures.",
+                "operationId": "getQRCodeTypes",
+                "responses": {
+                    "200": {
+                        "description": "Types retrieved successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TypesResponse"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/formats": {
+            "get": {
+                "tags": ["Metadata"],
+                "summary": "List supported output formats",
+                "description": "Returns all supported QR code output formats with MIME types, file extensions, and feature support information (transparency, logo overlay, frame rendering).",
+                "operationId": "getOutputFormats",
+                "responses": {
+                    "200": {
+                        "description": "Formats retrieved successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FormatsResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "tags": ["System"],
+                "summary": "Health check",
+                "description": "Check the health status of the API. Returns database connectivity, application version, and PHP version. Used by monitoring systems and load balancers.",
+                "operationId": "healthCheck",
+                "responses": {
+                    "200": {
+                        "description": "Service is healthy",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service is degraded (e.g., database unreachable)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+                "description": "API key for authentication. Format: `cuercode_` followed by 40 hexadecimal characters."
+            },
+            "CsrfAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-CSRF-Token",
+                "description": "CSRF token for session-based authentication (web UI AJAX requests)."
+            }
+        },
+        "schemas": {
+            "GenerateRequest": {
+                "type": "object",
+                "required": ["type", "input"],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "description": "The QR code type identifier (e.g., 'url', 'vcard', 'wifi', 'email'). Use the /types endpoint to get available types.",
+                        "example": "url"
+                    },
+                    "input": {
+                        "type": "object",
+                        "description": "Type-specific input data. The required fields depend on the QR code type. Use the /types endpoint to see the form schema for each type.",
+                        "additionalProperties": true,
+                        "example": {
+                            "url": "https://example.com"
+                        }
+                    },
+                    "customization": {
+                        "$ref": "#/components/schemas/Customization"
+                    }
+                }
+            },
+            "Customization": {
+                "type": "object",
+                "description": "Visual customisation options for the QR code. All fields are optional; defaults are applied for missing values.",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": ["png", "jpg", "gif", "webp", "svg", "pdf"],
+                        "default": "png",
+                        "description": "Output image format"
+                    },
+                    "size": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 4000,
+                        "default": 800,
+                        "description": "Target image size in pixels"
+                    },
+                    "ecc": {
+                        "type": "string",
+                        "enum": ["L", "M", "Q", "H"],
+                        "default": "M",
+                        "description": "Error correction level. L=7%, M=15%, Q=25%, H=30%. Higher levels allow more damage/obstruction. Use H when adding a logo."
+                    },
+                    "fg_color": {
+                        "type": "string",
+                        "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+                        "default": "#000000",
+                        "description": "Foreground (dark module) colour as hex code"
+                    },
+                    "bg_color": {
+                        "type": "string",
+                        "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+                        "default": "#ffffff",
+                        "description": "Background (light module) colour as hex code"
+                    },
+                    "marker_color": {
+                        "type": "string",
+                        "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+                        "description": "Finder pattern (corner squares) colour as hex code. Defaults to foreground colour if not specified."
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "enum": ["square", "round", "dot"],
+                        "default": "square",
+                        "description": "Module (pixel) shape style"
+                    },
+                    "logo": {
+                        "oneOf": [
+                            { "type": "integer", "description": "Logo ID from the logo library" },
+                            { "type": "string", "description": "Logo as base64-encoded image data or file path" }
+                        ],
+                        "description": "Logo to overlay on the QR code centre. Automatically upgrades ECC to H."
+                    },
+                    "logo_size_pct": {
+                        "type": "integer",
+                        "minimum": 10,
+                        "maximum": 40,
+                        "default": 20,
+                        "description": "Logo size as percentage of the QR code dimensions"
+                    },
+                    "frame_style": {
+                        "type": "string",
+                        "default": "none",
+                        "description": "Frame style to add around the QR code (e.g., 'banner-bottom', 'border-text', 'rounded')"
+                    },
+                    "frame_label": {
+                        "type": "string",
+                        "description": "Text label to display in the frame (e.g., 'SCAN ME')"
+                    },
+                    "frame_color": {
+                        "type": "string",
+                        "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+                        "description": "Frame colour as hex code"
+                    },
+                    "transparent": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Whether the background should be transparent (PNG, GIF, WebP, SVG only)"
+                    }
+                }
+            },
+            "GenerateResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code generated successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "uuid": {
+                                "type": "string",
+                                "format": "uuid",
+                                "description": "Unique identifier for the generated QR code. Use this with the /download endpoint.",
+                                "example": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                            },
+                            "image": {
+                                "type": "string",
+                                "description": "Base64 data URI of the generated QR code image",
+                                "example": "data:image/png;base64,iVBORw0KGgo..."
+                            },
+                            "download_url": {
+                                "type": "string",
+                                "description": "Relative URL for downloading the QR code file",
+                                "example": "/api/v1/download/a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                            },
+                            "mime_type": {
+                                "type": "string",
+                                "description": "MIME type of the generated image",
+                                "example": "image/png"
+                            },
+                            "format": {
+                                "type": "string",
+                                "description": "Output format used",
+                                "example": "png"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time",
+                        "example": "2026-02-27T12:00:00+00:00"
+                    }
+                }
+            },
+            "PreviewResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code preview generated successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "image": {
+                                "type": "string",
+                                "description": "Base64 data URI of the preview image (always PNG, 300px)",
+                                "example": "data:image/png;base64,iVBORw0KGgo..."
+                            },
+                            "mime_type": {
+                                "type": "string",
+                                "description": "MIME type (always image/png for previews)",
+                                "example": "image/png"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "TypesResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code types retrieved successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "types": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/QRCodeType"
+                                }
+                            },
+                            "count": {
+                                "type": "integer",
+                                "description": "Total number of active QR code types",
+                                "example": 15
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "QRCodeType": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Type identifier (use this in the 'type' field of generate/preview requests)",
+                        "example": "url"
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Human-readable type label",
+                        "example": "URL / Website"
+                    },
+                    "icon": {
+                        "type": "string",
+                        "description": "FontAwesome icon class for UI rendering",
+                        "example": "fa-solid fa-link"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Brief description of the QR code type",
+                        "example": "Link to a website URL"
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Type category for grouping",
+                        "example": "web"
+                    },
+                    "form_fields": {
+                        "type": "array",
+                        "description": "Form field schema defining the required input fields for this type",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "payload_template": {
+                        "type": "string",
+                        "description": "Template showing the generated payload format",
+                        "example": "{url}"
+                    },
+                    "sort_order": {
+                        "type": "integer",
+                        "description": "Display sort order",
+                        "example": 1
+                    }
+                }
+            },
+            "FormatsResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Supported output formats retrieved successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "formats": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/OutputFormat"
+                                }
+                            },
+                            "count": {
+                                "type": "integer",
+                                "example": 6
+                            },
+                            "default": {
+                                "type": "string",
+                                "example": "png"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "OutputFormat": {
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "description": "Format identifier",
+                        "example": "png"
+                    },
+                    "mime_type": {
+                        "type": "string",
+                        "description": "MIME type",
+                        "example": "image/png"
+                    },
+                    "extension": {
+                        "type": "string",
+                        "description": "File extension",
+                        "example": "png"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Human-readable format description",
+                        "example": "PNG image (lossless compression, transparent background support)"
+                    },
+                    "supports_transparency": {
+                        "type": "boolean",
+                        "description": "Whether the format supports transparent backgrounds"
+                    },
+                    "supports_logo": {
+                        "type": "boolean",
+                        "description": "Whether the format supports logo overlay"
+                    },
+                    "supports_frame": {
+                        "type": "boolean",
+                        "description": "Whether the format supports frame rendering"
+                    }
+                }
+            },
+            "HealthResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Service is healthy."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["healthy", "degraded"],
+                                "description": "Overall service status",
+                                "example": "healthy"
+                            },
+                            "version": {
+                                "type": "string",
+                                "description": "Application version",
+                                "example": "1.0.0"
+                            },
+                            "php_version": {
+                                "type": "string",
+                                "description": "PHP runtime version",
+                                "example": "8.3.6"
+                            },
+                            "database": {
+                                "type": "string",
+                                "enum": ["connected", "disconnected", "error"],
+                                "description": "Database connectivity status",
+                                "example": "connected"
+                            },
+                            "uptime_seconds": {
+                                "type": "number",
+                                "format": "float",
+                                "description": "Request processing time in seconds",
+                                "example": 0.015
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "ErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": false
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Human-readable error message",
+                        "example": "Missing required field: type."
+                    },
+                    "data": {
+                        "type": "object",
+                        "description": "Empty object for error responses"
+                    },
+                    "error_code": {
+                        "type": "string",
+                        "description": "Machine-readable error code for programmatic handling",
+                        "example": "MISSING_FIELD"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            }
+        }
+    }
+}

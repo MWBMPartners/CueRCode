@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Letters "in" in a rounded square -->
+  <rect x="4" y="4" width="56" height="56" rx="12" ry="12"/>
+  <!-- "i" letter -->
+  <rect x="14" y="26" width="7" height="22" rx="1" fill="white"/>
+  <circle cx="17.5" cy="19" r="4.5" fill="white"/>
+  <!-- "n" letter -->
+  <path d="M28 26h7v3c1.5-2.2 4-4 7.5-4c6 0 8.5 4 8.5 10v13h-7V37c0-3.5-1.2-6-4.5-6c-3 0-4.5 2-4.5 5.5V48h-7V26z" fill="white"/>
+</svg>

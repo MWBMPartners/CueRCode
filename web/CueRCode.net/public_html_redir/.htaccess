@@ -1,0 +1,19 @@
+# ==============================================================================
+# 🔄 CueRCode - Redirection Web Root
+# ==============================================================================
+# This directory is used for limited redirection scenarios.
+# All requests are redirected to the main CueRCode website.
+#
+# @package     CueRCode
+# @subpackage  Redirection
+# @version     1.0.0
+# @since       Phase 1
+# @see         https://httpd.apache.org/docs/2.4/mod/mod_rewrite.html
+# ==============================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 🔄 Redirect all requests to the main CueRCode site
+    RewriteRule ^(.*)$ https://cuercode.net/$1 [R=301,L]
+</IfModule>

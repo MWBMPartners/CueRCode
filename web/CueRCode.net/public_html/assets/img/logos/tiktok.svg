@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Musical note icon -->
+  <path d="M42 6v32c0 7.7-6.3 14-14 14s-14-6.3-14-14s6.3-14 14-14c2.5 0 4.8 0.7 6.8 1.8V6H42z"/>
+  <circle cx="28" cy="38" r="8" fill="white"/>
+  <circle cx="28" cy="38" r="4"/>
+  <path d="M34.8 6C34.8 6 34.8 14 44 16v8c0 0-6-0.5-9.2-4V6H34.8z"/>
+</svg>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Camera/viewfinder icon: rounded rectangle with circle and dot -->
+  <rect x="4" y="4" width="56" height="56" rx="14" ry="14"/>
+  <rect x="10" y="10" width="44" height="44" rx="10" ry="10" fill="white"/>
+  <rect x="14" y="14" width="36" height="36" rx="8" ry="8"/>
+  <circle cx="32" cy="32" r="10" fill="white"/>
+  <circle cx="32" cy="32" r="6"/>
+  <circle cx="45" cy="19" r="3" fill="white"/>
+</svg>

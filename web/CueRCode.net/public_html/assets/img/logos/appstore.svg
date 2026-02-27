@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#333333">
+  <!-- Letter "A" with horizontal line (App Store style) -->
+  <rect x="4" y="4" width="56" height="56" rx="12" ry="12"/>
+  <!-- Stylised A shape -->
+  <path d="M32 14L18 50h7l3-8h8l3 8h7L32 14z" fill="white"/>
+  <path d="M28.5 38L32 28l3.5 10h-7z"/>
+  <!-- Horizontal lines suggesting tools/pencil -->
+  <rect x="14" y="34" width="36" height="3" rx="1.5" fill="white" opacity="0.6"/>
+</svg>

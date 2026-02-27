@@ -1,0 +1,305 @@
+We'd like to create a web-based service that can either be used via a fully responsive, web-based front end, or an RESTful API, to generate downloadable QR Codes
+
+All types of QR Code use cases should be included, including (but not limited to)
+
+* Opening a web link (with later integration with our other Go2My.link URL shortner project, to allow for also dynamic links - keeping the QR Code the same, by changing where it links to)
+* text
+* email
+* Phone numbers/calls
+* SMS Messages
+* Whatsapp Messages/Links
+* Zoom Links (based on input Zoom Meeting ID and Passcode/Password OR Zoom Meeting Link)
+* 
+* geolocation 
+* vCard (business card)
+* calendar/diary invite/event
+* PayPal payment/link
+* Bitcoin link/payment
+* MP3 file/link
+* Video file/link
+* PDF File/link
+* Image file/link
+* App Store links (Apple AppStore/Google Play store)
+* Facebook link
+* YouTube link
+* Wi-Fi Network info (SSID, Network Type and Password)
+* LinkedIn link
+* etc
+
+The qr code should be generated in various image formats, including (but not limited to:
+
+* JPG
+* PNG (with alpha transparency)
+* GIf (with alpha transparency)
+* SVG (vector)
+* WEBP
+* JPEG XL
+* PDF
+
+The backend should utilise PHP and MYSQL and web standards to create a fully responsive Web UI including a form to input data to generate the QR Code and download the produced code.
+
+The QR Code should also be customizable, by allowing to user to
+
+* change the colour
+* QR Code design
+* make the background transparent or any other colour
+* chose an image to use in the centre (from a predefined set or via a custom uploaded image) - users with a an account to the service can even save some of there own logos that may be reused regularly
+* Customisable QR Code shape (most common being square)
+* Customisable “corner” elements/shapes
+* Customisable frame
+* customisable detail/error correction settings (though defaults to standard/recommended settings)
+* Other customisable options
+
+It would be great if a user of the web UI could create a account (that will later be integrated with our own SIGNula service). This online account can store the users generated qr code, to allow them to either redownload them later, or modify specific settings or create different variations.
+
+This same account can also be part of a universal “organisation” account to help a company to manage their own company qr codes as part of a “premium” service
+
+All of this should also be possible to use a RESTful API to generate or download QR codes. In fact the web based frontend could just be an implantation of one that calls on this API
+
+The web based Ui must be fully responsive, and adapt to various screen sizes, orientations and screen DPI configurations. Support for High density and HDR displays should also be considered, along side dark or “light” modes.
+
+
+
+========================
+*TECH STACK and specific instructions*
+========================
+Please use the following technologies for development of the entire 'Portal' project
+* PHP (minimum PHP 8.5 for longevity - current as of November 2025 - but with backward compatibility for PHP 8.4 as well (via conditional statements etc) where necessary.
+	* PHP code should
+		* Use PHP Predefined Constants wherever possible to aid with host platform neutrality (ie, use DIRECTORY_SEPARATOR instead of '/' in paths, PHP_EOL etc)
+		* Full notation for code blocks such as (but not limited to) IF statements, no shortened notation
+		* source code should be indented appropriately (upon deployment, code CAN be minified to conserve bandiwidth, but from a dev point everything MUST be easy to read and follow, so indentation is extremely important) with detailed inline comments/annotations to assith with code readibility, understanding, debugging and future learning/maintenance of code
+			* Comments can/should provide links to external (preferrably official) documentation for further guidance. 
+		* A modular development structure
+		* Minimise code duplication but grouping shared code and reusing/reaccessing them via PHP REQUIRE, REQUIRE_ONCE, INCLUDE & INCLUDE_ONCE
+		
+		  appropriate checks and error handling for REQUIRED and INCLUDED components should be done to avoid errors should files not exist/not be retrievable
+		* Provide "switches" (perhaps via URL Parameters or other means) to enable detailed PHP error visiblity by use of a URL Param such as &debug=true (for dev purposes only)
+		* log PHP errors/notifictions/warnings (including severity, PHP error code, PHP Error title, error detail, backtrace) to a table in the backend database along with any other errors from components and requested page URL and request headers to assist with debugging/trouble shooting.
+		* Log general application activity (not just errors/notifications/warnings/problems) to assist with future development and prooduct support
+
+* MySQL Backend Database (connectin
+	* Interactions between PHP & MySQL via MySQLi only
+	* Use Prepared Statements for all SQL run in PHP - this is to help manage often re-used types of queries and also help with embedded code/query security mechanism to minimise SQL code enjection exploits(?) 
+	* Backend database to be used for ALL settings and config as well as records pertaining the Short Links (and integration with a separate QRCode generator app)
+	* Settings should also be stored in the database, including credentials (keys, secrets etc) for third-party services/libraries (like MS365 etc)
+	* any confidential secrets/keys (labelled as "isSensitive") must be SALTed and cryptographically encrypted using the latest industry standards for such functionality and sensitive information, before entry into the database to ensure data security. Encryption of these confidential info should also use SALT for added security. When retrieving these fields, they should also be decrypted for use.
+
+* HTML5
+	* Must be fully HTML5 compliant, and using modern HTML5 elements, standards and methodologies
+    * generated web pages should ALL be fully responsive, and dynamically adjust to the device it is being used on (large screen monitor/smart tv, tabel, phone etc) and at various DPI resolutions and orientations.
+    * Happy to use third-party libraries to facilitate this, including bootstrap, and graphics/icons tools like FontAwesome
+        For third-party libraries, please use the latest versions and refer to them via their official CDN repositories in the first instance. We're however also happy to have some local copies but these shouold be a contingency more than anything else.
+
+* For bot protection of shortlink creation (main website A) form submission (support for both, in order of preference, but the service used depends on provision of required API Keys/secrets)
+	* CloudFlare Turnstile
+	* ReCapture
+	
+
+========================	
+*SPECIFIC REQUIREMENTS*
+========================
+
+------------------------	
+*Overall*
+------------------------
+* While this will be hosted on Dreamhost shared hosting initially, please include flexibility for hosting on other PHP/MySQL supporting platforms, as such please use PHP constants and predefined constants wherever possible for platform neutrality/flexibility.
+* Given the project will (at least) initially be hosted on Dreamhost's Shared Hosting platform, access to CLI is not possible, as such access to tools like Composer cannot be relied upon. This means any third-party libraries that need to be installed/self-hosted (and cant just be used via referencing CDNs) need to be specifically called out and hosted on local server.
+
+------------------------	
+*User Accounts*
+------------------------
+* A user can register an Organisation. This would create the Organisation and their individual user account under that organisation. As the persson creating the organisation, they will also be made Global Admin of that organisation.
+	* Organisation Global Admins can also setup new users within the Organisation with either Admin privileges (admin, but with fewer 'powers' than Global Admin.) or Regular USer access.
+	* Organisation Regular Users can only create new short links. Modifying of existing short links will be a defineable permission.
+	* Organisation Global Admins will also be the only account able to manage which domain names are assoicated with the organisation, manager all users, manage subscription/payments etc.
+	* Global Admins will also be able to setup Single Sign On using corporate providers such as (but not necessarily limited to):
+		* Microsoft 365
+		* Google Workspace
+		* self-hosted wordpress.
+		
+		Any SSO account MUST also be linked to a local/internal account within the application.
+		Support for linking multiple accounts from these corporate account providers (MS365, Google Workspace etc) should also be possible, but can be fully configured what limitations there are by the Organisational Global Admin
+	* Organisational Admins can 'invite' other members to create an account. this should send an email with a tokanised link which would create the user within the organisation
+* Local accounts will be used first, but we plan on rolling out integration with our SIGNula, our other first-party service, via API integration when it is ready for release. Once ready, provide a mechanism to link local account(s) to SIGNula (either via linking to existing SIGNula accounts or creating new ones)
+
+------------------------	
+*API*
+------------------------
+Secure API (utilising API Keys/CSRF and other security standard mechanisms) must also be supported, with the following functionality
+
+* Create QR Codes
+    Including all customisable features, noted above
+* Save QR Codes on online account - account users only
+* Manage/tweak existing QR Codes - account users only
+
+API should have the capability to return data in the following formats:
+* JSON (default)
+    associated JSON schema shouold be defined as well to help with JSON validation-checks
+* XML (very structured with embedded XSLT for easier view in browser)
+
+API can also be used to create a companion mobile app or managing your short URLs and user acounts.
+
+As with the main components of the app, we do not want to expose that we use PHP for the backend workings of the API, as such API endpoints should not be link create.php. Instead maybe have the actual API endpoint processing in a index.php within a create subdirectory (for example).
+
+Detailed API documentation should be provided online for using the API, using Swagger/OpenAPI standards
+
+------------------------
+	*Directory/File Structure*
+------------------------
+Within this repository, ALL components that need to be uploaded to the web must be within web/:
+
+
+<server>
+├── _auth_keys/                 	← Site/Server-Wide 🔐 MS365 / DB creds / reCapture / Cloudflare Turnstile & other API Keys (outside web root)
+│   ├── auth_creds.php				← Stored securely (not accessible via web)
+├── _includes/                  	← Stores Site/Server-wide shared 'includes' that are not directly publically accessible
+├── _functions/                		← Stores Site/Server-wide shared 'functions' (PHP or other) that used via php include/require and are not directly publically accessible
+├── _libraries/                 	← Stores Site/Server-wide shared 'libraries' (dompdf, Parsedown etc)
+├── _uploads/                 		← Stores Site/Server-wide 'uploads' that are not directly publically accessible
+├── _backups/                 		← Stores Site/Server-wide 'backups' that are not directly publically accessible
+├── CueRCode.net/			← Main Website (A): CueRCode.net - public/PR/"face of the service" website
+│   ├── _auth_keys/                 ← Website specific DB creds (outside web root) IF different from side/server wide wide
+│   │   ├── auth_creds.php          ← Stored securely (not accessible via web)
+│   ├── _includes/                  ← Website specific shared 'includes' that are not directly publically accessible
+│   ├── _functions/                 ← Website specific shared 'functions' (PHP or other) that used via php include/require and are not directly publically accessible
+│   ├── _libraries/                 ← Website specific shared 'libraries' (dompdf, Parsedown etc)
+│   ├── _uploads/                 	← Website specific 'uploads' that are not directly publically accessible
+│   ├── _backups/                 	← Website specific 'backups' that are not directly publically accessible
+│   ├── private_html/               ← Website Private HTML (placeholder structure element, may never be used)
+│   ├── public_html/                ← Website public web root (publicly accessible via web)
+│   ├── public_html_dev_alpha/		← Website Beta Development web root (publicly accessible via web, but may have auth restrictions via either .htaccess or other mechanisms)
+│   ├── public_html_dev_beta/		← Website Beta Development web root (publicly accessible via web, but may have auth restrictions via either .htaccess or other mechanisms)
+│   ├── public_html_landing/		← Website Public Landing Web Root (publicly accessible via web, but only used in pre-launch to show landing/coming soon page)
+│   ├── public_html_redir/			← Website Redirection Web Root (publicly accessible via web, but only used in limited cases where a redirection is needed.)
+│   ├── README.md                   ← Website notes/Readme
+│   └── CHANGE.log              	← Website changelog
+├── README.md                       ← Internal notes
+└── CHANGE.log              		← Internal changelog
+            
+
+
+------------------------
+	*Web Page Design*
+------------------------
+* In addition to having pre-supplied templates for the LinksPage page designs, It would also be useful, and user-friendly to have the ability for a user/admin to design their own LinksPage page templates using either a blocks-based WYSIWYG editor (where various 'sections' are represented by blocks than can be added/moved/resized into place) or the ability to upload the template as an HTML file. In both cases (WYSIWYG and html upload), their should be the ability to use 'placeholder text markers' that will be replaced by the relevant data (text or images) when the page is displayed
+* The LinksPage should also support displaying manually defined links, that do not originate/come from this link shortening service.
+* The LinksPage should also have the ability to 'intelligently' detect the favicon of the destination site, and use that within the listing of the relevant link for further user-friendly identification.
+* LinksPage should also have the ability to ask for a visitors Date of Birth for age verification purposes. This should be able to be enabled for any link, but should also have a mechanism for them to be automatically added for some adult only websites (OnlyFans etc). As with shortlinks, the age for these should also be definable for all destination links, apart from those with build in configuration of being identified as for 'adults only'
+
+------------------------
+	*Web Page Design*
+------------------------
+* Web pages should be fully responsive, and accommodate all screen sizes & orientations
+* Should also be compliant with all current standards
+* Should take accessibilty into WCAG compliant to support users with impairements, including a toggle for colour blind users and screenreader support.
+* Fully HTML5 compliant and use the latest and greatest HTML5 features, whilst also "gracefully" falling back for browsers that do not support them.
+* Styling of the UI should use modern CSS including CSS 3+ and can make use of modern/advanced switches and even animations.
+* Pages should indicate to the user that they're logged in, by showing something in the top-right corner (as is commonly the norm in the industry).
+  This should display
+	* User avatar (in this priority order: Locally stored Bespoke/User Specified/Defined Avatar/Profile Picture from tblUSers in database > MS365/Google Workspace etc > Gravatar > default/placeholder avatar)
+	* Name of user
+	* A means to change user profile settings (possible via drop-down menu when clicking on Name and Avatar)
+* ALL config (with the exception of database connection credentials) should be stored in the Backend MySQL Database (tblSettings table).
+    * Database connection credentials to be stored outside of web accessible web paths in relevant _auth_keys/auth_creds.php, which will stored the info, but if ever tried to be accessed directly would not return/echo any info, but should perhaps redirect to the main website (Go2My.Link via its API; GitHub Project: https://github.com/MWBMPartners/Go2My.Link)
+* Some settings, like MS365/Google Workspace etc credentials should also be able to be stored in a private location on the server as a fallback (perhaps also within the relevant _auth_keys/auth_creds.php file as stated above?).
+* It should also be possible for new settings to be added at any time by a Global Admin using the Web UI, to minimise requirement to have to manually update PHP Code too much to take these new settings to account.
+* Values for settings marked as 'isSensitive' (as well as fields storing ANY user passwords/keys/certs) should be appropriately cryptographically encrypted/hashed to current industry high security/crypographic standards, also using a strong SALT for increased security, to ensure these are safe/secure - but also allow them to be internally decrypted for use as/when required.
+* Whilst PHP will be used, the end user should not see this even in places like webpage/form/processor URLs. Not only is this unprofessional but it could also be a security risk as it exposes to potential attackers that PHP is used. Therefore all URLs should be visible as /something/somepage. This can perhaps be achieved by either a router (managed/stored in SQL database), or by simply ensuring the content is in a a location like /something/somepage/index.php (as in the case of the above example)
+* Appropriate user-facing error handling should also be implemented, as well as backend error handling for server-side PHP scripts and log these into the Activity Log for later development and fixing by the development and Global Admin teams.
+* Form fields (for ALL apps) should
+	* Have dynamic field validation wherever possible
+	* Use datepickers to ensure consistent format for entered dates.
+	* Use ReCaptcha or CloudFlare Turnstile, provided the relevant API Keys are provided (preferred backend database, but fallback in auth.php). If no API Keys provided dont use these technologies for form submission.
+* Web pages should also be designed to support use as a WebApp across all supported platforms and browsers, including but not limited to use as a PWA. This can be used for an initial web app until native apps are developed.
+
+Beta & alpha versions for each app will be placed in public_html_dev_beta & public_html_dev_alpha folders (as opposed to public_html for "fully released versions")
+Can we also consider implementing access control for alpha and beta versions of app to limit who's can access.
+
+For further flexibility, some future features may only be accessible via a payment (one-off or subscription). Therefore a mechanism for managing multi-tier payment/subscription levels shoold also be included, with payment accepted via PayPal (also via Apple Pay or Google Pay on supported platforms/devices), and payment records, status and access availability needs to also all be stored in the backend database. Payment for such services could be accomodated by service specific setup or via future integration with our own first party SIGNula service.
+
+All code (including Javascript, CSS, PHP & SQL) should be fully/completely commented/annotated in detail, to assist with understanding of code and functionality, make code readable and also assist with future learning and debugging. Code should also be properly indented for improved human readability. Happy to use emojis in comments to help "call-out" sections of comments. 
+
+We would also like to use AJAX where possible to dynamically load/change content to avoid entire page refreshes. However use of AJAX should not be a blocker if a browser doesnt support/have javascript/AJAX enabled. it should still be possible to use everything in the portal/sub-apps without AJAX
+Please use Bootstrap, and other technologies/libraries (FontAwesome, JQuery etc) to achieve the required functionality, but please note the project will be hosted on Dreamhost Shared Hosting, so any libraries will need to be manually downloaded and uploaded as Compile and similar functionality is not available. Happy to use libraries from CDNs as a priority, but would be good to have a fallback to selfhosted should CDNs be down.
+
+Any graphics/icons should be in SVG (Vector) to improve scalability and should offer a Base64 encoded fallback for browsers/clients that do not support SVG. (SVG support should be detected dynamically wherever possible). Animated SVG (vector) are also acceptible for icons
+
+We're trying to achieve wide compatibility and a user friendly feel, especially some users may not be computer savvy.
+
+With this in mind, we're looking for a modular design/development structure with a focus on functionality, security, data integrity as well as flexibility/scalability
+
+Primary development environment will be on Mac OS (Windows occassionally) with Visual Studio Code as our IDE where we also intend to use the ftp-sync extension. We would like to have a GitHub repo to manage the development and staging of the project. please also suggest the best way to setup and manage this project within a GitHub repo
+
+For security reasons, can includes, require etc be placed outside of web accessible directories. We want to ensure only the necessarily files for public access in web-accesssible folders. Any directories used for private (not web accessible files) should have a underscore '_' prefix.
+
+------------------------
+	*Terms of Use & Data Policy*
+------------------------
+As we use and collect (limited data), please also generate the following:
+
+* Terms of Use Policy
+* Copyright Notice(s)
+* Data Protection & Cookies Policy
+  including for compliance with
+	* GDPR
+	UK GDPR + DPA 2018
+	* CCPA / CPRA / VCDPA / CPA / CTDPA / UCPA
+	* HIPAA
+	* COPPA
+	* PIPEDA (Canada)
+	* LGPD (Brazil)
+	* Privacy Act 1988 (Australia) + Notifiable Data Breaches scheme
+	* Privacy Act 2000 (New Zealand)
+	* DPDP Act (India)
+	* PIPL (China)
+	* CSL & DSL (China)
+	* APPI (Japan)
+	* PIPA (South Korea)
+	* POPIA (South Africa)
+
+	Please also build in functionality to manage any data to comply with the above data protection laws.
+
+A future (first-party) QRCode generator website/service will also use the URL shortener to generate URL based QRCodes, via this API. Perhaps consider that as well when building database sstricture to provide mechanism for linking the two together?
+
+Throughout the project, create and maintain README.md files as well as CHANGELOG.md, PROJECT_STATUS.md, DEV_NOTES.md to help track key notes/readmes, project status, developer notes and changelogs.
+
+Please also log Claude prompts, memory and context in .claude/ throughout to help with future development
+
+OpenAI/ChatGPT/Codex prompts, memory and contact info should be saved/stored/kept current and saved in .openai
+
+Please also dynamically maintain .gitignore, for development in PHP, MySQL on Windows or MacOS or Linux (especially Raspberry Pi) via Visual Studio Code or Xcode, for the entire project as we progress, includig exclusion of ftp-sync.json files created by the FTP Sync Visual Studio Code extension.
+
+As this project will be hosted on a GitHub Repo (https://github.com/MWBMPartners/Go2My.Link), please also Setup, and constantly maintain use of the following GitHub functionality:
+ * GitHub Issues - For Issue and Feature Request tracking
+ * GitHub Project - for managing the overall project
+ * GitHub Wiki - for GitHub hosted wiki docs
+ * GitHub Security - setup with appropriate suggested settings
+ * GitHub Actions - as appropriate for code checking and potentially also for auto-upload (via SFTP) of some repo directories to web hosts
+
+ Any other suggested GitHub features
+
+ Can we create GitHub Issues of type 'Issue" for all issues we identify including through through lint/security checks, and update each as we fix them
+Can we do the same going forward for all changes/dev work?
+
+Can we then also ensure GitHub Issues, GitHub Project (including adding estimated timeframes to each Project task/sub-task), GitHub Wiki and all .md files (eg, but not limited to, README.md, CHANGELOG.md, DEV_NOTES.md, Project_Status.md, and .claude/ prompt, memory and context info/files are fully up to date!
+Before we start, can you summarise the current platform and a summary/build plan ahead of starting dev. I'd like to keep a track of build progress at each stage, therefore can we also run through the progress/checklist after each "stage"/step.
+
+Setup actions for automated version numbering, with version numbering also embedded into commented out code blocks in each code doc
+
+Design a Logo and associated icon/favicon (light and dark mode compatible).
+
+Where possible use vector svg graphics in the first instance with PNG as fallback for browsers with no svg support.
+
+Can we also, after all prompts/changes and IN THIS ORDER:
+* Update Changelog.md, Readme.md, Project_Status.md, Dev_Notes.md
+* Update GitHub Issues - to track implemented features, applied fixes etc
+* Update GitHub Project tracking
+* Update GitHub Milestones tracking
+* Update GitHub Wiki 
+* Update Swagger/OpenAPI documentation
+* Do a thorough project lint/code syntax, fixing ALL issues, including warning and notifications
+* Do a through code/security check, applying all suggested fixes
+* COMMIT changes (but DO NOT COMMIT)
+* Update .GitIgnore as needed based on latest changes
+Ensure these are done as a standing item after all prompts/actions completed

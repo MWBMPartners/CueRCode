@@ -1,0 +1,39 @@
+# ==============================================================================
+# 🌐 CueRCode - API v1 URL Rewriting
+# ==============================================================================
+# Routes all API requests to the central API router (index.php).
+# This enables clean RESTful URLs like /api/v1/generate instead of
+# /api/v1/index.php?route=generate
+#
+# @package     CueRCode
+# @subpackage  API
+# @version     1.0.0
+# @since       Phase 1
+# @see         https://httpd.apache.org/docs/2.4/mod/mod_rewrite.html
+# ==============================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 📌 Only rewrite if the requested file/directory doesn't physically exist
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    # 🔄 Route all requests to the API router with the path as a query parameter
+    # Example: /api/v1/generate → index.php?route=generate
+    # Example: /api/v1/download/abc-123 → index.php?route=download/abc-123
+    # QSA flag appends existing query string parameters
+    RewriteRule ^(.+)$ index.php?route=$1 [QSA,L]
+</IfModule>
+
+# ==============================================================================
+# 🔒 CORS Headers for API Access
+# @see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+# ==============================================================================
+<IfModule mod_headers.c>
+    # 📌 Allow cross-origin requests (adjust for production)
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header set Access-Control-Allow-Headers "Content-Type, X-API-Key, X-CSRF-Token, Accept"
+    Header set Access-Control-Max-Age "3600"
+</IfModule>
