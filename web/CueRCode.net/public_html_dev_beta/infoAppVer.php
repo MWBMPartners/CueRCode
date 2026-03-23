@@ -7,7 +7,7 @@
 		$app["Application"]["Description"]["Keywords"] = "Free QR code generator tool. Create and customize QR codes for various purposes.";
 
 		//Version
-			$app["Application"]["Version"]["Version"] = "0.1.0";
+			$app["Application"]["Version"]["Number"] = "0.1.0";
 			$app["Application"]["Version"]["Name"] = NULL;
 			
 			// Environment-based override (failsafe)

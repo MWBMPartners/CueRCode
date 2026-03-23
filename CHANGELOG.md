@@ -42,6 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🔧 Controlled via `SFTP_ENABLED` GitHub variable and GitHub Secrets
 - 📝 GitHub Issue [#44](https://github.com/MWBMPartners/CueRCode/issues/44) created for tracking
 
+### 🔢 Added - Automated Version Numbering & Build Info (2026-03-23)
+
+- 🔢 `version-bump.yml` — auto-increments semver in `infoAppVer.php` on push (conventional commits: feat→minor, fix→patch, breaking→major)
+- 🏷️ `release.yml` — creates GitHub Release on `v*` tag push (stable, beta, alpha, RC detection)
+- 📝 `deploy.yml` updated to inject commit SHA, short SHA, date, and URL into `$app["Application"]["Version"]["Repo"]["Commit"]` before SFTP upload
+- 🏷️ Production builds (main) automatically clear Development Status to NULL
+- 🔧 Fixed `infoAppVer.php` key from `["Version"]["Version"]` to `["Version"]["Number"]` across all public_html variants
+
 ### ♿ Added - WCAG 2.1 AA Accessibility Compliance (2026-02-27)
 
 - 🔗 Skip-to-main-content link on every page

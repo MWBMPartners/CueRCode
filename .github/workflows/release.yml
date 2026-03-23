@@ -1,0 +1,68 @@
+# =============================================================================
+# 🏷️ CueRCode - Create GitHub Release
+# =============================================================================
+# Automatically creates a GitHub Release when a version tag is pushed.
+#
+# 📋 Tag format:
+#   v1.2.3       → Stable release
+#   v1.2.3-beta  → Beta pre-release
+#   v1.2.3-alpha → Alpha pre-release
+#   v1.2.3-rc.1  → Release candidate pre-release
+#
+# @see https://github.com/MWBMPartners/phpWhoIs/blob/main/.github/workflows/release.yml
+# @copyright 2025 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+      # =======================================================================
+      # 📥 Step 1: Checkout the repository
+      # =======================================================================
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # =======================================================================
+      # 🏷️ Step 2: Determine if this is a pre-release or stable release
+      # =======================================================================
+      - name: Determine release type
+        id: release_type
+        run: |
+          TAG="${{ github.ref_name }}"
+
+          if [[ "$TAG" == *"-alpha"* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "channel=Alpha" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == *"-beta"* ]] || [[ "$TAG" == *"-rc"* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "channel=Beta" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "channel=Stable" >> $GITHUB_OUTPUT
+          fi
+
+          echo "🏷️ Tag: $TAG"
+          echo "📦 Channel: $(grep channel $GITHUB_OUTPUT | cut -d= -f2)"
+
+      # =======================================================================
+      # 🚀 Step 3: Create the GitHub Release
+      # =======================================================================
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.release_type.outputs.prerelease }}
+          name: "${{ github.ref_name }} (${{ steps.release_type.outputs.channel }})"

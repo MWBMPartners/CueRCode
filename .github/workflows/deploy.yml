@@ -207,6 +207,47 @@ jobs:
           fi
 
       # =======================================================================
+      # 🔢 Step 3b: Inject build/commit info into infoAppVer.php
+      # Populates $app["Application"]["Version"]["Repo"]["Commit"] keys
+      # and sets Development Status to NULL for production (main) builds
+      # =======================================================================
+      - name: Inject commit info into infoAppVer.php
+        if: steps.staging.outputs.has_files == 'true'
+        run: |
+          STAGING_DIR="${{ steps.staging.outputs.staging_dir }}"
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+          COMMIT_DATE=$(git log -1 --format="%cd" --date=format:"%Y-%m-%d %H:%M")
+          REPO_URL="https://github.com/${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
+
+          # 🔍 Find all infoAppVer.php files in the staging area
+          find "$STAGING_DIR" -name "infoAppVer.php" -type f | while read -r VERFILE; do
+            echo "📝 Injecting build info into: ${VERFILE#$STAGING_DIR/}"
+
+            # 🔗 Inject commit SHA
+            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"SHA\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"SHA\"\] = \"${COMMIT_SHA}\"|" "$VERFILE"
+
+            # 🔗 Inject short SHA
+            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"Short\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"Short\"\] = \"${SHORT_SHA}\"|" "$VERFILE"
+
+            # 📅 Inject commit date
+            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"Date\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"Date\"\] = \"${COMMIT_DATE}\"|" "$VERFILE"
+
+            # 🔗 Inject commit URL
+            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"URL\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"URL\"\] = \"${REPO_URL}/commit/${COMMIT_SHA}\"|" "$VERFILE"
+
+            # 🏷️ For production (main) builds, clear the Development Status
+            if [[ "$BRANCH" == "main" ]]; then
+              sed -i '/\["Development"\]\["Status"\]/{ s/= "Alpha"/= NULL/; s/= "Beta"/= NULL/ }' "$VERFILE"
+              echo "  🏷️ Development Status set to NULL (production)"
+            fi
+
+            # ✅ Verify
+            echo "  ✅ Commit: ${SHORT_SHA} @ ${COMMIT_DATE}"
+          done
+
+      # =======================================================================
       # 🗜️ Step 4: Minify JS, CSS, and HTML before upload
       # =======================================================================
       - name: Install minification tools

@@ -128,12 +128,50 @@ Sensitive values (API keys, SSO credentials, etc.) in `tblSettings` with `isSens
 
 Uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`
 
-Version is embedded in:
+Version is stored in `infoAppVer.php` as `$app["Application"]["Version"]["Number"]` and also embedded in:
 
 - 📄 Code file headers (comment blocks)
 - 🔌 API responses (`X-API-Version` header)
 - 📱 `manifest.json`
 - 🗄️ Database (`tblSettings.app_version`)
+
+### Automated Version Bumping
+
+GitHub Actions (`version-bump.yml`) auto-increments the version on push using [Conventional Commits](https://www.conventionalcommits.org/):
+
+| Commit Prefix | Bump Type | Example |
+| --- | --- | --- |
+| `feat:` or `feat(scope):` | MINOR | `feat: add bulk QR generation` |
+| `fix:`, `chore:`, `docs:`, etc. | PATCH | `fix: correct vCard encoding` |
+| `...!:` or `BREAKING CHANGE` in body | MAJOR | `feat!: redesign API response format` |
+
+Each branch bumps its own `infoAppVer.php`:
+
+- `alpha` → `web/CueRCode.net/public_html_dev_alpha/infoAppVer.php`
+- `beta` → `web/CueRCode.net/public_html_dev_beta/infoAppVer.php`
+- `main` → `web/CueRCode.net/public_html/infoAppVer.php`
+
+### Build Info Injection
+
+The deploy workflow injects commit metadata into `infoAppVer.php` before SFTP upload:
+
+```php
+$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]   = "abc1234...";
+$app["Application"]["Version"]["Repo"]["Commit"]["Short"] = "abc1234";
+$app["Application"]["Version"]["Repo"]["Commit"]["Date"]  = "2026-03-23 14:30";
+$app["Application"]["Version"]["Repo"]["Commit"]["URL"]   = "https://github.com/.../commit/abc1234...";
+```
+
+For production (main) builds, `Development Status` is automatically set to `NULL`.
+
+### GitHub Releases
+
+Pushing a version tag creates a GitHub Release (`release.yml`):
+
+- `v1.2.3` → Stable release
+- `v1.2.3-beta` → Beta pre-release
+- `v1.2.3-alpha` → Alpha pre-release
+- `v1.2.3-rc.1` → Release candidate
 
 ---
 

@@ -1,0 +1,206 @@
+# =============================================================================
+# 🔢 CueRCode - Auto-Increment Version (SemVer)
+# =============================================================================
+# Automatically bumps the semantic version number in infoAppVer.php on push
+# to alpha, beta, or main branches, based on conventional commit messages.
+#
+# 📋 Commit message conventions:
+#   feat(...):   → MINOR bump (new feature)
+#   fix(...):    → PATCH bump (bug fix)
+#   chore/docs:  → PATCH bump (maintenance)
+#   ...!:        → MAJOR bump (breaking change)
+#   BREAKING CHANGE in body → MAJOR bump
+#
+# 📁 Version is written to:
+#   alpha → web/CueRCode.net/public_html_dev_alpha/infoAppVer.php
+#   beta  → web/CueRCode.net/public_html_dev_beta/infoAppVer.php
+#   main  → web/CueRCode.net/public_html/infoAppVer.php
+#
+# The version is stored in:
+#   $app["Application"]["Version"]["Number"]
+#
+# @see https://github.com/MWBMPartners/phpWhoIs/blob/main/.github/workflows/version-bump.yml
+# @copyright 2025 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: Auto-increment version (semver)
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+      - alpha
+    paths:
+      - 'web/**'
+      - '!web/**/CHANGELOG.md'
+      - '!web/**/README.md'
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+
+    # =========================================================================
+    # 🔒 Skip if this commit was made by the bot (prevents infinite loops)
+    # =========================================================================
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+
+      # =======================================================================
+      # 📥 Step 1: Checkout the repository
+      # =======================================================================
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # =======================================================================
+      # 🎯 Step 2: Determine which infoAppVer.php to update based on branch
+      # =======================================================================
+      - name: Determine version file path
+        id: target
+        run: |
+          BRANCH="${{ github.ref_name }}"
+
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "verfile=web/CueRCode.net/public_html/infoAppVer.php" >> $GITHUB_OUTPUT
+            echo "channel=production" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "beta" ]]; then
+            echo "verfile=web/CueRCode.net/public_html_dev_beta/infoAppVer.php" >> $GITHUB_OUTPUT
+            echo "channel=beta" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "alpha" ]]; then
+            echo "verfile=web/CueRCode.net/public_html_dev_alpha/infoAppVer.php" >> $GITHUB_OUTPUT
+            echo "channel=alpha" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Branch: $BRANCH"
+
+      # =======================================================================
+      # 📊 Step 3: Determine semver bump type from commit message
+      # Uses conventional commit format:
+      #   feat:  → minor    fix:  → patch
+      #   ...!:  → major    BREAKING CHANGE → major
+      # =======================================================================
+      - name: Determine semver bump type from commit message
+        id: bump_type
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s%n%b")
+          echo "Commit message:"
+          echo "$COMMIT_MSG"
+
+          # 🔴 Check for breaking change (MAJOR bump)
+          if echo "$COMMIT_MSG" | grep -qiE "^.*!:|BREAKING CHANGE"; then
+            echo "type=major" >> $GITHUB_OUTPUT
+            echo "🔴 Bump type: MAJOR"
+
+          # 🟢 Check for new feature (MINOR bump)
+          elif echo "$COMMIT_MSG" | grep -qiE "^feat(\(.*\))?:"; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+            echo "🟢 Bump type: MINOR"
+
+          # 🔵 Everything else: fix, chore, docs, style, refactor, etc. (PATCH bump)
+          else
+            echo "type=patch" >> $GITHUB_OUTPUT
+            echo "🔵 Bump type: PATCH"
+          fi
+
+      # =======================================================================
+      # 🔢 Step 4: Bump the version number in infoAppVer.php
+      # =======================================================================
+      - name: Bump version
+        id: version
+        run: |
+          VERFILE="${{ steps.target.outputs.verfile }}"
+          BUMP_TYPE="${{ steps.bump_type.outputs.type }}"
+
+          if [[ ! -f "$VERFILE" ]]; then
+            echo "⚠️ Version file not found: $VERFILE"
+            echo "bumped=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 📖 Extract current version from $app["Application"]["Version"]["Number"]
+          CURRENT=$(grep -oP '\["Version"\]\["Number"\] = "\K[^"]+' "$VERFILE")
+          echo "📌 Current version: $CURRENT"
+
+          # 🔀 Split into major.minor.patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # ➕ Apply semver bump
+          case "$BUMP_TYPE" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "🆕 New version: $NEW_VERSION ($BUMP_TYPE bump)"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "bumped=true" >> $GITHUB_OUTPUT
+
+          # ✏️ Update the version in infoAppVer.php
+          sed -i "s/\[\"Version\"\]\[\"Number\"\] = \"$CURRENT\"/[\"Version\"][\"Number\"] = \"$NEW_VERSION\"/" "$VERFILE"
+
+          # ✅ Verify the change
+          echo "📄 Updated file:"
+          grep 'Version\"\]\[\"Number' "$VERFILE"
+
+      # =======================================================================
+      # 💾 Step 5: Commit the version bump
+      # =======================================================================
+      - name: Commit version bump
+        if: steps.version.outputs.bumped == 'true'
+        run: |
+          VERFILE="${{ steps.target.outputs.verfile }}"
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          BUMP_TYPE="${{ steps.bump_type.outputs.type }}"
+          BRANCH="${{ github.ref_name }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$VERFILE"
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ No version changes to commit"
+          else
+            git commit -m "chore: bump version to ${NEW_VERSION} (${BUMP_TYPE}) [skip ci]"
+
+            # 🔄 Pull any commits made by other workflows before pushing
+            # Retry up to 3 times in case of race conditions
+            for i in 1 2 3; do
+              git fetch origin "$BRANCH"
+              git rebase "origin/$BRANCH" && git push origin "$BRANCH" && break
+              echo "⚠️ Push attempt $i failed, retrying..."
+              sleep 2
+            done
+
+            echo "✅ Version bumped to ${NEW_VERSION} on ${BRANCH}"
+          fi
+
+      # =======================================================================
+      # 📊 Step 6: Summary
+      # =======================================================================
+      - name: Version bump summary
+        if: steps.version.outputs.bumped == 'true'
+        run: |
+          echo "### 🔢 Version Bumped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **New Version** | \`${{ steps.version.outputs.new_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Bump Type** | ${{ steps.bump_type.outputs.type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **File** | \`${{ steps.target.outputs.verfile }}\` |" >> $GITHUB_STEP_SUMMARY
