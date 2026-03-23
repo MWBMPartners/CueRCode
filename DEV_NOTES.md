@@ -1,6 +1,6 @@
 # 🛠️ CueRCode - Developer Notes
 
-**📅 Last Updated:** 2026-02-27
+**📅 Last Updated:** 2026-03-23
 
 ---
 
@@ -134,3 +134,54 @@ Version is embedded in:
 - 🔌 API responses (`X-API-Version` header)
 - 📱 `manifest.json`
 - 🗄️ Database (`tblSettings.app_version`)
+
+---
+
+## 🚀 CI/CD - SFTP Auto-Deployment
+
+### Branch Deployment Strategy
+
+| Branch | Channel | CueRCode.net public_html | QRmy.Link public_html |
+| --- | --- | --- | --- |
+| `alpha` | Alpha | `public_html_dev_alpha/` | `public_html_dev_alpha/` |
+| `beta` | Beta | `public_html_dev_beta/` | `public_html_dev_beta/` |
+| `main` | Production | `public_html/` | `public_html/` |
+
+**All branches also deploy:**
+
+- Server-wide shared folders (`web/_auth_keys/`, `web/_includes/`, `web/_functions/`, `web/_libraries/`, `web/_uploads/`, `web/_backups/`)
+- Site-specific private folders (`web/CueRCode.net/_*`, `web/QRmy.Link/_*`) — everything that does NOT have `public_html` or `private_html` in the directory name
+
+### Required GitHub Secrets
+
+| Secret | Description | Example |
+| --- | --- | --- |
+| `SFTP_HOST` | SFTP server hostname | `myserver.dreamhost.com` |
+| `SFTP_PORT` | SFTP port number | `22` |
+| `SFTP_USER` | SFTP username | `deploy_user` |
+| `SFTP_KEY` | SSH private key (primary auth) | PEM format private key |
+| `SFTP_PASSWORD` | SFTP password (fallback if key empty) | `p@ssw0rd` |
+| `SFTP_REMOTE_BASE` | Base remote directory on server | `/home/user/` |
+
+### Required GitHub Variables
+
+| Variable | Description | Value |
+| --- | --- | --- |
+| `SFTP_ENABLED` | Master switch for deployments | `true` |
+
+### Authentication Priority
+
+1. **SSH Key** (`SFTP_KEY` secret) — used when set and non-empty
+2. **Password** (`SFTP_PASSWORD` secret) — fallback when SSH key is not available
+
+### Pre-Upload Processing
+
+- 🗜️ JavaScript minified via `terser`
+- 🗜️ CSS minified via `clean-css-cli`
+- 🗜️ HTML minified via `html-minifier-terser`
+- 🗜️ XML whitespace stripped
+- 📄 `.DS_Store`, `.gitkeep`, `.gitignore`, `README.md`, `CHANGELOG.md`, `DEV_NOTES.md` excluded from upload
+
+### Workflow Location
+
+`.github/workflows/deploy.yml` — modelled after [phpWhoIs deploy.yml](https://github.com/MWBMPartners/phpWhoIs/blob/main/.github/workflows/deploy.yml)

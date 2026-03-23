@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - #43: Export branding PNGs from SVGs
 - 📊 Updated PROJECT_STATUS.md Phase 1 section to reflect actual audit status (not blindly marked complete)
 
+### 🚀 Added - SFTP Auto-Deploy GitHub Actions (2026-03-23)
+
+- 🔄 GitHub Actions workflow (`.github/workflows/deploy.yml`) for automated SFTP deployment
+- 🌿 `alpha` branch created for alpha development (deploys `public_html_dev_alpha/`)
+- 🌿 `beta` branch created for beta development (deploys `public_html_dev_beta/`)
+- 🌿 `main` branch deploys `public_html/` (production)
+- 📦 All branches deploy server-wide shared folders and site-specific private folders
+- 🗜️ JS/CSS/HTML/XML minification before upload
+- 🔐 SSH key authentication (primary) with password fallback
+- 🔧 Controlled via `SFTP_ENABLED` GitHub variable and GitHub Secrets
+- 📝 GitHub Issue [#44](https://github.com/MWBMPartners/CueRCode/issues/44) created for tracking
+
 ### ♿ Added - WCAG 2.1 AA Accessibility Compliance (2026-02-27)
 
 - 🔗 Skip-to-main-content link on every page

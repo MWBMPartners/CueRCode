@@ -1,0 +1,363 @@
+# =============================================================================
+# 🚀 CueRCode - Deploy via SFTP
+# =============================================================================
+# Automatically deploys files to the web server via SFTP on push to
+# alpha, beta, or main branches.
+#
+# 📁 Deployment logic:
+#   ALL branches upload:
+#     - web/ shared folders (excluding web/CueRCode.net/ and web/QRmy.Link/)
+#     - web/CueRCode.net/ private folders (no public_html/private_html in name)
+#     - web/QRmy.Link/ private folders (when it exists)
+#
+#   Branch-specific public_html:
+#     alpha → public_html_dev_alpha/
+#     beta  → public_html_dev_beta/
+#     main  → public_html/
+#
+# 🔐 Authentication:
+#   Primary:  SSH key (SFTP_KEY secret)
+#   Fallback: Password (SFTP_PASSWORD secret)
+#
+# 📋 Required GitHub Secrets:
+#   SFTP_HOST, SFTP_PORT, SFTP_USER, SFTP_KEY, SFTP_PASSWORD,
+#   SFTP_REMOTE_BASE
+#
+# 📋 Required GitHub Variables:
+#   SFTP_ENABLED = 'true'
+#
+# @see https://github.com/MWBMPartners/phpWhoIs/blob/main/.github/workflows/deploy.yml
+# @copyright 2025 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: Deploy via SFTP
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+      - alpha
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # =========================================================================
+    # 🔒 Only run if SFTP deployment is explicitly enabled
+    # =========================================================================
+    if: ${{ vars.SFTP_ENABLED == 'true' }}
+
+    steps:
+
+      # =======================================================================
+      # 📥 Step 1: Checkout the repository
+      # =======================================================================
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # =======================================================================
+      # 🎯 Step 2: Determine which public_html variant to deploy
+      # =======================================================================
+      - name: Determine deployment target
+        id: target
+        run: |
+          BRANCH="${{ github.ref_name }}"
+
+          # 🔀 Map branch to the public_html directory suffix
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "public_html_suffix=public_html" >> $GITHUB_OUTPUT
+            echo "channel=production" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "beta" ]]; then
+            echo "public_html_suffix=public_html_dev_beta" >> $GITHUB_OUTPUT
+            echo "channel=beta" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "alpha" ]]; then
+            echo "public_html_suffix=public_html_dev_alpha" >> $GITHUB_OUTPUT
+            echo "channel=alpha" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Branch: $BRANCH → deploying public_html variant: $(grep public_html_suffix $GITHUB_OUTPUT | cut -d= -f2)"
+
+      # =======================================================================
+      # 📂 Step 3: Prepare deployment staging area
+      # Builds a clean staging directory containing only the files that
+      # should be uploaded for this branch.
+      # =======================================================================
+      - name: Prepare deployment staging area
+        id: staging
+        run: |
+          STAGING_DIR="$(pwd)/.deploy_staging"
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR"
+
+          PUBLIC_SUFFIX="${{ steps.target.outputs.public_html_suffix }}"
+          HAS_FILES="false"
+
+          # =================================================================
+          # 📦 Part A: Server-wide shared folders
+          # Everything in web/ EXCEPT web/CueRCode.net/ and web/QRmy.Link/
+          # =================================================================
+          echo "📦 Copying server-wide shared folders..."
+          if [[ -d "web/" ]]; then
+            for item in web/*/; do
+              dir_name=$(basename "$item")
+
+              # ⏭️ Skip the site-specific directories (handled separately)
+              if [[ "$dir_name" == "CueRCode.net" ]] || [[ "$dir_name" == "QRmy.Link" ]]; then
+                echo "  ⏭️ Skipping web/$dir_name/ (handled separately)"
+                continue
+              fi
+
+              # ✅ Copy server-wide shared folders
+              echo "  ✅ Copying web/$dir_name/"
+              mkdir -p "$STAGING_DIR/web/$dir_name"
+              cp -r "$item"* "$STAGING_DIR/web/$dir_name/" 2>/dev/null || true
+              HAS_FILES="true"
+            done
+          fi
+
+          # =================================================================
+          # 📦 Part B: Site-specific private folders (CueRCode.net)
+          # All subfolders that do NOT contain 'public_html' or 'private_html'
+          # in the directory name, PLUS the branch-specific public_html
+          # =================================================================
+          echo ""
+          echo "📦 Processing web/CueRCode.net/..."
+          if [[ -d "web/CueRCode.net/" ]]; then
+            for item in web/CueRCode.net/*/; do
+              dir_name=$(basename "$item")
+
+              if [[ "$dir_name" == *"public_html"* ]] || [[ "$dir_name" == *"private_html"* ]]; then
+                # 🎯 Only copy the branch-specific public_html variant
+                if [[ "$dir_name" == "$PUBLIC_SUFFIX" ]]; then
+                  echo "  🎯 Copying web/CueRCode.net/$dir_name/ (branch target)"
+                  mkdir -p "$STAGING_DIR/web/CueRCode.net/$dir_name"
+                  cp -r "$item"* "$STAGING_DIR/web/CueRCode.net/$dir_name/" 2>/dev/null || true
+                  HAS_FILES="true"
+                else
+                  echo "  ⏭️ Skipping web/CueRCode.net/$dir_name/ (not for this branch)"
+                fi
+              else
+                # ✅ Copy private/shared folders (_functions, _includes, etc.)
+                echo "  ✅ Copying web/CueRCode.net/$dir_name/"
+                mkdir -p "$STAGING_DIR/web/CueRCode.net/$dir_name"
+                cp -r "$item"* "$STAGING_DIR/web/CueRCode.net/$dir_name/" 2>/dev/null || true
+                HAS_FILES="true"
+              fi
+            done
+
+            # 📄 Also copy any root-level files in web/CueRCode.net/ (README, CHANGELOG, etc.)
+            find "web/CueRCode.net/" -maxdepth 1 -type f | while read -r file; do
+              echo "  📄 Copying $(basename "$file")"
+              cp "$file" "$STAGING_DIR/web/CueRCode.net/" 2>/dev/null || true
+            done
+          fi
+
+          # =================================================================
+          # 📦 Part C: Site-specific private folders (QRmy.Link)
+          # Same logic as CueRCode.net but for QRmy.Link (when it exists)
+          # =================================================================
+          echo ""
+          echo "📦 Processing web/QRmy.Link/..."
+          if [[ -d "web/QRmy.Link/" ]]; then
+            for item in web/QRmy.Link/*/; do
+              dir_name=$(basename "$item")
+
+              if [[ "$dir_name" == *"public_html"* ]] || [[ "$dir_name" == *"private_html"* ]]; then
+                if [[ "$dir_name" == "$PUBLIC_SUFFIX" ]]; then
+                  echo "  🎯 Copying web/QRmy.Link/$dir_name/ (branch target)"
+                  mkdir -p "$STAGING_DIR/web/QRmy.Link/$dir_name"
+                  cp -r "$item"* "$STAGING_DIR/web/QRmy.Link/$dir_name/" 2>/dev/null || true
+                  HAS_FILES="true"
+                else
+                  echo "  ⏭️ Skipping web/QRmy.Link/$dir_name/ (not for this branch)"
+                fi
+              else
+                echo "  ✅ Copying web/QRmy.Link/$dir_name/"
+                mkdir -p "$STAGING_DIR/web/QRmy.Link/$dir_name"
+                cp -r "$item"* "$STAGING_DIR/web/QRmy.Link/$dir_name/" 2>/dev/null || true
+                HAS_FILES="true"
+              fi
+            done
+
+            # 📄 Root-level files in web/QRmy.Link/
+            find "web/QRmy.Link/" -maxdepth 1 -type f | while read -r file; do
+              cp "$file" "$STAGING_DIR/web/QRmy.Link/" 2>/dev/null || true
+            done
+          else
+            echo "  ℹ️ web/QRmy.Link/ does not exist yet — skipping"
+          fi
+
+          # =================================================================
+          # 📊 Summary
+          # =================================================================
+          echo ""
+          echo "has_files=$HAS_FILES" >> $GITHUB_OUTPUT
+          echo "staging_dir=$STAGING_DIR" >> $GITHUB_OUTPUT
+
+          if [[ "$HAS_FILES" == "true" ]]; then
+            echo "📊 Staging area contents:"
+            find "$STAGING_DIR" -type f | head -50
+            FILE_COUNT=$(find "$STAGING_DIR" -type f | wc -l)
+            echo "📊 Total files staged: $FILE_COUNT"
+          else
+            echo "⚠️ No files to deploy"
+          fi
+
+      # =======================================================================
+      # 🗜️ Step 4: Minify JS, CSS, and HTML before upload
+      # =======================================================================
+      - name: Install minification tools
+        if: steps.staging.outputs.has_files == 'true'
+        run: |
+          npm install -g terser clean-css-cli html-minifier-terser
+
+      - name: Minify files before upload
+        if: steps.staging.outputs.has_files == 'true'
+        run: |
+          STAGING_DIR="${{ steps.staging.outputs.staging_dir }}"
+
+          # 🟡 Minify JavaScript files
+          find "$STAGING_DIR" -name "*.js" -type f 2>/dev/null | while read -r file; do
+            echo "🟡 Minifying JS: ${file#$STAGING_DIR/}"
+            terser "$file" --compress --mangle --output "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
+          done
+
+          # 🔵 Minify CSS files
+          find "$STAGING_DIR" -name "*.css" -type f 2>/dev/null | while read -r file; do
+            echo "🔵 Minifying CSS: ${file#$STAGING_DIR/}"
+            cleancss -o "$file" "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
+          done
+
+          # 🟠 Minify HTML files
+          find "$STAGING_DIR" \( -name "*.html" -o -name "*.htm" \) -type f 2>/dev/null | while read -r file; do
+            echo "🟠 Minifying HTML: ${file#$STAGING_DIR/}"
+            html-minifier-terser --collapse-whitespace --remove-comments --minify-css true --minify-js true -o "$file" "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
+          done
+
+          # 🟣 Minify XML files (strip whitespace between tags)
+          find "$STAGING_DIR" -name "*.xml" -type f 2>/dev/null | while read -r file; do
+            echo "🟣 Minifying XML: ${file#$STAGING_DIR/}"
+            sed -i 's/>[[:space:]]*</></g' "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
+          done
+
+      # =======================================================================
+      # 🔐 Step 5: Determine authentication method
+      # Primary: SSH key | Fallback: Password
+      # =======================================================================
+      - name: Check auth method
+        if: steps.staging.outputs.has_files == 'true'
+        id: auth
+        run: |
+          if [[ -n "${{ secrets.SFTP_KEY }}" ]]; then
+            echo "method=key" >> $GITHUB_OUTPUT
+            echo "🔑 Using SSH key authentication"
+          else
+            echo "method=password" >> $GITHUB_OUTPUT
+            echo "🔒 Using password authentication (SSH key not set)"
+          fi
+
+      # =======================================================================
+      # 🚀 Step 6a: Deploy via SFTP using SSH key (primary)
+      # =======================================================================
+      - name: Install lftp
+        if: steps.staging.outputs.has_files == 'true'
+        run: sudo apt-get install -y lftp
+
+      - name: Deploy via SFTP (SSH key)
+        if: steps.staging.outputs.has_files == 'true' && steps.auth.outputs.method == 'key'
+        env:
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          SFTP_HOST: ${{ secrets.SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.SFTP_PORT }}
+          SFTP_KEY: ${{ secrets.SFTP_KEY }}
+          STAGING_DIR: ${{ steps.staging.outputs.staging_dir }}
+          REMOTE_BASE: ${{ secrets.SFTP_REMOTE_BASE }}
+        run: |
+          # 🔑 Write SSH key to file
+          mkdir -p ~/.ssh
+          echo "$SFTP_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # 🚀 Upload using lftp mirror
+          cat > /tmp/lftp_script.txt <<LFTP_EOF
+          set sftp:connect-program "ssh -o StrictHostKeyChecking=no -i $HOME/.ssh/deploy_key"
+          open sftp://${SFTP_USER}@${SFTP_HOST}:${SFTP_PORT}
+          mirror --reverse --verbose --only-newer --no-empty-dirs \
+            --exclude .DS_Store \
+            --exclude .gitkeep \
+            --exclude .gitignore \
+            --exclude README.md \
+            --exclude CHANGELOG.md \
+            --exclude DEV_NOTES.md \
+            ${STAGING_DIR}/web/ ${REMOTE_BASE}
+          bye
+          LFTP_EOF
+
+          echo "🚀 Deploying to ${SFTP_HOST}:${REMOTE_BASE}..."
+          lftp -f /tmp/lftp_script.txt
+
+          # 🧹 Clean up SSH key
+          rm -f ~/.ssh/deploy_key
+
+      # =======================================================================
+      # 🚀 Step 6b: Deploy via SFTP using password (fallback)
+      # =======================================================================
+      - name: Deploy via SFTP (password)
+        if: steps.staging.outputs.has_files == 'true' && steps.auth.outputs.method == 'password'
+        env:
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          SFTP_PASS: ${{ secrets.SFTP_PASSWORD }}
+          SFTP_HOST: ${{ secrets.SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.SFTP_PORT }}
+          STAGING_DIR: ${{ steps.staging.outputs.staging_dir }}
+          REMOTE_BASE: ${{ secrets.SFTP_REMOTE_BASE }}
+        run: |
+          echo "🚀 Deploying to ${SFTP_HOST}:${REMOTE_BASE}..."
+          lftp -u "${SFTP_USER},${SFTP_PASS}" \
+            -e "set sftp:auto-confirm yes; set ssl:verify-certificate no; \
+            mirror --reverse --verbose --only-newer --no-empty-dirs \
+            --exclude .DS_Store \
+            --exclude .gitkeep \
+            --exclude .gitignore \
+            --exclude README.md \
+            --exclude CHANGELOG.md \
+            --exclude DEV_NOTES.md \
+            ${STAGING_DIR}/web/ ${REMOTE_BASE}; \
+            bye" \
+            "sftp://${SFTP_HOST}:${SFTP_PORT}"
+
+      # =======================================================================
+      # 📊 Step 7: Deployment summary
+      # =======================================================================
+      - name: Deployment summary
+        if: steps.staging.outputs.has_files == 'true'
+        run: |
+          FILE_COUNT=$(find "${{ steps.staging.outputs.staging_dir }}" -type f | wc -l)
+          echo "### 🚀 Deployed to ${{ steps.target.outputs.channel }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Channel** | ${{ steps.target.outputs.channel }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Public HTML** | \`${{ steps.target.outputs.public_html_suffix }}/\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Files uploaded** | $FILE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Auth method** | ${{ steps.auth.outputs.method }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Skip summary
+        if: steps.staging.outputs.has_files == 'false'
+        run: |
+          echo "### ⏭️ No deployment needed" >> $GITHUB_STEP_SUMMARY
+          echo "No deployable files found for branch \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+
+      # =======================================================================
+      # 🧹 Step 8: Cleanup staging area
+      # =======================================================================
+      - name: Cleanup staging area
+        if: always()
+        run: |
+          rm -rf "${{ steps.staging.outputs.staging_dir }}" 2>/dev/null || true
+          rm -f /tmp/lftp_script.txt 2>/dev/null || true
