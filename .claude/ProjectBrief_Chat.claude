@@ -1,0 +1,272 @@
+I’d like to create a web-based service that can either be used via a fully responsive, web-based front end, or an RESTful API, to generate downloadable QR Codes
+
+All types of QR Code use cases should be included, including (but not limited to)
+
+* Opening a web link
+* Communication
+    * Text
+    * Email (including recipient email address, subject and email body)
+    * Phone number (including country code)
+    * SMS text message (including country code, recipient phone number and message body)
+	* whatsApp mesage (including recipient country code, phone number and message)
+	* Zoom Meeting (including Meeting ID and hashed/unhashed password/passcode)
+* Contact Information (vCard 2.1, 3.0 & 4.0 supported)
+* Calendar event
+* PayPal 
+* crypto
+    * Bitcoint payments (including BitCoin wallet address, amount in BTC, Item Name and a message)
+* Media
+    * link to MP3 file
+	* Link to video file
+	* YouTube link
+* apps
+    * Apple App Store/Google Play Store/Amazon App Store link
+* Social Media
+    * Facebook Page/Profile/Event link
+	* facebook Messenger link
+	* Linked In URL
+* Link to Rating/review page
+* Wi-Fi connection details (including SSID Network Name, Network Ecryption Type, network Encryption Passcode, Hidden yes/no)
+* Location
+    * Geolocation link by coordinates (uses native mapping app if available, with Google Maps as fallback)
+	* Google Maps URL
+* vCard (business card)
+* calendar/diary invite
+* etc
+
+The qr code should be generated in various image formats, including (but not limited to):
+
+* SVG (vector with alpha transparency)
+* PNG (with alpha transparency)
+* GIf (with transparency)
+* JPG
+* WEBP
+* JPEG XL
+* PDF
+
+The backend should utilise PHP and MYSQL and web standards to create a fully responsive Web UI including a form to input data to generate the QR Code and download the produced code.
+
+The QR Code should also be customizable, by allowing to user to
+
+* change the colours (including solid colours, gradiants, or using another image)
+* make the background transparent or any other colour (solid, gradiant or image. Transparent default for formats that support transparency, otherwise default is white)
+* chose an image to use in the centre (from a predefined set or via a custom uploaded image. Predefined images can be popular logos/graphics like full emoji list, or fontAwesome graphics/icons. Registered customers can also define their own and store them for future use)
+* Various Pattern designs
+* Various Marker Border/corner “corner” elements/shapes
+* Various Marker Centre shapes
+    * Custom Marker Colour
+* customisable frames, including Frame Label and typefaces for label (using Google fonts and other free font libraries)
+* customisable detail/error correction settings (though defaults to standard/recommended settings)
+* Customisable size (pixel) & QR Code Precision selection
+
+It would be great if a user of the web Ui could create a account (that can also be linked to common online accounts like Microsoft Account, Microsoft 365 work/school, Google Account, apple account, Facebook/instagram, passkey etc). This online account can store the users generated qr code, to allow them to either redownload them later, or modify specific settings or create different variations.
+This same account can also be part of a universally “organisation” account to help a company to manage their own company qr codes as part of a “premium” service
+
+All of this should also be possible to use a RESTful API to generate or download QR codes. In fact the web based front end could just be an implantation of one that calls on this API
+
+The web based UI must be fully responsive, and adapt to various screen sizes, orientations and screen DPI configurations. Support for High density and HDR displays should also be considered, along side dark or “light” modes as well as colour blind friendly options.
+
+
+
+
+
+========================
+*TECH STACK and specific instructions*
+========================
+Please use the following technologies for development of the entire 'Portal' project
+* PHP (target PHP 8.5 (but with backward compatibility to to PHP 8.4))
+	* PHP code should
+		* Use PHP Predefined Constants wherever possible to aid with host platform neutrality (ie, use DIRECTORY_SEPARATOR instead of '/' in paths, PHP_EOL instead of '\n' etc)
+		* Full multi-line notation for code blocks such as (but not limited to) IF statements, no shortened notation
+		* be indented appropriately with detailed inline comments/annotations to assit with code readibility, understanding, debugging and future learning/maintenance of code (where applicable include reference links to documentation to help explain understand the concept)
+		* Minimise code duplication but grouping shared code and reusing them via PHP REQUIRE, REQUIRE_ONCE, INCLUDE & INCLUDE_ONCE
+		
+		  appropriate checks and error handling for REQUIRED and INCLUDED components should be done to avoid errors should files not exist/not be retrievable
+		* provide switches  to enable detailed PHP error visiblity by use of a URL Param such as &debug=true and ?dev=true (for dev purposes only)
+		* log PHP errors/notifictions/warnings (including severity, PHP error code, PHP Error title, error detail, backtrace) to a table in the backend database along with any other errors from components and requested page URL and request headers to assist with debugging/trouble shooting
+
+* MySQL Backend Database
+	* Interactions between PHP & MySQL/MariaDB via MySQLi only
+	* Use Prepared Statements for all SQL run in PHP with mySQLi (adds improved maintenance, code efficiency and security)
+	* Backend database to be used for ALL settings and config as well as records pertaining to users/organisations etc.
+	* Settings should also be stored in the database, including credentials (keys, secrets etc) for third-party services/libraries (like MS365 etc)
+	* any confidential secrets/keys (labelled as "isSensitive") must be cryptographically encrypted before entry into the database to ensure data security. Encryption of these confidential info should also use SALT methodology for added security, to current industry standard levels. When retrieving these fields, they should also be decrypted for use.
+
+* HTML5
+	* Must be fully HTML5 compliant, and using modern HTML5 elements and techniques
+	* Must be fully responsive, and useable on a range of devices, display aspect ratios and display sizes (Hi Res PCs/TV, regular PCs/TV, Tablets, Phones etc)
+		* As <table> tags and the like dont work well in a modern responsive web era, please dont use them
+* For bot projection of form submission (support for both, with definable order of preference, but the service used depends on provision of required API Keys/secrets)
+	* CloudFlare Turnstile
+	* ReCapture
+	* hCapture
+* Microsoft 365
+	* Used for sending emails using from a Shared Microsoft 365 mailbox (Send As)
+	* used for user login, especially for staff/admins/global admins/devs etc
+* Google Workspace (future use, but functionality built now)
+	* Used for sending emails using from a Shared Microsoft 365 mailbox (SendAs)
+	* used for user login, especially for staff/admins/global admins/devs etc
+* Support for future implementation/integration of SIGNula (https://github.com/MWBMPartners/SIGNula.id) via its API
+* Use of third-party libaries (such as, but not limited to, Bootstrap, FontAwesome, JQuery as needed, should use the LATEST version, and reference them via their OFFICIAL CDN URLs in the first instances, with a fallback to a local copy (mainly needed if official CDN hosted instance is unavailable/blocked by network providers)
+* Where possible all graphics should be vector/SVG-first (with alpha-transparency) even if animated graphics, but with fallback to PNG/APNG (with alpha transparency for browsers that dont support SVG). This decision is taken due to SVG's size scalability but small file size. Browsers should not try to 'load' the fallback PNG/APNG unless they do not support SVG
+* Support Light AND Dark modes, with the mode defaulting to match system settings. Switching between modes manually should also be possible, overriding system setting
+* Support for a Colourblind friendly UI
+* fully accesibility compliant
+* Fully W3C compliant
+* please use moden CSS3+ (happy to use things like CSS animations etc to add extra 'pazaz'/flare). But any of these must take all common browsers into account, with maybe a leaner fallback for ancient browsers that may not support sum modern CCS3+ elements
+* Gracefull fallback if JS unaavailable - rare, but we should consider this
+* Full translation functionalty.
+	
+
+========================	
+*FILE & DATA STRUCTURE*
+========================
+
+------------------------	
+*Server Files*
+------------------------
+File structure instructions as follows:
+* All files for upload to the web host should be in web/
+* non-web accessible files (shared auth Keys/certificates for APIs, DB Connection credentials etc, includes, functions, libraries, uploads, backups) in ./ (root) - this will  need to be used via PHP INCLUDE/REQUIRE if needed in web processing.
+* all files directly accessbile from the web are in web/ including:
+  * fonts
+  * graphics/videos/audio
+  * stylesheets
+  * javascript/libraries
+* web/public_html/ to be used for public website as root (for DNS etc)
+* web/public_html_dev/ to be used for earlier development/beta 'build', with restricted access (this to be managed in the database, by login, but also with fallback .htaccess which itself must have a UI tomanage (or should sync with database configured access restrictions)
+* web/private_html/  to be used for earlier development/beta 'build', with restricted access (this to be managed in the database, by login, but also with fallback .htaccess which itself must have a UI tomanage (or should sync with database configured access restrictions)
+* web/public_html_landing/ to be publically visible 'Landing'/'coming soon' page
+* web/public_html_redir/ place holder, to be used if any redirction of home/root is required
+
+
+========================	
+*SPECIFIC REQUIREMENTS*
+========================
+
+------------------------	
+*Overall*
+------------------------
+* While this will be hosted on Dreamhost shared hosting initially, please include flexibility for hosting on other PHP/MySQL supporting platforms, as such please use PHP constants and predefined constants (such as dirname(), __FILE__, etc for folder defining) wherever possible for platform neutrality/flexibility.
+* Given the project will (at least) initially be hosted on Dreamhost's Shared Hosting platform, access to CLI is not possible, as such access to tools like Composer cannot be relied upon. This means any third-party libraries that need to be installed/self-hosted (and cant just be used via referencing CDNs) need to be specifically called out and hosted on local server, often installed/uploaded manually.
+			
+
+------------------------
+*Use of Database*
+------------------------
+All records must be logged in the backend database
+
+------------------------
+	*Activity Logging/Audit Trail*
+------------------------
+All activity also logged in an ActivityLog (tblActivityLog) in the backend database
+
+
+
+------------------------
+	*Log All Errors/Warning/Notificaions*
+------------------------
+All Errors/Warnings/Notifications from PHP or any other service/library/tool used should be looked to a tblErrors table. Like tblActivityLog, the following data points must be logged
+* Error Platform (the Platform/tool Libary where the error occured: ie PHP, MySQL, dompdf, MS365, Google Workspace, Paypal, faceID, Javascript etc)
+* Error Severity (such as, but not limited to: Notification, Warning, Error, Fatal etc)
+* Platform Specific Error Code
+* Platform returned error description
+* Platform returned error detail
+* Timestamp of error 
+* User account who performed the action
+* IP Address from which action was initiated (both IPv4 & IPv6). Take into account use of proxies and services similar to CloudFlare, and try to log the users action IP not CloudFlare/proxy IP
+* Browser/client useragent where action was initiated
+* Original requested URL
+* Original Request Header
+* Whether or not error has been reviewed/resolved (for tracking fixes etc - will be managed via a Error Log UI available to Global Admins within the Portal)
+
+------------------------
+	*Sending E-mails*
+------------------------
+Emails should be sent with Microsoft Graph via a Microsoft 365 account using a shared mailbox (with appropriate permissions), not standard PHP Send especially as we want to ensure all mail is appropriately secure via DKIM, DMARC and other requirements
+
+------------------------
+	*Security & User Authentication*
+------------------------
+  * User authentication is key! CSRF, sessions, cookies and other security methods should be used throughout to ensure only the appropriate people can do certain tasks.
+  * Local user accounts initially
+	  * Local User Accounts (when not using third-party services for login) should also support the following technologies on supported devices/platforms
+  		* Windows Hello
+		  * Fingerprint (Touch ID)
+		  * Facial Recognition (Face ID) login should also be supported on all supported devices.
+  * Will later integrate with our other SIGNula service (https://github.com/MWBMPartners/SIGNula.id)
+
+
+
+------------------------
+	*Web Page Design*
+------------------------
+* Web pages should be fully responsive, and accommodate all screen sizes & orientations
+* Should also be compliant with all current standards
+* Should take accessibilty into WCAG compliant to support users with impairements, including a toggle for colour blind users and screenreader support.
+* Fully HTML5 compliant and use the latest and greatest HTML5 features, whilst also "gracefully" falling back for browsers that do not support them.
+* Styling of the UI should use modern CSS including CSS 3+ and can make use of modern/advanced switches and even animations.
+* Pages should indicate to the user that they're logged in, by showing something in the top-right corner (as is commonly the norm in the industry).
+  This should display
+	* User avatar (in this priority order: MS365/Google Workspace etc > Locally stored profile picture from tblUSers in database > Gravatar > default/placeholder avatar)
+	* Name of user
+	* A means to change user profile settings (possible via drop-down menu when clicking on Name and Avatar)
+* ALL config (with the exception of database connection credentials) should be stored in the Backend MySQL Database (tblSettings table).
+* Some settings, like MS365/Google Workspace etc credentials should also be able to be stored in a private location on the server as a fallback.
+* It should also be possible for new settings to be added at any time by a Global Admin using the Web UI, and minimised requirement to have to manually update PHP Code too much to take these new settings to account.
+* Values for settings marked as 'isSensitive' (as well as fields storing ANY user passwords) should be appropriately cryptographically encrypted/hashed to current industry standards, also using a salt for increased security, to ensure these are safe/secure - but also allow them to be internally decrypted for use as/when required.
+* Whilst PHP will be used, the end user should not see this even in places like webpage/form/processor URLs. Not only is this unprofessional but it could also be a security risk as it exposes to potential attackers that PHP is used. Therefore all URLs should be visible as /something/somepage. This can perhaps be achieved by either a router (managed/tored in SQL database), or by simply ensuring the content is in a a location like /something/somepage/index.php (as in the case of the above example)
+* Appropriate user-facing error handling should also be implemented, as well as backend error handling for server-side PHP scripts and log these into the Activity Log for later development and fixing by the development and Global Admin teams.
+* Form fields (for ALL apps) should
+	* Have dynamic field validation wherever possible
+	* Use datepickers to ensure consistent format for entered dates.
+	* Use ReCaptcha or CloudFlare Turnstile, provided the relevant API Keys are provided (preferred backend database, but fallback in auth.php). If no API Keys provided dont use these technologies for form submission.
+
+development (beta) versions for each app will be placed in web/public_html_dev/ folders (as opposed to public_html for "fully released versions" (main))
+* Create 'Beta' branch, which will have automated gitHub actions to auto-upload contens of web/public_html_dev/ on every Push in a similar way to our other repo phpWhoIs.
+* 'main' branch, which will have automated gitHub actions to auto-upload contens of web/public_html/ on every Push in a similar way to our other repo phpWhoIs.
+* GitHub Actions should also manage version numbering (in a similar way to our phpWhoIs repo, via a infoAppVer.php file), and generating CHANGELOG.md and its updates
+
+Can we also consider implementing access control for alpha and beta versions of app to limit who's can access.
+
+For further flexibility, some future apps may only be accessible via a payment (one-off or subscription). support for this also needs to be built, with payment accepted via PayPal (also via Apple Pay or Google Pay on supported platforms/devices), and payment records, status and access availability needs to also all be stored in the backend database
+
+Additional "Dashboards" should also be created as required.
+
+All code (including SQL) should be fully/completely commented/annotated in detail, to assist with understanding of code and functionality, make code readable and also assist with future learning and debugging. Code should also be properly indented for improved human readability. Happy to use emojis in comments to help "call-out" sections of comments. 
+
+We would also like to use AJAX where possible to dynamically load/change content to avoid entire page refreshes. However use of AJAX should not be a blocker if a browser doesnt support/have javascript/AJAX enabled. it should still be possible to use everything in the portal/sub-apps without AJAX
+Please use Bootstrap, and other technologies/libraries (FontAwesome etc) to achieve the required functionality, but please note the project will be hosted on Dreamhost Shared Hosting, so any libraries will need to be manually downloaded and uploaded as Compile and similar functionality is not available. Happy to use libraries from CDNs as a priority, but would be good to have a fallback to selfhosted should CDNs be down.
+
+Any graphics/icons should be in SVG (Vector) to improve scalability and should offer a Base64 encoded fallback for browsers/clients that do not support SVG. (SVG support should be detected dynamically wherever possible). Animated SVG (vector) are also acceptible for icons
+
+We're trying to achieve wide compatibility and a user friendly feel, especially some users may not be computer savvy.
+
+With this in mind, we're looking for a modular design/development structure with a focus on functionality, security, data integrity as well as flexibility/scalability
+
+Primary development environment will be on Mac OS (Windows/Raspberry Pi occassionally) with Visual Studio Code as our IDE where we also intend to use the ftp-sync extension. We have a GitHub repo (https://github.com/MWBMPartners/iLyricsDB) to manage the development and staging of the project. please also suggest the best way to setup and manage this project within a GitHub repo (use of GitHub Secrets, GitHub Project, GitHub Issues, GitHub Actions, GitHub Agents, GitHub Wikis, GitHub Sponsorships, GitHub Discussions. Propose/Configure these as it would work best for a project like this.
+
+Please include intended file path in the "header comments" of this and every file going forward, alongside Copyright info, which should start in 2025 and end in the current year (that is dynamic and managed in the Repo). Copyright Organisation is "MWBM Partners Ltd"
+
+Before we start, can you summarise the current platform and a summary/build plan ahead of starting dev.
+
+I'd like to keep a track of build progress at each stage, and log these in Project_Status.md
+
+Please also produce a suitable README.md and CHANGELOG.md and keep it up to date with every change/as we progress. 
+
+Please also store any Claude memory, or prompt history in .claude/ to help us as we progress.
+
+We want this to be well developed and organised. As such, please ensure the following Standing Instructions/Tasks and tasks are actioned as part of every prompt:
+
+* For each new action (which will either be to implement a fix, enhance functionality or brand new functionality) please ensure a detailed GitHub Issue/task is created to help track all the tasks and keep our progress going. Give a thorough description within each GitHub Issue, along the lines of "Whats the problem, whaat are we adding/creating", including Proposed Scope checks, and Acceptance Criteria checks.
+* Once the work is completed, update the GitHub Issue/Task in question with the status and close if the task is fully complete. Also link/include the COMMIT number(s) that dealt with the issue/task in question
+* Run ALL code through thorough Syntax, Lint and similar checks, fixing ALL issues regardless of age (new or pre-exissting) or severity (fix warnings, issues, bugs, fatal errors, discrepancy warnings, recommendations etc). Security checks should be included, checking for all security "holes", including all user inputs are sanatised to prevent injections. Repeat until ZERO issues are found. We wnat CLEAN code, as this minimises further issues down the line.
+* Update GitHub Wiki, GitHub Project, GitHub Milestones alongside GitHub Issues.
+* Update local documents including CHANGELOG.md, DEV_NOTES.md, README.md
+* Update .claude/ memory, context and prompts
+* COMMIT Changes (DO NOT PUSH, we'll PUSH mannually)
+
+ALSO, ALWAYS ensure all code is well commented/annotated including inline comments as well as comment blocks. This will help with further development, maintenance, code learning and understanding.
+Ensure all PHP code blocks are written in there full annotation with suitable indentation,no shortened versions. This makes code more human readable. If we want to keep code to a minimum or somewhat obfuscated, we can always minify it as part of the code upload process via GitHub Actions
+
+Please also add Swagger/OpenAPI documentation for the API

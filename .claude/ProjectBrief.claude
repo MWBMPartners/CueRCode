@@ -1,0 +1,460 @@
+# CueRCode - Project Brief
+
+> **Project:** CueRCode - Professional QR Code Generator
+> **Organisation:** MWBM Partners Ltd
+> **Copyright:** 2025-present
+> **Repository:** https://github.com/MWBMPartners/CueRCode
+> **Primary Domain:** CueRCode.net
+> **Secondary Domain:** CueRCode.me (redirects to CueRCode.net)
+> **Tertiary Domain:** QRmy.Link (redirects to CueRCode.net with web link QR function)
+
+---
+
+## 1. Project Overview
+
+CueRCode is a web-based service for generating customisable, downloadable QR codes. It provides both a fully responsive web UI and a RESTful API. The web frontend is itself an implementation built on top of the API, ensuring complete feature parity between the two interfaces.
+
+---
+
+## 2. QR Code Types
+
+All standard QR code use cases must be supported, including but not limited to:
+
+### 2.1 Web & Links
+
+- **URL/Web Link** - with future integration with Go2My.Link URL shortener for dynamic links (keeping the QR code static while changing the destination)
+- **App Store Links** - Apple App Store, Google Play Store, Amazon Appstore
+
+### 2.2 Communication
+
+- **Plain Text** - arbitrary text content
+- **Email** - recipient address, subject, and body (mailto: scheme)
+- **Phone Call** - phone number with country code (tel: scheme)
+- **SMS Message** - recipient phone number with country code and message body (smsto: scheme)
+- **WhatsApp Message** - recipient country code, phone number, and message
+- **Zoom Meeting** - Meeting ID and hashed/unhashed password/passcode, or direct Zoom Meeting link
+
+### 2.3 Contact & Calendar
+
+- **vCard (Business Card)** - vCard 2.1, 3.0, and 4.0 support
+- **Calendar Event** - iCal/vEvent format for diary invites/events
+
+### 2.4 Payments
+
+- **PayPal** - payment link
+- **Bitcoin** - wallet address, amount in BTC, item name, and message
+
+### 2.5 Media
+
+- **MP3 File/Link**
+- **Video File/Link**
+- **PDF File/Link**
+- **Image File/Link**
+- **YouTube Link**
+
+### 2.6 Social Media
+
+- **Facebook** - Page, Profile, or Event link
+- **Facebook Messenger** - direct message link
+- **LinkedIn** - profile URL
+- **Instagram** - profile link
+- **Other platforms** as needed
+
+### 2.7 Utility
+
+- **Wi-Fi** - SSID network name, encryption type (WEP/WPA/WPA2/nopass), password, hidden network flag
+- **Geolocation** - coordinates (uses native mapping app with Google Maps fallback), or Google Maps URL
+- **Rating/Review** - link to rating/review page
+
+---
+
+## 3. Output Formats
+
+QR codes must be available in the following image formats:
+
+| Format | Transparency | Notes |
+| --- | --- | --- |
+| **SVG** | Alpha | Vector format, preferred for scalability |
+| **PNG** | Alpha | Default raster format |
+| **GIF** | Binary | Legacy transparency support |
+| **JPG** | None | Lossy compression |
+| **WEBP** | Alpha | Modern format |
+| **JPEG XL** | Alpha | Next-generation format |
+| **PDF** | N/A | Document format via FPDF/DOMPDF |
+
+---
+
+## 4. QR Code Customisation
+
+Users must be able to customise the following aspects of generated QR codes:
+
+### 4.1 Colours
+
+- Foreground colour: solid, gradient, or image-based
+- Background colour: transparent (default for formats supporting it), solid, gradient, or image-based
+
+### 4.2 Design
+
+- Multiple QR pattern/module designs
+- Marker border/corner element shapes
+- Marker centre shapes with custom colours
+
+### 4.3 Logo/Centre Image
+
+- Predefined set of logos (popular platforms, emoji, FontAwesome icons)
+- Custom uploaded image
+- Registered users can save their own logos for reuse
+
+### 4.4 Frames
+
+- Customisable frame styles (8+ styles)
+- Frame label text
+- Typeface selection for labels (Google Fonts and other free font libraries)
+
+### 4.5 Technical Options
+
+- Error correction level (L/M/Q/H) - defaults to recommended settings
+- Output size (pixels)
+- QR code precision/version selection
+- Quiet zone (border) toggle
+
+---
+
+## 5. User Accounts & Organisations
+
+### 5.1 Account Types
+
+- **Individual User** - create, save, re-download, and modify QR codes
+- **Organisation Account** - company-level QR code management as a premium service
+
+### 5.2 Organisation Roles
+
+- **Global Admin** - creates the organisation; manages all users, domains, subscriptions, payments, SSO configuration
+- **Admin** - elevated privileges but fewer than Global Admin; can invite new members via tokenised email links
+- **Regular User** - can create QR codes; modification permissions are configurable by admins
+
+### 5.3 Authentication Methods
+
+- **Local Accounts** (primary, initial implementation)
+  - Password hashing with Argon2id
+  - WebAuthn/Passkey support: Windows Hello, Touch ID (Fingerprint), Face ID (Facial Recognition)
+- **SSO/OAuth Integration** (configurable by Organisation Global Admin):
+  - Microsoft 365 (work/school accounts)
+  - Google Workspace
+  - Apple Account
+  - Facebook/Instagram
+  - Self-hosted WordPress
+  - All SSO accounts MUST be linked to a local/internal account
+  - Support for linking multiple corporate provider accounts
+- **SIGNula Integration** (future) - link local accounts to SIGNula via API when available (https://github.com/MWBMPartners/SIGNula.id)
+
+---
+
+## 6. RESTful API
+
+### 6.1 Functionality
+
+- Create QR codes (with all customisation features)
+- Preview QR codes (quick PNG preview without database save)
+- Download QR codes (by UUID, with Content-Disposition headers)
+- List supported QR types and output formats
+- Save QR codes to user account (authenticated users only)
+- Manage/modify existing QR codes (authenticated users only)
+- Health check endpoint
+
+### 6.2 Security
+
+- API key authentication (HMAC-SHA256 hashed, timing-safe comparison)
+- CSRF token support for web UI AJAX requests
+- Anonymous fallback for basic generation
+- Rate limiting (per-minute and per-day windows via tblAPIRateLog)
+
+### 6.3 Response Formats
+
+- **JSON** (default) - with associated JSON schema for validation
+- **XML** - structured with embedded XSLT for browser viewing
+
+### 6.4 Documentation
+
+- Swagger/OpenAPI 3.0 specification
+- Interactive Swagger UI at `/api/docs/`
+- PHP file extensions hidden from all API endpoints (directory-based routing)
+
+---
+
+## 7. Tech Stack
+
+### 7.1 Backend
+
+| Component | Specification |
+| --- | --- |
+| **Language** | PHP 8.5 (target) with backward compatibility to PHP 8.4 |
+| **Database** | MySQL via MySQLi only (prepared statements for ALL queries) |
+| **Encryption** | AES-256-GCM with HKDF key derivation and salt |
+| **Password Hashing** | Argon2id via `password_hash()` |
+| **QR Library** | chillerlan/php-qrcode v5.x (self-hosted, no Composer) |
+| **PDF Library** | FPDF v1.86 (self-hosted) |
+| **Email** | Microsoft Graph API via M365 shared mailbox (DKIM/DMARC compliant) |
+
+### 7.2 Frontend
+
+| Component | Specification |
+| --- | --- |
+| **Markup** | HTML5, fully compliant, responsive |
+| **Styling** | CSS3+ with modern features and animations |
+| **Framework** | Bootstrap 5.3+ (CDN with local fallback) |
+| **Icons** | FontAwesome 6+ (CDN with local fallback), SVG-first |
+| **JavaScript** | jQuery 3.7+ (CDN with local fallback), AJAX with graceful fallback |
+| **Fonts** | Google Fonts for frame label typefaces |
+
+### 7.3 Bot Protection (priority order, based on available API keys)
+
+1. Cloudflare Turnstile
+2. reCAPTCHA
+3. hCaptcha
+
+---
+
+## 8. PHP Coding Standards
+
+- **Platform Neutrality:** Use PHP predefined constants everywhere (`DIRECTORY_SEPARATOR`, `PHP_EOL`, `__FILE__`, `dirname()`, etc.)
+- **Full Notation:** Always use full multi-line notation for code blocks (if/else, loops, etc.) - no shorthand
+- **Indentation:** Properly indented with detailed inline comments and comment blocks
+- **Comments:** Include reference links to official documentation where applicable; emojis welcome in comments
+- **Modularity:** Minimise duplication via `require_once`, `include_once` with existence checks and error handling
+- **Debug Mode:** URL parameter switches (`?debug=true`, `?dev=true`) for detailed error visibility
+- **Error Logging:** All PHP errors/warnings/notices logged to `tblErrorLog` with severity, error code, title, detail, backtrace, request URL, and headers
+- **Activity Logging:** All application activity logged to `tblActivityLog`
+- **Security:** All user inputs sanitised; sensitive values encrypted with salt before database storage
+
+---
+
+## 9. Database Standards
+
+- **Connection:** MySQLi only, singleton pattern
+- **Queries:** Prepared statements for ALL SQL executed in PHP
+- **Naming:** Tables use `tbl` prefix with PascalCase; columns use camelCase
+- **Settings:** All config stored in `tblSettings` (except DB connection credentials)
+- **Sensitive Data:** Values marked `isSensitive` are AES-256-GCM encrypted with HKDF-derived keys and random salt
+- **Engine:** InnoDB with `utf8mb4_unicode_ci` collation
+
+---
+
+## 10. Directory Structure
+
+```text
+web/
+├── _auth_keys/                     ← Server-wide credentials (outside web root)
+│   └── auth_creds.php              ← DB creds, API keys (never web-accessible)
+├── _includes/                      ← Server-wide shared includes
+├── _functions/                     ← Server-wide shared functions
+├── _libraries/                     ← Server-wide shared libraries
+├── _uploads/                       ← Server-wide uploads
+├── _backups/                       ← Server-wide backups
+└── CueRCode.net/                   ← Main website
+    ├── _auth_keys/                 ← Site-specific credentials
+    ├── _includes/                  ← Site-specific includes (bootstrap.php, SQL, templates)
+    ├── _functions/                 ← Site-specific functions (QR engine, API handlers)
+    ├── _libraries/                 ← Third-party PHP libraries (chillerlan, FPDF)
+    ├── _uploads/                   ← User uploads (logos, generated QR codes)
+    ├── _backups/                   ← Site backups
+    ├── public_html/                ← Production web root
+    ├── public_html_dev_alpha/      ← Alpha development (restricted access)
+    ├── public_html_dev_beta/       ← Beta development (restricted access)
+    ├── public_html_landing/        ← Pre-launch landing page
+    └── public_html_redir/          ← Redirection web root
+```
+
+**Key Rules:**
+- Directories prefixed with `_` (underscore) are private, secured via `.htaccess` deny-all rules
+- Only `public_html*` directories are web-accessible
+- `auth_creds.php` files must never echo/return data if accessed directly; should redirect to main site
+- Third-party libraries that cannot be referenced via CDN must be manually downloaded and placed in `_libraries/`
+
+---
+
+## 11. Web UI Requirements
+
+### 11.1 Responsiveness
+
+- Fully responsive across all devices: desktop monitors, smart TVs, tablets, phones
+- Support all screen DPI resolutions, orientations, and aspect ratios
+- High-density and HDR display support
+- No `<table>` tags for layout purposes
+
+### 11.2 Accessibility
+
+- WCAG 2.1 AA compliant
+- Colourblind-friendly UI toggle
+- Screen reader support with proper ARIA attributes
+- Skip-to-main-content links
+- `prefers-reduced-motion` media queries for animations
+- Focus-visible indicators
+
+### 11.3 Display Modes
+
+- Dark/Light mode with system preference detection (`prefers-color-scheme`)
+- Manual toggle to override system setting
+
+### 11.4 Logged-In User Display
+
+- Top-right corner user indicator showing:
+  - User avatar (priority: local custom > MS365/Google > Gravatar > default placeholder)
+  - User name
+  - Dropdown menu for profile settings
+
+### 11.5 Progressive Enhancement
+
+- AJAX for dynamic content loading (avoid full page refreshes)
+- Graceful fallback when JavaScript is unavailable
+- PWA support (service worker, offline fallback page, manifest.json)
+- SVG-first graphics with PNG/APNG fallback (only load fallback if SVG unsupported)
+
+### 11.6 Form Standards
+
+- Dynamic field validation on all forms
+- Datepickers for consistent date format
+- Bot protection (Cloudflare Turnstile / reCAPTCHA / hCaptcha) when API keys are available
+- PHP file extensions hidden from all URLs
+
+---
+
+## 12. Legal & Compliance
+
+### 12.1 Required Pages
+
+- Terms of Use Policy
+- Privacy / Data Protection & Cookies Policy
+- Copyright Notice(s)
+
+### 12.2 Data Protection Compliance
+
+The platform must include functionality to manage data in compliance with:
+
+| Region | Regulation |
+| --- | --- |
+| EU | GDPR |
+| UK | UK GDPR + DPA 2018 |
+| USA | CCPA / CPRA / VCDPA / CPA / CTDPA / UCPA |
+| USA | HIPAA, COPPA |
+| Canada | PIPEDA |
+| Brazil | LGPD |
+| Australia | Privacy Act 1988 + Notifiable Data Breaches |
+| New Zealand | Privacy Act 2020 |
+| India | DPDP Act |
+| China | PIPL, CSL, DSL |
+| Japan | APPI |
+| South Korea | PIPA |
+| South Africa | POPIA |
+
+---
+
+## 13. Email
+
+- Emails sent via **Microsoft Graph API** using a M365 shared mailbox (Send As)
+- Must ensure DKIM, DMARC, and other email security requirements
+- **NOT** standard PHP `mail()` function
+- Google Workspace integration prepared for future use
+
+---
+
+## 14. Payments (Future)
+
+- PayPal integration (primary)
+- Apple Pay and Google Pay on supported platforms/devices
+- Multi-tier subscription levels
+- Payment records, status, and access availability stored in backend database
+- Future integration with SIGNula for payment handling
+
+---
+
+## 15. Future Integrations
+
+- **Go2My.Link** - URL shortener for dynamic QR code links (https://github.com/MWBMPartners/Go2My.Link)
+- **SIGNula** - SSO and account management (https://github.com/MWBMPartners/SIGNula.id)
+- **Companion Mobile App** - via the RESTful API
+
+---
+
+## 16. Hosting & Deployment
+
+### 16.1 Target Environment
+
+- **Primary Host:** Dreamhost Shared Hosting
+- **Constraints:** No CLI access, no Composer, no `npm`
+- **Platform Neutrality:** PHP predefined constants used throughout for portability
+
+### 16.2 Branches & CI/CD
+
+- `main` branch → auto-deploys `web/CueRCode.net/public_html/` to production
+- `beta` branch → auto-deploys `web/CueRCode.net/public_html_dev_beta/` to beta environment
+- GitHub Actions for:
+  - Automated version numbering (embedded in `infoAppVer.php` and code file headers)
+  - CHANGELOG.md generation
+  - Auto-upload via SFTP on push
+  - Code linting and security checks
+
+### 16.3 Access Control
+
+- Alpha and beta environments have restricted access via `.htaccess` and/or database-managed authentication
+
+---
+
+## 17. Development Environment
+
+- **Primary OS:** macOS (Windows and Raspberry Pi occasionally)
+- **IDE:** Visual Studio Code with ftp-sync extension
+- **Version Control:** Git via GitHub (https://github.com/MWBMPartners/CueRCode)
+
+### 17.1 GitHub Project Management
+
+- **GitHub Issues** - for issue and feature request tracking
+- **GitHub Project** - for overall project management with estimated timeframes
+- **GitHub Wiki** - for hosted documentation
+- **GitHub Milestones** - for phase/release tracking
+- **GitHub Actions** - for CI/CD, code checking, auto-upload
+- **GitHub Security** - configured with appropriate settings
+- **GitHub Discussions** - for team communication
+
+---
+
+## 18. Documentation Standards
+
+The following files must be maintained throughout development:
+
+| File | Purpose |
+| --- | --- |
+| `README.md` | Project overview, setup instructions, tech stack |
+| `CHANGELOG.md` | Keep a Changelog format with Semantic Versioning |
+| `PROJECT_STATUS.md` | Phase-by-phase build progress tracking |
+| `DEV_NOTES.md` | Technical decisions, coding standards, constraints |
+| `.claude/` | Claude AI memory, context, and prompts |
+| Swagger/OpenAPI | API documentation (`openapi.json`) |
+
+---
+
+## 19. Standing Instructions (Per-Prompt Checklist)
+
+After every prompt/action, complete the following **in this order**:
+
+1. Update `CHANGELOG.md`, `README.md`, `PROJECT_STATUS.md`, `DEV_NOTES.md`
+2. Update GitHub Issues - track implemented features, applied fixes
+3. Update GitHub Project tracking
+4. Update GitHub Milestones tracking
+5. Update GitHub Wiki
+6. Update Swagger/OpenAPI documentation
+7. Run thorough lint/syntax checks, fixing ALL issues (warnings, notifications, errors)
+8. Run thorough security checks, applying all suggested fixes
+9. Update `.gitignore` as needed
+10. COMMIT changes (**DO NOT PUSH** - push is done manually)
+11. Update `.claude/` memory, context, and prompts
+
+---
+
+## 20. Code Quality Standards
+
+- All code (PHP, JavaScript, CSS, SQL) must be fully commented/annotated in detail
+- Proper indentation throughout (code can be minified for deployment, but source must be readable)
+- Emojis are welcome in code comments to visually call out sections
+- Zero lint/syntax/security warnings - all issues must be resolved before commit
+- Version numbering embedded in commented code blocks in each file
