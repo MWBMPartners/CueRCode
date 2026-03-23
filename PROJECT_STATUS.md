@@ -10,7 +10,7 @@
 
 | Phase | Name | Milestone | Issues | Status |
 | --- | --- | --- | --- | --- |
-| 1 | Core QR Engine | [#1](https://github.com/MWBMPartners/CueRCode/milestone/1) | #1-#9 (closed) | ✅ Complete |
+| 1 | Core QR Engine | [#1](https://github.com/MWBMPartners/CueRCode/milestone/1) | #1-#9, #39-#43 | 🔄 Audit gaps open |
 | 1.5 | Live Server Testing | [#2](https://github.com/MWBMPartners/CueRCode/milestone/2) | #13, #17, #18, #22 | ⬜ Pending |
 | 2 | User Accounts & Organisations | [#3](https://github.com/MWBMPartners/CueRCode/milestone/3) | #11, #12, #14-#16, #19-#21, #23-#24 | 📋 Planned |
 | 3 | Premium Features & Payments | [#4](https://github.com/MWBMPartners/CueRCode/milestone/4) | #25, #26 | 📋 Planned |
@@ -20,25 +20,35 @@
 
 ---
 
-## ✅ Phase 1: Core QR Engine (COMPLETE)
+## 🔄 Phase 1: Core QR Engine (AUDITED - gaps identified)
 
-**Milestone:** [Phase 1: Core QR Engine](https://github.com/MWBMPartners/CueRCode/milestone/1) (closed)
+**Milestone:** [Phase 1: Core QR Engine](https://github.com/MWBMPartners/CueRCode/milestone/1)
 
-All 7 stages completed on 2026-02-27 in commit `73fc61e`.
+Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit against revised ProjectBrief conducted 2026-03-23 — gaps identified and tracked below.
 
 | Stage | Description | Issues | Status |
 | --- | --- | --- | --- |
-| 1 | Project Foundation & Directory Structure | [#1](https://github.com/MWBMPartners/CueRCode/issues/1) | ✅ |
-| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ✅ |
-| 3 | Core PHP Framework | [#3](https://github.com/MWBMPartners/CueRCode/issues/3) | ✅ |
-| 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ✅ |
-| 5 | Responsive Web UI | [#5](https://github.com/MWBMPartners/CueRCode/issues/5) | ✅ |
-| 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | ✅ |
-| 7 | Testing, Documentation & Polish | [#7](https://github.com/MWBMPartners/CueRCode/issues/7) | ✅ |
+| 1 | Project Foundation & Directory Structure | [#1](https://github.com/MWBMPartners/CueRCode/issues/1) | ⬜ Needs live server verification |
+| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ⚠️ Stubs for tblUsers/tblOrganisations; 3 QR types missing |
+| 3 | Core PHP Framework | [#3](https://github.com/MWBMPartners/CueRCode/issues/3) | ⬜ Needs live server verification |
+| 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 21/24 types; JPEG XL missing |
+| 5 | Responsive Web UI | [#5](https://github.com/MWBMPartners/CueRCode/issues/5) | ⚠️ No colourblind mode; no i18n; no cookie consent |
+| 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | ⬜ Needs live server verification |
+| 7 | Testing, Documentation & Polish | [#7](https://github.com/MWBMPartners/CueRCode/issues/7) | ⚠️ Branding PNGs; closing PHP tags; no screen reader testing |
+| - | Project Rebrand (QRmy.Link -> CueRCode) | [#8](https://github.com/MWBMPartners/CueRCode/issues/8) | ✅ Complete (closed) |
+| - | WCAG 2.1 AA Accessibility | [#9](https://github.com/MWBMPartners/CueRCode/issues/9) | ⚠️ Good ARIA foundation but no colourblind toggle or screen reader testing |
 
-Additional completed: [#8](https://github.com/MWBMPartners/CueRCode/issues/8) Project Rebrand (QRmy.Link -> CueRCode), [#9](https://github.com/MWBMPartners/CueRCode/issues/9) WCAG 2.1 AA Accessibility
+**Audit gap issues:**
 
-**Deliverables:** 29 PHP files, 3 JS files, 1 CSS file (1,266 lines), 26 SVG logo assets, 10 database tables, 21 QR code types, OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
+| Issue | Gap | Priority |
+| --- | --- | --- |
+| [#39](https://github.com/MWBMPartners/CueRCode/issues/39) | Missing QR types: Facebook Messenger, Instagram, Rating/Review | Medium |
+| [#40](https://github.com/MWBMPartners/CueRCode/issues/40) | JPEG XL output format support | Low (host-dependent) |
+| [#41](https://github.com/MWBMPartners/CueRCode/issues/41) | Remove closing PHP tags from include files | Low |
+| [#42](https://github.com/MWBMPartners/CueRCode/issues/42) | Implement colourblind-friendly UI toggle | Medium |
+| [#43](https://github.com/MWBMPartners/CueRCode/issues/43) | Export branding PNGs from SVGs | Low |
+
+**Deliverables so far:** 29 PHP files, 3 JS files, 1 CSS file (1,301 lines), 25 SVG logo assets, 10 database tables, 21 QR code types, OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
 
 ---
 

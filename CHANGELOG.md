@@ -9,13 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 📋 Added - Project Plan & GitHub Project Management (2026-03-23)
 
-- 📄 Clean ProjectBrief (``.claude/ProjectBrief.claude``) - structured 20-section specification document
+- 📄 Clean ProjectBrief (`.claude/ProjectBrief.claude`) - structured 20-section specification document
 - 🏷️ GitHub Milestones created for Phases 1.5 through 6
 - 🏷️ 13 new GitHub labels (phase-1.5 through phase-6, security, testing, infrastructure, legal, auth, payment, integration)
 - 📝 28 new GitHub Issues across 6 phases with detailed descriptions, scope, and acceptance criteria
-- ✅ Closed all 9 Phase 1 issues and Phase 1 milestone as complete
 - 📊 Updated PROJECT_STATUS.md with comprehensive phase-by-phase project plan with issue links
 - 🤖 Updated `.claude/` memory and CLAUDE.md for current project state
+
+### 🔍 Added - Codebase Audit Against Revised ProjectBrief (2026-03-23)
+
+- 🔎 Thorough audit of all Phase 1 code against the clean ProjectBrief
+- 📝 Detailed review comments posted on all 9 Phase 1 GitHub Issues (#1-#9)
+- ✅ Closed #8 (Project Rebrand) as genuinely complete after verification
+- 🔄 Reopened #1-#7, #9 — audit identified gaps that need tracking
+- 🆕 Created 5 new gap issues from audit findings:
+  - #39: Missing QR types (Facebook Messenger, Instagram, Rating/Review)
+  - #40: JPEG XL output format support
+  - #41: Remove closing PHP tags from include files
+  - #42: Implement colourblind-friendly UI toggle
+  - #43: Export branding PNGs from SVGs
+- 📊 Updated PROJECT_STATUS.md Phase 1 section to reflect actual audit status (not blindly marked complete)
 
 ### ♿ Added - WCAG 2.1 AA Accessibility Compliance (2026-02-27)
 
