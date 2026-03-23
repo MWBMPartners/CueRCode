@@ -225,11 +225,11 @@ jobs:
           find "$STAGING_DIR" -name "infoAppVer.php" -type f | while read -r VERFILE; do
             echo "📝 Injecting build info into: ${VERFILE#$STAGING_DIR/}"
 
-            # 🔗 Inject commit SHA
-            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"SHA\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"SHA\"\] = \"${COMMIT_SHA}\"|" "$VERFILE"
+            # 🔗 Inject full commit SHA
+            sed -i "s|\[\"Commit\"\]\[\"SHA\"\]\[\"Full\"\] = NULL|\[\"Commit\"\]\[\"SHA\"\]\[\"Full\"\] = \"${COMMIT_SHA}\"|" "$VERFILE"
 
             # 🔗 Inject short SHA
-            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"Short\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"Short\"\] = \"${SHORT_SHA}\"|" "$VERFILE"
+            sed -i "s|\[\"Commit\"\]\[\"SHA\"\]\[\"Short\"\] = NULL|\[\"Commit\"\]\[\"SHA\"\]\[\"Short\"\] = \"${SHORT_SHA}\"|" "$VERFILE"
 
             # 📅 Inject commit date
             sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"Date\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"Date\"\] = \"${COMMIT_DATE}\"|" "$VERFILE"

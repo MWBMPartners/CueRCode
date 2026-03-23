@@ -23,8 +23,8 @@
 				}
 
 			//Repo Build (populated by GitHub Actions deploy)
-			$app["Application"]["Version"]["Repo"]["Commit"]["SHA"] = NULL;
-			$app["Application"]["Version"]["Repo"]["Commit"]["Short"] = NULL;
+			$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Full"] = NULL;
+			$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Short"] = NULL;
 			$app["Application"]["Version"]["Repo"]["Commit"]["Date"] = NULL;
 			$app["Application"]["Version"]["Repo"]["Commit"]["URL"] = NULL;
 
