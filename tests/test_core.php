@@ -446,22 +446,28 @@ assertTrue(validateJSON('{"key":"value"}'), 'validateJSON accepts a JSON object'
 assertTrue(validateJSON('[1,2,3]'), 'validateJSON accepts a JSON array');
 assertFalse(validateJSON(''), 'validateJSON rejects an empty string');
 assertFalse(validateJSON('{invalid}'), 'validateJSON rejects malformed JSON');
-// 🐛 CHARACTERIZATION: the docblock claims the literal 'null' is INVALID, but the
-//    implementation only rejects an empty string — json_decode('null') succeeds with
-//    JSON_ERROR_NONE, so validateJSON('null') CURRENTLY returns true. Locking in the
-//    current (docblock-contradicting) behaviour for a later fix cycle to revisit.
-assertTrue(validateJSON('null'), 'validateJSON CURRENTLY accepts the literal "null" (contradicts its docblock — flagged)');
+// ✅ FIX #3 (2026-06-28): validateJSON now requires a JSON *structure* (object or
+//    array) and rejects bare scalars, matching its docblock. Previously these
+//    well-formed-but-scalar values all returned true (json_decode succeeded with
+//    JSON_ERROR_NONE). The function has no external callers, so tightening to the
+//    documented object/array contract was the lowest-risk fix.
+assertFalse(validateJSON('null'), 'validateJSON rejects the bare scalar literal "null" (FIX #3: structure-only contract)');
+assertFalse(validateJSON('true'), 'validateJSON rejects the bare scalar literal "true" (FIX #3)');
+assertFalse(validateJSON('123'), 'validateJSON rejects a bare JSON number (FIX #3)');
+assertFalse(validateJSON('"a string"'), 'validateJSON rejects a bare JSON string (FIX #3)');
 
 // 🧹 sanitizeInput
 assertEquals('Hi', sanitizeInput('  Hi  '), 'sanitizeInput trims surrounding whitespace');
-// 🐛 CHARACTERIZATION: the docblock example claims sanitizeInput('<script>alert("XSS")</script>Hello')
-//    returns 'Hello', but strip_tags() only removes the TAGS, leaving the inner text.
-//    The CURRENT output is 'alert(&quot;XSS&quot;)Hello' (quotes entity-encoded by
-//    htmlspecialchars with ENT_QUOTES). Locking in the actual current behaviour.
+// ✅ FIX #5 (2026-06-28): behaviour is correct and UNCHANGED — strip_tags() only
+//    removes the TAGS, leaving the inner text, which htmlspecialchars() then
+//    entity-encodes (quotes via ENT_QUOTES) so the result is inert in HTML. The
+//    docblock previously claimed the output was 'Hello' (implying script removal);
+//    it has been corrected to the real output below and to note this is NOT
+//    tag/script *removal*. This assertion already matched reality, so it stands.
 assertEquals(
     'alert(&quot;XSS&quot;)Hello',
     sanitizeInput('<script>alert("XSS")</script>Hello'),
-    'sanitizeInput strips tags but KEEPS inner text and entity-encodes quotes (contradicts docblock — flagged)'
+    'sanitizeInput strips tags but KEEPS inner text and entity-encodes quotes (FIX #5: docblock corrected to match)'
 );
 // 📌 Input '&lt;b&gt;' contains NO literal angle brackets (they are already
 //    entities), so strip_tags removes nothing and htmlspecialchars re-encodes
@@ -475,13 +481,14 @@ assertEquals(
 // 📄 sanitizeFileName
 assertEquals('my-photo-2.jpg', sanitizeFileName('My Photo (2).JPG'), 'sanitizeFileName lowercases, hyphenates spaces, drops parens');
 assertEquals('passwd', sanitizeFileName('../../../etc/passwd'), 'sanitizeFileName strips path traversal components');
-// 🐛 CHARACTERIZATION: the docblock example claims sanitizeFileName('  hello   world.PNG  ')
-//    returns 'hello-world.png', but the function sanitises only the NAME part — the
-//    EXTENSION is merely lowercased, NOT trimmed. The input's trailing two spaces
-//    are kept by pathinfo() as part of the extension ('PNG  ' -> 'png  '), so the
-//    CURRENT output is 'hello-world.png  ' (two trailing spaces). Locking in the
-//    actual current bytes; flagged for a later fix cycle (extension should be trimmed).
-assertEquals('hello-world.png  ', sanitizeFileName('  hello   world.PNG  '), 'sanitizeFileName does NOT trim the extension — trailing input spaces leak into it (contradicts docblock — flagged)');
+// ✅ FIX #4 (2026-06-28): the extension is now trimmed. Previously pathinfo()
+//    kept the input's trailing two spaces as part of the extension ('PNG  ' ->
+//    'png  '), so the output leaked them as 'hello-world.png  '. The corrected
+//    output matches the docblock example: 'hello-world.png' (no trailing spaces).
+assertEquals('hello-world.png', sanitizeFileName('  hello   world.PNG  '), 'sanitizeFileName trims the extension (FIX #4: trailing input spaces no longer leak into it)');
+// ✅ FIX #4 guard: an extension that is ONLY whitespace collapses to no extension,
+//    so we never emit a trailing-dot name like 'data.'.
+assertEquals('data', sanitizeFileName('data.   '), 'sanitizeFileName treats an all-whitespace extension as no extension (FIX #4 guard)');
 assertEquals('unnamed', sanitizeFileName('***'), 'sanitizeFileName falls back to "unnamed" when nothing safe remains');
 
 // ==============================================================================
@@ -571,6 +578,36 @@ if (!$qrLibraryLoaded) {
     assertEquals(50, $scaleHuge, 'calculateScale clamps a very large target size to the maximum scale of 50');
     $scaleTiny  = calculateScale(10, mapEccLevel('H'), 2000);
     assertEquals(1, $scaleTiny, 'calculateScale clamps a tiny target / large payload to the minimum scale of 1');
+
+    // 📐 estimateModuleCount: ECC-level -> capacity-row mapping (FIX #6).
+    // ✅ FIX #6 (2026-06-28): the capacity table was keyed 0=L,1=M,2=Q,3=H and
+    //    indexed with the RAW EccLevel constant. But chillerlan's constants are
+    //    L=1, M=0, Q=3, H=2, so every level selected the WRONG capacity row
+    //    (e.g. ecc=L picked the M row), and the result was non-monotonic in ECC.
+    //    estimateModuleCount() now maps the constant to its logical L/M/Q/H row.
+    //
+    //    Affects scale ESTIMATION only (used by calculateScale + logo-space sizing),
+    //    NOT the generated QR matrix.
+    //
+    //    At dataLength = 60 each ECC level falls on a DISTINCT version, giving the
+    //    clean, strictly-increasing sequence below (higher ECC needs more modules
+    //    for the same data — never fewer):
+    //      L -> v3 -> 4*3+17 = 29   (was buggily 33, the v4/M row)
+    //      M -> v4 -> 4*4+17 = 33   (was buggily 29, the v3/L row)
+    //      Q -> v5 -> 4*5+17 = 37   (was buggily 41, the v6/H row)
+    //      H -> v6 -> 4*6+17 = 41   (was buggily 37, the v5/Q row)
+    assertEquals(29, estimateModuleCount(mapEccLevel('L'), 60), 'estimateModuleCount(L, 60) -> 29 modules (v3) — FIX #6 correct capacity row');
+    assertEquals(33, estimateModuleCount(mapEccLevel('M'), 60), 'estimateModuleCount(M, 60) -> 33 modules (v4) — FIX #6 correct capacity row');
+    assertEquals(37, estimateModuleCount(mapEccLevel('Q'), 60), 'estimateModuleCount(Q, 60) -> 37 modules (v5) — FIX #6 correct capacity row');
+    assertEquals(41, estimateModuleCount(mapEccLevel('H'), 60), 'estimateModuleCount(H, 60) -> 41 modules (v6) — FIX #6 correct capacity row');
+
+    // 📈 Monotonicity guard: for fixed data, module count is non-decreasing as ECC
+    //    rises (L <= M <= Q <= H). The old bug VIOLATED this (it gave M < L, H < Q).
+    $emL = estimateModuleCount(mapEccLevel('L'), 100);
+    $emM = estimateModuleCount(mapEccLevel('M'), 100);
+    $emQ = estimateModuleCount(mapEccLevel('Q'), 100);
+    $emH = estimateModuleCount(mapEccLevel('H'), 100);
+    assertTrue($emL <= $emM && $emM <= $emQ && $emQ <= $emH, 'estimateModuleCount is non-decreasing as ECC rises L<=M<=Q<=H at dataLength=100 (FIX #6 monotonicity)');
 }
 
 // ==============================================================================

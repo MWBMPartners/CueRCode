@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - QR Payload & Core Correctness (2026-06-28)
+
+- **vCard contact fields now emitted correctly** (B-044): `buildPayload_vcard` now accepts the seed/form field names (`phone`, `mobile`, `website`, `postcode`, `notes`) as aliases for the legacy internal names, so TEL, URL, NOTE, and ADR lines are no longer silently dropped when generating a vCard QR from the web form.
+- **App Store invalid-platform handling** (B-045): `buildPayload_appstore` now validates that `platform` is one of `apple`/`ios` or `google`/`android` (case-insensitive) and throws `InvalidArgumentException` for any other value, including the former `auto` option which produced a malformed Apple URL. The `auto` option has been removed from the seed `formFieldsJSON`.
+- **validateJSON rejects bare scalar values** (B-046): `validateJSON()` now enforces its documented contract — only JSON objects and arrays pass; bare scalars (`null`, `true`, `false`, numbers, strings) are correctly rejected.
+- **sanitizeFileName extension trimming** (B-047): `sanitizeFileName` now trims whitespace from the file extension and collapses an all-whitespace extension to none, so `'hello-world.png  '` yields `'hello-world.png'` and `'data.   '` yields `'data'`.
+- **QR size-estimation ECC level mapping** (B-049): `estimateModuleCount` now maps the chillerlan `EccLevel` constant values (`L=1`, `M=0`, `Q=3`, `H=2`) to the correct capacity rows instead of using the raw integer as a row index, fixing a non-monotonic size estimate that affected all four ECC levels. Generated QR codes are unaffected; only the UI scale hint changes.
+- **Activity-log session ID bind type** (B-020): `logActivity()` bind-param type string corrected from `'sssiiissss'` to `'sssiisssss'`; parameter 6 (`$sessionID`) is a VARCHAR(128) string, not an integer — the previous `'i'` binding silently coerced every session ID to `0` on insert.
+
 ### 🧪 Added - PHP Test Harness & Characterization Safety Net (2026-06-28)
 
 - Self-hosted PHP test harness (`tests/run.php`) with characterization tests for QR payload builders and core functions — no-Composer, runnable via `php tests/run.php`. 218 assertions across `tests/test_payloads.php` (all 21 QR builders + escaping helpers + dispatcher) and `tests/test_core.php` (encryption, CSRF, validation, QR options, response formatting). All 218 pass; harness lives entirely under repo-root `tests/` and is never deployed.

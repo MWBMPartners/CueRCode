@@ -514,34 +514,37 @@ function estimateModuleCount(int $eccLevel, int $dataLength): int
 
     // 📌 Byte-mode capacities at different ECC levels (selected versions)
     // Format: [max_bytes => version]
+    // The rows are keyed by the LOGICAL ECC name (L/M/Q/H), NOT by the library's
+    // numeric EccLevel constant — those constants are deliberately bit-packed and
+    // are NOT in L,M,Q,H order (L=1, M=0, Q=3, H=2). See the mapping below.
     // @see https://www.qrcode.com/en/about/version.html
     $capacityTable = [
-        // EccLevel::L = 0 (approximately 7% recovery)
-        0 => [
+        // EccLevel L (approximately 7% recovery)
+        'L' => [
             17  => 1,   41  => 2,   77  => 3,   114 => 4,   154 => 5,
             195 => 6,   224 => 7,   279 => 8,   335 => 9,   395 => 10,
             512 => 12,  652 => 14,  818 => 16,  1003 => 18, 1249 => 20,
             1574 => 23, 1852 => 25, 2232 => 28, 2603 => 30, 2956 => 32,
             3391 => 35, 3909 => 38, 4296 => 40,
         ],
-        // EccLevel::M = 1 (approximately 15% recovery)
-        1 => [
+        // EccLevel M (approximately 15% recovery)
+        'M' => [
             14  => 1,   32  => 2,   53  => 3,   78  => 4,   106 => 5,
             134 => 6,   154 => 7,   192 => 8,   230 => 9,   271 => 10,
             367 => 12,  458 => 14,  570 => 16,  700 => 18,  871 => 20,
             1089 => 23, 1273 => 25, 1528 => 28, 1732 => 30, 2009 => 32,
             2324 => 35, 2670 => 38, 2956 => 40,
         ],
-        // EccLevel::Q = 2 (approximately 25% recovery)
-        2 => [
+        // EccLevel Q (approximately 25% recovery)
+        'Q' => [
             11  => 1,   24  => 2,   40  => 3,   54  => 4,   74  => 5,
             97  => 6,   111 => 7,   135 => 8,   160 => 9,   192 => 10,
             259 => 12,  321 => 14,  401 => 16,  489 => 18,  604 => 20,
             762 => 23,  894 => 25,  1062 => 28, 1222 => 30, 1415 => 32,
             1628 => 35, 1867 => 38, 2068 => 40,
         ],
-        // EccLevel::H = 3 (approximately 30% recovery)
-        3 => [
+        // EccLevel H (approximately 30% recovery)
+        'H' => [
             7   => 1,   17  => 2,   32  => 3,   42  => 4,   56  => 5,
             74  => 6,   86  => 7,   108 => 8,   130 => 9,   151 => 10,
             203 => 12,  253 => 14,  313 => 16,  385 => 18,  468 => 20,
@@ -550,14 +553,29 @@ function estimateModuleCount(int $eccLevel, int $dataLength): int
         ],
     ];
 
-    // 📌 Look up the appropriate capacity table for the ECC level
-    // Clamp ECC level to valid range (0-3)
-    $eccIndex = max(0, min(3, $eccLevel));
-    if (isset($capacityTable[$eccIndex])) {
-        $table = $capacityTable[$eccIndex];
+    // 📌 Map the library's numeric EccLevel constant to the correct capacity row.
+    // 🐛 FIX (2026-06-28): the rows were previously keyed 0=L,1=M,2=Q,3=H and
+    //    indexed with the raw EccLevel value. But chillerlan's EccLevel constants
+    //    are L=1, M=0, Q=3, H=2, so the raw value selected the WRONG row for every
+    //    level (e.g. ecc=L (1) picked the M row, ecc=H (2) picked the Q row). We
+    //    now translate the constant to its logical L/M/Q/H name and look that up.
+    //    Affects scale ESTIMATION only — the generated QR is unaffected.
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/Common/EccLevel.php
+    $eccRowMap = [
+        EccLevel::L => 'L',
+        EccLevel::M => 'M',
+        EccLevel::Q => 'Q',
+        EccLevel::H => 'H',
+    ];
+
+    if (isset($eccRowMap[$eccLevel])) {
+        $eccRowKey = $eccRowMap[$eccLevel];
     } else {
-        $table = $capacityTable[1];
+        // ⚠️ Unknown ECC value — fall back to the M (Medium) capacity row.
+        $eccRowKey = 'M';
     }
+
+    $table = $capacityTable[$eccRowKey];
 
     // 📌 Find the smallest version that can hold the data
     $version = 1;

@@ -66,9 +66,15 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * @see https://www.php.net/manual/en/function.htmlspecialchars.php
  * @see https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
  *
+ * ⚠️ CAUTION: this is NOT tag/script *removal*. strip_tags() removes only the
+ * tag delimiters, leaving the inner text; htmlspecialchars() then encodes it so
+ * the result is inert in an HTML context — but the original text content remains.
+ *
  * @example
  *   $clean = sanitizeInput('<script>alert("XSS")</script>Hello');
- *   // Returns: 'Hello'
+ *   // Returns: 'alert(&quot;XSS&quot;)Hello'
+ *   // (the <script> tags are stripped, the inner text is KEPT, and the quotes
+ *   //  are entity-encoded by htmlspecialchars with ENT_QUOTES)
  *
  *   $clean = sanitizeInput('  Hello World  ');
  *   // Returns: 'Hello World'
@@ -310,26 +316,41 @@ function validateColor(string $hex): bool
 // ==============================================================================
 
 /**
- * 📋 Validate that a string is valid JSON
+ * 📋 Validate that a string is a JSON object or array
  *
- * Attempts to parse the input as JSON and checks for syntax errors.
- * An empty string or 'null' is considered invalid (must be a non-trivial
- * JSON structure like an object or array).
+ * Attempts to parse the input as JSON, checks for syntax errors, AND requires
+ * that the decoded value be a JSON *structure* — an object or an array. Bare
+ * JSON scalars (the literals null, true, false, a number, or a quoted string)
+ * are rejected even though they are technically well-formed JSON. This matches
+ * the intended use: validating config / form payloads that must be a structured
+ * object or array, never a lone scalar.
+ *
+ * An empty string is likewise invalid.
+ *
+ * 🐛 FIX (2026-06-28): previously this accepted ANY well-formed JSON, so the
+ *    literal 'null' (and 'true' / '123' / '"x"') returned true — contradicting
+ *    this docblock. The decoded value is now required to be an array/object,
+ *    making code and docblock consistent. validateJSON has no external callers,
+ *    so tightening the contract is the lowest-risk fix.
  *
  * @param string $json The JSON string to validate
  *
- * @return bool True if the string is valid JSON, false otherwise
+ * @return bool True if the string is a valid JSON object or array, false otherwise
  *
  * @see https://www.php.net/manual/en/function.json-decode.php
  * @see https://www.php.net/manual/en/function.json-last-error.php
  * @see https://www.php.net/manual/en/json.constants.php
  *
  * @example
- *   validateJSON('{"key": "value"}');        // true
- *   validateJSON('[1, 2, 3]');                // true
- *   validateJSON('not json');                  // false
- *   validateJSON('');                          // false
- *   validateJSON('{invalid: json}');           // false
+ *   validateJSON('{"key": "value"}');        // true  (object)
+ *   validateJSON('[1, 2, 3]');                // true  (array)
+ *   validateJSON('not json');                  // false (parse error)
+ *   validateJSON('');                          // false (empty)
+ *   validateJSON('{invalid: json}');           // false (parse error)
+ *   validateJSON('null');                      // false (bare scalar, not a structure)
+ *   validateJSON('true');                      // false (bare scalar)
+ *   validateJSON('123');                       // false (bare scalar)
+ *   validateJSON('"a string"');               // false (bare scalar)
  */
 function validateJSON(string $json): bool
 {
@@ -342,15 +363,25 @@ function validateJSON(string $json): bool
     }
 
     // ✅ Attempt to decode the JSON
-    // json_decode() returns null on failure (or for the literal JSON 'null').
-    // We then check json_last_error() to distinguish valid null from parse errors.
+    // json_decode() returns null on a parse failure OR for the literal JSON
+    // 'null'. We capture the decoded value AND check json_last_error() so we can
+    // both reject parse errors and reject well-formed-but-scalar values.
+    // Associative decoding (true) makes JSON objects decode to PHP arrays, so a
+    // single is_array() check below covers both JSON objects and JSON arrays.
     // @see https://www.php.net/manual/en/function.json-decode.php
     // @see https://www.php.net/manual/en/function.json-last-error.php
-    json_decode($json);
+    $decoded = json_decode($json, true);
 
-    // 📌 JSON_ERROR_NONE indicates successful parsing
+    // 📌 JSON_ERROR_NONE indicates the string parsed without a syntax error.
     // @see https://www.php.net/manual/en/json.constants.php
-    return json_last_error() === JSON_ERROR_NONE;
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return false;
+    }
+
+    // 📌 Require a JSON structure (object or array). With associative decoding,
+    // both JSON objects and JSON arrays become PHP arrays; bare scalars
+    // (null / true / false / number / string) do not, so they are rejected.
+    return is_array($decoded);
 }
 
 // ==============================================================================
@@ -429,6 +460,15 @@ function sanitizeFileName(string $filename): string
     // @see https://www.php.net/manual/en/function.strtolower.php
     $name      = strtolower($name);
     $extension = strtolower($extension);
+
+    // 📌 Step 7b: Trim whitespace from the extension
+    // 🐛 FIX (2026-06-28): pathinfo() keeps any trailing/leading whitespace as
+    //    part of the extension (e.g. 'world.PNG  ' -> extension 'png  '), which
+    //    then leaked into the reassembled name as 'hello-world.png  '. Trim it.
+    //    An extension that is *only* whitespace collapses to '' (treated as no
+    //    extension), so 'file.   ' does not produce a trailing-dot result.
+    // @see https://www.php.net/manual/en/function.trim.php
+    $extension = trim($extension);
 
     // 📌 Step 8: Ensure the name is not empty after sanitisation
     if ($name === '') {

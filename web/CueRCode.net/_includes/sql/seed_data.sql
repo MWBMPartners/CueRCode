@@ -196,7 +196,7 @@ INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescript
 -- 📱 App Store
 ('appstore', 'App Store Link', 'fa-solid fa-mobile-screen-button', 'Link to an app on Apple App Store or Google Play', 'utility',
  '{url}',
- '[{"name":"url","label":"App Store URL","type":"url","required":true,"placeholder":"https://apps.apple.com/app/... or https://play.google.com/store/apps/...","maxlength":2048,"validation":"url"},{"name":"platform","label":"Platform","type":"select","required":false,"options":["auto","apple","google"],"default":"auto","hint":"Select platform or auto-detect from URL"}]',
+ '[{"name":"url","label":"App Store URL","type":"url","required":true,"placeholder":"https://apps.apple.com/app/... or https://play.google.com/store/apps/...","maxlength":2048,"validation":"url"},{"name":"platform","label":"Platform","type":"select","required":false,"options":["apple","google"],"default":"apple","hint":"Select the app store (required when building from an app ID — a static QR code cannot auto-detect the platform)"}]',
  17),
 
 -- 📘 Facebook

@@ -716,6 +716,16 @@ function buildPayload_geo(array $inputData): string
  *   - street, city, state, zip, country
  *   - note
  *
+ * 🔁 Seed/form-field aliases (the vcard formFieldsJSON in seed_data.sql uses
+ *    these shorter names) are also accepted, so a vCard built from the actual
+ *    rendered form emits TEL/URL/NOTE/ADR correctly:
+ *   - phone    → phone_work
+ *   - mobile   → phone_cell
+ *   - website  → url
+ *   - postcode → zip (also postal_code)
+ *   - notes    → note
+ *   The canonical/legacy name is preferred when both are supplied.
+ *
  * @return string The complete vCard 3.0 payload string
  *
  * @see https://datatracker.ietf.org/doc/html/rfc2426 vCard 3.0 specification
@@ -764,15 +774,22 @@ function buildPayload_vcard(array $inputData): string
     }
     $title = trim($titleValue);
 
+    // 🔁 'phone' is the seed/form field name; 'phone_work' is the legacy name.
+    //    Prefer the legacy name when both are provided.
     if (isset($inputData['phone_work'])) {
         $phoneWorkValue = $inputData['phone_work'];
+    } elseif (isset($inputData['phone'])) {
+        $phoneWorkValue = $inputData['phone'];
     } else {
         $phoneWorkValue = '';
     }
     $phoneWork = trim($phoneWorkValue);
 
+    // 🔁 'mobile' is the seed/form field name; 'phone_cell' is the legacy name.
     if (isset($inputData['phone_cell'])) {
         $phoneCellValue = $inputData['phone_cell'];
+    } elseif (isset($inputData['mobile'])) {
+        $phoneCellValue = $inputData['mobile'];
     } else {
         $phoneCellValue = '';
     }
@@ -785,8 +802,11 @@ function buildPayload_vcard(array $inputData): string
     }
     $email = trim($vcardEmailValue);
 
+    // 🔁 'website' is the seed/form field name; 'url' is the legacy name.
     if (isset($inputData['url'])) {
         $vcardUrlValue = $inputData['url'];
+    } elseif (isset($inputData['website'])) {
+        $vcardUrlValue = $inputData['website'];
     } else {
         $vcardUrlValue = '';
     }
@@ -813,10 +833,13 @@ function buildPayload_vcard(array $inputData): string
     }
     $state = trim($stateValue);
 
+    // 🔁 'postcode' is the seed/form field name; 'zip'/'postal_code' are legacy.
     if (isset($inputData['zip'])) {
         $zipValue = $inputData['zip'];
     } elseif (isset($inputData['postal_code'])) {
         $zipValue = $inputData['postal_code'];
+    } elseif (isset($inputData['postcode'])) {
+        $zipValue = $inputData['postcode'];
     } else {
         $zipValue = '';
     }
@@ -829,8 +852,11 @@ function buildPayload_vcard(array $inputData): string
     }
     $country = trim($countryValue);
 
+    // 🔁 'notes' is the seed/form field name; 'note' is the legacy name.
     if (isset($inputData['note'])) {
         $noteValue = $inputData['note'];
+    } elseif (isset($inputData['notes'])) {
+        $noteValue = $inputData['notes'];
     } else {
         $noteValue = '';
     }
@@ -1519,7 +1545,7 @@ function buildPayload_appstore(array $inputData): string
     if (isset($inputData['platform'])) {
         $platformValue = $inputData['platform'];
     } else {
-        $platformValue = 'ios';
+        $platformValue = 'apple';
     }
     $platform = strtolower(trim($platformValue));
 
@@ -1531,14 +1557,24 @@ function buildPayload_appstore(array $inputData): string
     }
 
     // 📌 Build platform-specific URL
-    if ($platform === 'android' || $platform === 'google') {
+    // A static QR code cannot auto-detect the device platform at scan time, so
+    // when building from an app_id the platform MUST be explicitly chosen.
+    // Validate it up front rather than silently emitting a malformed Apple URL.
+    if ($platform === 'apple' || $platform === 'ios') {
+        // 📌 Apple App Store URL
+        // @see https://developer.apple.com/library/archive/qa/qa1633/_index.html
+        return 'https://apps.apple.com/app/id' . rawurlencode($appId);
+    } elseif ($platform === 'google' || $platform === 'android') {
         // 📌 Google Play Store URL
         // @see https://developer.android.com/distribute/marketing-tools
         return 'https://play.google.com/store/apps/details?id=' . rawurlencode($appId);
     } else {
-        // 📌 Apple App Store URL (default)
-        // @see https://developer.apple.com/library/archive/qa/qa1633/_index.html
-        return 'https://apps.apple.com/app/id' . rawurlencode($appId);
+        // ❌ Anything else (e.g. the old 'auto' option) cannot be resolved to a
+        //    concrete store URL — reject it instead of building a broken link.
+        throw new \InvalidArgumentException(
+            'Invalid app store platform: "' . $platform . '". '
+            . 'Expected "apple" or "google" (a static QR code cannot auto-detect the platform).'
+        );
     }
 }
 

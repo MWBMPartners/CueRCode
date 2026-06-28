@@ -394,22 +394,57 @@ assertEquals(
     'vcard: organization (US spelling) fallback maps to ORG'
 );
 
-// 📌 NOTE: the seed formFieldsJSON for vcard uses field names 'phone', 'mobile',
-//          'website', 'postcode', 'notes' — but the builder reads 'phone_work',
-//          'phone_cell', 'url', 'zip'/'postal_code', 'note'. The seed field
-//          names that DON'T match are silently ignored (no TEL/URL/NOTE emitted).
-//          Characterizing that mismatch as CURRENT behaviour:
+// 📌 FIX (2026-06-28): the seed formFieldsJSON for vcard uses field names
+//          'phone', 'mobile', 'website', 'postcode', 'notes'. The builder now
+//          accepts these as aliases for 'phone_work', 'phone_cell', 'url',
+//          'zip', 'note' respectively, so a vCard built straight from the
+//          rendered form now correctly emits TEL/URL/NOTE/ADR lines.
+//          (Previously these seed field names were silently ignored — see the
+//          git history of this assertion.)
 assertEquals(
-    "BEGIN:VCARD\nVERSION:3.0\nN:;A;;;\nFN:A\nEND:VCARD",
+    "BEGIN:VCARD\n"
+    . "VERSION:3.0\n"
+    . "N:;A;;;\n"
+    . "FN:A\n"
+    . "TEL;TYPE=WORK:+1-555-999\n"   // 'phone'    → phone_work
+    . "TEL;TYPE=CELL:+1-555-000\n"   // 'mobile'   → phone_cell
+    . "URL:https://x.io\n"           // 'website'  → url
+    . "ADR;TYPE=WORK:;;;;;AB1;\n"    // 'postcode' → zip (only ZIP slot filled)
+    . "NOTE:hi\n"                    // 'notes'    → note
+    . "END:VCARD",
     buildPayload_vcard([
         'first_name' => 'A',
-        'phone'      => '+1-555-999',   // builder expects phone_work/phone_cell
-        'mobile'     => '+1-555-000',   // builder expects phone_cell
-        'website'    => 'https://x.io', // builder expects url
-        'postcode'   => 'AB1',          // builder expects zip/postal_code
-        'notes'      => 'hi',           // builder expects note
+        'phone'      => '+1-555-999',   // seed/form alias for phone_work
+        'mobile'     => '+1-555-000',   // seed/form alias for phone_cell
+        'website'    => 'https://x.io', // seed/form alias for url
+        'postcode'   => 'AB1',          // seed/form alias for zip
+        'notes'      => 'hi',           // seed/form alias for note
     ]),
-    'vcard: BUG — seed field names (phone/mobile/website/postcode/notes) are ignored by builder'
+    'vcard: FIX — seed field names (phone/mobile/website/postcode/notes) now emit TEL/URL/ADR/NOTE'
+);
+
+// 📌 When BOTH a legacy name and its seed alias are supplied, the legacy
+//    (canonical) name wins — confirming the preference order of the alias map.
+assertEquals(
+    "BEGIN:VCARD\n"
+    . "VERSION:3.0\n"
+    . "N:;A;;;\n"
+    . "FN:A\n"
+    . "TEL;TYPE=WORK:LEGACY-WORK\n"   // phone_work preferred over phone
+    . "TEL;TYPE=CELL:LEGACY-CELL\n"   // phone_cell preferred over mobile
+    . "URL:https://legacy.example\n"  // url preferred over website
+    . "ADR;TYPE=WORK:;;;;;LEGACYZIP;\n" // zip preferred over postcode
+    . "NOTE:legacy note\n"            // note preferred over notes
+    . "END:VCARD",
+    buildPayload_vcard([
+        'first_name' => 'A',
+        'phone_work' => 'LEGACY-WORK',  'phone'    => 'SEED-PHONE',
+        'phone_cell' => 'LEGACY-CELL',  'mobile'   => 'SEED-MOBILE',
+        'url'        => 'https://legacy.example', 'website' => 'https://seed.example',
+        'zip'        => 'LEGACYZIP',    'postcode' => 'SEEDZIP',
+        'note'       => 'legacy note',  'notes'    => 'seed note',
+    ]),
+    'vcard: legacy field names take precedence over seed aliases when both present'
 );
 
 // 📌 No name at all → throws.
@@ -712,21 +747,34 @@ assertEquals(
     'appstore: no platform defaults to Apple App Store'
 );
 
-// 📌 NOTE: 'google' is accepted as an alias for 'android' (case-insensitive).
-//          The seed offers platform options ["auto","apple","google"] — but
-//          the builder only special-cases 'android'/'google'; ANY other value
-//          (including 'auto' and 'apple') falls through to the Apple branch.
+// 📌 'google' (and the legacy 'android' alias) → Google Play, case-insensitive.
 assertEquals(
     'https://play.google.com/store/apps/details?id=com.x',
     buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'GOOGLE']),
-    'appstore: GOOGLE (case-insensitive) alias -> Google Play'
+    'appstore: GOOGLE (case-insensitive) -> Google Play'
 );
 
-// 📌 NOTE: seed platform value 'auto' is NOT recognised → falls to Apple branch.
+// 📌 'apple' explicitly selects the Apple App Store branch.
 assertEquals(
     'https://apps.apple.com/app/idcom.x',
-    buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'auto']),
-    'appstore: BUG — seed platform "auto" unrecognised, falls through to Apple branch'
+    buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'apple']),
+    'appstore: apple platform -> Apple App Store'
+);
+
+// 📌 FIX (2026-06-28): the seed used to offer a 'platform' option of 'auto',
+//          and the builder silently fell 'auto' (and any unknown value) through
+//          to the Apple branch — producing a MALFORMED URL like
+//          https://apps.apple.com/app/idcom.example.app. A static QR code cannot
+//          auto-detect the platform, so 'auto' has been removed from the seed
+//          options and the builder now THROWS for any platform that is not
+//          'apple'/'ios' or 'google'/'android'. (Previously this asserted the
+//          malformed Apple URL — see the git history of this assertion.)
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'auto']);
+    },
+    'appstore: FIX — invalid platform "auto" now throws instead of building a malformed URL',
+    \InvalidArgumentException::class
 );
 
 // 📌 Neither URL nor app_id → throws.
