@@ -559,8 +559,11 @@ function getLogoPathFromDatabase(int $logoId): ?string
     }
 
     try {
+        // 📌 NOTE: tblPredefinedLogos stores only the filename (logoFileName);
+        //     there is no stored absolute-path column. The path is constructed
+        //     at runtime from the predefined logos directory + logoFileName.
         $stmt = dbQuery(
-            "SELECT `logoFileName`, `logoFilePath` "
+            "SELECT `logoFileName` "
             . "FROM `tblPredefinedLogos` "
             . "WHERE `logoID` = ? "
             . "AND `isActive` = 1 "
@@ -577,26 +580,20 @@ function getLogoPathFromDatabase(int $logoId): ?string
             return null;
         }
 
-        // 📌 Build the absolute path from the stored file path
-        if (isset($row['logoFilePath'])) {
-            $logoFilePath = $row['logoFilePath'];
-        } else {
-            $logoFilePath = '';
-        }
-
+        // 📌 Build the absolute path from the stored filename. The schema only
+        //     stores logoFileName; the directory is resolved at runtime.
         if (isset($row['logoFileName'])) {
             $logoFileName = $row['logoFileName'];
         } else {
             $logoFileName = '';
         }
 
-        // 📌 Try the stored path first
-        if ($logoFilePath !== '' && file_exists($logoFilePath)) {
-            return $logoFilePath;
+        if ($logoFileName === '') {
+            return null;
         }
 
         // 📌 Try relative to the uploads/logos directory
-        if (defined('CUERCODE_UPLOADS_DIR') && $logoFileName !== '') {
+        if (defined('CUERCODE_UPLOADS_DIR')) {
             $fullPath = CUERCODE_UPLOADS_DIR . 'logos' . DIRECTORY_SEPARATOR . $logoFileName;
             if (file_exists($fullPath)) {
                 return $fullPath;

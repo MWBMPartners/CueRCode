@@ -847,19 +847,23 @@ function saveQRCodeRecord(
             $userIdType = 's';
         }
 
+        // 📌 Column names aligned to the canonical install.sql schema:
+        //    qrUUID, qrTypeID (FK), qrPayload, qrOptions (JSON), qrOutputFormat, userID.
+        //    There is no typeName/qrFormat/customizationJSON column on tblQRCodes -
+        //    the type name resolves to qrTypeID above and the customisation snapshot
+        //    is stored in the qrOptions JSON column.
         $stmt = dbQuery(
             "INSERT INTO `tblQRCodes` ("
-            . "`qrUUID`, `typeID`, `typeName`, `qrPayload`, `qrFormat`, "
-            . "`customizationJSON`, `userID`"
-            . ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-            'sissss' . $userIdType,
+            . "`qrUUID`, `qrTypeID`, `qrPayload`, `qrOptions`, `qrOutputFormat`, "
+            . "`userID`"
+            . ") VALUES (?, ?, ?, ?, ?, ?)",
+            'sisss' . $userIdType,
             [
                 $uuid,
                 $typeId,
-                $typeName,
                 $payload,
-                $format,
                 $customizationJson,
+                $format,
                 $userId,
             ]
         );
@@ -911,7 +915,7 @@ function updateQRCodeFilePath(int $qrCodeId, string $filePath): void
 
     try {
         $stmt = dbQuery(
-            "UPDATE `tblQRCodes` SET `filePath` = ? WHERE `qrCodeID` = ?",
+            "UPDATE `tblQRCodes` SET `qrFilePath` = ? WHERE `qrID` = ?",
             'si',
             [$filePath, $qrCodeId]
         );

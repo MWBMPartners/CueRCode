@@ -106,10 +106,15 @@ function handleDownload(string $uuid): void
     }
 
     try {
+        // 📌 typeName lives in tblQRCodeTypes; tblQRCodes only holds the
+        //    qrTypeID FK, so we JOIN to retrieve the human/machine type name.
+        // @see install.sql tblQRCodes.qrTypeID -> tblQRCodeTypes.typeID
         $stmt = dbQuery(
-            "SELECT `qrCodeID`, `qrUUID`, `typeName`, `qrFormat`, `filePath` "
-            . "FROM `tblQRCodes` "
-            . "WHERE `qrUUID` = ? "
+            "SELECT `q`.`qrID`, `q`.`qrUUID`, `t`.`typeName`, "
+            . "`q`.`qrOutputFormat`, `q`.`qrFilePath` "
+            . "FROM `tblQRCodes` AS `q` "
+            . "LEFT JOIN `tblQRCodeTypes` AS `t` ON `q`.`qrTypeID` = `t`.`typeID` "
+            . "WHERE `q`.`qrUUID` = ? "
             . "LIMIT 1",
             's',
             [$uuid]
@@ -148,13 +153,13 @@ function handleDownload(string $uuid): void
     // ==================================================================
     // 📌 Step 3: Locate the file on the filesystem
     // ==================================================================
-    if (isset($row['filePath'])) {
-        $filePath = $row['filePath'];
+    if (isset($row['qrFilePath'])) {
+        $filePath = $row['qrFilePath'];
     } else {
         $filePath = '';
     }
-    if (isset($row['qrFormat'])) {
-        $format = strtolower(trim($row['qrFormat']));
+    if (isset($row['qrOutputFormat'])) {
+        $format = strtolower(trim($row['qrOutputFormat']));
     } else {
         $format = 'png';
     }
@@ -346,7 +351,7 @@ function handleDownload(string $uuid): void
             'api_download',
             'API: Downloaded QR code: ' . $uuid . ' (' . strtoupper($format) . ')',
             'qr_code',
-            (int) $row['qrCodeID'],
+            (int) $row['qrID'],
             [
                 'uuid'     => $uuid,
                 'format'   => $format,

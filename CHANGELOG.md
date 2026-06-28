@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Security: Schema↔Code Reconciliation (2026-06-29)
+
+- **Rate-limiting restored** (F-014): `recordAPIRequest()` INSERT and SELECT statements in `fn_api_auth.php` aligned to canonical `tblAPIRateLog` schema columns (`requestIP`, `endpoint`, `requestMethod`); per-key and per-IP rate-limiting now functional end-to-end.
+- **Download and generate persistence restored** (F-015): All `tblQRCodes` column references reconciled to canonical schema (`qrID`, `qrOutputFormat`, `qrFilePath`) across `fn_api_download.php`, `fn_qr_generate.php`, and `fn_qr_logo.php`; download endpoint and generate-save pipeline now operational; predefined-logo lookup corrected in `fn_qr_logo.php`.
+- **API-key length constant corrected** (F-016): `CUERCODE_API_KEY_LENGTH` corrected from 45 to 49 to match the generated key length (`'cuercode_'` prefix 9 chars + `bin2hex(random_bytes(20))` 40 chars); API-key authentication now accepts correctly-generated keys; prefix doc comment updated.
+
 ### Fixed - QR Payload & Core Correctness (2026-06-28)
 
 - **vCard contact fields now emitted correctly** (B-044): `buildPayload_vcard` now accepts the seed/form field names (`phone`, `mobile`, `website`, `postcode`, `notes`) as aliases for the legacy internal names, so TEL, URL, NOTE, and ADR lines are no longer silently dropped when generating a vCard QR from the web form.

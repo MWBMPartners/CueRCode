@@ -62,10 +62,11 @@ if (!defined('CUERCODE_API_KEY_PREFIX')) {
 
 /**
  * @var int Expected length of the full API key (prefix + 40 hex chars)
- * Format: cuercode_ (5 chars) + 40 hex chars = 45 total
+ * Format: cuercode_ (9 chars) + 40 hex chars = 49 total
+ * @see fn_encryption.php - generateAPIKey() -> 'cuercode_' . bin2hex(random_bytes(20))
  */
 if (!defined('CUERCODE_API_KEY_LENGTH')) {
-    define('CUERCODE_API_KEY_LENGTH', 45);
+    define('CUERCODE_API_KEY_LENGTH', 49);
 }
 
 /**
@@ -237,7 +238,7 @@ function authenticateAPIRequest(): array
  * 🔐 Validate an API key against the tblAPIKeys database table
  *
  * Performs the following validation steps:
- *   1. Format check: must be 'cuercode_' + 40 hex characters (45 total)
+ *   1. Format check: must be 'cuercode_' + 40 hex characters (49 total)
  *   2. Hash the key with HMAC-SHA256 using hashAPIKey()
  *   3. Look up the hash in tblAPIKeys
  *   4. Check that isActive = 1
@@ -482,7 +483,7 @@ function checkRateLimit(?int $apiKeyId, string $ipAddress, array $limits): array
                 "SELECT COUNT(*) AS `requestCount` "
                 . "FROM `tblAPIRateLog` "
                 . "WHERE `apiKeyID` IS NULL "
-                . "AND `ipAddress` = ? "
+                . "AND `requestIP` = ? "
                 . "AND `requestedAt` >= DATE_SUB(NOW(), INTERVAL 1 MINUTE)",
                 's',
                 [$ipAddress]
@@ -535,7 +536,7 @@ function checkRateLimit(?int $apiKeyId, string $ipAddress, array $limits): array
                 "SELECT COUNT(*) AS `requestCount` "
                 . "FROM `tblAPIRateLog` "
                 . "WHERE `apiKeyID` IS NULL "
-                . "AND `ipAddress` = ? "
+                . "AND `requestIP` = ? "
                 . "AND `requestedAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
                 's',
                 [$ipAddress]
@@ -604,7 +605,7 @@ function recordAPIRequest(?int $apiKeyId, string $ipAddress, string $requestPath
     try {
         $stmt = dbQuery(
             "INSERT INTO `tblAPIRateLog` ("
-            . "`apiKeyID`, `ipAddress`, `requestPath`, `requestedAt`"
+            . "`apiKeyID`, `requestIP`, `endpoint`, `requestedAt`"
             . ") VALUES (?, ?, ?, NOW())",
             'iss',
             [

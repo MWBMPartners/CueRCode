@@ -303,6 +303,20 @@ assertTrue(
     'generateAPIKey produces unique keys on each call'
 );
 
+// 🔗 Regression (2026-06-29): the API-key length CONSTANT in fn_api_auth.php must
+// match what fn_encryption.php actually generates. Previously CUERCODE_API_KEY_LENGTH
+// was 45 (treating the 'cuercode_' prefix as 5 chars) while generateAPIKey() emits
+// 9-char prefix + 40 hex = 49, so every real key was rejected by validateAPIKey()'s
+// strlen() format gate. fn_api_auth.php is DB-independent at load time (it only
+// defines constants + functions), so it is safe to require in the in-process runner.
+// @see web/CueRCode.net/_functions/fn_api_auth.php - CUERCODE_API_KEY_LENGTH
+requireFn('fn_api_auth.php');
+assertEquals(
+    CUERCODE_API_KEY_LENGTH,
+    strlen(generateAPIKey()),
+    'a freshly generated API key length equals CUERCODE_API_KEY_LENGTH (49)'
+);
+
 // 🔍 getAPIKeyPrefix returns the first 12 characters.
 assertEquals(
     'cuercode_abc',
