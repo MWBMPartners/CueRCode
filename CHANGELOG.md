@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🧪 Added - PHP Test Harness & Characterization Safety Net (2026-06-28)
+
+- Self-hosted PHP test harness (`tests/run.php`) with characterization tests for QR payload builders and core functions — no-Composer, runnable via `php tests/run.php`. 218 assertions across `tests/test_payloads.php` (all 21 QR builders + escaping helpers + dispatcher) and `tests/test_core.php` (encryption, CSRF, validation, QR options, response formatting). All 218 pass; harness lives entirely under repo-root `tests/` and is never deployed.
+
 ### 📋 Added - Project Plan & GitHub Project Management (2026-03-23)
 
 - 📄 Clean ProjectBrief (`.claude/ProjectBrief.claude`) - structured 20-section specification document

@@ -79,6 +79,41 @@ Since Dreamhost shared hosting has no CLI/Composer access:
 
 ---
 
+## 🧪 Testing
+
+A dependency-free PHP characterization test harness lives under `tests/` at the repo root. It requires no Composer or external packages and can be run on any machine with PHP 8.4+.
+
+**Run all tests:**
+
+```bash
+php tests/run.php
+```
+
+**Run a single file by name filter:**
+
+```bash
+php tests/run.php --filter=core
+php tests/run.php --filter=payloads
+```
+
+Exits 0 if all assertions pass (or if there are no tests), 1 if any fail. Coloured per-file and grand-total output is printed to stdout.
+
+**Structure:**
+
+| Path | Purpose |
+| ---- | ------- |
+| `tests/run.php` | Test runner — discovers `tests/test_*.php`, supports `--filter` |
+| `tests/bootstrap.php` | Test-only constants (ENCRYPTION_KEY/SALT, CUERCODE_* paths), `requireFn()` loader (includes `fn_*.php` without opening a DB), `requireLibraryAutoloader()` opt-in |
+| `tests/lib/assert.php` | Assertion helpers: `assertEquals`, `assertTrue`, `assertFalse`, `assertContains`, `assertMatches`, `assertThrows` |
+| `tests/test_payloads.php` | Characterization tests for all 21 QR payload builders and escaping helpers |
+| `tests/test_core.php` | Characterization tests for encryption, CSRF, validation, QR options, and response formatting |
+
+**Deployment boundary:** `tests/` is repo-root only and is excluded from all SFTP deploy workflows. It never reaches the Dreamhost server.
+
+**DB-independent vs DB-dependent boundary:** `requireFn()` in `bootstrap.php` includes `fn_*.php` files directly without running `db_connect.php`, so any function that does not open a DB connection is testable. Functions that require a live MySQLi connection (`fn_config.php` `getConfig`/`setConfig`, `fn_activity_log.php`, etc.) are deliberately out of scope and documented as such in the test file headers.
+
+---
+
 ## 🐛 Debug Mode
 
 Add `?debug=true` to any URL to enable debug output (development use only).

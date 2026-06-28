@@ -151,7 +151,7 @@ Scored improvement items merged + deduped from all scouts. Sorted by severity (P
 | B-030 | No max payload / per-field length validation on API | security | P2/Med | M | queue | _functions/fn_api_generate.php | fn_api_generate.php:94-200 no size/length caps — SECURITY F-007 | Router-level max body size (LimitRequestBody + PHP check); per-field length limits in handleGenerate(). |
 | B-031 | Image-upload validation not behind a rate-limited endpoint | security | P2/Med | M | queue | _functions/fn_validation.php | fn_validation.php:492-665 validateImageUpload not rate-limited — SECURITY F-005 | Rate-limit upload endpoints; alert on repeated failures; document call sites. |
 | B-032 | Error logs may leak SQL/file paths | security | P2/Med | S | queue | _functions/fn_error_handler.php, fn_api_auth.php | fn_error_handler.php:244-245 logs `SQL:`+substr; pre-init errors → error_log — SECURITY F-008 | Mask SQL/paths in error_log() output; bootstrap try/catch for init errors; add masking helper. |
-| B-033 | No automated test harness for core flows | correctness | P2/Med | M | queue | (repo-wide) | No tests dir / CI test step; DoD requires core-flow coverage | Add no-Composer PHP test runner (self-hosted) covering payload builders, generate pipeline, API auth/rate-limit, response formatting; wire into CI. |
+| B-033 | No automated test harness for core flows | correctness | P2/Med | M | queue | (repo-wide) | No tests dir / CI test step; DoD requires core-flow coverage | Add no-Composer PHP test runner (self-hosted) covering payload builders, generate pipeline, API auth/rate-limit, response formatting; wire into CI. *(in progress: harness + characterization done; CI wiring + DB-flow coverage remain)* |
 | B-034 | No bot-protection hooks (Turnstile/reCAPTCHA/hCaptcha) | security | P2/Med | M | queue | public_html/index.php, assets/js/cuercode-generator.js | ProjectBrief §7.3; no integration / config keys checked | Detect config keys (Turnstile>reCAPTCHA>hCaptcha); inject widget; server-side token verify before generation. |
 | B-035 | No Content-Security-Policy at app layer (header.php) | security | P2/Med | M | queue | _includes/header.php, footer.php, offline.html | No CSP meta/header in header.php (overlaps .htaccess CSP F-004) | Emit CSP via PHP header/meta restricting script/style-src to self + trusted CDNs; nonce inline scripts. |
 | B-036 | Missing X-RateLimit-* headers on API responses | ux | P3/Low | M | queue | _functions/fn_api_auth.php, fn_response.php | checkRateLimit() returns info not surfaced — SECURITY F-011 | Pass limit/remaining/reset into json/xmlResponse → X-RateLimit-Limit/Remaining/Reset on all responses. |
@@ -187,6 +187,7 @@ Features NOT auto-buildable by the loop (Bucket-3: authentication, payments, SSO
 | Cycle | Date | Mode | Items closed (IDs) | Backlog open | P0 open | High open | Sec Crit/High open | Tests | php -l | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0 (discover) | 2026-06-28 | discover | — | 43 | 0 | 3 | 0 | none | 114/114 pass | Baseline from 8-scout merge. |
+| 1 | 2026-06-28 | iterate/STABILIZE | B-033 safety net | 43 | 0 | 3 | 0 | 218/218 pass | 114/114 pass | No-Composer test harness + characterization baseline established. |
 
 ## Decision log
 
@@ -201,6 +202,7 @@ Features NOT auto-buildable by the loop (Bucket-3: authentication, payments, SSO
 | Checkpoint | Date | Trigger | Summary |
 | --- | --- | --- | --- |
 | CP-0 | 2026-06-28 | DISCOVER complete | Artifacts written (PROJECT.md, FEATURES.md, SECURITY.md). 43 backlog items, 28 feature gaps, 11 security findings (0 Critical/High). Awaiting first iterate/security cycle. |
+| CP-1 | 2026-06-28 | Cycle-1 STABILIZE complete | No-Composer PHP test harness built (tests/run.php, tests/lib/assert.php, tests/bootstrap.php). Characterization safety net: 218 assertions across test_payloads.php (90, all 21 QR builders + escaping helpers + dispatcher) and test_core.php (128, encryption/CSRF/validation/qr_options/response). All 218 pass, exit 0. Six production bugs documented as current behaviour (wifi WPA3 downgrade, appstore 'auto' fallthrough, vcard field-name mismatch, validateJSON('null') true, sanitizeInput tag-content leak, sanitizeFileName untrimmed ext). No production code under web/ modified. CI wiring and DB-flow coverage remain for a future cycle. |
 
 ## Feature Specs
 
