@@ -1209,7 +1209,280 @@
      *
      * @see https://api.jquery.com/ready/
      */
+    // ==========================================================================
+    // 📦 Bulk Generation Panel (FG-003)
+    // ==========================================================================
+
+    /**
+     * 📦 Count the items implied by the current bulk textarea contents.
+     *
+     * For CSV mode this is the number of non-blank lines minus the header row.
+     * For JSON mode it is the length of the parsed `items` array. Returns -1
+     * when the input cannot be interpreted (so callers can show a hint without
+     * claiming a misleading count).
+     *
+     * @param {string} mode - 'csv' or 'json'
+     * @param {string} text - The raw textarea contents
+     * @returns {number} The item count, or -1 if indeterminate
+     */
+    function bulkCountItems(mode, text) {
+        var trimmed = (text || '').trim();
+        if (trimmed === '') {
+            return 0;
+        }
+
+        if (mode === 'json') {
+            try {
+                var parsed = JSON.parse(trimmed);
+                if (parsed && Array.isArray(parsed.items)) {
+                    return parsed.items.length;
+                }
+                return -1;
+            } catch (e) {
+                return -1;
+            }
+        }
+
+        /* 📌 CSV mode: count non-blank lines, minus the header row. */
+        var lines = trimmed.split(/\r\n|\r|\n/);
+        var nonBlank = 0;
+        for (var i = 0; i < lines.length; i++) {
+            if (lines[i].trim() !== '') {
+                nonBlank++;
+            }
+        }
+        return Math.max(0, nonBlank - 1);
+    }
+
+    /**
+     * 🔢 Refresh the live "items detected" count preview for the bulk panel.
+     */
+    function updateBulkCount() {
+        var mode = $('#bulk-input-mode').val();
+        var text = $('#bulk-data').val();
+        var count = bulkCountItems(mode, text);
+        var $count = $('#bulk-count');
+
+        if (count === -1) {
+            $count.text('Could not read the data — check it matches the selected format.');
+            return;
+        }
+        if (count === 0) {
+            $count.text('No items detected yet.');
+            return;
+        }
+        if (count === 1) {
+            $count.text('1 item detected.');
+            return;
+        }
+        $count.text(count + ' items detected.');
+    }
+
+    /**
+     * 📦 Build the JSON request body for the bulk endpoint from the panel.
+     *
+     * @returns {Object|null} The request body object, or null on a JSON parse
+     *                        error (an error message is shown to the user).
+     */
+    function buildBulkPayload() {
+        var mode = $('#bulk-input-mode').val();
+        var text = $('#bulk-data').val();
+        var sharedFormat = $('#bulk-format').val();
+
+        var body = {};
+
+        if (mode === 'json') {
+            try {
+                var parsed = JSON.parse((text || '').trim());
+                if (parsed && typeof parsed === 'object') {
+                    body = parsed;
+                } else {
+                    showBulkError('JSON body must be an object with an "items" array.');
+                    return null;
+                }
+            } catch (e) {
+                showBulkError('Invalid JSON: ' + e.message);
+                return null;
+            }
+        } else {
+            body.csv = text;
+        }
+
+        /* 📌 Apply the shared output format (when chosen) without clobbering an
+              existing customization object the user may have supplied in JSON. */
+        if (sharedFormat) {
+            if (!body.customization || typeof body.customization !== 'object') {
+                body.customization = {};
+            }
+            body.customization.format = sharedFormat;
+        }
+
+        return body;
+    }
+
+    /**
+     * ❌ Show a bulk-panel error message (and hide any success message).
+     *
+     * @param {string} message - The error text to display
+     */
+    function showBulkError(message) {
+        $('#bulk-success').addClass('d-none').text('');
+        $('#bulk-error').removeClass('d-none').text(message);
+    }
+
+    /**
+     * ✅ Show a bulk-panel success message (and hide any error message).
+     *
+     * @param {string} message - The success text to display
+     */
+    function showBulkSuccess(message) {
+        $('#bulk-error').addClass('d-none').text('');
+        $('#bulk-success').removeClass('d-none').text(message);
+    }
+
+    /**
+     * 📦 Submit the bulk request and trigger a ZIP download.
+     *
+     * Uses the native fetch() API because the response is a binary ZIP blob
+     * (jQuery's JSON dataType cannot handle it). The CSRF token is sent in the
+     * X-CSRF-Token header so session-based (web UI) requests authenticate, even
+     * though the endpoint is anonymous-capable. On a non-OK response the JSON
+     * error body is parsed and surfaced.
+     */
+    function submitBulk() {
+        var payload = buildBulkPayload();
+        if (payload === null) {
+            return;
+        }
+
+        var count = bulkCountItems($('#bulk-input-mode').val(), $('#bulk-data').val());
+        if (count === 0) {
+            showBulkError('Enter at least one item before generating.');
+            return;
+        }
+
+        var $btn = $('#bulk-submit');
+        var originalHtml = $btn.html();
+        $btn.prop('disabled', true).html(
+            '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Generating...'
+        );
+        $('#bulk-error').addClass('d-none').text('');
+        $('#bulk-success').addClass('d-none').text('');
+
+        var headers = {
+            'Content-Type': 'application/json'
+        };
+        if (CueRCode && typeof CueRCode.getCSRFToken === 'function') {
+            headers['X-CSRF-Token'] = CueRCode.getCSRFToken();
+        }
+
+        fetch(CueRCodeConfig.apiBase + '/bulk-generate', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(payload)
+        }).then(function (response) {
+            var contentType = response.headers.get('Content-Type') || '';
+
+            if (response.ok && contentType.indexOf('application/zip') === 0) {
+                /* 📌 Success: download the ZIP blob. */
+                var succeeded = response.headers.get('X-Bulk-Succeeded');
+                var failed = response.headers.get('X-Bulk-Failed');
+                return response.blob().then(function (blob) {
+                    var blobUrl = URL.createObjectURL(blob);
+                    var link = document.createElement('a');
+                    link.href = blobUrl;
+                    link.download = 'cuercode-bulk.zip';
+                    link.style.display = 'none';
+                    document.body.appendChild(link);
+                    link.click();
+                    setTimeout(function () {
+                        URL.revokeObjectURL(blobUrl);
+                        document.body.removeChild(link);
+                    }, 100);
+
+                    var msg = 'ZIP downloaded.';
+                    if (succeeded !== null) {
+                        msg = 'ZIP downloaded — ' + succeeded + ' generated';
+                        if (failed !== null && parseInt(failed, 10) > 0) {
+                            msg += ', ' + failed + ' failed (see manifest.txt inside the ZIP)';
+                        }
+                        msg += '.';
+                    }
+                    showBulkSuccess(msg);
+                });
+            }
+
+            /* 📌 Error: try to parse a JSON error body for a useful message. */
+            return response.json().then(function (data) {
+                var message = 'Bulk generation failed (HTTP ' + response.status + ').';
+                if (data && data.message) {
+                    message = data.message;
+                }
+                showBulkError(message);
+            }).catch(function () {
+                showBulkError('Bulk generation failed (HTTP ' + response.status + ').');
+            });
+        }).catch(function () {
+            showBulkError('Network error — could not reach the bulk endpoint.');
+        }).then(function () {
+            $btn.prop('disabled', false).html(originalHtml);
+        });
+    }
+
+    /**
+     * 📂 Read an uploaded file into the bulk textarea and auto-detect the mode.
+     *
+     * @param {Event} e - The file input change event
+     */
+    function handleBulkFileUpload(e) {
+        var input = e.target;
+        if (!input.files || input.files.length === 0) {
+            return;
+        }
+
+        var file = input.files[0];
+        var name = (file.name || '').toLowerCase();
+
+        /* 📌 Auto-select the input mode from the file extension. */
+        if (name.lastIndexOf('.json') === name.length - 5) {
+            $('#bulk-input-mode').val('json');
+        } else if (name.lastIndexOf('.csv') === name.length - 4) {
+            $('#bulk-input-mode').val('csv');
+        }
+
+        var reader = new FileReader();
+        reader.onload = function (readerEvent) {
+            $('#bulk-data').val(readerEvent.target.result);
+            updateBulkCount();
+        };
+        reader.onerror = function () {
+            showBulkError('Could not read the selected file.');
+        };
+        reader.readAsText(file);
+    }
+
     $(document).ready(function () {
+
+        // ======================================================================
+        // 📦 Bulk Generate Panel Events (FG-003)
+        // ======================================================================
+
+        /* 📌 Live count preview on data / mode changes. */
+        $('#bulk-data').on('input', updateBulkCount);
+        $('#bulk-input-mode').on('change', updateBulkCount);
+
+        /* 📌 File upload fills the textarea. */
+        $('#bulk-file').on('change', handleBulkFileUpload);
+
+        /* 📌 Submit + clear. */
+        $('#bulk-submit').on('click', submitBulk);
+        $('#bulk-clear').on('click', function () {
+            $('#bulk-data').val('');
+            $('#bulk-file').val('');
+            $('#bulk-error').addClass('d-none').text('');
+            $('#bulk-success').addClass('d-none').text('');
+            updateBulkCount();
+        });
 
         // ======================================================================
         // 📱 QR Type Selector

@@ -1179,6 +1179,187 @@ assertThrows(
 );
 
 // ==============================================================================
+// 🔗 buildPayload_deeplink()  (FG-007)
+// ==============================================================================
+
+// 📌 A full https Universal/App Link passes through unchanged — this single
+//    https link IS the encoded payload (the OS, not the QR, does the routing).
+assertEquals(
+    'https://example.com/app/item/42',
+    buildPayload_deeplink(['url' => 'https://example.com/app/item/42']),
+    'deeplink: full https Universal/App Link passes through'
+);
+
+// 📌 A schemeless link gets https:// prepended (so 'example.com/x' becomes a
+//    proper Universal Link rather than a malformed string).
+assertEquals(
+    'https://example.com/open/thing',
+    buildPayload_deeplink(['url' => 'example.com/open/thing']),
+    'deeplink: schemeless link gets https:// prepended'
+);
+
+// 📌 app_scheme and fallback_url are DOCUMENTATION-ONLY: the encoded payload is
+//    still just the https link. (Validated when present, but never encoded.)
+assertEquals(
+    'https://ex.com/x',
+    buildPayload_deeplink([
+        'url'          => 'https://ex.com/x',
+        'app_scheme'   => 'myapp',
+        'fallback_url' => 'https://ex.com/get',
+    ]),
+    'deeplink: app_scheme/fallback_url are doc-only, not encoded into the payload'
+);
+
+// 📌 A bare (schemeless) fallback_url is accepted (https:// is prepended for the
+//    validation) and the encoded payload is still only the primary link.
+assertEquals(
+    'https://ex.com/x',
+    buildPayload_deeplink([
+        'url'          => 'https://ex.com/x',
+        'fallback_url' => 'ex.com/get',
+    ]),
+    'deeplink: schemeless fallback_url validated, primary link still the payload'
+);
+
+// 📌 Missing url → throws.
+assertThrows(
+    function (): void {
+        buildPayload_deeplink([]);
+    },
+    'deeplink: missing url throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A non-http(s) primary link (e.g. ftp) is rejected — a Universal/App Link
+//    must be http(s) for the OS to perform the app-or-web routing.
+assertThrows(
+    function (): void {
+        buildPayload_deeplink(['url' => 'ftp://files.example.com/x']);
+    },
+    'deeplink: non-http(s) primary link throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A supplied fallback_url with a non-http(s) scheme is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_deeplink(['url' => 'https://ex.com/x', 'fallback_url' => 'mailto:a@b.com']);
+    },
+    'deeplink: non-http(s) fallback_url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🏷️ buildPayload_gs1_product()  (FG-009 — GS1 Digital Link)
+// ==============================================================================
+
+// 📌 GTIN only → minimal GS1 Digital Link with AI 01 and the default resolver.
+assertEquals(
+    'https://id.gs1.org/01/09521234543213',
+    buildPayload_gs1_product(['gtin' => '09521234543213']),
+    'gs1_product: GTIN only -> /01/{gtin} on default resolver id.gs1.org'
+);
+
+// 📌 Full: GTIN + batch (AI 10) + serial (AI 21) as path segments, expiry
+//    (AI 17, YYMMDD) as a ?17= query parameter — canonical AI order.
+assertEquals(
+    'https://id.gs1.org/01/09521234543213/10/LOT42/21/SN0001?17=261231',
+    buildPayload_gs1_product([
+        'gtin'   => '09521234543213',
+        'batch'  => 'LOT42',
+        'serial' => 'SN0001',
+        'expiry' => '261231',
+    ]),
+    'gs1_product: full GTIN+batch+serial+expiry Digital Link'
+);
+
+// 📌 GTIN-8 (8 digits) is accepted.
+assertEquals(
+    'https://id.gs1.org/01/12345670',
+    buildPayload_gs1_product(['gtin' => '12345670']),
+    'gs1_product: GTIN-8 accepted'
+);
+
+// 📌 A configurable resolver host is honoured; any scheme/path the user pastes
+//    is stripped down to the bare host before building the link.
+assertEquals(
+    'https://id.example.com/01/09521234543213',
+    buildPayload_gs1_product(['gtin' => '09521234543213', 'resolver' => 'https://id.example.com/foo/']),
+    'gs1_product: custom resolver host honoured, scheme/path stripped'
+);
+
+// 📌 AI-significant characters in batch are rawurlencoded so they cannot corrupt
+//    the Digital Link path structure ('/' → %2F, '?' → %3F).
+assertEquals(
+    'https://id.gs1.org/01/09521234543213/10/A%2FB%3FC',
+    buildPayload_gs1_product(['gtin' => '09521234543213', 'batch' => 'A/B?C']),
+    'gs1_product: batch path-significant chars rawurlencoded'
+);
+
+// 📌 Missing GTIN → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product([]);
+    },
+    'gs1_product: missing GTIN throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A GTIN of an unsupported length (3 digits) → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '123']);
+    },
+    'gs1_product: invalid GTIN length throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A non-numeric GTIN → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '0952123454321X']);
+    },
+    'gs1_product: non-numeric GTIN throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A malformed expiry (not 6 digits) → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '09521234543213', 'expiry' => '2612']);
+    },
+    'gs1_product: short expiry (not YYMMDD) throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 An out-of-range expiry month (13) → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '09521234543213', 'expiry' => '261331']);
+    },
+    'gs1_product: invalid expiry month throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🔀 Dispatcher routing for the FG-007 / FG-009 builders
+// ==============================================================================
+
+// 📌 buildPayloadByType('deeplink', ...) routes to buildPayload_deeplink().
+assertEquals(
+    'https://x.io/p',
+    buildPayloadByType('deeplink', ['url' => 'https://x.io/p']),
+    'dispatcher: deeplink routes to buildPayload_deeplink()'
+);
+
+// 📌 buildPayloadByType('gs1_product', ...) routes to buildPayload_gs1_product().
+assertEquals(
+    'https://id.gs1.org/01/09521234543213',
+    buildPayloadByType('gs1_product', ['gtin' => '09521234543213']),
+    'dispatcher: gs1_product routes to buildPayload_gs1_product()'
+);
+
+// ==============================================================================
 // ❓ Dispatcher: absent builder
 // ==============================================================================
 // FG-025 added buildPayload_facebook_messenger / buildPayload_instagram /

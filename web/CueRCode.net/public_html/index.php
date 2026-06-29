@@ -982,6 +982,128 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
     </section>
 
     <!-- ====================================================================
+         📦 Bulk Generate Panel (FG-003) - CSV / JSON -> ZIP download
+         ====================================================================
+         A simple, accessible panel for generating many QR codes at once.
+         Paste a CSV (header row + data rows) or a JSON body, see a live count
+         preview, then submit to download a ZIP. The endpoint is synchronous and
+         anonymous-capable (POST /api/v1/bulk-generate). Without JavaScript the
+         panel degrades to an explanatory note plus a documentation link.
+         ==================================================================== -->
+    <section class="py-4 border-top" id="bulk-section" aria-labelledby="bulk-heading">
+        <div class="container">
+            <div class="row justify-content-center">
+                <div class="col-lg-9">
+                    <div class="card shadow-sm">
+                        <div class="card-header bg-transparent">
+                            <h2 class="h5 mb-0" id="bulk-heading">
+                                <i class="fa-solid fa-layer-group me-2" style="color: var(--cuercode-primary);" aria-hidden="true"></i>
+                                Bulk generate
+                            </h2>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-body-secondary">
+                                Generate many QR codes at once and download them as a single ZIP file.
+                                Paste a <strong>CSV</strong> (a header row with a <code>type</code> column
+                                plus one or more input columns) or a <strong>JSON</strong> body with an
+                                <code>items</code> array.
+                            </p>
+
+                            <!-- ⛔ No-JS fallback: explain the API directly. -->
+                            <noscript>
+                                <div class="alert alert-info" role="note">
+                                    <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
+                                    Bulk generation needs JavaScript in this panel. You can still use it
+                                    directly by sending a <code>POST</code> request to
+                                    <code>/api/v1/bulk-generate</code> with a JSON body
+                                    (<code>Content-Type: application/json</code>). See the API
+                                    documentation for the request format.
+                                </div>
+                            </noscript>
+
+                            <!-- 📥 Input mode + file upload row -->
+                            <div class="row g-3 align-items-end mb-3">
+                                <div class="col-sm-4">
+                                    <label for="bulk-input-mode" class="form-label">
+                                        <i class="fa-solid fa-table-list me-1" aria-hidden="true"></i> Input format
+                                    </label>
+                                    <select class="form-select" id="bulk-input-mode" aria-describedby="bulk-input-mode-help">
+                                        <option value="csv" selected>CSV (header + rows)</option>
+                                        <option value="json">JSON (items array)</option>
+                                    </select>
+                                    <div id="bulk-input-mode-help" class="form-text">
+                                        Choose how your pasted data is interpreted.
+                                    </div>
+                                </div>
+                                <div class="col-sm-5">
+                                    <label for="bulk-file" class="form-label">
+                                        <i class="fa-solid fa-file-arrow-up me-1" aria-hidden="true"></i> Upload a file (optional)
+                                    </label>
+                                    <input type="file" class="form-control" id="bulk-file"
+                                           accept=".csv,.json,.txt,text/csv,application/json,text/plain"
+                                           aria-describedby="bulk-file-help">
+                                    <div id="bulk-file-help" class="form-text">
+                                        A <code>.csv</code> or <code>.json</code> file fills the box below.
+                                    </div>
+                                </div>
+                                <div class="col-sm-3">
+                                    <label for="bulk-format" class="form-label">
+                                        <i class="fa-solid fa-image me-1" aria-hidden="true"></i> Output format
+                                    </label>
+                                    <select class="form-select" id="bulk-format" aria-label="Shared output format for all items">
+                                        <option value="" selected>Per-item / default</option>
+                                        <option value="png">PNG</option>
+                                        <option value="jpg">JPG</option>
+                                        <option value="webp">WebP</option>
+                                        <option value="gif">GIF</option>
+                                        <option value="svg">SVG</option>
+                                        <option value="pdf">PDF</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- 📝 Data textarea -->
+                            <div class="mb-2">
+                                <label for="bulk-data" class="form-label">
+                                    <i class="fa-solid fa-pen-to-square me-1" aria-hidden="true"></i> Bulk data
+                                </label>
+                                <textarea class="form-control font-monospace" id="bulk-data" rows="8"
+                                          spellcheck="false"
+                                          aria-describedby="bulk-data-help bulk-count"
+                                          placeholder="type,input.url&#10;url,https://example.com&#10;url,https://example.org"></textarea>
+                                <div id="bulk-data-help" class="form-text">
+                                    CSV example: a <code>type</code> column plus <code>input.&lt;field&gt;</code>
+                                    columns (e.g. <code>input.url</code>). JSON example:
+                                    <code>{ "items": [ { "type": "url", "input": { "url": "https://example.com" } } ] }</code>.
+                                </div>
+                            </div>
+
+                            <!-- 🔢 Count preview + status (polite live region) -->
+                            <div id="bulk-count" class="small text-body-secondary mb-3" aria-live="polite" role="status">
+                                No items detected yet.
+                            </div>
+
+                            <div id="bulk-error" class="alert alert-danger d-none" role="alert"></div>
+                            <div id="bulk-success" class="alert alert-success d-none" role="status"></div>
+
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary" id="bulk-submit">
+                                    <i class="fa-solid fa-file-zipper me-1" aria-hidden="true"></i>
+                                    Generate ZIP
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" id="bulk-clear">
+                                    <i class="fa-solid fa-eraser me-1" aria-hidden="true"></i>
+                                    Clear
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ====================================================================
          📊 QR Types Data (passed to JavaScript)
          ==================================================================== -->
     <script>

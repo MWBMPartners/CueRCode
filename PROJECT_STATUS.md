@@ -29,9 +29,9 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | Stage | Description | Issues | Status |
 | --- | --- | --- | --- |
 | 1 | Project Foundation & Directory Structure | [#1](https://github.com/MWBMPartners/CueRCode/issues/1) | ⬜ Needs live server verification |
-| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ⚠️ Stubs for tblUsers/tblOrganisations (Phase 2); 3 missing QR seed rows added (cycle 6) |
+| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ⚠️ Stubs for tblUsers/tblOrganisations (Phase 2); 3 missing QR seed rows added (cycle 6); deeplink + gs1_product seed rows added (cycle 8) |
 | 3 | Core PHP Framework | [#3](https://github.com/MWBMPartners/CueRCode/issues/3) | ⬜ Needs live server verification |
-| 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 24/24 QR types now in code (cycle 6); JPEG XL missing (host-dependent); needs live-server verification |
+| 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 26/26 QR types now in code (cycle 8); JPEG XL missing (host-dependent); needs live-server verification |
 | 5 | Responsive Web UI | [#5](https://github.com/MWBMPartners/CueRCode/issues/5) | ⚠️ Colourblind mode + cookie-consent banner added in code (cycle 7); no i18n; needs live-server verification (#22) |
 | 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | ⬜ Needs live server verification |
 | 7 | Testing, Documentation & Polish | [#7](https://github.com/MWBMPartners/CueRCode/issues/7) | ⚠️ Branding PNGs; closing PHP tags; no screen reader testing |
@@ -48,7 +48,7 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | [#42](https://github.com/MWBMPartners/CueRCode/issues/42) | Implement colourblind-friendly UI toggle | Medium | 🔄 Addressed in code (cycle 7, 2026-06-29) — Okabe-Ito palettes, navbar dropdown, pre-paint script; needs live-server verification (#22) |
 | [#43](https://github.com/MWBMPartners/CueRCode/issues/43) | Export branding PNGs from SVGs | Low | 🔄 Addressed in code (cycle 7, 2026-06-29) — og-image.png created at /assets/img/branding/og-image.png; needs live-server verification (#22) |
 
-**Deliverables so far:** 29 PHP files, 3 JS files, 1 CSS file (1,301 lines), 25 SVG logo assets, 10 database tables, 21 QR code types, OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
+**Deliverables so far:** 29 PHP files, 3 JS files, 1 CSS file (1,301 lines), 25 SVG logo assets, 10 database tables, 26 QR code types (cycle 8), OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
 
 ---
 
@@ -121,7 +121,7 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | Issue | Task | Status |
 | --- | --- | --- |
 | [#31](https://github.com/MWBMPartners/CueRCode/issues/31) | Admin dashboard: Global Admin control panel | 📋 |
-| [#32](https://github.com/MWBMPartners/CueRCode/issues/32) | Bulk QR code generation | 📋 |
+| [#32](https://github.com/MWBMPartners/CueRCode/issues/32) | Bulk QR code generation | 🔄 Addressed in code (cycle 8, 2026-06-29) — POST /api/v1/bulk-generate + accessible UI panel + ZIP streaming; needs live-server verification (#18) |
 | [#33](https://github.com/MWBMPartners/CueRCode/issues/33) | QR code analytics and scan tracking | 📋 |
 | [#34](https://github.com/MWBMPartners/CueRCode/issues/34) | Internationalisation (i18n) and translation framework | 📋 |
 

@@ -2198,3 +2198,289 @@ function buildPayload_rating(array $inputData): string
 
     return $url;
 }
+
+// ==============================================================================
+// 🔗 buildPayload_deeplink() - App deep-linking payload (FG-007)
+// ==============================================================================
+
+/**
+ * 🔗 Build an app deep-linking payload for QR code encoding
+ *
+ * 🧭 Design choice — why a static QR can only encode a single https link:
+ *   A printed (static) QR code is just a fixed string; it has NO ability to
+ *   branch on the scanning device's OS or on whether an app is installed.
+ *   Encoding a raw custom scheme (e.g. myapp://path) only works for users who
+ *   already have the app, and fails to a "cannot open" error for everyone else.
+ *
+ *   The robust, future-proof approach is therefore to encode an https
+ *   Universal Link (iOS) / App Link (Android). The operating system itself
+ *   performs the routing: if the app that claims that domain is installed it
+ *   opens directly in-app; otherwise the SAME url opens in the browser (the
+ *   web fallback). The QR encodes only that one https link — the OS does the
+ *   "app if installed, else web" decision at scan time.
+ *
+ * The optional app_scheme and fallback_url fields are accepted for
+ * DOCUMENTATION / record-keeping only (so the QR's owner can note the custom
+ * scheme and an explicit web fallback). They are validated when present but
+ * are NOT part of the encoded payload — the encoded payload is always the
+ * single https Universal/App Link.
+ *
+ * @param array $inputData Required: 'url' (the https Universal/App Link).
+ *                         Optional: 'app_scheme' (e.g. 'myapp'), 'fallback_url'
+ *                         (an http(s) web fallback) — both documentation-only.
+ *
+ * @return string The https Universal/App Link to encode
+ *
+ * @throws \InvalidArgumentException If the link is missing, not http(s), or not
+ *         a valid URL; or if a supplied fallback_url is not a valid http(s) URL.
+ *
+ * @see https://developer.apple.com/ios/universal-links/ iOS Universal Links
+ * @see https://developer.android.com/training/app-links Android App Links
+ * @see https://www.php.net/manual/en/filter.filters.validate.php
+ *
+ * @example
+ *   buildPayload_deeplink(['url' => 'https://example.com/app/item/42']);
+ *   // Returns: 'https://example.com/app/item/42'
+ *
+ *   buildPayload_deeplink([
+ *       'url'          => 'example.com/open/thing',
+ *       'app_scheme'   => 'myapp',
+ *       'fallback_url' => 'https://example.com/get-the-app',
+ *   ]);
+ *   // Returns: 'https://example.com/open/thing'  (scheme prepended; app_scheme
+ *   //          and fallback_url documented but not encoded)
+ */
+function buildPayload_deeplink(array $inputData): string
+{
+    // 📌 Extract the primary Universal/App Link (required)
+    if (isset($inputData['url'])) {
+        $deeplinkUrlValue = $inputData['url'];
+    } else {
+        $deeplinkUrlValue = '';
+    }
+    $url = trim($deeplinkUrlValue);
+
+    // ❌ Validate that a link was provided
+    if ($url === '') {
+        throw new \InvalidArgumentException(
+            'A Universal/App Link (https URL) is required for deep link-type QR codes.'
+        );
+    }
+
+    // 🔍 Ensure the link has a scheme; default to https:// when bare so a user
+    //    can type 'example.com/path' and get a proper Universal Link.
+    // @see https://www.php.net/manual/en/function.parse-url.php
+    $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+    if ($parsedScheme === null || $parsedScheme === false) {
+        $url = 'https://' . $url;
+        $parsedScheme = 'https';
+    }
+
+    // ✅ Universal/App Links MUST be http(s) — the whole point is that the OS
+    //    routes an https link to the app (if installed) or the browser (if not).
+    //    A custom-scheme link here would defeat the static-QR fallback design.
+    $scheme = strtolower((string) $parsedScheme);
+    if ($scheme !== 'http' && $scheme !== 'https') {
+        throw new \InvalidArgumentException(
+            'Invalid deep link scheme: "' . $scheme . '". '
+            . 'A Universal/App Link must be an http or https URL so the OS can '
+            . 'route it to the app if installed, else the web.'
+        );
+    }
+
+    // ✅ Validate the overall URL shape with the filter extension.
+    // @see https://www.php.net/manual/en/filter.filters.validate.php
+    if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+        throw new \InvalidArgumentException(
+            'Invalid deep link URL: "' . $url . '".'
+        );
+    }
+
+    // 📝 Optional fallback_url is documentation-only, but if the owner supplies
+    //    one we still validate it as a real http(s) URL so a typo is caught at
+    //    build time. It is intentionally NOT encoded into the payload.
+    if (isset($inputData['fallback_url'])) {
+        $fallbackValue = $inputData['fallback_url'];
+    } else {
+        $fallbackValue = '';
+    }
+    $fallbackUrl = trim($fallbackValue);
+    if ($fallbackUrl !== '') {
+        $fallbackScheme = parse_url($fallbackUrl, PHP_URL_SCHEME);
+        if ($fallbackScheme === null || $fallbackScheme === false) {
+            $fallbackUrl = 'https://' . $fallbackUrl;
+            $fallbackScheme = 'https';
+        }
+        $fallbackScheme = strtolower((string) $fallbackScheme);
+        if ($fallbackScheme !== 'http' && $fallbackScheme !== 'https') {
+            throw new \InvalidArgumentException(
+                'Invalid fallback URL scheme: "' . $fallbackScheme . '". '
+                . 'The web fallback must be an http or https URL.'
+            );
+        }
+        if (filter_var($fallbackUrl, FILTER_VALIDATE_URL) === false) {
+            throw new \InvalidArgumentException(
+                'Invalid fallback URL: "' . $fallbackUrl . '".'
+            );
+        }
+    }
+
+    // 📌 The encoded payload is ALWAYS the single https Universal/App Link.
+    //    app_scheme / fallback_url are documentation-only and never encoded —
+    //    the OS, not the QR string, performs the app-vs-web routing.
+    return $url;
+}
+
+// ==============================================================================
+// 🏷️ buildPayload_gs1_product() - GS1 Digital Link payload (FG-009)
+// ==============================================================================
+
+/**
+ * 🏷️ Build a GS1 Digital Link URI payload for QR code encoding
+ *
+ * Encodes product identity as a GS1 Digital Link — a web URI whose path carries
+ * GS1 Application Identifiers (AIs). A single QR can then resolve to product
+ * info, while remaining a scannable structured product code.
+ *
+ * URI shape (canonical AI order):
+ *   https://<resolver>/01/{GTIN}[/10/{batch}][/21/{serial}][?17={expiry}]
+ *     - AI 01 = GTIN          (Global Trade Item Number, required)
+ *     - AI 10 = batch / lot   (optional, key-qualifier path segment)
+ *     - AI 21 = serial number (optional, key-qualifier path segment)
+ *     - AI 17 = expiry        (optional, YYMMDD, carried as a query parameter)
+ *
+ * The resolver host is configurable (defaults to id.gs1.org, GS1's canonical
+ * resolver). Provide 'resolver' to point at your own GS1-conformant resolver.
+ *
+ * @param array $inputData Required: 'gtin' (8/12/13/14 digits).
+ *                         Optional: 'batch' (AI 10), 'serial' (AI 21),
+ *                         'expiry' (AI 17, YYMMDD), 'resolver' (host).
+ *
+ * @return string The GS1 Digital Link URI
+ *
+ * @throws \InvalidArgumentException If the GTIN is missing/invalid, or expiry
+ *         is not a valid YYMMDD date.
+ *
+ * @see https://www.gs1.org/standards/gs1-digital-link GS1 Digital Link standard
+ * @see https://ref.gs1.org/standards/digital-link/ GS1 Digital Link URI syntax
+ * @see https://www.gs1.org/standards/barcodes/application-identifiers GS1 AIs
+ * @see https://www.php.net/manual/en/function.preg-match.php
+ *
+ * @example
+ *   buildPayload_gs1_product(['gtin' => '09521234543213']);
+ *   // Returns: 'https://id.gs1.org/01/09521234543213'
+ *
+ *   buildPayload_gs1_product([
+ *       'gtin'   => '09521234543213',
+ *       'batch'  => 'LOT42',
+ *       'serial' => 'SN0001',
+ *       'expiry' => '261231',
+ *   ]);
+ *   // Returns: 'https://id.gs1.org/01/09521234543213/10/LOT42/21/SN0001?17=261231'
+ */
+function buildPayload_gs1_product(array $inputData): string
+{
+    // 📌 Extract the GTIN (AI 01, required)
+    if (isset($inputData['gtin'])) {
+        $gtinValue = $inputData['gtin'];
+    } else {
+        $gtinValue = '';
+    }
+    $gtin = trim((string) $gtinValue);
+
+    // ❌ Validate that a GTIN was provided
+    if ($gtin === '') {
+        throw new \InvalidArgumentException(
+            'A GTIN is required for GS1 product-type QR codes.'
+        );
+    }
+
+    // ✅ A GTIN is 8, 12, 13 or 14 numeric digits (GTIN-8/12/13/14).
+    //    Reject anything with non-digits or an unsupported length so we never
+    //    emit a malformed GS1 Digital Link.
+    // @see https://www.gs1.org/standards/id-keys/gtin
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    if (preg_match('/^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/', $gtin) !== 1) {
+        throw new \InvalidArgumentException(
+            'Invalid GTIN: "' . $gtin . '". '
+            . 'A GTIN must be 8, 12, 13 or 14 digits.'
+        );
+    }
+
+    // 📌 Resolve the resolver host (configurable; default id.gs1.org).
+    //    Strip any scheme/path the user pasted so we only keep the host[:port].
+    // @see https://ref.gs1.org/standards/digital-link/
+    if (isset($inputData['resolver'])) {
+        $resolverValue = $inputData['resolver'];
+    } else {
+        $resolverValue = '';
+    }
+    $resolver = trim((string) $resolverValue);
+    if ($resolver === '') {
+        $resolver = 'id.gs1.org';
+    }
+    // 🧹 Drop any leading scheme (https://) and any trailing slash/path.
+    // @see https://www.php.net/manual/en/function.preg-replace.php
+    $resolver = preg_replace('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', '', $resolver);
+    $resolver = rtrim($resolver, '/');
+    // ✂️ Keep only the authority (host[:port]); discard any path the user added.
+    $slashPos = strpos($resolver, '/');
+    if ($slashPos !== false) {
+        $resolver = substr($resolver, 0, $slashPos);
+    }
+    if ($resolver === '') {
+        $resolver = 'id.gs1.org';
+    }
+
+    // 📌 Begin the GS1 Digital Link URI with the primary key (AI 01 / GTIN).
+    $payload = 'https://' . $resolver . '/01/' . rawurlencode($gtin);
+
+    // 📌 AI 10 — batch/lot (optional key qualifier, path segment).
+    if (isset($inputData['batch'])) {
+        $batchValue = $inputData['batch'];
+    } else {
+        $batchValue = '';
+    }
+    $batch = trim((string) $batchValue);
+    if ($batch !== '') {
+        // 🔒 Encode so any AI-significant characters ('/', '?', etc.) cannot
+        //    corrupt the Digital Link path structure.
+        // @see https://www.php.net/manual/en/function.rawurlencode.php
+        $payload .= '/10/' . rawurlencode($batch);
+    }
+
+    // 📌 AI 21 — serial number (optional key qualifier, path segment).
+    if (isset($inputData['serial'])) {
+        $serialValue = $inputData['serial'];
+    } else {
+        $serialValue = '';
+    }
+    $serial = trim((string) $serialValue);
+    if ($serial !== '') {
+        $payload .= '/21/' . rawurlencode($serial);
+    }
+
+    // 📌 AI 17 — expiry date (optional), carried as a query parameter.
+    //    GS1 AI 17 is a 6-digit YYMMDD date.
+    // @see https://www.gs1.org/standards/barcodes/application-identifiers
+    if (isset($inputData['expiry'])) {
+        $expiryValue = $inputData['expiry'];
+    } else {
+        $expiryValue = '';
+    }
+    $expiry = trim((string) $expiryValue);
+    if ($expiry !== '') {
+        // ✅ Validate the YYMMDD shape: 6 digits, MM 01-12, DD 00-31.
+        //    (GS1 permits DD = 00 to mean "end of month", so 00 is allowed.)
+        // @see https://www.php.net/manual/en/function.preg-match.php
+        if (preg_match('/^\d{2}(0[1-9]|1[0-2])(0[0-9]|[12]\d|3[01])$/', $expiry) !== 1) {
+            throw new \InvalidArgumentException(
+                'Invalid expiry date: "' . $expiry . '". '
+                . 'GS1 AI 17 expiry must be in YYMMDD format (e.g. 261231).'
+            );
+        }
+        $payload .= '?17=' . rawurlencode($expiry);
+    }
+
+    return $payload;
+}

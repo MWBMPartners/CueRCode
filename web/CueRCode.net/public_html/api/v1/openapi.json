@@ -342,6 +342,148 @@
                 }
             }
         },
+        "/bulk-generate": {
+            "post": {
+                "tags": ["Generation"],
+                "summary": "Bulk generate QR codes (ZIP)",
+                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request is configurable (`api_bulk_max_items`, default 100); exceeding it returns `413`. Per-item failures do NOT abort the batch — each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.",
+                "operationId": "bulkGenerateQRCodes",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BulkGenerateRequest"
+                            },
+                            "examples": {
+                                "items_array": {
+                                    "summary": "Explicit item list with shared defaults",
+                                    "value": {
+                                        "customization": { "format": "png", "ecc": "H" },
+                                        "items": [
+                                            { "type": "url", "input": { "url": "https://example.com" } },
+                                            { "type": "text", "input": { "text": "Hello" }, "customization": { "format": "svg" } }
+                                        ]
+                                    }
+                                },
+                                "csv_string": {
+                                    "summary": "CSV body (header row + data rows)",
+                                    "value": {
+                                        "csv": "type,input.url,format\nurl,https://a.com,png\nurl,https://b.com,svg"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "ZIP archive of generated QR codes (plus manifest.txt)",
+                        "headers": {
+                            "Content-Disposition": {
+                                "description": "Attachment filename for download",
+                                "schema": {
+                                    "type": "string",
+                                    "example": "attachment; filename=\"cuercode-bulk.zip\""
+                                }
+                            },
+                            "X-Bulk-Succeeded": {
+                                "description": "Number of items generated successfully",
+                                "schema": { "type": "integer" }
+                            },
+                            "X-Bulk-Failed": {
+                                "description": "Number of items that failed (see manifest.txt)",
+                                "schema": { "type": "integer" }
+                            }
+                        },
+                        "content": {
+                            "application/zip": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request (no items/csv, malformed item, bad CSV header)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Too many items (exceeds api_bulk_max_items, default 100) or request body too large",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "415": {
+                        "description": "Unsupported Media Type. A non-empty request body must be sent with Content-Type: application/json (an optional charset parameter is allowed).",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limit exceeded",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Limit": {
+                                "description": "Maximum requests per minute",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Remaining": {
+                                "description": "Remaining requests in the current window",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Reset": {
+                                "description": "Unix epoch time (seconds) at which the rate limit window resets",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "501": {
+                        "description": "Bulk ZIP generation unavailable (server missing the PHP zip extension)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/download/{uuid}": {
             "get": {
                 "tags": ["Download"],
@@ -656,6 +798,49 @@
                         "type": "boolean",
                         "default": false,
                         "description": "Whether the background should be transparent (PNG, GIF, WebP, SVG only)"
+                    }
+                }
+            },
+            "BulkItem": {
+                "type": "object",
+                "required": ["type", "input"],
+                "description": "A single QR code request inside a bulk batch.",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "description": "The QR code type identifier (e.g., 'url', 'text', 'wifi').",
+                        "example": "url"
+                    },
+                    "input": {
+                        "type": "object",
+                        "description": "Type-specific input data for this item.",
+                        "additionalProperties": true,
+                        "example": { "url": "https://example.com" }
+                    },
+                    "customization": {
+                        "allOf": [{ "$ref": "#/components/schemas/Customization" }],
+                        "description": "Per-item customization. Overrides the request-level shared customization key-by-key."
+                    }
+                }
+            },
+            "BulkGenerateRequest": {
+                "type": "object",
+                "description": "A bulk generation request. Provide EITHER an 'items' array OR a 'csv' string. An optional request-level 'customization' object supplies shared defaults that each item's own customization overrides.",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": { "$ref": "#/components/schemas/BulkItem" },
+                        "description": "Explicit list of QR code requests. Mutually exclusive with 'csv'."
+                    },
+                    "csv": {
+                        "type": "string",
+                        "description": "CSV body whose first non-empty line is the header row. The header must contain a 'type' column and at least one input column. Columns named 'input.<field>' (or any non-reserved column) become input fields; reserved columns (format, size, ecc, fg_color, bg_color, marker_color, pattern, logo, logo_size_pct, frame_style, frame_label, frame_color, transparent) fold into that row's customization. Mutually exclusive with 'items'.",
+                        "example": "type,input.url,format\nurl,https://a.com,png\nurl,https://b.com,svg"
+                    },
+                    "customization": {
+                        "allOf": [{ "$ref": "#/components/schemas/Customization" }],
+                        "description": "Shared customization defaults applied to every item (overridden by per-item/per-row customization)."
                     }
                 }
             },

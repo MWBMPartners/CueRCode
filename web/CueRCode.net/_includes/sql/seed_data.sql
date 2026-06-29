@@ -246,7 +246,32 @@ INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescript
 ('rating', 'Review / Rating', 'fa-solid fa-star', 'Link to a review or rating page', 'utility',
  NULL,
  '[{"name":"url","label":"Review / Rating URL","type":"url","required":true,"placeholder":"https://g.page/r/yourbusiness/review","maxlength":2048,"validation":"url","hint":"e.g. a Google review link, Trustpilot page or App Store review URL"}]',
- 24);
+ 24),
+
+-- 🔗 App Deep Link (FG-007)
+-- payloadTemplate is NULL so the dispatcher routes to buildPayload_deeplink().
+-- A static QR cannot branch on the OS / installed-app state, so it encodes a
+-- single https Universal Link (iOS) / App Link (Android): the OS opens the app
+-- if installed, else the web. The field names below MUST match the keys read by
+-- buildPayload_deeplink(): 'url' (the encoded link) plus the documentation-only
+-- 'app_scheme' and 'fallback_url'.
+('deeplink', 'App Deep Link', 'fa-solid fa-arrow-up-right-from-square', 'Open an app via a Universal/App Link (falls back to the web)', 'utility',
+ NULL,
+ '[{"name":"url","label":"Universal / App Link (https)","type":"url","required":true,"placeholder":"https://example.com/app/open/item/42","maxlength":2048,"validation":"url","hint":"A static QR cannot detect the OS — encode an https link your app claims; the OS opens the app if installed, else the web"},{"name":"app_scheme","label":"App Scheme (optional, for your records)","type":"text","required":false,"placeholder":"myapp","maxlength":100,"hint":"Documentation only — the custom scheme your app registers (not encoded into the QR)"},{"name":"fallback_url","label":"Web Fallback URL (optional, for your records)","type":"url","required":false,"placeholder":"https://example.com/get-the-app","maxlength":2048,"validation":"url","hint":"Documentation only — where users without the app should land (not encoded into the QR)"}]',
+ 25),
+
+-- 🏷️ GS1 Product (GS1 Digital Link) (FG-009)
+-- payloadTemplate is NULL so the dispatcher routes to buildPayload_gs1_product(),
+-- which builds a GS1 Digital Link URI:
+--   https://<resolver>/01/{gtin}[/10/{batch}][/21/{serial}][?17={expiry}]
+-- Field names below MUST match the keys read by the builder: 'gtin' (required),
+-- optional 'batch' (AI 10), 'serial' (AI 21), 'expiry' (AI 17, YYMMDD), and
+-- 'resolver' (host, defaults to id.gs1.org).
+-- @see https://www.gs1.org/standards/gs1-digital-link
+('gs1_product', 'GS1 Product (Digital Link)', 'fa-solid fa-barcode', 'Encode a product as a GS1 Digital Link (GTIN, batch, serial, expiry)', 'utility',
+ NULL,
+ '[{"name":"gtin","label":"GTIN","type":"text","required":true,"placeholder":"09521234543213","maxlength":14,"hint":"Global Trade Item Number — 8, 12, 13 or 14 digits (AI 01)"},{"name":"batch","label":"Batch / Lot","type":"text","required":false,"placeholder":"LOT42","maxlength":20,"hint":"AI 10 — batch or lot number (optional)"},{"name":"serial","label":"Serial Number","type":"text","required":false,"placeholder":"SN0001","maxlength":20,"hint":"AI 21 — serial number (optional)"},{"name":"expiry","label":"Expiry (YYMMDD)","type":"text","required":false,"placeholder":"261231","maxlength":6,"hint":"AI 17 — expiry date in YYMMDD format (optional)"},{"name":"resolver","label":"Resolver Host","type":"text","required":false,"placeholder":"id.gs1.org","maxlength":253,"hint":"GS1 Digital Link resolver host (defaults to id.gs1.org)"}]',
+ 26);
 
 -- ==============================================================================
 -- 🖼️ Predefined Logos (tblPredefinedLogos)
@@ -297,7 +322,7 @@ INSERT INTO `tblPredefinedLogos` (`logoName`, `logoLabel`, `logoFileName`, `logo
 -- ==============================================================================
 -- Inserted:
 --   - 52 default settings across 6 groups
---   - 24 QR code type definitions with form field schemas
+--   - 26 QR code type definitions with form field schemas
 --   - 25 predefined logo entries
 --
 -- 📌 The application is now ready for use.

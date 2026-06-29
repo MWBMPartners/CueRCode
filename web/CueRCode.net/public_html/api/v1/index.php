@@ -21,6 +21,7 @@
  * Registered routes:
  *   POST   /api/v1/generate          Generate a full QR code
  *   POST   /api/v1/preview           Generate a preview QR code
+ *   POST   /api/v1/bulk-generate     Generate many QR codes -> ZIP (anonymous)
  *   GET    /api/v1/download/{uuid}   Download a previously generated QR code
  *   GET    /api/v1/types             List available QR code types
  *   GET    /api/v1/formats           List supported output formats
@@ -29,7 +30,7 @@
  * Authentication:
  *   - X-API-Key header: API key authentication for external consumers
  *   - X-CSRF-Token header: Session-based auth for web UI AJAX calls
- *   - Anonymous: Allowed for health, types, and formats endpoints
+ *   - Anonymous: Allowed for health, types, formats, and bulk-generate endpoints
  *
  * @package     CueRCode
  * @subpackage  API
@@ -60,6 +61,7 @@ require_once __DIR__ . '/../../../_includes/bootstrap.php';
 $apiFunctionFiles = [
     'fn_api_auth.php',       // 🔐 Authentication & rate limiting
     'fn_api_generate.php',   // 🎯 Generate & preview handlers
+    'fn_api_bulk.php',       // 📦 Bulk generate handler (ZIP)
     'fn_api_download.php',   // 📥 Download handler
     'fn_api_types.php',      // 📋 Types, formats & health check handlers
 ];
@@ -184,6 +186,18 @@ $routes = [
         'methods'   => ['POST'],
         'handler'   => 'handlePreview',
         'auth'      => true,
+        'rateLimit' => true,
+    ],
+
+    // 📌 POST /api/v1/bulk-generate - Generate many QR codes and stream a ZIP
+    //    Synchronous + anonymous-capable (no auth required, like /types). The
+    //    same body-size cap (413) and JSON Content-Type (415) guards as other
+    //    POST endpoints apply, plus rate limiting. (FG-003 / #32)
+    [
+        'pattern'   => 'bulk-generate',
+        'methods'   => ['POST'],
+        'handler'   => 'handleBulkGenerate',
+        'auth'      => false,
         'rateLimit' => true,
     ],
 
@@ -557,6 +571,12 @@ switch ($handlerFunction) {
 
     case 'handlePreview':
         handlePreview($requestBody);
+        break;
+
+    case 'handleBulkGenerate':
+        // 📦 Bulk handler reads php://input itself (it may be a CSV-bearing
+        //    JSON body) and needs the auth context for activity logging.
+        handleBulkGenerate($auth);
         break;
 
     case 'handleDownload':
