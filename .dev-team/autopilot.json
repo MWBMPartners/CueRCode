@@ -17,12 +17,12 @@
     {"phase": "SECURE",    "mode": "security", "exit": "Phase-0 done; no unresolved Critical/High finding; all Medium triaged; rounds dry", "status": "done"},
     {"phase": "COMPLETE",  "mode": "orchestrator(feature)", "exit": "every High in-scope auto-buildable gap built; Bucket-3 queued with specs", "status": "done"},
     {"phase": "POLISH",    "mode": "iterate",  "exit": "no High UX/perf item; syntax/standards clean; remaining Med correctness cleared", "status": "done"},
-    {"phase": "VERIFY",    "mode": "review",   "exit": "complete review pass: overall PASS @ last_commit", "status": "in-progress"}
+    {"phase": "VERIFY",    "mode": "review",   "exit": "complete review pass: overall PASS @ last_commit", "status": "done"}
   ],
-  "phase_cursor": 5,
-  "state": "RUNNING",
-  "cursor": "VERIFY phase — full independent review pass @ last_commit (400 tests green @ cycle 10; 0 Critical/High; API parity+OpenAPI done; standards/zero-deprecation clean). DISCOVER..POLISH all done. B-057 (deploy.yml sed ' = NULL' -> allow lowercase) logged as minor follow-up.",
-  "next_action": "Cycle 11 = GitHub reconciliation THEN VERIFY. (a) RECONCILE issues (comment+close-with-evidence, code side; live-test stays #18/#22): close #45 API parity, #6 Stage-6 REST API, #39 missing QR types, #41 closing PHP tags, #42 colourblind, #43 branding/og-image, #32 bulk gen; progress-comment #37 (consent banner+legal added; export/erasure tie to accounts), #38 (legal template added, needs counsel review), #40 (JPEG XL host-limitation documented; FG-030), #34 (i18n queued G-012); leave #1-5/#7/#9 as owner milestone calls with a status note. (b) VERIFY: run dev-team-review (remediate=report) over the run branch — independent claim-group verification of the trajectory (correctness fixes, security remediation, API parity, features), the clean-room build/load check (php -l all, suite, install.sql<->code reconcile, openapi valid), and a completeness critic. Any FAILED/DRIFTED verdict -> re-open the matching phase. On a complete PASS @ last_commit set verified_at_commit and terminal. Bucket-3 (G-001..G-010)+i18n(G-012) queued. QUEUED security: F-004 CSP/SRI (live UI), F-006(G-010), F-012, F-013.",
+  "phase_cursor": 6,
+  "state": "DONE",
+  "cursor": "TERMINAL — production-ready for Phase-1 scope. VERIFY overall PASS @ f5cf408 (72 claims re-proven, 0 fail/drift/hollow; integration pass: 400/400 tests, 122/122 php -l, 0 schema mismatches, openapi valid, QR renders in-memory). GitHub reconciliation done (#45/#6/#39/#41/#42/#43/#32 closed; #37/#38/#40/#34/#9 progress-commented). The only commit after the f5cf408 VERIFY is doc-only (VERIFICATION.md/verdict.json/state) — code is unchanged, so verification holds.",
+  "next_action": "DONE. Loop terminal. Residual = owner-gated live-server tests (#13/#17/#18/#22), queued Bucket-3 features (G-001..G-010) + i18n (G-012), queued security F-004 (CSP/SRI, live UI) / F-006 (G-010 per-record salt) / F-012 (bot protection) / F-013 (Argon2id, Phase-2), and the Low/Med residual backlog. Re-fire with 'approve G-00X' to build a queued item; otherwise nothing more for the loop to do safely.",
   "queue": {
     "backlog": "PROJECT.md#Backlog",
     "feature_gaps": "FEATURES.md",
@@ -48,14 +48,14 @@
   "blocked": {"is": false, "reason": null, "since": null},
   "cycle": 11,
   "cap": 45,
-  "verify": {"commit": null, "claim_groups": [], "integration": "pending", "completeness_critic": "pending"},
-  "verified_at_commit": null,
+  "verify": {"commit": "f5cf408", "overall": "PASS", "claim_groups": ["correctness+schema PASS", "security PASS", "features PASS", "api+polish PASS", "integration PASS"], "integration": "pass", "completeness_critic": "done (only honest nuances; no defects)", "owner_gated": ["#13", "#17", "#18", "#22"], "verification_doc": "VERIFICATION.md"},
+  "verified_at_commit": "f5cf408",
   "lock": {"holder": null, "ts": null, "stale_after_min": 90},
   "branch": "autopilot/2026-06-28",
-  "last_commit": "860b6f0",
+  "last_commit": "f5cf408",
   "trajectory_ref": "PROJECT.md#Trajectory-ledger",
   "github_policy": "comment + close-with-evidence only; no destructive ops",
   "hands_off": ["git push", "deploy", "live-server testing", "git config/remote edits", "_auth_keys secrets (never commit)"],
-  "terminal": false,
+  "terminal": true,
   "updated": "2026-06-28T00:00:00Z"
 }

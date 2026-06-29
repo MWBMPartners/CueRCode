@@ -1,0 +1,64 @@
+{
+  "overall": "PASS",
+  "integration": "pass",
+  "verified_at_commit": "f5cf408",
+  "verified_branch": "autopilot/2026-06-28",
+  "verified_on": "2026-06-29",
+  "counts": {
+    "pass": 5,
+    "fail": 0,
+    "drifted": 0,
+    "hollow": 0,
+    "unverifiable_local": 4
+  },
+  "group_verdicts": {
+    "group_1_correctness_schema": "PASS",
+    "group_2_security": "PASS",
+    "group_3_features": "PASS",
+    "group_4_api_openapi_polish": "PASS",
+    "group_5_clean_room_integration": "PASS"
+  },
+  "integration_gates": {
+    "php_lint_web": "115/115 clean",
+    "php_lint_web_plus_tests": "122/122 clean",
+    "test_suite": "400/400 passed, 0 failed",
+    "deprecation_sweep_e_all": "clean",
+    "schema_reconciliation": "0 unknown columns, 0 mismatches",
+    "openapi_valid_json": true,
+    "vendored_libs_present": true,
+    "qr_render_in_memory_no_db": "SVG 19906 bytes + PNG 859 bytes valid"
+  },
+  "failed_or_drifted": [],
+  "owner_gated": [
+    { "id": "#13", "type": "UNVERIFIABLE-LOCAL", "reason": "Live-server smoke test (installer / QR types / formats / API / a11y) — owner-run on Dreamhost" },
+    { "id": "#17", "type": "UNVERIFIABLE-LOCAL", "reason": "Live-server smoke test — owner-run on Dreamhost" },
+    { "id": "#18", "type": "UNVERIFIABLE-LOCAL", "reason": "Live-server smoke test — owner-run on Dreamhost" },
+    { "id": "#22", "type": "UNVERIFIABLE-LOCAL", "reason": "Live-server smoke test incl. og-image (B-037) + colourblind toggle (B-038) browser verification — owner-run on Dreamhost" }
+  ],
+  "queued_security": [
+    { "id": "F-004", "severity": "medium", "bucket": "queue", "reason": "CSP unsafe-inline + SRI hashes; needs live-UI verification (code still carries unsafe-inline, no integrity=)" },
+    { "id": "F-006", "severity": "medium", "bucket": "pause", "reason": "Global encryption salt -> per-record salt; Phase-2 schema change, owner decision" },
+    { "id": "F-012", "severity": "medium", "bucket": "queue", "reason": "Bot protection (Turnstile/reCAPTCHA/hCaptcha); owner product/UX decision; no code present" },
+    { "id": "F-013", "severity": "low", "bucket": "queue", "reason": "Argon2id user-password hashing; Phase-2 auth prerequisite" }
+  ],
+  "queued_features_bucket3": [
+    "FG-001 dynamic QR", "FG-002 scan analytics", "FG-004 password protection",
+    "FG-005 expiry/scheduling", "FG-006 A/B variants", "FG-008 templates",
+    "FG-010 anomaly detection", "FG-011 Go2My.Link", "FG-012 lead-capture",
+    "FG-013 webhooks", "FG-014 white-label", "FG-015 RBAC",
+    "FG-016 barcodes", "FG-017 gallery", "FG-019 user accounts"
+  ],
+  "completeness_gaps": [
+    "Live-server/DB-backed flows verified at code/schema level only (rate-limit enforcement, persistence, API-key round-trips, installer execution) — owner-gated #13/#17/#18/#22.",
+    "chillerlan vendored without Composer; loads via custom _libraries/autoload.php, not vendor/autoload.php (Group 5 phrasing imprecise; claim still true).",
+    "privacy.php/terms.php live at public_html/, not _includes/ (Group 3 path drift; lint + 0-table + counsel-note claims hold).",
+    "estimateModuleCount takes mapEccLevel() int, not raw EccLevel:: constants (which are non-monotonic 1/0/3/2); monotonicity true as test exercises it.",
+    "Group 2 summary 'four Medium remaining' vs SECURITY.md total '5 Medium, 14 Low' — fixed-vs-total counting nuance, open set is consistently F-004/F-006/F-012/F-013.",
+    "F-004/F-012 are PASS only as 'documented OPEN/QUEUED' — not remediated in code.",
+    "PROJECT.md numeric trajectory/cycle scores not independently recomputed; only the underlying code/test/schema claims re-proven."
+  ],
+  "files_written": [
+    "VERIFICATION.md",
+    "verdict.json"
+  ]
+}
