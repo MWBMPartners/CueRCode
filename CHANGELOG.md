@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Security: Headers/CORS/Upload/Encoding Hardening (2026-06-29)
+
+- **CORS allowlist enforced** (F-001): `Access-Control-Allow-Origin` now resolves against an explicit allowlist from `tblSettings`; wildcard `*` default removed; `.htaccess` hardcode replaced with allowlist-driven value.
+- **HSTS and HTTPS redirect enabled** (F-002): `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload` wired in prod block; 301 HTTP→HTTPS redirect activated; local-dev comment preserved.
+- **Secure-cookie `.htaccess` conflict resolved** (F-003): `php_value session.cookie_secure 0` removed from `.htaccess`; bootstrap HTTPS detection is now the sole authority for the secure-cookie flag.
+- **Upload size/dimension guards added** (F-005): 8 MB decoded-byte cap added in `saveBase64LogoToTemp`; pixel-dimension guard (≤ 8000×8000) added via `getimagesize()` before GD load; same guards applied to `validateImageUpload()`.
+- **API body-size cap and per-field length limits** (F-007): router-level `Content-Length` check added before `json_decode`; per-field length limits enforced in `handleGenerate()` (e.g. url ≤ 2048, vCard fields ≤ 500).
+- **Error-log SQL/path masking** (F-008): masking helper added; `error_log()` fallback redacts SQL text and file paths before writing; technical detail split to DB-only log channel.
+- **Content-Type 415 gate** (F-009): POST requests with non-empty body now require `Content-Type: application/json` (charset suffix allowed); 415 returned otherwise, before `json_decode`.
+- **Installer standalone CSRF documented** (F-010): clear comment added to `install/index.php` explaining acceptability of the one-shot standalone CSRF in a pre-bootstrap context.
+- **X-RateLimit-* headers surfaced** (F-011): `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` now emitted on all API responses using data from `checkRateLimit()`.
+- **Logo path containment enforced** (F-017): `getLogoPath()` Case 3 now passes the request-supplied path through `isPathWithinAllowedBase()` constrained to `realpath`-under-`CUERCODE_UPLOADS_DIR/logos`; any path resolving outside is rejected.
+- **notify() DOM XSS sink closed** (F-018): `message` now wrapped in `CueRCode.escapeHtml()` inside `notify()` in `cuercode-common.js`; sink closed unconditionally.
+- **Session ID output escaping** (F-019): `htmlspecialchars($sessionId, ENT_QUOTES, 'UTF-8')` applied in debug-panel footer; last-8-chars masking added for baseline consistency.
+- **Installer HTTP deny and robots.txt lockdown** (F-020): `Require all denied` `.htaccess` added to `public_html/install/`; `robots.txt` `Disallow:/install/` entry replaced with a non-advertising alternative.
+
 ### Fixed - Security: Schema↔Code Reconciliation (2026-06-29)
 
 - **Rate-limiting restored** (F-014): `recordAPIRequest()` INSERT and SELECT statements in `fn_api_auth.php` aligned to canonical `tblAPIRateLog` schema columns (`requestIP`, `endpoint`, `requestMethod`); per-key and per-IP rate-limiting now functional end-to-end.

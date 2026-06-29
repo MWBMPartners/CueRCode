@@ -181,12 +181,18 @@ CueRCode.notify = function (message, type, duration) {
     } else {
         durationAttr = ' data-bs-autohide="false"';
     }
+    /* 🛡️ HTML-escape the message before building the toast markup so any
+       HTML/script characters in the text are rendered as literal text
+       rather than parsed into the DOM (closes the latent DOM-XSS sink
+       documented in SECURITY.md F-018). escapeHtml() returns '' for
+       non-string input, preserving the existing behaviour for plain text. */
+    var safeMessage = CueRCode.escapeHtml(String(message));
     var toastHtml =
         '<div id="' + toastId + '" class="toast align-items-center text-bg-' + type + ' border-0" '
         + roleAttr + ' aria-atomic="true"'
         + durationAttr + '>'
         + '<div class="d-flex">'
-        + '<div class="toast-body"><i class="' + icon + ' me-2"></i>' + message + '</div>'
+        + '<div class="toast-body"><i class="' + icon + ' me-2"></i>' + safeMessage + '</div>'
         + '<button type="button" class="btn-close btn-close-white me-2 m-auto" '
         + 'data-bs-dismiss="toast" aria-label="Close"></button>'
         + '</div></div>';

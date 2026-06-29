@@ -84,8 +84,36 @@ $credsAvailable = file_exists($siteCredsPath) || file_exists($serverCredsPath);
 // ==============================================================================
 // 🛡️ CSRF Protection for Installer
 // ==============================================================================
-// Generate a simple CSRF token for the installer form. This uses PHP sessions
-// since the bootstrap/fn_csrf.php may not be available during installation.
+// 📌 DESIGN NOTE (F-010 — intentional, do NOT "consolidate" into fn_csrf):
+//
+// The installer deliberately uses its OWN standalone, one-shot CSRF token
+// rather than the application-wide fn_csrf helper. This is a conscious choice,
+// not an oversight or inconsistency — please leave it as-is:
+//
+//   1. PRE-BOOTSTRAP CONTEXT. The installer runs BEFORE the database schema
+//      exists and before the normal application bootstrap (bootstrap.php /
+//      fn_csrf.php) is guaranteed to be loadable. It must stand entirely on
+//      its own with zero dependency on app internals it is about to create.
+//      Routing through fn_csrf would couple a chicken-and-egg first-run page
+//      to a stack that may not yet be wired up.
+//
+//   2. SINGLE-USE / ONE-SHOT. The token is regenerated immediately after a
+//      successful validation (see below), so it cannot be replayed. After a
+//      successful install the lock file (.installed.lock) hard-disables the
+//      whole page, so the installer's CSRF surface exists only for the brief
+//      one-time setup window.
+//
+//   3. CRYPTOGRAPHICALLY SOUND. The token is bin2hex(random_bytes(32)) (256
+//      bits of CSPRNG entropy) and verified with hash_equals() (timing-safe
+//      comparison) — the same primitives fn_csrf uses. Security posture is
+//      equivalent; only the plumbing is local.
+//
+// Per SECURITY.md F-010 this is rated Low and accepted as sound. This block
+// documents the rationale so future audits do not re-flag the two-implementation
+// pattern as an inconsistency.
+//
+// Uses PHP sessions directly since the bootstrap/fn_csrf.php may not be
+// available during installation (see point 1 above).
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -113,6 +141,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
     }
 
     // 🔄 Regenerate CSRF token after validation to prevent reuse
+    // (this is the "one-shot / single-use" property described in the design
+    //  note above — F-010): each accepted token is consumed and replaced, so
+    //  it can never be replayed.
     $_SESSION['install_csrf_token'] = bin2hex(random_bytes(32));
 
     $installRequested = true;

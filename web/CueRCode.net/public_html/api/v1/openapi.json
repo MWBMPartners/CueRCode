@@ -2,7 +2,7 @@
     "openapi": "3.0.3",
     "info": {
         "title": "CueRCode API",
-        "description": "REST API for generating, customising, and downloading QR codes. Supports multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours, patterns, logos, and frames.\n\n## Authentication\n\nThe API supports two authentication methods:\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Obtain an API key from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the CSRF token in the `X-CSRF-Token` header.\n\nPublic endpoints (`/types`, `/formats`, `/health`) do not require authentication.\n\n## Rate Limiting\n\nAll endpoints (except `/health`) are rate limited. Rate limit headers are included in responses:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `Retry-After` - Seconds to wait before retrying (when rate limited)\n\n## Response Format\n\nBy default, responses are in JSON format. To receive XML responses, either:\n- Set the `Accept` header to `application/xml`\n- Add `?format=xml` to the query string",
+        "description": "REST API for generating, customising, and downloading QR codes. Supports multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours, patterns, logos, and frames.\n\n## Authentication\n\nThe API supports two authentication methods:\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Obtain an API key from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the CSRF token in the `X-CSRF-Token` header.\n\nPublic endpoints (`/types`, `/formats`, `/health`) do not require authentication.\n\n## Rate Limiting\n\nAll endpoints (except `/health`) are rate limited. Rate limit headers are included in responses:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (when rate limited)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`.\n\n## Response Format\n\nBy default, responses are in JSON format. To receive XML responses, either:\n- Set the `Accept` header to `application/xml`\n- Add `?format=xml` to the query string",
         "version": "1.0.0",
         "contact": {
             "name": "CueRCode Support",
@@ -138,6 +138,26 @@
                             }
                         }
                     },
+                    "413": {
+                        "description": "Request body too large (exceeds the maximum accepted size, default 256 KiB)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "415": {
+                        "description": "Unsupported Media Type. A non-empty request body must be sent with Content-Type: application/json (an optional charset parameter is allowed).",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
                     "422": {
                         "description": "QR code generation failed (e.g., invalid payload data)",
                         "content": {
@@ -165,6 +185,12 @@
                             },
                             "X-RateLimit-Remaining": {
                                 "description": "Remaining requests in the current window",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Reset": {
+                                "description": "Unix epoch time (seconds) at which the rate limit window resets",
                                 "schema": {
                                     "type": "integer"
                                 }
@@ -247,6 +273,26 @@
                             }
                         }
                     },
+                    "413": {
+                        "description": "Request body too large (exceeds the maximum accepted size, default 256 KiB)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "415": {
+                        "description": "Unsupported Media Type. A non-empty request body must be sent with Content-Type: application/json (an optional charset parameter is allowed).",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
                     "422": {
                         "description": "Preview generation failed",
                         "content": {
@@ -259,6 +305,32 @@
                     },
                     "429": {
                         "description": "Rate limit exceeded",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Limit": {
+                                "description": "Maximum requests per minute",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Remaining": {
+                                "description": "Remaining requests in the current window",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Reset": {
+                                "description": "Unix epoch time (seconds) at which the rate limit window resets",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
                         "content": {
                             "application/json": {
                                 "schema": {

@@ -252,7 +252,16 @@ if (function_exists('isDebugMode')) {
                     <dd class="col-sm-9"><code><?php
                     $sessionId = session_id();
                     if ($sessionId) {
-                        echo $sessionId;
+                        // 🛡️ Mask all but the last 8 characters so the full
+                        //    session token is never rendered, then HTML-escape
+                        //    the result before output (SECURITY.md F-019).
+                        if (strlen($sessionId) > 8) {
+                            $maskedSessionId = str_repeat('•', strlen($sessionId) - 8)
+                                . substr($sessionId, -8);
+                        } else {
+                            $maskedSessionId = $sessionId;
+                        }
+                        echo htmlspecialchars($maskedSessionId, ENT_QUOTES, 'UTF-8');
                     } else {
                         echo 'N/A';
                     }

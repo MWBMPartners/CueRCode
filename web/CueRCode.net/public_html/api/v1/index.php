@@ -84,14 +84,15 @@ foreach ($apiFunctionFiles as $apiFile) {
 // ==============================================================================
 
 if (!headers_sent()) {
-    // 📌 Allow configured origins (default: all origins)
-    if (function_exists('getConfig')) {
-        $corsOrigin = getConfig('api_cors_allowed_origins', '*');
-    } else {
-        $corsOrigin = '*';
+    // 📌 Allow only allowlisted origins (🔐 F-001 - no wildcard default).
+    // emitCorsHeaders() is defined in fn_response.php (loaded via bootstrap)
+    // and reflects only an exact-match allowed Origin, adding Vary: Origin.
+    // Same-origin web UI requests are unaffected (no cross-origin ACAO needed).
+    // @see fn_response.php - emitCorsHeaders()
+    if (function_exists('emitCorsHeaders')) {
+        emitCorsHeaders();
     }
 
-    header('Access-Control-Allow-Origin: ' . $corsOrigin);
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, X-API-Key, X-CSRF-Token, Accept');
     header('Access-Control-Max-Age: 86400');
@@ -360,13 +361,25 @@ if ($matchedRoute['rateLimit'] === true) {
     if (function_exists('checkRateLimit')) {
         $rateCheck = checkRateLimit($auth['apiKeyId'], $clientIP, $auth['rateLimits']);
 
+        // 🔐 F-011: compute the reset time (Unix epoch seconds) at which the
+        // limited window frees up. retryAfter is seconds-from-now; 0 means the
+        // window is not currently blocking, in which case the next minute
+        // window boundary is a sensible reset hint.
+        if (isset($rateCheck['retryAfter']) && (int) $rateCheck['retryAfter'] > 0) {
+            $rateLimitReset = time() + (int) $rateCheck['retryAfter'];
+        } else {
+            $rateLimitReset = time() + 60;
+        }
+
         if (!$rateCheck['allowed']) {
             // 📌 Set rate limit headers per RFC conventions
             // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
             if (!headers_sent()) {
-                header('Retry-After: ' . $rateCheck['retryAfter']);
-                header('X-RateLimit-Limit: ' . $rateCheck['limitPerMin']);
-                header('X-RateLimit-Remaining: ' . $rateCheck['remainingMin']);
+                header('Retry-After: ' . (int) $rateCheck['retryAfter']);
+                header('X-RateLimit-Limit: ' . (int) $rateCheck['limitPerMin']);
+                header('X-RateLimit-Remaining: ' . (int) $rateCheck['remainingMin']);
+                // 🔐 F-011: surface when the limit resets so clients can back off.
+                header('X-RateLimit-Reset: ' . $rateLimitReset);
             }
 
             errorResponse(
@@ -376,10 +389,11 @@ if ($matchedRoute['rateLimit'] === true) {
             );
         }
 
-        // 📌 Set rate limit headers for successful requests
+        // 📌 Set rate limit headers for successful requests (🔐 F-011)
         if (!headers_sent()) {
-            header('X-RateLimit-Limit: ' . $rateCheck['limitPerMin']);
-            header('X-RateLimit-Remaining: ' . $rateCheck['remainingMin']);
+            header('X-RateLimit-Limit: ' . (int) $rateCheck['limitPerMin']);
+            header('X-RateLimit-Remaining: ' . (int) $rateCheck['remainingMin']);
+            header('X-RateLimit-Reset: ' . $rateLimitReset);
         }
     }
 
@@ -421,15 +435,82 @@ if (!function_exists($handlerFunction)) {
     );
 }
 
-// 📌 Parse JSON request body for POST requests
+// 📌 Parse JSON request body for body-carrying methods (POST/PUT/PATCH).
 // @see https://www.php.net/manual/en/function.json-decode.php
 // @see https://www.php.net/manual/en/wrappers.php.php#wrappers.php.input
 $requestBody = [];
 
-if ($httpMethod === 'POST') {
+// 🔐 F-007: maximum accepted request body size (bytes). Bodies larger than
+// this are rejected with 413 BEFORE we read/decode them, so a hostile client
+// cannot exhaust memory by streaming a huge JSON document into json_decode().
+// Configurable via the 'api_max_request_body_bytes' setting; default 256 KiB.
+if (function_exists('getConfig')) {
+    $maxBodyBytes = (int) getConfig('api_max_request_body_bytes', 262144);
+} else {
+    $maxBodyBytes = 262144;
+}
+// 📌 Guard against a misconfigured non-positive limit (fall back to default).
+if ($maxBodyBytes <= 0) {
+    $maxBodyBytes = 262144;
+}
+
+// 📌 Methods that may legitimately carry a request body in this API.
+$bodyMethods = ['POST', 'PUT', 'PATCH'];
+
+if (in_array($httpMethod, $bodyMethods, true)) {
     $rawInput = file_get_contents('php://input');
 
-    if ($rawInput !== false && $rawInput !== '') {
+    if ($rawInput === false) {
+        $rawInput = '';
+    }
+
+    if ($rawInput !== '') {
+        // 🔐 F-007: enforce the body-size cap before any further processing.
+        // Prefer the advertised Content-Length when present, but always fall
+        // back to the actual byte length so a missing/lying header cannot
+        // bypass the cap.
+        if (isset($_SERVER['CONTENT_LENGTH']) && (int) $_SERVER['CONTENT_LENGTH'] > $maxBodyBytes) {
+            errorResponse(
+                'Request body too large. Maximum allowed size is ' . $maxBodyBytes . ' bytes.',
+                413,
+                'PAYLOAD_TOO_LARGE'
+            );
+        }
+
+        if (strlen($rawInput) > $maxBodyBytes) {
+            errorResponse(
+                'Request body too large. Maximum allowed size is ' . $maxBodyBytes . ' bytes.',
+                413,
+                'PAYLOAD_TOO_LARGE'
+            );
+        }
+
+        // 🔐 F-009: require a JSON Content-Type for non-empty request bodies.
+        // We accept 'application/json' optionally followed by parameters
+        // (e.g. '; charset=utf-8'). Anything else is rejected with 415 BEFORE
+        // we attempt to json_decode() the body.
+        // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/415
+        if (isset($_SERVER['CONTENT_TYPE'])) {
+            $contentType = $_SERVER['CONTENT_TYPE'];
+        } else {
+            $contentType = '';
+        }
+
+        // 📌 Normalise: trim and lowercase the media type for comparison.
+        $contentTypeNormalised = strtolower(trim($contentType));
+
+        $isJsonContentType = ($contentTypeNormalised === 'application/json')
+            || (strncmp($contentTypeNormalised, 'application/json;', 17) === 0);
+
+        if (!$isJsonContentType) {
+            errorResponse(
+                'Unsupported Media Type. Request body must be sent as '
+                . 'Content-Type: application/json.',
+                415,
+                'UNSUPPORTED_MEDIA_TYPE'
+            );
+        }
+
         $requestBody = json_decode($rawInput, true);
 
         // ❌ Invalid JSON body

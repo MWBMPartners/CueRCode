@@ -41,6 +41,32 @@ if (basename($scriptFilenameValue) === basename(__FILE__)) {
 }
 
 // ==============================================================================
+// 🛡️ Resource limits for logo decode/processing (F-005)
+// ==============================================================================
+// Caps applied BEFORE any heavy image work (base64 decode -> disk -> GD) to
+// prevent decompression / pixel "bombs": a small upload that decodes to a huge
+// byte blob, or a tiny file that declares enormous pixel dimensions and would
+// blow up memory when GD allocates the canvas. These are conservative, defensive
+// caps that comfortably accommodate any real brand logo. Each is overridable via
+// a define() set earlier (e.g. in bootstrap/config) so the owner can tune them
+// without editing this file. Values follow this workstream's brief (2 MB decoded,
+// 4096×4096 px); the SECURITY register's looser suggestion (8 MB / 8000²) can be
+// adopted by defining the constants below.
+// @see https://www.php.net/manual/en/function.getimagesize.php
+if (!defined('CUERCODE_LOGO_MAX_DECODED_BYTES')) {
+    // 📏 Max decoded image size in bytes (2 MB).
+    define('CUERCODE_LOGO_MAX_DECODED_BYTES', 2 * 1024 * 1024);
+}
+if (!defined('CUERCODE_LOGO_MAX_WIDTH')) {
+    // 📐 Max image width in pixels.
+    define('CUERCODE_LOGO_MAX_WIDTH', 4096);
+}
+if (!defined('CUERCODE_LOGO_MAX_HEIGHT')) {
+    // 📐 Max image height in pixels.
+    define('CUERCODE_LOGO_MAX_HEIGHT', 4096);
+}
+
+// ==============================================================================
 // 🖼️ overlayLogoOnRaster() - Overlay logo on raster QR code image
 // ==============================================================================
 
@@ -496,25 +522,91 @@ function getLogoPath(mixed $logoInput): ?string
     }
 
     // ==================================================================
-    // 📁 Case 3: File path - validate existence
+    // 📁 Case 3: File path - validate existence WITH base-directory containment
+    //
+    // 🔒 SECURITY (F-017): the 'logo' value here is REQUEST-supplied
+    //    (customization.logo flows straight from the API/form into this
+    //    function — see buildCustomizationFromRequest()). A bare realpath()
+    //    with no base check would happily resolve an attacker-controlled
+    //    absolute or traversal path (e.g. '/etc/passwd', '../../config.php')
+    //    and hand it to the GD/SVG overlay, leaking file contents (bounded to
+    //    image-parseable files by GD, but still a least-privilege defect).
+    //
+    //    Containment: the resolved real path MUST live inside the allowed
+    //    uploads/logos directory. We mirror the traversal guard used by the
+    //    download handler (fn_api_download.php): realpath() the candidate,
+    //    realpath() the base, and reject anything that does not begin with
+    //    "<base>/". The system temp dir is ALSO allowed so that base64 logo
+    //    temp files (written by saveBase64LogoToTemp() under sys_get_temp_dir())
+    //    remain usable if their path is ever round-tripped through Case 3.
     // @see https://www.php.net/manual/en/function.realpath.php
     // @see https://www.php.net/manual/en/function.file-exists.php
+    // @see fn_api_download.php - identical realpath-under-base containment guard
     // ==================================================================
     if (is_string($logoInput) && strlen($logoInput) > 0) {
-        // 📌 Resolve the real path to prevent directory traversal attacks
-        // @see https://www.php.net/manual/en/function.realpath.php
-        $realPath = realpath($logoInput);
+        // 📌 Build the set of allowed base directories the logo MUST resolve
+        //    under. Each entry is realpath()-resolved so symlinks in the base
+        //    itself are normalised before comparison.
+        $allowedBases = [];
 
-        if ($realPath !== false && file_exists($realPath) && is_file($realPath)) {
-            return $realPath;
+        // 🗂️ Primary allowed base: the uploads/logos directory.
+        if (defined('CUERCODE_UPLOADS_DIR')) {
+            $logosBase = realpath(CUERCODE_UPLOADS_DIR . 'logos');
+            if ($logosBase !== false) {
+                $allowedBases[] = $logosBase;
+            }
         }
 
-        // 📌 Try relative to uploads directory
+        // 🌡️ Secondary allowed base: the system temp dir (base64 temp logos).
+        //    saveBase64LogoToTemp() writes decoded uploads here; allowing it
+        //    keeps that legitimate path working without widening exposure to
+        //    arbitrary server locations.
+        $tempBase = realpath(sys_get_temp_dir());
+        if ($tempBase !== false) {
+            $allowedBases[] = $tempBase;
+        }
+
+        // 📌 Candidate 1: the raw input, resolved as-is. (An absolute path or a
+        //    path relative to CWD; only accepted if it lands inside a base.)
+        // 📌 Candidate 2: the input resolved relative to uploads/logos, which
+        //    is how predefined logo FILENAMES (e.g. 'brand-mark.png') resolve.
+        $candidates = [];
+
+        $rawReal = realpath($logoInput);
+        if ($rawReal !== false) {
+            $candidates[] = $rawReal;
+        }
+
         if (defined('CUERCODE_UPLOADS_DIR')) {
-            $uploadsPath = realpath(CUERCODE_UPLOADS_DIR . 'logos' . DIRECTORY_SEPARATOR . $logoInput);
-            if ($uploadsPath !== false && file_exists($uploadsPath) && is_file($uploadsPath)) {
-                return $uploadsPath;
+            $uploadsReal = realpath(
+                CUERCODE_UPLOADS_DIR . 'logos' . DIRECTORY_SEPARATOR . $logoInput
+            );
+            if ($uploadsReal !== false) {
+                $candidates[] = $uploadsReal;
             }
+        }
+
+        // 🔒 Accept the FIRST candidate that (a) is a real existing file and
+        //    (b) is contained within one of the allowed base directories.
+        foreach ($candidates as $candidatePath) {
+            if (!file_exists($candidatePath) || !is_file($candidatePath)) {
+                continue;
+            }
+
+            if (isPathWithinAllowedBase($candidatePath, $allowedBases)) {
+                return $candidatePath;
+            }
+        }
+
+        // ❌ A non-empty path was supplied but resolved OUTSIDE every allowed
+        //    base (or did not exist). Treat this as a blocked traversal /
+        //    containment failure and fall through to the null return + log.
+        if (function_exists('logError')) {
+            logError(
+                'error',
+                'Logo file-path containment check failed (F-017 guard)',
+                'Input: ' . mb_substr($logoInput, 0, 200)
+            );
         }
     }
 
@@ -533,6 +625,51 @@ function getLogoPath(mixed $logoInput): ?string
     }
 
     return null;
+}
+
+// ==============================================================================
+// 🔒 isPathWithinAllowedBase() - Base-directory containment check (F-017)
+// ==============================================================================
+
+/**
+ * 🔒 Determine whether an ALREADY-RESOLVED real path sits inside one of the
+ *    allowed base directories.
+ *
+ * This is the containment primitive behind the F-017 logo-path guard. It does
+ * NOT resolve the candidate itself — callers must pass a realpath()-resolved,
+ * existing path (so symlinks/.. are already normalised). Each base is compared
+ * with a trailing directory separator appended, so that a sibling directory
+ * sharing a name PREFIX (e.g. '/uploads/logos-evil' vs base '/uploads/logos')
+ * cannot satisfy the check. An exact match of the base directory itself is not
+ * accepted (we only allow files strictly *under* a base).
+ *
+ * @param string   $resolvedPath  A realpath()-resolved, existing file path.
+ * @param string[] $allowedBases  realpath()-resolved base directories.
+ *
+ * @return bool True if $resolvedPath is contained within any allowed base.
+ *
+ * @see https://www.php.net/manual/en/function.str-starts-with.php
+ * @see fn_api_download.php - the original strpos()-based traversal guard
+ */
+function isPathWithinAllowedBase(string $resolvedPath, array $allowedBases): bool
+{
+    foreach ($allowedBases as $base) {
+        // 📌 Skip empty/false bases (a base whose realpath() failed).
+        if (!is_string($base) || $base === '') {
+            continue;
+        }
+
+        // 📌 Anchor the comparison to "<base>/" so prefix-collision siblings
+        //    are rejected and only true descendants match.
+        // @see https://www.php.net/manual/en/function.str-starts-with.php
+        $prefix = rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+
+        if (str_starts_with($resolvedPath, $prefix)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // ==============================================================================
@@ -672,6 +809,22 @@ function saveBase64LogoToTemp(string $dataUri): ?string
         return null;
     }
 
+    // 🛡️ F-005: enforce the decoded-byte cap BEFORE touching the disk or GD.
+    //    A small base64 payload can decode to a large blob; rejecting here
+    //    (in-memory, pre-write) avoids spending I/O on an over-size logo.
+    // @see CUERCODE_LOGO_MAX_DECODED_BYTES (defined at the top of this file)
+    if (strlen($imageData) > CUERCODE_LOGO_MAX_DECODED_BYTES) {
+        if (function_exists('logError')) {
+            logError(
+                'warning',
+                'Base64 logo rejected: decoded size exceeds limit (F-005)',
+                'Decoded bytes: ' . strlen($imageData)
+                . ' | Limit: ' . CUERCODE_LOGO_MAX_DECODED_BYTES
+            );
+        }
+        return null;
+    }
+
     // 📌 Create a temporary file with the appropriate extension
     // @see https://www.php.net/manual/en/function.tempnam.php
     // @see https://www.php.net/manual/en/function.sys-get-temp-dir.php
@@ -701,6 +854,54 @@ function saveBase64LogoToTemp(string $dataUri): ?string
             logError('error', 'Failed to write logo data to temporary file', 'Path: ' . $tempFileWithExt);
         }
         return null;
+    }
+
+    // 🛡️ F-005: enforce the pixel-dimension cap BEFORE the image is handed to
+    //    GD (loadLogoImage / overlayLogoOnRaster). getimagesize() reads only the
+    //    header to learn declared width/height, so a tiny file claiming enormous
+    //    dimensions (a "pixel bomb") is caught here without GD ever allocating a
+    //    multi-gigabyte canvas. SVG is XML-based and not measurable by
+    //    getimagesize() (it returns false), so the pixel check is skipped for
+    //    SVG — its size is already bounded by the decoded-byte cap above.
+    // @see https://www.php.net/manual/en/function.getimagesize.php
+    // @see CUERCODE_LOGO_MAX_WIDTH / CUERCODE_LOGO_MAX_HEIGHT (top of this file)
+    if ($extension !== 'svg') {
+        $dimensions = @getimagesize($tempFileWithExt);
+
+        if ($dimensions === false) {
+            // ⚠️ Not a parseable raster image (corrupt or spoofed). Reject and
+            //    clean up rather than let GD attempt to load garbage.
+            @unlink($tempFileWithExt);
+
+            if (function_exists('logError')) {
+                logError(
+                    'warning',
+                    'Base64 logo rejected: not a valid image (getimagesize failed) (F-005)',
+                    'Path: ' . $tempFileWithExt
+                );
+            }
+            return null;
+        }
+
+        $logoWidth  = (int) $dimensions[0];
+        $logoHeight = (int) $dimensions[1];
+
+        if ($logoWidth > CUERCODE_LOGO_MAX_WIDTH
+            || $logoHeight > CUERCODE_LOGO_MAX_HEIGHT
+        ) {
+            // 🧹 Over-size pixel dimensions — discard the temp file and reject.
+            @unlink($tempFileWithExt);
+
+            if (function_exists('logError')) {
+                logError(
+                    'warning',
+                    'Base64 logo rejected: pixel dimensions exceed limit (F-005)',
+                    'Dimensions: ' . $logoWidth . 'x' . $logoHeight
+                    . ' | Limit: ' . CUERCODE_LOGO_MAX_WIDTH . 'x' . CUERCODE_LOGO_MAX_HEIGHT
+                );
+            }
+            return null;
+        }
     }
 
     return $tempFileWithExt;

@@ -49,6 +49,121 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 }
 
 // ==============================================================================
+// 📏 API request field-length limits (🔐 F-007)
+// ==============================================================================
+// Per-field maximum lengths (in characters/bytes) for user-supplied request
+// fields. These bound the work done downstream (payload building, QR encoding,
+// frame text rendering) and stop a caller from sending pathologically large
+// individual values even when the overall body is under the router's size cap.
+// A QR code's own data capacity tops out well under 3 KB, so these limits are
+// generous for legitimate use while still defensive.
+// @see https://www.qrcode.com/en/about/version.html (max ~2953 bytes binary)
+// ==============================================================================
+
+/**
+ * @var int Maximum length of the 'type' field (a short type identifier slug).
+ */
+if (!defined('CUERCODE_API_MAX_TYPE_LEN')) {
+    define('CUERCODE_API_MAX_TYPE_LEN', 64);
+}
+
+/**
+ * @var int Maximum length of any single scalar value inside the 'input' object.
+ * 4096 comfortably exceeds the QR data ceiling while bounding per-field size.
+ */
+if (!defined('CUERCODE_API_MAX_INPUT_FIELD_LEN')) {
+    define('CUERCODE_API_MAX_INPUT_FIELD_LEN', 4096);
+}
+
+/**
+ * @var int Maximum length of a frame label (short marketing text e.g. "SCAN ME").
+ */
+if (!defined('CUERCODE_API_MAX_FRAME_LABEL_LEN')) {
+    define('CUERCODE_API_MAX_FRAME_LABEL_LEN', 120);
+}
+
+// ==============================================================================
+// 📏 validateRequestFieldLengths() - Enforce per-field max lengths (🔐 F-007)
+// ==============================================================================
+
+/**
+ * 📏 Validate that user-supplied request fields are within length limits
+ *
+ * 🔐 F-007: complements the router-level total-body-size cap with per-field
+ * bounds so an individual value cannot be pathologically large even within an
+ * otherwise small body. Checks:
+ *   - 'type'                  (≤ CUERCODE_API_MAX_TYPE_LEN)
+ *   - each scalar in 'input'  (≤ CUERCODE_API_MAX_INPUT_FIELD_LEN)
+ *   - 'customization.frame_label' (≤ CUERCODE_API_MAX_FRAME_LABEL_LEN)
+ *
+ * Only scalar input values are length-checked; nested arrays are walked one
+ * level (sufficient for the flat input objects this API accepts) and their
+ * scalar leaves are checked too.
+ *
+ * @param array $requestData The parsed JSON request body
+ *
+ * @return string|null Null if all fields are within limits, otherwise a
+ *                     human-readable error message describing the first
+ *                     field that exceeded its limit.
+ *
+ * @see https://www.php.net/manual/en/function.mb-strlen.php
+ */
+function validateRequestFieldLengths(array $requestData): ?string
+{
+    // 📌 'type' length (only when present and a string).
+    if (isset($requestData['type']) && is_string($requestData['type'])) {
+        if (mb_strlen($requestData['type']) > CUERCODE_API_MAX_TYPE_LEN) {
+            return 'Field "type" is too long. Maximum '
+                . CUERCODE_API_MAX_TYPE_LEN . ' characters.';
+        }
+    }
+
+    // 📌 'input' scalar values (one level of nesting walked).
+    if (isset($requestData['input']) && is_array($requestData['input'])) {
+        foreach ($requestData['input'] as $inputKey => $inputValue) {
+            // 🔢 Walk a single level of nested arrays (e.g. structured types).
+            if (is_array($inputValue)) {
+                foreach ($inputValue as $nestedKey => $nestedValue) {
+                    if (is_string($nestedValue)
+                        && mb_strlen($nestedValue) > CUERCODE_API_MAX_INPUT_FIELD_LEN
+                    ) {
+                        return 'Input field "'
+                            . htmlspecialchars((string) $inputKey . '.' . (string) $nestedKey, ENT_QUOTES, 'UTF-8')
+                            . '" is too long. Maximum '
+                            . CUERCODE_API_MAX_INPUT_FIELD_LEN . ' characters.';
+                    }
+                }
+                continue;
+            }
+
+            if (is_string($inputValue)
+                && mb_strlen($inputValue) > CUERCODE_API_MAX_INPUT_FIELD_LEN
+            ) {
+                return 'Input field "'
+                    . htmlspecialchars((string) $inputKey, ENT_QUOTES, 'UTF-8')
+                    . '" is too long. Maximum '
+                    . CUERCODE_API_MAX_INPUT_FIELD_LEN . ' characters.';
+            }
+        }
+    }
+
+    // 📌 'customization.frame_label' length (free-text rendered into a frame).
+    if (isset($requestData['customization']) && is_array($requestData['customization'])) {
+        $customization = $requestData['customization'];
+        if (isset($customization['frame_label'])
+            && is_string($customization['frame_label'])
+            && mb_strlen($customization['frame_label']) > CUERCODE_API_MAX_FRAME_LABEL_LEN
+        ) {
+            return 'Field "frame_label" is too long. Maximum '
+                . CUERCODE_API_MAX_FRAME_LABEL_LEN . ' characters.';
+        }
+    }
+
+    // ✅ All fields within limits.
+    return null;
+}
+
+// ==============================================================================
 // 🎯 handleGenerate() - Handle QR code generation API request
 // ==============================================================================
 
@@ -93,6 +208,15 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  */
 function handleGenerate(array $requestData): void
 {
+    // ==================================================================
+    // 🔐 F-007: enforce per-field length limits before any processing
+    // ==================================================================
+    $lengthError = validateRequestFieldLengths($requestData);
+    if ($lengthError !== null) {
+        errorResponse($lengthError, 400, 'FIELD_TOO_LONG');
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
     // ==================================================================
     // 📌 Step 1: Validate required fields
     // ==================================================================
@@ -260,6 +384,15 @@ function handleGenerate(array $requestData): void
  */
 function handlePreview(array $requestData): void
 {
+    // ==================================================================
+    // 🔐 F-007: enforce per-field length limits before any processing
+    // ==================================================================
+    $lengthError = validateRequestFieldLengths($requestData);
+    if ($lengthError !== null) {
+        errorResponse($lengthError, 400, 'FIELD_TOO_LONG');
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
     // ==================================================================
     // 📌 Step 1: Validate required fields
     // ==================================================================

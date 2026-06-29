@@ -11,8 +11,11 @@ User-agent: *
 Allow: /
 
 # 🚫 Disallow private/API paths
+# 🔒 NOTE: /install/ is intentionally NOT listed here (F-020). A robots.txt
+#    Disallow entry is publicly readable and would advertise the installer path
+#    to scanners. The directory is instead blocked at the HTTP layer by
+#    install/.htaccess (Require all denied) and should be deleted post-setup.
 Disallow: /api/
-Disallow: /install/
 Disallow: /error/
 
 # 📍 Sitemap location (uncomment when sitemap is available)

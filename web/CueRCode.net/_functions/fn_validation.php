@@ -42,6 +42,26 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 }
 
 // ==============================================================================
+// 🛡️ Image upload pixel-dimension limits (F-005)
+// ==============================================================================
+// Maximum width/height (in pixels) accepted for an uploaded image. getimagesize()
+// reads only the header, so a tiny file declaring enormous dimensions (a
+// decompression / "pixel bomb") is rejected before any downstream code allocates
+// a canvas for it. Conservative defaults that comfortably fit any real logo;
+// each is overridable via an earlier define() (e.g. in bootstrap/config) so the
+// owner can tune them without editing this file. The byte-size cap is the
+// $maxSize parameter of validateImageUpload() (default 5 MB).
+// @see https://www.php.net/manual/en/function.getimagesize.php
+if (!defined('CUERCODE_UPLOAD_MAX_WIDTH')) {
+    // 📐 Max image width in pixels.
+    define('CUERCODE_UPLOAD_MAX_WIDTH', 4096);
+}
+if (!defined('CUERCODE_UPLOAD_MAX_HEIGHT')) {
+    // 📐 Max image height in pixels.
+    define('CUERCODE_UPLOAD_MAX_HEIGHT', 4096);
+}
+
+// ==============================================================================
 // 🧹 sanitizeInput() - General string sanitisation
 // ==============================================================================
 
@@ -662,6 +682,26 @@ function validateImageUpload(array $file, int $maxSize = 5242880): array
         if (isset($imageInfo['mime']) && !in_array($imageInfo['mime'], $allowedMimeTypes, true)) {
             $result['error'] = 'Image content type mismatch. Expected an allowed image type but found: '
                 . htmlspecialchars($imageInfo['mime'], ENT_QUOTES, 'UTF-8') . '.';
+            return $result;
+        }
+
+        // 🛡️ F-005: enforce a pixel-dimension cap to block decompression /
+        //    "pixel bomb" images. getimagesize() already read the header above,
+        //    so we reuse $imageInfo[0]/[1] (width/height) — no extra I/O. A file
+        //    declaring dimensions beyond the cap is rejected BEFORE any caller
+        //    hands it to GD (which would allocate ~4 bytes per pixel).
+        // @see https://www.php.net/manual/en/function.getimagesize.php
+        // @see CUERCODE_UPLOAD_MAX_WIDTH / CUERCODE_UPLOAD_MAX_HEIGHT
+        $imageWidth  = (int) ($imageInfo[0] ?? 0);
+        $imageHeight = (int) ($imageInfo[1] ?? 0);
+
+        if ($imageWidth > CUERCODE_UPLOAD_MAX_WIDTH
+            || $imageHeight > CUERCODE_UPLOAD_MAX_HEIGHT
+        ) {
+            $result['error'] = 'Image dimensions are too large. Maximum allowed is '
+                . CUERCODE_UPLOAD_MAX_WIDTH . ' x ' . CUERCODE_UPLOAD_MAX_HEIGHT
+                . ' pixels. This image is '
+                . $imageWidth . ' x ' . $imageHeight . ' pixels.';
             return $result;
         }
     } else {

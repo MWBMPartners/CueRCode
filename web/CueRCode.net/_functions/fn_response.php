@@ -44,6 +44,112 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 }
 
 // ==============================================================================
+// 🌐 emitCorsHeaders() - Emit a safe, allowlisted CORS Access-Control-Allow-Origin
+// ==============================================================================
+
+/**
+ * 🌐 Emit the Access-Control-Allow-Origin header using a strict origin allowlist
+ *
+ * 🔐 F-001 hardening: the previous behaviour echoed a configurable value
+ * verbatim (defaulting to the wildcard '*') into Access-Control-Allow-Origin.
+ * A wildcard ACAO lets any website on the internet read API responses from a
+ * user's browser session. This helper replaces that with a strict allowlist:
+ *
+ *   1. The allowlist is read from the 'api_cors_allowed_origins' setting
+ *      (comma-separated list of exact origins, e.g.
+ *      "https://cuercode.net,https://www.cuercode.net"). The DEFAULT is an
+ *      EMPTY allowlist (NO wildcard) so a missing/unset config fails closed.
+ *   2. If the request carries an Origin header AND that exact origin is on the
+ *      allowlist, we reflect that single origin back in
+ *      Access-Control-Allow-Origin and add 'Vary: Origin' (so caches do not
+ *      serve one origin's ACAO to another). We also allow credentials in that
+ *      case, which is only safe BECAUSE we never reflect '*'.
+ *   3. If the literal '*' is present in the allowlist, that is treated as an
+ *      explicit opt-in to the wildcard (for fully public deployments). It is
+ *      NOT the default and must be configured deliberately.
+ *   4. Otherwise (no Origin header, or origin not allowed) NO
+ *      Access-Control-Allow-Origin header is emitted at all. Same-origin web
+ *      UI requests do not send an Origin that needs reflecting for simple
+ *      reads, and browsers simply block disallowed cross-origin reads — the
+ *      request still reaches the server and same-origin XHR keeps working.
+ *
+ * Defining this helper HERE (in fn_response.php) keeps it available everywhere
+ * the response functions are loaded — including the API router (which loads
+ * fn_response.php via bootstrap) and the standalone characterization-test
+ * subprocess (which requireFn()s fn_response.php directly). It must therefore
+ * never call a function that is not guaranteed to exist; getConfig() is guarded
+ * with function_exists() exactly as the rest of this file does.
+ *
+ * @return void
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Origin
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Vary
+ */
+function emitCorsHeaders(): void
+{
+    // 📌 Never attempt to send headers once the body has begun.
+    if (headers_sent()) {
+        return;
+    }
+
+    // 📌 Read the configured allowlist. Default is an EMPTY string (no origins,
+    //    no wildcard) so an unconfigured deployment fails closed rather than
+    //    open. getConfig() is optional (not loaded in the test subprocess).
+    $allowedRaw = '';
+    if (function_exists('getConfig')) {
+        $configValue = getConfig('api_cors_allowed_origins', '');
+        if (is_string($configValue)) {
+            $allowedRaw = $configValue;
+        }
+    }
+
+    // 📌 Parse the comma-separated allowlist into an array of trimmed origins.
+    //    Empty entries are discarded.
+    $allowedOrigins = [];
+    if ($allowedRaw !== '') {
+        foreach (explode(',', $allowedRaw) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate !== '') {
+                $allowedOrigins[] = $candidate;
+            }
+        }
+    }
+
+    // 📌 Determine the request's Origin (browsers set this on cross-origin and
+    //    on some same-origin requests). Absent on most direct/server-to-server
+    //    calls, in which case there is nothing to reflect.
+    if (isset($_SERVER['HTTP_ORIGIN'])) {
+        $requestOrigin = $_SERVER['HTTP_ORIGIN'];
+    } else {
+        $requestOrigin = '';
+    }
+
+    // 📌 Explicit wildcard opt-in: only when '*' is deliberately configured.
+    //    A wildcard cannot be combined with credentials per the CORS spec, so
+    //    we do NOT send Allow-Credentials in this branch.
+    if (in_array('*', $allowedOrigins, true)) {
+        header('Access-Control-Allow-Origin: *');
+        return;
+    }
+
+    // 📌 Reflect the request origin ONLY when it exactly matches the allowlist.
+    if ($requestOrigin !== '' && in_array($requestOrigin, $allowedOrigins, true)) {
+        header('Access-Control-Allow-Origin: ' . $requestOrigin);
+        // 🔐 Vary on Origin so shared caches never reuse one origin's ACAO
+        //    response for a different origin.
+        header('Vary: Origin');
+        // 🔐 Safe to allow credentials because we reflect a single, vetted
+        //    origin (never '*').
+        header('Access-Control-Allow-Credentials: true');
+        return;
+    }
+
+    // 📌 No match and no wildcard: emit NO Access-Control-Allow-Origin header.
+    //    The browser blocks the cross-origin read; same-origin use is unaffected.
+}
+
+// ==============================================================================
 // 📋 jsonResponse() - Send a JSON response
 // ==============================================================================
 
@@ -137,13 +243,10 @@ function jsonResponse(array $data, int $httpCode = 200): void
         // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
         header('X-Content-Type-Options: nosniff');
 
-        // 📌 CORS headers (configurable via settings)
+        // 📌 CORS headers (strict origin allowlist - see emitCorsHeaders())
+        // 🔐 F-001: no wildcard default; reflects only allowlisted origins.
         // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-        $allowedOrigins = '*';
-        if (function_exists('getConfig')) {
-            $allowedOrigins = getConfig('api_cors_allowed_origins', '*');
-        }
-        header('Access-Control-Allow-Origin: ' . $allowedOrigins);
+        emitCorsHeaders();
     }
 
     // 📤 Output the JSON body and terminate
@@ -213,12 +316,9 @@ function xmlResponse(array $data, int $httpCode = 200): void
         // 📌 Security headers
         header('X-Content-Type-Options: nosniff');
 
-        // 📌 CORS headers
-        $allowedOrigins = '*';
-        if (function_exists('getConfig')) {
-            $allowedOrigins = getConfig('api_cors_allowed_origins', '*');
-        }
-        header('Access-Control-Allow-Origin: ' . $allowedOrigins);
+        // 📌 CORS headers (strict origin allowlist - see emitCorsHeaders())
+        // 🔐 F-001: no wildcard default; reflects only allowlisted origins.
+        emitCorsHeaders();
     }
 
     // 📤 Output the XML and terminate
