@@ -76,9 +76,12 @@ use chillerlan\QRCode\Output\QRFpdf;
  *   - 'bg_color'      (string)  Background (light module) color as hex (#ffffff)
  *   - 'marker_color'  (string)  Finder pattern (corner squares) color as hex
  *   - 'pattern'       (string)  Module shape: square, round, dot (default: square)
+ *   - 'marker_border' (string)  Finder outer-border shape: square, round, circle, extra-rounded (default: square)
+ *   - 'marker_center' (string)  Finder centre-dot shape: square, round, circle, diamond (default: square)
  *   - 'logo'          (mixed)   Logo identifier (triggers logo space reservation)
  *   - 'logo_size_pct' (int)     Logo size as percentage of QR code (default: 20)
  *   - 'transparent'   (bool)    Whether background should be transparent (default: false)
+ *   - 'quiet_zone'    (bool)    Whether to add the quiet-zone margin (default: true)
  *   - 'gradient'      (array)   Gradient config: [type, color1, color2, direction] (SVG only)
  *   - 'payload'       (string)  The data payload (used for scale calculation)
  *
@@ -160,6 +163,27 @@ function buildQROptions(array $customization): QROptions
     }
     $pattern = strtolower(trim($patternValue));
 
+    // 📌 Marker (finder pattern) outer border shape (square, round, circle, extra-rounded)
+    // 🔧 PARITY: the API/UI offer a finder-pattern border shape. The chillerlan
+    //    GD + markup outputs used here do not render per-finder corner radii, but
+    //    a NON-square marker border IS meaningful when the modules are circular:
+    //    it tells us to let the finder patterns be rounded too (i.e. NOT force
+    //    them back to squares). We map the choice onto keepAsSquare below.
+    if (isset($customization['marker_border'])) {
+        $markerBorderValue = $customization['marker_border'];
+    } else {
+        $markerBorderValue = 'square';
+    }
+    $markerBorder = strtolower(trim((string) $markerBorderValue));
+
+    // 📌 Marker (finder pattern) centre dot shape (square, round, circle, diamond)
+    if (isset($customization['marker_center'])) {
+        $markerCenterValue = $customization['marker_center'];
+    } else {
+        $markerCenterValue = 'square';
+    }
+    $markerCenter = strtolower(trim((string) $markerCenterValue));
+
     // 📌 Logo space configuration
     $hasLogo = !empty($customization['logo']);
     if (isset($customization['logo_size_pct'])) {
@@ -174,6 +198,17 @@ function buildQROptions(array $customization): QROptions
         $transparent = (bool) $customization['transparent'];
     } else {
         $transparent = false;
+    }
+
+    // 📌 Quiet zone (margin) toggle. Defaults to true (matches the chillerlan
+    //    library default $addQuietzone = true and the UI's default-checked box).
+    // 🔧 PARITY: the UI offers a quiet-zone checkbox; honour it here so an API
+    //    caller can disable the margin (e.g. for tight layouts) exactly as the
+    //    web UI does. Mapped to the addQuietzone QROptions property below.
+    if (isset($customization['quiet_zone'])) {
+        $addQuietzone = (bool) $customization['quiet_zone'];
+    } else {
+        $addQuietzone = true;
     }
 
     // 📌 Gradient configuration (SVG only)
@@ -220,6 +255,10 @@ function buildQROptions(array $customization): QROptions
         'scale'           => $scale,
         'eccLevel'        => $eccLevel,
         'imageBase64'     => false,
+        // 🔧 PARITY: honour the quiet-zone toggle. When false the library omits
+        //    the 4-module margin; true (default) keeps it for scan reliability.
+        // @see chillerlan\QRCode\QROptionsTrait::$addQuietzone
+        'addQuietzone'    => $addQuietzone,
     ];
 
     // 📌 Set output type if applicable (GD image formats need outputType)
@@ -261,14 +300,29 @@ function buildQROptions(array $customization): QROptions
         $optionsArray['drawCircularModules'] = true;
         $optionsArray['circleRadius']        = 0.45;
 
-        // 📌 Keep finder patterns (corner squares) as squares for scanner compatibility
-        // These module types define the three large squares in the corners.
+        // 📌 By default keep finder patterns (corner squares) as squares for
+        //    scanner compatibility. These module types define the three large
+        //    corner squares (outer border = M_FINDER_DARK / M_FINDER; centre dot
+        //    = M_FINDER_DOT).
+        // 🔧 PARITY: the marker_border / marker_center shape choices decide
+        //    whether those finder module types are kept square or allowed to be
+        //    rounded along with the data modules. A non-square border shape
+        //    (round|circle|extra-rounded) lets the OUTER finder modules round;
+        //    a non-square centre shape (round|circle|diamond) lets the CENTRE
+        //    dot round. Anything left as 'square' stays square.
         // @see https://php-qrcode.readthedocs.io/en/main/Usage/Configuration.html
-        $optionsArray['keepAsSquare'] = [
-            QRMatrix::M_FINDER_DARK,
-            QRMatrix::M_FINDER,
-            QRMatrix::M_FINDER_DOT,
-        ];
+        $keepAsSquare = [];
+
+        if ($markerBorder === 'square') {
+            $keepAsSquare[] = QRMatrix::M_FINDER_DARK;
+            $keepAsSquare[] = QRMatrix::M_FINDER;
+        }
+
+        if ($markerCenter === 'square') {
+            $keepAsSquare[] = QRMatrix::M_FINDER_DOT;
+        }
+
+        $optionsArray['keepAsSquare'] = $keepAsSquare;
     } else {
         // 📌 Default square modules
         $optionsArray['drawCircularModules'] = false;

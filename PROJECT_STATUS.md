@@ -33,7 +33,7 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | 3 | Core PHP Framework | [#3](https://github.com/MWBMPartners/CueRCode/issues/3) | ⬜ Needs live server verification |
 | 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 26/26 QR types now in code (cycle 8); JPEG XL missing (host-dependent); needs live-server verification |
 | 5 | Responsive Web UI | [#5](https://github.com/MWBMPartners/CueRCode/issues/5) | ⚠️ Colourblind mode + cookie-consent banner added in code (cycle 7); no i18n; needs live-server verification (#22) |
-| 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | ⬜ Needs live server verification |
+| 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | 🔄 Addressed in code (cycle 9, 2026-06-29) — full API/UI feature parity confirmed; complete OpenAPI 3.0.3 spec; uniform endpoint security; needs live-server verification (#18) before close |
 | 7 | Testing, Documentation & Polish | [#7](https://github.com/MWBMPartners/CueRCode/issues/7) | ⚠️ Branding PNGs; closing PHP tags; no screen reader testing |
 | - | Project Rebrand (QRmy.Link -> CueRCode) | [#8](https://github.com/MWBMPartners/CueRCode/issues/8) | ✅ Complete (closed) |
 | - | WCAG 2.1 AA Accessibility | [#9](https://github.com/MWBMPartners/CueRCode/issues/9) | ⚠️ Good ARIA foundation but no colourblind toggle or screen reader testing |
@@ -47,6 +47,7 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | [#41](https://github.com/MWBMPartners/CueRCode/issues/41) | Remove closing PHP tags from include files | Low | ✅ Complete (verified clean) |
 | [#42](https://github.com/MWBMPartners/CueRCode/issues/42) | Implement colourblind-friendly UI toggle | Medium | 🔄 Addressed in code (cycle 7, 2026-06-29) — Okabe-Ito palettes, navbar dropdown, pre-paint script; needs live-server verification (#22) |
 | [#43](https://github.com/MWBMPartners/CueRCode/issues/43) | Export branding PNGs from SVGs | Low | 🔄 Addressed in code (cycle 7, 2026-06-29) — og-image.png created at /assets/img/branding/og-image.png; needs live-server verification (#22) |
+| [#45](https://github.com/MWBMPartners/CueRCode/issues/45) | API parity: expose all UI customisation params via REST | High | 🔄 Addressed in code (cycle 9, 2026-06-29) — all 21 customisation params confirmed in buildCustomizationFromRequest(); full OpenAPI 3.0.3 spec completed; uniform endpoint security confirmed; pending live-server verification (#18) |
 
 **Deliverables so far:** 29 PHP files, 3 JS files, 1 CSS file (1,301 lines), 25 SVG logo assets, 10 database tables, 26 QR code types (cycle 8), OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
 

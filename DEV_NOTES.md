@@ -156,6 +156,8 @@ Sensitive values (API keys, SSO credentials, etc.) in `tblSettings` with `isSens
 3. **📦 Custom PSR-4 autoloader:** Replaces Composer for shared hosting environments
 4. **🏭 Post-processing pipeline:** Logo overlay and frame rendering after QR generation
 5. **🎨 Progressive enhancement:** Full shape variety for SVG; square + round for raster (Phase 1)
+6. **📐 API is the parity contract:** The REST API (`POST /api/v1/generate`, `POST /api/v1/preview`) is a strict superset of the web UI — every customisation parameter the UI can send is accepted by the API. The web frontend is itself built on the API. If a UI feature is added, a corresponding API parameter must be exposed in `buildCustomizationFromRequest()` (cycle 9, GitHub #45).
+7. **📖 `openapi.json` is the source of truth for the API surface:** `public_html/api/v1/openapi.json` (OpenAPI 3.0.3) is the canonical definition of every endpoint, parameter, schema, and response. Swagger UI at `public_html/api/docs/` derives from it. Any API change must update `openapi.json` first.
 
 ---
 

@@ -184,13 +184,17 @@ function validateRequestFieldLengths(array $requestData): ?string
  *           "ecc": "H",
  *           "fg_color": "#000000",
  *           "bg_color": "#ffffff",
+ *           "marker_color": "",
  *           "pattern": "square",
+ *           "marker_border": "square",
+ *           "marker_center": "square",
  *           "logo": 5,
  *           "logo_size_pct": 20,
  *           "frame_style": "none",
  *           "frame_label": "",
  *           "frame_color": "",
- *           "transparent": false
+ *           "transparent": false,
+ *           "quiet_zone": true
  *       }
  *   }
  *
@@ -601,15 +605,108 @@ function buildCustomizationFromRequest(array $raw): array
         $customization['pattern'] = 'square';
     }
 
-    // 📌 Logo (mixed: int ID, string path, or null)
+    // 📌 Marker (finder pattern) OUTER BORDER shape (string)
+    // 🔧 PARITY (api-has-ui-missing): the UI exposes a finder-pattern outer
+    //    border shape selector (#opt-marker-border) but the API previously
+    //    dropped the value. We now accept + allowlist it so the API is a strict
+    //    superset of the UI. Allowlist mirrors index.php: square|round|circle|
+    //    extra-rounded. Unknown values fall back to the 'square' default rather
+    //    than passing an untyped string through to the engine.
+    if (isset($raw['marker_border'])) {
+        $markerBorder = strtolower(trim((string) $raw['marker_border']));
+    } else {
+        $markerBorder = 'square';
+    }
+    $validMarkerBorders = ['square', 'round', 'circle', 'extra-rounded'];
+    if (in_array($markerBorder, $validMarkerBorders, true)) {
+        $customization['marker_border'] = $markerBorder;
+    } else {
+        $customization['marker_border'] = 'square';
+    }
+
+    // 📌 Marker (finder pattern) CENTER DOT shape (string)
+    // 🔧 PARITY (api-has-ui-missing): the UI exposes a finder-pattern centre dot
+    //    shape selector (#opt-marker-center); the API previously dropped it.
+    //    Allowlist mirrors index.php: square|round|circle|diamond. Unknown ->
+    //    'square'.
+    if (isset($raw['marker_center'])) {
+        $markerCenter = strtolower(trim((string) $raw['marker_center']));
+    } else {
+        $markerCenter = 'square';
+    }
+    $validMarkerCenters = ['square', 'round', 'circle', 'diamond'];
+    if (in_array($markerCenter, $validMarkerCenters, true)) {
+        $customization['marker_center'] = $markerCenter;
+    } else {
+        $customization['marker_center'] = 'square';
+    }
+
+    // 📌 Logo (mixed: int ID, string path, 'upload', or null)
     if (isset($raw['logo']) && $raw['logo'] !== '' && $raw['logo'] !== null) {
         $customization['logo'] = $raw['logo'];
     }
 
-    // 📌 Logo size percentage (int, 10-40)
+    // 📌 Custom logo upload data (base64 data URI) + its MIME type
+    // 🔧 PARITY (api-has-ui-missing): when the UI uploads a custom logo it sends
+    //    logo='upload' plus logo_data (a data:image/...;base64,... URI) and
+    //    logo_mime. The generation pipeline resolves a logo via getLogoPath(),
+    //    which understands a base64 data URI directly but NOT the sentinel
+    //    string 'upload'. So when logo === 'upload' we substitute the data URI
+    //    as the effective logo value (after a strict shape + MIME check), making
+    //    the API accept the exact payload the UI emits.
+    // @see fn_qr_logo.php - getLogoPath() / saveBase64LogoToTemp()
+    // @see cuercode-generator.js - collectCustomization() (logo_data / logo_mime)
+    $logoData = null;
+    if (isset($raw['logo_data']) && is_string($raw['logo_data'])) {
+        $logoDataCandidate = trim($raw['logo_data']);
+        // 🔒 Only accept a well-formed image data URI; anything else is dropped
+        //    rather than handed to the decoder. saveBase64LogoToTemp() applies
+        //    the F-005 size/pixel caps after this point.
+        if ($logoDataCandidate !== ''
+            && preg_match('#^data:image/[a-zA-Z0-9.+-]+;base64,#', $logoDataCandidate) === 1
+        ) {
+            $logoData = $logoDataCandidate;
+            $customization['logo_data'] = $logoDataCandidate;
+        }
+    }
+
+    // 📌 Logo MIME type (string, allowlisted image/* types)
+    if (isset($raw['logo_mime']) && is_string($raw['logo_mime'])) {
+        $logoMime = strtolower(trim($raw['logo_mime']));
+        $validLogoMimes = [
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+            'image/gif',
+            'image/webp',
+            'image/svg+xml',
+        ];
+        if (in_array($logoMime, $validLogoMimes, true)) {
+            $customization['logo_mime'] = $logoMime;
+        }
+    }
+
+    // 📌 Resolve the 'upload' sentinel to the actual base64 data URI so the
+    //    downstream getLogoPath() can decode it. If logo='upload' but no valid
+    //    logo_data was supplied, drop the logo entirely (an 'upload' string on
+    //    its own is meaningless to the engine and would resolve to null).
+    if (isset($customization['logo'])
+        && is_string($customization['logo'])
+        && strtolower(trim($customization['logo'])) === 'upload'
+    ) {
+        if ($logoData !== null) {
+            $customization['logo'] = $logoData;
+        } else {
+            unset($customization['logo']);
+        }
+    }
+
+    // 📌 Logo size percentage (int, 5-40 to match overlayLogoOnRaster + UI)
+    // 🔧 Lower bound aligned to 5 (was 10) so it matches the engine clamp in
+    //    fn_qr_logo.php / fn_qr_options.php and the contract (5-40).
     if (isset($raw['logo_size_pct'])) {
         $logoSizePct = (int) $raw['logo_size_pct'];
-        $customization['logo_size_pct'] = max(10, min(40, $logoSizePct));
+        $customization['logo_size_pct'] = max(5, min(40, $logoSizePct));
     }
 
     // 📌 Frame style (string)
@@ -632,6 +729,21 @@ function buildCustomizationFromRequest(array $raw): array
         $customization['transparent'] = (bool) $raw['transparent'];
     } else {
         $customization['transparent'] = false;
+    }
+
+    // 📌 Quiet zone toggle (bool, default true)
+    // 🔧 PARITY (api-has-ui-missing): the UI sends quiet_zone (a checkbox,
+    //    checked by default) but the API previously dropped it. We now accept +
+    //    type-coerce it to a bool. buildQROptions() maps it to the chillerlan
+    //    addQuietzone option so disabling the quiet zone in the UI takes effect
+    //    through the API too. Default true mirrors both the UI default-checked
+    //    state and the library default ($addQuietzone = true).
+    // @see fn_qr_options.php - buildQROptions() (addQuietzone mapping)
+    // @see cuercode-generator.js - collectCustomization() (quiet_zone)
+    if (isset($raw['quiet_zone'])) {
+        $customization['quiet_zone'] = (bool) $raw['quiet_zone'];
+    } else {
+        $customization['quiet_zone'] = true;
     }
 
     // 📌 Gradient (array, SVG only)
