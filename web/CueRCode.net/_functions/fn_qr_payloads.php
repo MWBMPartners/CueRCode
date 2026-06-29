@@ -701,14 +701,19 @@ function buildPayload_geo(array $inputData): string
 // ==============================================================================
 
 /**
- * 👤 Build a vCard 3.0 payload for QR code encoding
+ * 👤 Build a vCard 3.0 / 4.0 payload for QR code encoding
  *
- * Generates a complete vCard 3.0 contact card that can be scanned and
- * imported into the device's contacts app. Includes name, organisation,
- * title, phone numbers, email, URL, address, and notes.
+ * Generates a complete vCard contact card that can be scanned and imported
+ * into the device's contacts app. Includes name, organisation, title, phone
+ * numbers, email, URL, address, and notes.
  *
- * vCard 3.0 format (RFC 2426) is used for maximum compatibility across
- * QR code scanner apps on both iOS and Android.
+ * The optional 'version' field selects the vCard version:
+ *   - '3.0' (default, RFC 2426): uppercase TYPE tokens (TEL;TYPE=WORK). Output
+ *      is byte-for-byte identical to the historical 3.0 output for back-compat.
+ *   - '4.0' (RFC 6350): emits VERSION:4.0 with lowercase TYPE tokens
+ *      (TEL;TYPE=work) as the 4.0 spec prescribes.
+ * vCard 3.0 remains the default for maximum compatibility across QR code
+ * scanner apps on both iOS and Android.
  *
  * @param array $inputData Contact fields (all optional except first_name or last_name):
  *   - first_name, last_name, organisation, title
@@ -862,6 +867,26 @@ function buildPayload_vcard(array $inputData): string
     }
     $note = trim($noteValue);
 
+    // 🔢 'version' is an optional select; default '3.0' for full back-compat.
+    //    Only '3.0' and '4.0' are accepted — anything else is rejected so a
+    //    malformed VERSION line can never reach a scanner.
+    // @see https://datatracker.ietf.org/doc/html/rfc6350 vCard 4.0 specification
+    if (isset($inputData['version'])) {
+        $versionValue = $inputData['version'];
+    } else {
+        $versionValue = '3.0';
+    }
+    $version = trim((string) $versionValue);
+    if ($version === '') {
+        $version = '3.0';
+    }
+    if ($version !== '3.0' && $version !== '4.0') {
+        throw new \InvalidArgumentException(
+            'Invalid vCard version: "' . $version . '". Supported versions are 3.0 and 4.0.'
+        );
+    }
+    $isV4 = ($version === '4.0');
+
     // ❌ Validate that at least a first name or last name is provided
     if ($firstName === '' && $lastName === '') {
         throw new \InvalidArgumentException(
@@ -874,22 +899,37 @@ function buildPayload_vcard(array $inputData): string
     $fullName = trim($firstName . ' ' . $lastName);
 
     // ==================================================================
-    // 📋 Construct the vCard 3.0 payload
+    // 📋 Construct the vCard payload
     // Each property is on its own line, separated by \n (line feed).
     // vCard uses CRLF per spec, but \n is widely compatible with scanners.
-    // @see https://datatracker.ietf.org/doc/html/rfc2426
+    //
+    // Two property TYPE syntaxes are emitted depending on $version:
+    //   - 3.0 (RFC 2426): uppercase tokens, e.g. TEL;TYPE=WORK / ADR;TYPE=WORK
+    //   - 4.0 (RFC 6350): lowercase tokens, e.g. TEL;TYPE=work / ADR;TYPE=work
+    // The 3.0 branch is byte-for-byte identical to the historical output.
+    // @see https://datatracker.ietf.org/doc/html/rfc2426 (vCard 3.0)
+    // @see https://datatracker.ietf.org/doc/html/rfc6350 (vCard 4.0)
     // ==================================================================
+    // 📌 vCard 4.0 uses lowercase TYPE tokens; 3.0 uses uppercase.
+    if ($isV4) {
+        $typeWork = 'work';
+        $typeCell = 'cell';
+    } else {
+        $typeWork = 'WORK';
+        $typeCell = 'CELL';
+    }
+
     $lines = [];
 
     // 📌 vCard header - mandatory
     $lines[] = 'BEGIN:VCARD';
-    $lines[] = 'VERSION:3.0';
+    $lines[] = 'VERSION:' . $version;
 
     // 📌 N property: structured name (Last;First;Middle;Prefix;Suffix)
     // @see https://datatracker.ietf.org/doc/html/rfc2426#section-3.1.2
     $lines[] = 'N:' . vcardEscape($lastName) . ';' . vcardEscape($firstName) . ';;;';
 
-    // 📌 FN property: formatted (display) name - mandatory in vCard 3.0
+    // 📌 FN property: formatted (display) name - mandatory in vCard 3.0 and 4.0
     // @see https://datatracker.ietf.org/doc/html/rfc2426#section-3.1.1
     $lines[] = 'FN:' . vcardEscape($fullName);
 
@@ -904,15 +944,15 @@ function buildPayload_vcard(array $inputData): string
     }
 
     // 📌 TEL property: work phone number
-    // TYPE=WORK indicates a work number per vCard 3.0 spec
+    // TYPE=WORK (3.0) / TYPE=work (4.0) indicates a work number
     if ($phoneWork !== '') {
-        $lines[] = 'TEL;TYPE=WORK:' . vcardEscape($phoneWork);
+        $lines[] = 'TEL;TYPE=' . $typeWork . ':' . vcardEscape($phoneWork);
     }
 
     // 📌 TEL property: cell/mobile phone number
-    // TYPE=CELL indicates a mobile number
+    // TYPE=CELL (3.0) / TYPE=cell (4.0) indicates a mobile number
     if ($phoneCell !== '') {
-        $lines[] = 'TEL;TYPE=CELL:' . vcardEscape($phoneCell);
+        $lines[] = 'TEL;TYPE=' . $typeCell . ':' . vcardEscape($phoneCell);
     }
 
     // 📌 EMAIL property: email address
@@ -926,10 +966,10 @@ function buildPayload_vcard(array $inputData): string
     }
 
     // 📌 ADR property: structured address (PO Box;Extended;Street;City;State;ZIP;Country)
-    // TYPE=WORK indicates a work address
+    // TYPE=WORK (3.0) / TYPE=work (4.0) indicates a work address
     // @see https://datatracker.ietf.org/doc/html/rfc2426#section-3.2.1
     if ($street !== '' || $city !== '' || $state !== '' || $zip !== '' || $country !== '') {
-        $lines[] = 'ADR;TYPE=WORK:;;'
+        $lines[] = 'ADR;TYPE=' . $typeWork . ':;;'
             . vcardEscape($street) . ';'
             . vcardEscape($city) . ';'
             . vcardEscape($state) . ';'
@@ -1561,10 +1601,38 @@ function buildPayload_appstore(array $inputData): string
     // when building from an app_id the platform MUST be explicitly chosen.
     // Validate it up front rather than silently emitting a malformed Apple URL.
     if ($platform === 'apple' || $platform === 'ios') {
+        // ✅ Apple app IDs are numeric, optionally with a leading 'id' prefix
+        //    (e.g. '123456789' or 'id123456789'). Normalise to the bare digits
+        //    and reject anything non-numeric so we never emit a broken store URL
+        //    like https://apps.apple.com/app/idcom.example.app.
+        // @see https://www.php.net/manual/en/function.preg-match.php
+        $appleId = $appId;
+        if (preg_match('/^id(\d+)$/i', $appleId, $matches) === 1) {
+            // 🧹 Strip the optional leading 'id' prefix to avoid 'idid...'.
+            $appleId = $matches[1];
+        }
+        if (preg_match('/^\d+$/', $appleId) !== 1) {
+            throw new \InvalidArgumentException(
+                'Invalid Apple App Store app ID: "' . $appId . '". '
+                . 'Apple app IDs must be numeric (optionally prefixed with "id"), e.g. "123456789".'
+            );
+        }
         // 📌 Apple App Store URL
         // @see https://developer.apple.com/library/archive/qa/qa1633/_index.html
-        return 'https://apps.apple.com/app/id' . rawurlencode($appId);
+        return 'https://apps.apple.com/app/id' . rawurlencode($appleId);
     } elseif ($platform === 'google' || $platform === 'android') {
+        // ✅ Google Play app IDs are Android package names — reverse-DNS style:
+        //    at least two dot-separated segments, each starting with a letter
+        //    and containing only letters, digits and underscores
+        //    (e.g. 'com.example.app'). Reject anything malformed.
+        // @see https://developer.android.com/guide/topics/manifest/manifest-element#package
+        // @see https://www.php.net/manual/en/function.preg-match.php
+        if (preg_match('/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/', $appId) !== 1) {
+            throw new \InvalidArgumentException(
+                'Invalid Google Play app ID: "' . $appId . '". '
+                . 'Google Play app IDs must be a valid package name (reverse-DNS), e.g. "com.example.app".'
+            );
+        }
         // 📌 Google Play Store URL
         // @see https://developer.android.com/distribute/marketing-tools
         return 'https://play.google.com/store/apps/details?id=' . rawurlencode($appId);
@@ -1877,4 +1945,256 @@ function buildPayload_linkedin(array $inputData): string
     }
 
     return 'https://www.linkedin.com/in/' . rawurlencode($username);
+}
+
+// ==============================================================================
+// 💬 buildPayload_facebook_messenger() - Facebook Messenger (m.me) payload
+// ==============================================================================
+
+/**
+ * 💬 Build a Facebook Messenger deep-link payload for QR code encoding
+ *
+ * Generates an m.me short link that opens a Messenger conversation with the
+ * given page/profile username. Accepts either a direct m.me/facebook.com URL
+ * or a bare username (a leading '@' is stripped). The username is validated
+ * against Facebook's permitted character set before the link is built.
+ *
+ * Format: https://m.me/{username}
+ *
+ * @param array $inputData Must contain 'username' or 'url'
+ *
+ * @return string The Messenger m.me URL
+ *
+ * @throws \InvalidArgumentException If no username/URL is given, or the
+ *         username contains characters Facebook does not permit.
+ *
+ * @see https://developers.facebook.com/docs/messenger-platform/discovery/m-me-links/
+ *
+ * @example
+ *   buildPayload_facebook_messenger(['username' => '@acme.support']);
+ *   // Returns: 'https://m.me/acme.support'
+ *
+ *   buildPayload_facebook_messenger(['url' => 'm.me/acme']);
+ *   // Returns: 'https://m.me/acme'
+ */
+function buildPayload_facebook_messenger(array $inputData): string
+{
+    // 📌 Check for a direct URL first (m.me/... or facebook.com/messages/...)
+    if (isset($inputData['url'])) {
+        $msgrUrlValue = $inputData['url'];
+    } else {
+        $msgrUrlValue = '';
+    }
+    $url = trim($msgrUrlValue);
+
+    if ($url !== '') {
+        // 🔍 Ensure the URL has a scheme
+        // @see https://www.php.net/manual/en/function.parse-url.php
+        $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+        if ($parsedScheme === null || $parsedScheme === false) {
+            $url = 'https://' . $url;
+        }
+        return $url;
+    }
+
+    // 📌 Build from a bare username
+    if (isset($inputData['username'])) {
+        $msgrUsernameValue = $inputData['username'];
+    } else {
+        $msgrUsernameValue = '';
+    }
+    $username = trim($msgrUsernameValue);
+
+    // 🧹 Strip a single leading '@' that users often include (e.g. "@acme")
+    // @see https://www.php.net/manual/en/function.ltrim.php
+    if ($username !== '' && $username[0] === '@') {
+        $username = ltrim($username, '@');
+    }
+
+    // ❌ Validate that at least a URL or username was provided
+    if ($username === '') {
+        throw new \InvalidArgumentException(
+            'A Messenger username or URL is required for Facebook Messenger-type QR codes.'
+        );
+    }
+
+    // ✅ Validate the username against Facebook's permitted characters.
+    // Facebook usernames allow letters, digits and full stops (5–50 chars),
+    // but we accept hyphens/underscores too for forward-compatibility while
+    // still rejecting anything that would corrupt the m.me path (slashes,
+    // spaces, query chars, etc.).
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    if (preg_match('/^[A-Za-z0-9._-]+$/', $username) !== 1) {
+        throw new \InvalidArgumentException(
+            'Invalid Messenger username: "' . $username . '". '
+            . 'Only letters, digits, dots, hyphens and underscores are allowed.'
+        );
+    }
+
+    // 📌 Build the m.me deep link (username already known-safe, but encode for
+    //    defence in depth so any future relaxation cannot inject path chars).
+    // @see https://www.php.net/manual/en/function.rawurlencode.php
+    return 'https://m.me/' . rawurlencode($username);
+}
+
+// ==============================================================================
+// 📸 buildPayload_instagram() - Instagram profile URL payload
+// ==============================================================================
+
+/**
+ * 📸 Build an Instagram profile URL payload for QR code encoding
+ *
+ * Generates an instagram.com profile link from a username (a leading '@' is
+ * stripped) or passes through a direct Instagram URL. The username is
+ * validated against Instagram's permitted character set (letters, digits,
+ * dots and underscores) before the link is built.
+ *
+ * Format: https://instagram.com/{username}
+ *
+ * @param array $inputData Must contain 'username' or 'url'
+ *
+ * @return string The Instagram profile URL
+ *
+ * @throws \InvalidArgumentException If no username/URL is given, or the
+ *         username contains characters Instagram does not permit.
+ *
+ * @see https://help.instagram.com/ Instagram username rules
+ *
+ * @example
+ *   buildPayload_instagram(['username' => '@natgeo']);
+ *   // Returns: 'https://instagram.com/natgeo'
+ *
+ *   buildPayload_instagram(['url' => 'instagram.com/natgeo']);
+ *   // Returns: 'https://instagram.com/natgeo'
+ */
+function buildPayload_instagram(array $inputData): string
+{
+    // 📌 Check for a direct URL first
+    if (isset($inputData['url'])) {
+        $igUrlValue = $inputData['url'];
+    } else {
+        $igUrlValue = '';
+    }
+    $url = trim($igUrlValue);
+
+    if ($url !== '') {
+        // 🔍 Ensure the URL has a scheme
+        // @see https://www.php.net/manual/en/function.parse-url.php
+        $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+        if ($parsedScheme === null || $parsedScheme === false) {
+            $url = 'https://' . $url;
+        }
+        return $url;
+    }
+
+    // 📌 Build from a bare username
+    if (isset($inputData['username'])) {
+        $igUsernameValue = $inputData['username'];
+    } else {
+        $igUsernameValue = '';
+    }
+    $username = trim($igUsernameValue);
+
+    // 🧹 Strip a single leading '@' that users often include (e.g. "@natgeo")
+    // @see https://www.php.net/manual/en/function.ltrim.php
+    if ($username !== '' && $username[0] === '@') {
+        $username = ltrim($username, '@');
+    }
+
+    // ❌ Validate that at least a URL or username was provided
+    if ($username === '') {
+        throw new \InvalidArgumentException(
+            'An Instagram username or URL is required for Instagram-type QR codes.'
+        );
+    }
+
+    // ✅ Validate the username against Instagram's permitted characters.
+    // Instagram handles allow letters, digits, dots and underscores only.
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    if (preg_match('/^[A-Za-z0-9._]+$/', $username) !== 1) {
+        throw new \InvalidArgumentException(
+            'Invalid Instagram username: "' . $username . '". '
+            . 'Only letters, digits, dots and underscores are allowed.'
+        );
+    }
+
+    // 📌 Build the profile URL (username already known-safe; encode defensively).
+    // @see https://www.php.net/manual/en/function.rawurlencode.php
+    return 'https://instagram.com/' . rawurlencode($username);
+}
+
+// ==============================================================================
+// ⭐ buildPayload_rating() - Review / rating URL payload
+// ==============================================================================
+
+/**
+ * ⭐ Build a review/rating URL payload for QR code encoding
+ *
+ * Directs a scanner to a place where they can leave a review or rating
+ * (e.g. a Google review link, a Trustpilot page, an App Store review URL).
+ * The supplied URL is validated as a real http(s) URL; a scheme is prepended
+ * when missing. Designed to be extensible — additional shorthand sources can
+ * be mapped to full review URLs here in future without changing the seed.
+ *
+ * Format: {validated review URL}
+ *
+ * @param array $inputData Must contain 'url' (the review/rating URL)
+ *
+ * @return string The validated review URL
+ *
+ * @throws \InvalidArgumentException If no URL is given or it is not a valid
+ *         http(s) URL.
+ *
+ * @see https://www.php.net/manual/en/filter.filters.validate.php
+ *
+ * @example
+ *   buildPayload_rating(['url' => 'https://g.page/r/CcExampleReview/review']);
+ *   // Returns: 'https://g.page/r/CcExampleReview/review'
+ *
+ *   buildPayload_rating(['url' => 'trustpilot.com/review/example.com']);
+ *   // Returns: 'https://trustpilot.com/review/example.com'
+ */
+function buildPayload_rating(array $inputData): string
+{
+    // 📌 Extract the review/rating URL (required)
+    if (isset($inputData['url'])) {
+        $ratingUrlValue = $inputData['url'];
+    } else {
+        $ratingUrlValue = '';
+    }
+    $url = trim($ratingUrlValue);
+
+    // ❌ Validate that a URL was provided
+    if ($url === '') {
+        throw new \InvalidArgumentException(
+            'A review/rating URL is required for rating-type QR codes.'
+        );
+    }
+
+    // 🔍 Ensure the URL has a scheme; default to https:// when bare.
+    // @see https://www.php.net/manual/en/function.parse-url.php
+    $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+    if ($parsedScheme === null || $parsedScheme === false) {
+        $url = 'https://' . $url;
+        $parsedScheme = 'https';
+    }
+
+    // ✅ Only http(s) review links make sense for a rating QR code.
+    $scheme = strtolower((string) $parsedScheme);
+    if ($scheme !== 'http' && $scheme !== 'https') {
+        throw new \InvalidArgumentException(
+            'Invalid review/rating URL scheme: "' . $scheme . '". '
+            . 'Only http and https review links are supported.'
+        );
+    }
+
+    // ✅ Validate the overall URL shape with the filter extension.
+    // @see https://www.php.net/manual/en/filter.filters.validate.php
+    if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+        throw new \InvalidArgumentException(
+            'Invalid review/rating URL: "' . $url . '".'
+        );
+    }
+
+    return $url;
 }

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - QR Types, vCard 4.0, and Legal Pages (2026-06-29)
+
+- **Facebook Messenger QR type** (FG-025): new `buildPayload_facebook_messenger` builder generates `m.me/{username}` URLs; strips leading `@`, validates handle format; matching `tblQRCodeTypes` seed row with `NULL` payloadTemplate so the builder runs (no template short-circuit).
+- **Instagram QR type** (FG-025): new `buildPayload_instagram` builder generates `instagram.com/{username}` URLs; strips leading `@`, validates handle format; matching seed row.
+- **Rating/Review QR type** (FG-025): new `buildPayload_rating` builder accepts a validated `http(s)` review URL; extensible for future per-platform fields; matching seed row.
+- **vCard 4.0 support** (FG-031): `buildPayload_vcard` now accepts an optional `version` field (default `3.0`, accepts `4.0`); v4.0 emits `VERSION:4.0` with lowercase `TYPE` tokens (`TEL;TYPE=work`, `TEL;TYPE=cell`, `ADR;TYPE=work`) per RFC 6350; v3.0 path is byte-for-byte unchanged; `version` optional select added to vCard seed `formFieldsJSON`.
+- **Multi-jurisdiction Privacy Policy** (FG-027): `privacy.php` rewritten as a comprehensive data-protection and cookies policy covering EU GDPR, UK GDPR + DPA 2018, USA (CCPA/CPRA, VCDPA, CPA, CTDPA, UCPA, HIPAA, COPPA), Canada PIPEDA, Brazil LGPD, Australia Privacy Act + NDB, New Zealand Privacy Act 2020, India DPDP, China PIPL/CSL/DSL, Japan APPI, South Korea PIPA, South Africa POPIA; dynamic `date('Y')` copyright year; editorial TEMPLATE note — review by qualified legal counsel before production launch.
+- **Multi-jurisdiction Terms of Use** (FG-027): `terms.php` rewritten with comprehensive terms covering acceptance, description, eligibility/accounts, acceptable use, user content, IP/copyright, API usage, availability/termination, disclaimer of warranties, limitation of liability, indemnification, governing law and disputes, general provisions, and changes; same TEMPLATE caveat.
+
+### Fixed - App Store app_id Validation (2026-06-29)
+
+- **App Store app_id validated per platform** (B-050): `buildPayload_appstore` now validates `app_id` per platform — Apple IDs must be numeric (optional leading `id` prefix is normalised away, preventing doubled `idid`); Google IDs must be valid reverse-DNS package names; malformed IDs throw `InvalidArgumentException` with a clear message.
+
 ### Fixed - Security: Headers/CORS/Upload/Encoding Hardening (2026-06-29)
 
 - **CORS allowlist enforced** (F-001): `Access-Control-Allow-Origin` now resolves against an explicit allowlist from `tblSettings`; wildcard `*` default removed; `.htaccess` hardcode replaced with allowlist-driven value.

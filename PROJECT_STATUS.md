@@ -29,9 +29,9 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | Stage | Description | Issues | Status |
 | --- | --- | --- | --- |
 | 1 | Project Foundation & Directory Structure | [#1](https://github.com/MWBMPartners/CueRCode/issues/1) | ⬜ Needs live server verification |
-| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ⚠️ Stubs for tblUsers/tblOrganisations; 3 QR types missing |
+| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ⚠️ Stubs for tblUsers/tblOrganisations (Phase 2); 3 missing QR seed rows added (cycle 6) |
 | 3 | Core PHP Framework | [#3](https://github.com/MWBMPartners/CueRCode/issues/3) | ⬜ Needs live server verification |
-| 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 21/24 types; JPEG XL missing |
+| 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 24/24 QR types now in code (cycle 6); JPEG XL missing (host-dependent); needs live-server verification |
 | 5 | Responsive Web UI | [#5](https://github.com/MWBMPartners/CueRCode/issues/5) | ⚠️ No colourblind mode; no i18n; no cookie consent |
 | 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | ⬜ Needs live server verification |
 | 7 | Testing, Documentation & Polish | [#7](https://github.com/MWBMPartners/CueRCode/issues/7) | ⚠️ Branding PNGs; closing PHP tags; no screen reader testing |
@@ -40,13 +40,13 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 
 **Audit gap issues:**
 
-| Issue | Gap | Priority |
-| --- | --- | --- |
-| [#39](https://github.com/MWBMPartners/CueRCode/issues/39) | Missing QR types: Facebook Messenger, Instagram, Rating/Review | Medium |
-| [#40](https://github.com/MWBMPartners/CueRCode/issues/40) | JPEG XL output format support | Low (host-dependent) |
-| [#41](https://github.com/MWBMPartners/CueRCode/issues/41) | Remove closing PHP tags from include files | Low |
-| [#42](https://github.com/MWBMPartners/CueRCode/issues/42) | Implement colourblind-friendly UI toggle | Medium |
-| [#43](https://github.com/MWBMPartners/CueRCode/issues/43) | Export branding PNGs from SVGs | Low |
+| Issue | Gap | Priority | Autopilot Status |
+| --- | --- | --- | --- |
+| [#39](https://github.com/MWBMPartners/CueRCode/issues/39) | Missing QR types: Facebook Messenger, Instagram, Rating/Review | Medium | ✅ Addressed in code (cycle 6, 2026-06-29) — builders + seed rows added; needs live-server verification (#17) |
+| [#40](https://github.com/MWBMPartners/CueRCode/issues/40) | JPEG XL output format support | Low (host-dependent) | ⬜ Queued — host limitation (GD/Dreamhost); document + WEBP fallback recommended |
+| [#41](https://github.com/MWBMPartners/CueRCode/issues/41) | Remove closing PHP tags from include files | Low | ✅ Complete (verified clean) |
+| [#42](https://github.com/MWBMPartners/CueRCode/issues/42) | Implement colourblind-friendly UI toggle | Medium | ⬜ Not started (FG-023, auto-bucket) |
+| [#43](https://github.com/MWBMPartners/CueRCode/issues/43) | Export branding PNGs from SVGs | Low | ⬜ Not started (FG-024, auto-bucket) |
 
 **Deliverables so far:** 29 PHP files, 3 JS files, 1 CSS file (1,301 lines), 25 SVG logo assets, 10 database tables, 21 QR code types, OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
 
@@ -135,8 +135,8 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | --- | --- | --- |
 | [#35](https://github.com/MWBMPartners/CueRCode/issues/35) | GitHub Actions: automated version numbering and CHANGELOG | 📋 |
 | [#36](https://github.com/MWBMPartners/CueRCode/issues/36) | GitHub Actions: auto-deploy via SFTP to Dreamhost | 📋 |
-| [#37](https://github.com/MWBMPartners/CueRCode/issues/37) | Comprehensive data protection and privacy compliance | 📋 |
-| [#38](https://github.com/MWBMPartners/CueRCode/issues/38) | Enhanced Terms of Use, Privacy Policy, and Copyright pages | 📋 |
+| [#37](https://github.com/MWBMPartners/CueRCode/issues/37) | Comprehensive data protection and privacy compliance | 🔄 In progress — cookie consent banner (B-003) still needed; legal-page content addressed in code |
+| [#38](https://github.com/MWBMPartners/CueRCode/issues/38) | Enhanced Terms of Use, Privacy Policy, and Copyright pages | 🔄 Addressed in code (cycle 6, 2026-06-29) — privacy.php + terms.php rewritten as multi-jurisdiction TEMPLATE pages; needs legal-counsel review and live-server verification (#17) before close |
 
 **Note:** #35 and #36 (CI/CD) can be implemented at any time and would benefit all phases.
 

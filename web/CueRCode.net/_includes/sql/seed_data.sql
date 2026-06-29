@@ -148,7 +148,7 @@ INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescript
 -- 📇 vCard
 ('vcard', 'vCard (Business Card)', 'fa-solid fa-address-card', 'Share contact information', 'contact',
  NULL,
- '[{"name":"first_name","label":"First Name","type":"text","required":true,"placeholder":"John","maxlength":100},{"name":"last_name","label":"Last Name","type":"text","required":true,"placeholder":"Doe","maxlength":100},{"name":"organisation","label":"Organisation","type":"text","required":false,"placeholder":"Acme Corp","maxlength":200},{"name":"title","label":"Job Title","type":"text","required":false,"placeholder":"Software Engineer","maxlength":100},{"name":"email","label":"Email","type":"email","required":false,"placeholder":"john@example.com","maxlength":254,"validation":"email"},{"name":"phone","label":"Phone","type":"tel","required":false,"placeholder":"+44 20 1234 5678","maxlength":20},{"name":"mobile","label":"Mobile","type":"tel","required":false,"placeholder":"+44 7700 900000","maxlength":20},{"name":"website","label":"Website","type":"url","required":false,"placeholder":"https://example.com","maxlength":500,"validation":"url"},{"name":"street","label":"Street Address","type":"text","required":false,"placeholder":"123 Main St","maxlength":200},{"name":"city","label":"City","type":"text","required":false,"placeholder":"London","maxlength":100},{"name":"postcode","label":"Postcode","type":"text","required":false,"placeholder":"EC1A 1BB","maxlength":20},{"name":"country","label":"Country","type":"text","required":false,"placeholder":"United Kingdom","maxlength":100},{"name":"notes","label":"Notes","type":"textarea","required":false,"placeholder":"Additional notes...","maxlength":500,"rows":3}]',
+ '[{"name":"first_name","label":"First Name","type":"text","required":true,"placeholder":"John","maxlength":100},{"name":"last_name","label":"Last Name","type":"text","required":true,"placeholder":"Doe","maxlength":100},{"name":"organisation","label":"Organisation","type":"text","required":false,"placeholder":"Acme Corp","maxlength":200},{"name":"title","label":"Job Title","type":"text","required":false,"placeholder":"Software Engineer","maxlength":100},{"name":"email","label":"Email","type":"email","required":false,"placeholder":"john@example.com","maxlength":254,"validation":"email"},{"name":"phone","label":"Phone","type":"tel","required":false,"placeholder":"+44 20 1234 5678","maxlength":20},{"name":"mobile","label":"Mobile","type":"tel","required":false,"placeholder":"+44 7700 900000","maxlength":20},{"name":"website","label":"Website","type":"url","required":false,"placeholder":"https://example.com","maxlength":500,"validation":"url"},{"name":"street","label":"Street Address","type":"text","required":false,"placeholder":"123 Main St","maxlength":200},{"name":"city","label":"City","type":"text","required":false,"placeholder":"London","maxlength":100},{"name":"postcode","label":"Postcode","type":"text","required":false,"placeholder":"EC1A 1BB","maxlength":20},{"name":"country","label":"Country","type":"text","required":false,"placeholder":"United Kingdom","maxlength":100},{"name":"notes","label":"Notes","type":"textarea","required":false,"placeholder":"Additional notes...","maxlength":500,"rows":3},{"name":"version","label":"vCard Version","type":"select","required":false,"options":["3.0","4.0"],"default":"3.0","hint":"3.0 has the widest scanner compatibility; 4.0 is the current standard"}]',
  9),
 
 -- 📅 Calendar Event
@@ -221,7 +221,32 @@ INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescript
 ('linkedin', 'LinkedIn', 'fa-brands fa-linkedin', 'Link to a LinkedIn profile or page', 'social',
  '{url}',
  '[{"name":"url","label":"LinkedIn URL","type":"url","required":true,"placeholder":"https://linkedin.com/in/yourprofile","maxlength":2048,"validation":"url"}]',
- 21);
+ 21),
+
+-- 💬 Facebook Messenger
+-- payloadTemplate is NULL so the dispatcher always routes to
+-- buildPayload_facebook_messenger(), which strips a leading '@' and validates
+-- the username before building the m.me deep link.
+('facebook_messenger', 'Facebook Messenger', 'fa-brands fa-facebook-messenger', 'Open a chat in Facebook Messenger', 'messaging',
+ NULL,
+ '[{"name":"username","label":"Messenger Username","type":"text","required":true,"placeholder":"yourpage","maxlength":100,"hint":"Your Facebook page/profile username (the part after m.me/ — a leading @ is fine)"},{"name":"url","label":"OR Messenger URL","type":"url","required":false,"placeholder":"https://m.me/yourpage","maxlength":2048,"validation":"url","hint":"Provide either a username OR the full m.me link"}]',
+ 22),
+
+-- 📸 Instagram
+-- payloadTemplate is NULL so the dispatcher routes to buildPayload_instagram(),
+-- which strips a leading '@' and validates the handle before building the URL.
+('instagram', 'Instagram', 'fa-brands fa-instagram', 'Link to an Instagram profile', 'social',
+ NULL,
+ '[{"name":"username","label":"Instagram Username","type":"text","required":true,"placeholder":"yourhandle","maxlength":100,"hint":"Your Instagram handle (a leading @ is fine)"},{"name":"url","label":"OR Instagram URL","type":"url","required":false,"placeholder":"https://instagram.com/yourhandle","maxlength":2048,"validation":"url","hint":"Provide either a username OR the full profile URL"}]',
+ 23),
+
+-- ⭐ Review / Rating
+-- payloadTemplate is NULL so the dispatcher routes to buildPayload_rating(),
+-- which validates the http(s) review URL before encoding it.
+('rating', 'Review / Rating', 'fa-solid fa-star', 'Link to a review or rating page', 'utility',
+ NULL,
+ '[{"name":"url","label":"Review / Rating URL","type":"url","required":true,"placeholder":"https://g.page/r/yourbusiness/review","maxlength":2048,"validation":"url","hint":"e.g. a Google review link, Trustpilot page or App Store review URL"}]',
+ 24);
 
 -- ==============================================================================
 -- 🖼️ Predefined Logos (tblPredefinedLogos)
@@ -272,7 +297,7 @@ INSERT INTO `tblPredefinedLogos` (`logoName`, `logoLabel`, `logoFileName`, `logo
 -- ==============================================================================
 -- Inserted:
 --   - 52 default settings across 6 groups
---   - 21 QR code type definitions with form field schemas
+--   - 24 QR code type definitions with form field schemas
 --   - 25 predefined logo entries
 --
 -- 📌 The application is now ready for use.

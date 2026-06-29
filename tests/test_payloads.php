@@ -457,6 +457,76 @@ assertThrows(
 );
 
 // ==============================================================================
+// 👤 buildPayload_vcard() — FG-031 vCard 4.0 support
+// ==============================================================================
+
+// 📌 BACK-COMPAT: an explicit version '3.0' must produce EXACTLY the same bytes
+//    as the default (no version supplied). This guards the 3.0 output against
+//    any regression introduced by the version branch.
+assertEquals(
+    buildPayload_vcard(['first_name' => 'Jane']),
+    buildPayload_vcard(['first_name' => 'Jane', 'version' => '3.0']),
+    'vcard: FG-031 — explicit version 3.0 equals the default output (back-compat)'
+);
+
+// 📌 vCard 4.0 full card. VERSION:4.0 and lowercase TYPE tokens
+//    (TEL;TYPE=work / TEL;TYPE=cell / ADR;TYPE=work). All other lines (N, FN,
+//    ORG/ADR/NOTE escaping, \n joining) are identical to the 3.0 output.
+//    Captured from the real builder. '\\,' is backslash+comma, '\\;' is
+//    backslash+semicolon (single-quoted PHP literal).
+$expectedVcard4Full =
+    "BEGIN:VCARD\n"
+    . "VERSION:4.0\n"
+    . "N:Doe;John;;;\n"
+    . "FN:John Doe\n"
+    . 'ORG:ACME\, Corp' . "\n"
+    . "TITLE:Engineer\n"
+    . "TEL;TYPE=work:+1-555-111\n"
+    . "TEL;TYPE=cell:+1-555-222\n"
+    . "EMAIL:john@acme.com\n"
+    . "URL:https://acme.com\n"
+    . 'ADR;TYPE=work:;;1 Main\; St;London;ENG;EC1A;UK' . "\n"
+    . 'NOTE:Note\, with comma' . "\n"
+    . "END:VCARD";
+assertEquals(
+    $expectedVcard4Full,
+    buildPayload_vcard([
+        'first_name'   => 'John',
+        'last_name'    => 'Doe',
+        'organisation' => 'ACME, Corp',
+        'title'        => 'Engineer',
+        'phone_work'   => '+1-555-111',
+        'phone_cell'   => '+1-555-222',
+        'email'        => 'john@acme.com',
+        'url'          => 'https://acme.com',
+        'street'       => '1 Main; St',
+        'city'         => 'London',
+        'state'        => 'ENG',
+        'zip'          => 'EC1A',
+        'country'      => 'UK',
+        'note'         => 'Note, with comma',
+        'version'      => '4.0',
+    ]),
+    'vcard: FG-031 — full 4.0 card emits VERSION:4.0 and lowercase TYPE tokens'
+);
+
+// 📌 vCard 4.0 minimal: only the header VERSION line differs from the 3.0 minimal.
+assertEquals(
+    "BEGIN:VCARD\nVERSION:4.0\nN:;Jane;;;\nFN:Jane\nEND:VCARD",
+    buildPayload_vcard(['first_name' => 'Jane', 'version' => '4.0']),
+    'vcard: FG-031 — minimal 4.0 card header'
+);
+
+// 📌 An unsupported version (e.g. '2.1') is rejected with InvalidArgumentException.
+assertThrows(
+    function (): void {
+        buildPayload_vcard(['first_name' => 'A', 'version' => '2.1']);
+    },
+    'vcard: FG-031 — unsupported version throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
 // 🔧 vcardEscape()
 // ==============================================================================
 
@@ -754,11 +824,50 @@ assertEquals(
     'appstore: GOOGLE (case-insensitive) -> Google Play'
 );
 
-// 📌 'apple' explicitly selects the Apple App Store branch.
+// 📌 'apple' explicitly selects the Apple App Store branch (numeric app ID).
 assertEquals(
-    'https://apps.apple.com/app/idcom.x',
-    buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'apple']),
-    'appstore: apple platform -> Apple App Store'
+    'https://apps.apple.com/app/id123456789',
+    buildPayload_appstore(['app_id' => '123456789', 'platform' => 'apple']),
+    'appstore: apple platform -> Apple App Store (numeric app ID)'
+);
+
+// 📌 B-050 (2026-06-29): Apple app IDs accept an optional leading 'id' prefix
+//    and that prefix is normalised away (no doubled 'idid'). So 'id987654321'
+//    on the apple branch yields .../app/id987654321, not .../app/idid987654321.
+assertEquals(
+    'https://apps.apple.com/app/id987654321',
+    buildPayload_appstore(['app_id' => 'id987654321', 'platform' => 'apple']),
+    'appstore: B-050 — Apple app ID with leading "id" prefix is normalised'
+);
+
+// 📌 B-050: a non-numeric Apple app ID (e.g. a package name) now THROWS rather
+//    than building a malformed https://apps.apple.com/app/idcom.x URL.
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'apple']);
+    },
+    'appstore: B-050 — non-numeric Apple app ID throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 B-050: a Google Play app ID that is not a valid reverse-DNS package name
+//    (single label, no dot) is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'notapackage', 'platform' => 'google']);
+    },
+    'appstore: B-050 — invalid Google package name throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 B-050: a malformed package name whose segment starts with a digit is
+//    rejected (Android package segments must start with a letter).
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'com.1example', 'platform' => 'android']);
+    },
+    'appstore: B-050 — package segment starting with a digit throws',
+    \InvalidArgumentException::class
 );
 
 // 📌 FIX (2026-06-28): the seed used to offer a 'platform' option of 'auto',
@@ -947,43 +1056,156 @@ assertThrows(
 );
 
 // ==============================================================================
-// ❓ Dispatcher: absent builder (instagram / messenger / rating)
+// 💬 buildPayload_facebook_messenger()  (FG-025)
 // ==============================================================================
-// 'instagram' appears in seed_data.sql ONLY as a tblPredefinedLogos row (a logo
-// for branding), NOT as a tblQRCodeTypes row, so there is no payloadTemplate and
-// no buildPayload_instagram() function. Routing such a type through
-// buildPayloadByType() therefore throws InvalidArgumentException. This documents
-// the CURRENT behaviour for any caller that mistakes a logo name for a QR type.
-// (No facebook_messenger / rating QR types exist either — same outcome.)
+
+// 📌 Bare username with a leading '@' → m.me/<user> ('@' stripped). Dots are a
+//    legal Facebook username character so they survive.
+assertEquals(
+    'https://m.me/acme.support',
+    buildPayload_facebook_messenger(['username' => '@acme.support']),
+    'messenger: @username stripped -> m.me/<user>'
+);
+
+// 📌 Username without '@' passes straight through.
+assertEquals(
+    'https://m.me/acme',
+    buildPayload_facebook_messenger(['username' => 'acme']),
+    'messenger: bare username -> m.me/<user>'
+);
+
+// 📌 A direct (schemeless) URL gets https:// prepended and passes through.
+assertEquals(
+    'https://m.me/acme',
+    buildPayload_facebook_messenger(['url' => 'm.me/acme']),
+    'messenger: schemeless URL gets https://'
+);
+
+// 📌 A username containing a path separator is rejected (would corrupt m.me path).
+assertThrows(
+    function (): void {
+        buildPayload_facebook_messenger(['username' => 'foo/bar']);
+    },
+    'messenger: invalid username (slash) throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Missing both username and URL → throws.
+assertThrows(
+    function (): void {
+        buildPayload_facebook_messenger([]);
+    },
+    'messenger: no username/url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📸 buildPayload_instagram()  (FG-025)
+// ==============================================================================
+
+// 📌 Bare handle with a leading '@' → instagram.com/<handle> ('@' stripped).
+assertEquals(
+    'https://instagram.com/natgeo',
+    buildPayload_instagram(['username' => '@natgeo']),
+    'instagram: @handle stripped -> instagram.com/<handle>'
+);
+
+// 📌 Dots and underscores are legal Instagram handle characters.
+assertEquals(
+    'https://instagram.com/nat.geo_',
+    buildPayload_instagram(['username' => 'nat.geo_']),
+    'instagram: dots and underscores preserved in handle'
+);
+
+// 📌 A direct (schemeless) URL gets https:// prepended and passes through.
+assertEquals(
+    'https://instagram.com/natgeo',
+    buildPayload_instagram(['url' => 'instagram.com/natgeo']),
+    'instagram: schemeless URL gets https://'
+);
+
+// 📌 A handle containing a space is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_instagram(['username' => 'foo bar']);
+    },
+    'instagram: invalid handle (space) throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Missing both username and URL → throws.
+assertThrows(
+    function (): void {
+        buildPayload_instagram([]);
+    },
+    'instagram: no username/url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// ⭐ buildPayload_rating()  (FG-025)
+// ==============================================================================
+
+// 📌 A valid https review URL passes through unchanged.
+assertEquals(
+    'https://g.page/r/CcExampleReview/review',
+    buildPayload_rating(['url' => 'https://g.page/r/CcExampleReview/review']),
+    'rating: full https review URL passes through'
+);
+
+// 📌 A schemeless review URL gets https:// prepended.
+assertEquals(
+    'https://trustpilot.com/review/example.com',
+    buildPayload_rating(['url' => 'trustpilot.com/review/example.com']),
+    'rating: schemeless review URL gets https://'
+);
+
+// 📌 A non-http(s) scheme (e.g. ftp) is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_rating(['url' => 'ftp://files.example.com/r']);
+    },
+    'rating: non-http(s) scheme throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Missing URL → throws.
+assertThrows(
+    function (): void {
+        buildPayload_rating([]);
+    },
+    'rating: missing url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// ❓ Dispatcher: absent builder
+// ==============================================================================
+// FG-025 added buildPayload_facebook_messenger / buildPayload_instagram /
+// buildPayload_rating, so those names now resolve. We keep a dispatcher
+// characterization for a name that genuinely has NO builder: 'twitter' exists
+// in seed_data.sql ONLY as a tblPredefinedLogos row (a branding logo), NOT as a
+// tblQRCodeTypes row, so there is no buildPayload_twitter() function. Routing it
+// through buildPayloadByType() therefore throws InvalidArgumentException.
 
 assertThrows(
     function (): void {
-        buildPayloadByType('instagram', ['url' => 'https://instagram.com/x']);
+        buildPayloadByType('twitter', ['url' => 'https://twitter.com/x']);
     },
-    'dispatcher: instagram has no builder -> throws (not a QR type, only a logo)',
+    'dispatcher: twitter has no builder -> throws (not a QR type, only a logo)',
     \InvalidArgumentException::class
 );
 
 // 📌 Confirm the exact current error message for the missing builder.
-$instagramMessage = '';
+$twitterMessage = '';
 try {
-    buildPayloadByType('instagram', ['url' => 'x']);
+    buildPayloadByType('twitter', ['url' => 'x']);
 } catch (\InvalidArgumentException $e) {
-    $instagramMessage = $e->getMessage();
+    $twitterMessage = $e->getMessage();
 }
 assertEquals(
-    'Unknown QR code type: "instagram". '
-    . 'No payload builder function "buildPayload_instagram()" found.',
-    $instagramMessage,
-    'dispatcher: exact "unknown type" message for absent instagram builder'
-);
-
-// 📌 An empty builder result also throws (e.g. a builder returning '' would be
-//    rejected by buildPayloadByType). 'rating' is likewise an absent type.
-assertThrows(
-    function (): void {
-        buildPayloadByType('rating', ['stars' => '5']);
-    },
-    'dispatcher: rating has no builder -> throws',
-    \InvalidArgumentException::class
+    'Unknown QR code type: "twitter". '
+    . 'No payload builder function "buildPayload_twitter()" found.',
+    $twitterMessage,
+    'dispatcher: exact "unknown type" message for absent twitter builder'
 );
