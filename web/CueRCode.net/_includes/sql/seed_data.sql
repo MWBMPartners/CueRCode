@@ -53,7 +53,13 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('api', 'api_rate_limit_anonymous_per_min', '10', 'integer', 0, 1, 'Rate limit per minute for anonymous API requests'),
 ('api', 'api_rate_limit_anonymous_per_day', '100', 'integer', 0, 1, 'Rate limit per day for anonymous API requests'),
 ('api', 'api_default_response_format', 'json', 'string', 0, 1, 'Default API response format (json or xml)'),
-('api', 'api_cors_allowed_origins', '*', 'string', 0, 1, 'CORS allowed origins (comma-separated or * for all)'),
+-- 🔐 B-053 secure-by-default: seed an EMPTY allow-list so a fresh install denies
+--    all cross-origin requests until an admin explicitly adds origins. The CORS
+--    code already fails closed on an empty value (no Access-Control-Allow-Origin
+--    header emitted), so this makes new deployments safe out of the box. Set this
+--    to a comma-separated list of trusted origins (or '*' to allow all) via the
+--    admin panel only after consciously deciding cross-origin access is wanted.
+('api', 'api_cors_allowed_origins', '', 'string', 0, 1, 'CORS allowed origins (comma-separated list; empty = deny all cross-origin; * = allow all)'),
 
 -- 🛡️ Security Settings
 ('security', 'debug_mode', '0', 'boolean', 0, 1, 'Enable debug mode globally (overridden by ?debug=true URL param)'),

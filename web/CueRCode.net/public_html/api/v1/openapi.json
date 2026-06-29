@@ -786,6 +786,15 @@
                                 }
                             }
                         }
+                    },
+                    "application/xml": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "examples": {
+                            "too_large_xml": {
+                                "summary": "Body over the size cap (XML)",
+                                "value": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-stylesheet type=\"text/xsl\" href=\"/assets/xsl/api-response.xsl\"?>\n<response><success>false</success><message>Request body too large. Maximum allowed size is 262144 bytes.</message><data></data><error_code>PAYLOAD_TOO_LARGE</error_code><timestamp>2026-02-27T12:00:00+00:00</timestamp></response>"
+                            }
+                        }
                     }
                 }
             },
@@ -806,6 +815,15 @@
                                 }
                             }
                         }
+                    },
+                    "application/xml": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "examples": {
+                            "wrong_content_type_xml": {
+                                "summary": "Non-JSON Content-Type (XML)",
+                                "value": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-stylesheet type=\"text/xsl\" href=\"/assets/xsl/api-response.xsl\"?>\n<response><success>false</success><message>Unsupported Media Type. Request body must be sent as Content-Type: application/json.</message><data></data><error_code>UNSUPPORTED_MEDIA_TYPE</error_code><timestamp>2026-02-27T12:00:00+00:00</timestamp></response>"
+                            }
+                        }
                     }
                 }
             },
@@ -824,6 +842,15 @@
                                     "error_code": "GENERATION_FAILED",
                                     "timestamp": "2026-02-27T12:00:00+00:00"
                                 }
+                            }
+                        }
+                    },
+                    "application/xml": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "examples": {
+                            "generation_failed_xml": {
+                                "summary": "Generation failure (XML)",
+                                "value": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-stylesheet type=\"text/xsl\" href=\"/assets/xsl/api-response.xsl\"?>\n<response><success>false</success><message>QR code generation failed: Invalid payload data.</message><data></data><error_code>GENERATION_FAILED</error_code><timestamp>2026-02-27T12:00:00+00:00</timestamp></response>"
                             }
                         }
                     }
@@ -864,6 +891,15 @@
                                 }
                             }
                         }
+                    },
+                    "application/xml": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "examples": {
+                            "rate_limited_xml": {
+                                "summary": "Too many requests (XML)",
+                                "value": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-stylesheet type=\"text/xsl\" href=\"/assets/xsl/api-response.xsl\"?>\n<response><success>false</success><message>Rate limit exceeded. Please wait before making another request.</message><data></data><error_code>RATE_LIMIT_EXCEEDED</error_code><timestamp>2026-02-27T12:00:00+00:00</timestamp></response>"
+                            }
+                        }
                     }
                 }
             },
@@ -882,6 +918,15 @@
                                     "error_code": "FETCH_ERROR",
                                     "timestamp": "2026-02-27T12:00:00+00:00"
                                 }
+                            }
+                        }
+                    },
+                    "application/xml": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "examples": {
+                            "server_error_xml": {
+                                "summary": "Unexpected server error (XML)",
+                                "value": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-stylesheet type=\"text/xsl\" href=\"/assets/xsl/api-response.xsl\"?>\n<response><success>false</success><message>An error occurred while fetching QR code types.</message><data></data><error_code>FETCH_ERROR</error_code><timestamp>2026-02-27T12:00:00+00:00</timestamp></response>"
                             }
                         }
                     }

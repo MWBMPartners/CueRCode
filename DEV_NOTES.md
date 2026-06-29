@@ -79,6 +79,37 @@ Since Dreamhost shared hosting has no CLI/Composer access:
 
 ---
 
+## ⚠️ Known Caveats & Intentional Patterns
+
+### Zero-Deprecation DoD Bar (cycle 10)
+
+PHP 8.4/8.5 zero-deprecation is a hard Definition-of-Done gate. As of cycle 10, zero `E_DEPRECATED` or `E_STRICT` notices are emitted by any file under `web/CueRCode.net/`. Any future change must preserve this bar — run `php -l` and verify no deprecation output before committing.
+
+### deploy.yml CI-Coupling — `'= NULL'` String Literals in infoAppVer.php
+
+**Do not reformat lines 68–71 of `web/CueRCode.net/public_html/infoAppVer.php`** without first updating `.github/workflows/deploy.yml`.
+
+These four lines contain the literal string `= NULL` (uppercase, with a leading space before `=`) in PHP assignment statements for `Repo.Commit.*` fields:
+
+```php
+$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]    = NULL;
+$app["Application"]["Version"]["Repo"]["Commit"]["Short"]  = NULL;
+$app["Application"]["Version"]["Repo"]["Commit"]["Date"]   = NULL;
+$app["Application"]["Version"]["Repo"]["Commit"]["URL"]    = NULL;
+```
+
+The `deploy.yml` workflow uses a literal `sed` injection that targets the string `= NULL` (with leading space) exactly to replace these values with real commit metadata before SFTP upload. If the casing, spacing, or structure of these lines changes, the sed substitution will silently fail and production builds will ship `NULL` commit info.
+
+The uppercase `NULL` in these four lines is therefore intentional and must be preserved until `deploy.yml` is updated to match any new format. All other `NULL` → `null` lowercase normalisation (B-025) has been applied; these four are the only retained exception.
+
+**Follow-up:** a future task should update `deploy.yml` to use a more robust injection method (e.g. `jq`-equivalent or PHP-based substitution) so these lines can be normalised to lowercase `null` without CI risk. Track under a new backlog item when addressed.
+
+### dev_alpha / dev_beta infoAppVer.php Copies
+
+`web/CueRCode.net/public_html_dev_alpha/infoAppVer.php` and `web/CueRCode.net/public_html_dev_beta/infoAppVer.php` are derivative copies of the production `infoAppVer.php`. They have NOT yet received the cycle-10 standards pass (tabs→spaces, doc header, `||`/`&&`, lowercase null, section spacing). A follow-up standards pass is needed on these two files to bring them into sync with the production copy.
+
+---
+
 ## 🧪 Testing
 
 A dependency-free PHP characterization test harness lives under `tests/` at the repo root. It requires no Composer or external packages and can be run on any machine with PHP 8.4+.

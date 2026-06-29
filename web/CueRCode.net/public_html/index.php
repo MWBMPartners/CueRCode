@@ -883,12 +883,35 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </div>
 
                                     <!-- Quiet Zone -->
-                                    <div class="form-check form-switch">
+                                    <div class="form-check form-switch mb-4">
                                         <input class="form-check-input" type="checkbox" role="switch"
                                                id="opt-quiet-zone" name="quiet_zone" checked>
                                         <label class="form-check-label" for="opt-quiet-zone">
                                             Include Quiet Zone (recommended for scanning)
                                         </label>
+                                    </div>
+
+                                    <!-- QR Version (module grid size) — B-055 -->
+                                    <div class="mb-4">
+                                        <label for="opt-version" class="form-label fw-semibold">
+                                            <i class="fa-solid fa-table-cells me-1" aria-hidden="true"></i> QR Version
+                                        </label>
+                                        <select class="form-select" id="opt-version" name="qr_version">
+                                            <option value="auto" selected>Auto (fit to data)</option>
+                                            <?php
+                                            // 🔢 Versions 1-40 set a fixed module grid (modules = 4 * v + 17).
+                                            for ($qrVersionOption = 1; $qrVersionOption <= 40; $qrVersionOption++) {
+                                                echo '<option value="' . $qrVersionOption . '">'
+                                                    . 'Version ' . $qrVersionOption
+                                                    . ' (' . ((4 * $qrVersionOption) + 17) . '&times;'
+                                                    . ((4 * $qrVersionOption) + 17) . ')'
+                                                    . '</option>';
+                                            }
+                                            ?>
+                                        </select>
+                                        <small class="text-body-secondary mt-1 d-block">
+                                            Leave on <strong>Auto</strong> unless you need a fixed size. A version too small for the data will be rejected.
+                                        </small>
                                     </div>
                                 </div>
 

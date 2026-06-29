@@ -746,6 +746,49 @@ function buildCustomizationFromRequest(array $raw): array
         $customization['quiet_zone'] = true;
     }
 
+    // 📌 QR code version (int 1-40, or 'auto'/absent => library auto-select)
+    // 🔧 B-055 (ProjectBrief §4.5 — version/precision selection): the openapi
+    //    spec documents an optional 'version' customisation param; we now accept
+    //    it for real so the doc matches the impl (cycle-9 doc-vs-impl mismatch).
+    //    Behaviour:
+    //      - absent           => key omitted => buildQROptions() leaves the
+    //                            library default (Version::AUTO) so the smallest
+    //                            version that fits the payload at the chosen ECC
+    //                            level is chosen automatically.
+    //      - 'auto' (string)  => same as absent (explicit auto request).
+    //      - integer 1..40    => coerced to int and passed through; buildQROptions()
+    //                            sets QROptions->version to pin the module grid.
+    //    Any out-of-range integer or non-numeric/non-'auto' value is treated as a
+    //    hard validation error (surfaced by validateCustomization()), rather than
+    //    being silently coerced — a caller asking for version 99 should be told
+    //    it is invalid, not quietly given an auto-sized code. We store a sentinel
+    //    so validateCustomization() can distinguish "absent/auto" (fine) from
+    //    "present but invalid" (rejected).
+    // @see fn_qr_options.php - buildQROptions() (version mapping)
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/Common/Version.php (AUTO = -1)
+    if (isset($raw['version'])) {
+        $versionRaw = $raw['version'];
+
+        // 📌 Normalise an 'auto' string (any case / whitespace) to "no pin".
+        if (is_string($versionRaw) && strtolower(trim($versionRaw)) === 'auto') {
+            // 🟢 Explicit auto => leave the key unset (library auto-selects).
+            $versionResolved = null;
+        } elseif (is_int($versionRaw) || (is_string($versionRaw) && preg_match('/^-?\d+$/', trim($versionRaw)) === 1)) {
+            // 🔢 An integer (or a clean integer string from JSON/form). Coerce to
+            //    int; range is validated by validateCustomization() so an out-of
+            //    -range value becomes a 400 rather than a clamp.
+            $versionResolved = (int) $versionRaw;
+        } else {
+            // ❌ Neither 'auto' nor an integer — record it verbatim so
+            //    validateCustomization() rejects it (no untyped pass-through).
+            $versionResolved = $versionRaw;
+        }
+
+        if ($versionResolved !== null) {
+            $customization['version'] = $versionResolved;
+        }
+    }
+
     // 📌 Gradient (array, SVG only)
     if (isset($raw['gradient']) && is_array($raw['gradient'])) {
         $customization['gradient'] = $raw['gradient'];
@@ -818,6 +861,24 @@ function validateCustomization(array $customization): ?string
     if ($size < 100 || $size > 4000) {
         return 'Invalid size: ' . (int) $size
             . '. Must be between 100 and 4000 pixels.';
+    }
+
+    // 📌 Validate QR version (B-055). Only present when the caller pinned a
+    //    version (absent/'auto' was normalised away in buildCustomizationFromRequest()).
+    //    A present value MUST be an integer in 1..40; anything else is a 400.
+    // @see buildCustomizationFromRequest() - 'version' handling
+    if (isset($customization['version'])) {
+        $version = $customization['version'];
+        if (!is_int($version) || $version < 1 || $version > 40) {
+            if (is_scalar($version)) {
+                $versionDisplay = (string) $version;
+            } else {
+                $versionDisplay = gettype($version);
+            }
+            return 'Invalid version: '
+                . htmlspecialchars($versionDisplay, ENT_QUOTES, 'UTF-8')
+                . '. Must be an integer between 1 and 40, or "auto".';
+        }
     }
 
     // ✅ All validations passed

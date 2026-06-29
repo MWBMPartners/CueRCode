@@ -630,6 +630,163 @@ assertThrows(
 );
 
 // ==============================================================================
+// 📅 buildPayload_calendar() — B-007 optional 'tz' (IANA timezone) support
+// ==============================================================================
+// When a 'tz' is supplied the builder interprets the wall-clock start/end IN
+// that zone, tags DTSTART/DTEND with ";TZID=<tz>", and emits a minimal RFC 5545
+// VTIMEZONE block (a single STANDARD/DAYLIGHT subcomponent carrying the zone's
+// UTC offset at the event instant). When 'tz' is absent the historical
+// floating-local-time output is unchanged (asserted by the two tests above).
+// Outputs below were captured byte-for-byte from the real builder. The harness
+// pins date_default_timezone_set('UTC') at the top of this file, but the tz
+// path is independent of the process default (it uses the named zone), so these
+// are reproducible on any host.
+
+// 📌 Europe/London in WINTER → GMT, STANDARD subcomponent, +0000 offset. The
+//    wall-clock 10:00 is preserved (interpreted as local London time) and the
+//    VTIMEZONE is emitted before the VEVENT. SUMMARY/LOCATION are ical-escaped.
+$expectedCalTzLondonWinter =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VTIMEZONE\r\n"
+    . "TZID:Europe/London\r\n"
+    . "BEGIN:STANDARD\r\n"
+    . "DTSTART:20260115T100000\r\n"
+    . "TZOFFSETFROM:+0000\r\n"
+    . "TZOFFSETTO:+0000\r\n"
+    . "TZNAME:GMT\r\n"
+    . "END:STANDARD\r\n"
+    . "END:VTIMEZONE\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART;TZID=Europe/London:20260115T100000\r\n"
+    . "DTEND;TZID=Europe/London:20260115T110000\r\n"
+    . 'SUMMARY:Team\, Meeting' . "\r\n"
+    . 'LOCATION:Room\; A' . "\r\n"
+    . "DESCRIPTION:sync\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalTzLondonWinter,
+    buildPayload_calendar([
+        'title'       => 'Team, Meeting',
+        'start_date'  => '2026-01-15T10:00:00',
+        'end_date'    => '2026-01-15T11:00:00',
+        'location'    => 'Room; A',
+        'description' => 'sync',
+        'tz'          => 'Europe/London',
+    ]),
+    'calendar: B-007 — tz=Europe/London (winter) emits GMT STANDARD VTIMEZONE + TZID DTSTART/DTEND'
+);
+
+// 📌 Europe/London in SUMMER → BST, DAYLIGHT subcomponent, +0100 offset. No
+//    end_date → DTEND defaults to start + 1 hour (in-zone).
+$expectedCalTzLondonSummer =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VTIMEZONE\r\n"
+    . "TZID:Europe/London\r\n"
+    . "BEGIN:DAYLIGHT\r\n"
+    . "DTSTART:20260715T100000\r\n"
+    . "TZOFFSETFROM:+0100\r\n"
+    . "TZOFFSETTO:+0100\r\n"
+    . "TZNAME:BST\r\n"
+    . "END:DAYLIGHT\r\n"
+    . "END:VTIMEZONE\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART;TZID=Europe/London:20260715T100000\r\n"
+    . "DTEND;TZID=Europe/London:20260715T110000\r\n"
+    . "SUMMARY:Solo\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalTzLondonSummer,
+    buildPayload_calendar([
+        'title'      => 'Solo',
+        'start_date' => '2026-07-15T10:00:00',
+        'tz'         => 'Europe/London',
+    ]),
+    'calendar: B-007 — tz=Europe/London (summer) emits BST DAYLIGHT VTIMEZONE, DTEND defaults +1h'
+);
+
+// 📌 A negative-offset zone (America/New_York, EST, -0500) formats the offset
+//    with a leading '-'.
+$expectedCalTzNY =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VTIMEZONE\r\n"
+    . "TZID:America/New_York\r\n"
+    . "BEGIN:STANDARD\r\n"
+    . "DTSTART:20260115T093000\r\n"
+    . "TZOFFSETFROM:-0500\r\n"
+    . "TZOFFSETTO:-0500\r\n"
+    . "TZNAME:EST\r\n"
+    . "END:STANDARD\r\n"
+    . "END:VTIMEZONE\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART;TZID=America/New_York:20260115T093000\r\n"
+    . "DTEND;TZID=America/New_York:20260115T103000\r\n"
+    . "SUMMARY:NY\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalTzNY,
+    buildPayload_calendar([
+        'title'      => 'NY',
+        'start_date' => '2026-01-15T09:30:00',
+        'end_date'   => '2026-01-15T10:30:00',
+        'tz'         => 'America/New_York',
+    ]),
+    'calendar: B-007 — tz=America/New_York (EST) emits negative -0500 offset'
+);
+
+// 📌 'timezone' is accepted as a friendly alias for 'tz' (same output as tz=).
+assertEquals(
+    buildPayload_calendar([
+        'title'      => 'Alias',
+        'start_date' => '2026-01-15T10:00:00',
+        'tz'         => 'Europe/London',
+    ]),
+    buildPayload_calendar([
+        'title'      => 'Alias',
+        'start_date' => '2026-01-15T10:00:00',
+        'timezone'   => 'Europe/London',
+    ]),
+    'calendar: B-007 — "timezone" key is an alias for "tz"'
+);
+
+// 📌 BACK-COMPAT: an empty tz is treated as absent → the default floating-local
+//    output is produced (identical to omitting the field entirely). This guards
+//    the default path against the tz branch being entered on a blank value.
+assertEquals(
+    buildPayload_calendar([
+        'title'      => 'Solo',
+        'start_date' => '2026-03-15T10:00:00',
+    ]),
+    buildPayload_calendar([
+        'title'      => 'Solo',
+        'start_date' => '2026-03-15T10:00:00',
+        'tz'         => '',
+    ]),
+    'calendar: B-007 — empty tz falls back to the default (no-TZID) output'
+);
+
+// 📌 An invalid IANA timezone name throws InvalidArgumentException.
+assertThrows(
+    function (): void {
+        buildPayload_calendar([
+            'title'      => 'X',
+            'start_date' => '2026-01-15T10:00:00',
+            'tz'         => 'Mars/Olympus_Mons',
+        ]);
+    },
+    'calendar: B-007 — invalid tz name throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
 // 🔧 icalEscape()
 // ==============================================================================
 

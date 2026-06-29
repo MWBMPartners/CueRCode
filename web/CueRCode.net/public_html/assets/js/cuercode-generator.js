@@ -170,6 +170,14 @@
             quiet_zone: $('#opt-quiet-zone').is(':checked')
         };
 
+        /* 🔢 QR version (B-055): only send a pinned version when the user picks
+           a numeric value; 'auto' (the default) is omitted so the API/library
+           auto-selects the smallest version that fits the payload. */
+        var versionVal = $('#opt-version').val();
+        if (versionVal && versionVal !== 'auto') {
+            customization.version = parseInt(versionVal, 10);
+        }
+
         /* 📌 Include uploaded logo base64 data if present */
         if (uploadedLogoBase64 && customization.logo === 'upload') {
             customization.logo_data = uploadedLogoBase64;

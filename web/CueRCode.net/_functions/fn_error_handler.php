@@ -47,8 +47,19 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 // @see https://www.php-fig.org/psr/psr-3/#5-psrlogloglevel
 // ==============================================================================
 
+// 🛡️ B-052: E_STRICT is DEPRECATED as of PHP 8.4 — even *naming* the constant
+//     (e.g. as an array key) emits a "Constant E_STRICT is deprecated" notice.
+//     PHP no longer raises any E_STRICT errors on 8.4+, so the map key is only
+//     useful on older runtimes. We therefore add it conditionally, and read its
+//     value via constant('E_STRICT') guarded by a version check so the constant
+//     is only ever referenced on PHP < 8.4 (where it is not deprecated). This
+//     keeps the historical severity-map behaviour for every other code intact
+//     while emitting ZERO deprecation notices when the file is loaded on 8.4+.
+// @see https://www.php.net/manual/en/migration84.deprecated.php
+// @see https://www.php.net/manual/en/function.constant.php
+
 /** @var array<int,string> Map of PHP error constants to PSR-3 severity strings */
-define('CUERCODE_ERROR_SEVERITY_MAP', [
+$cuercodeErrorSeverityMap = [
     E_ERROR             => 'critical',   // 🔴 Fatal run-time error
     E_WARNING           => 'warning',    // 🟡 Run-time warning
     E_PARSE             => 'critical',   // 🔴 Compile-time parse error
@@ -60,11 +71,20 @@ define('CUERCODE_ERROR_SEVERITY_MAP', [
     E_USER_ERROR        => 'error',      // 🟠 User-triggered error
     E_USER_WARNING      => 'warning',    // 🟡 User-triggered warning
     E_USER_NOTICE       => 'notice',     // 🔵 User-triggered notice
-    E_STRICT            => 'info',       // 🔵 Strict standards suggestion
     E_RECOVERABLE_ERROR => 'error',      // 🟠 Catchable fatal error
     E_DEPRECATED        => 'info',       // 🔵 Deprecated feature notice
     E_USER_DEPRECATED   => 'info',       // 🔵 User-triggered deprecation
-]);
+];
+
+// 🔵 Add the legacy E_STRICT severity ONLY on PHP versions where the constant
+//    is still live (< 8.4). constant('E_STRICT') avoids a literal reference to
+//    the deprecated constant on newer PHP, suppressing the deprecation notice.
+if (version_compare(PHP_VERSION, '8.4', '<') && defined('E_STRICT')) {
+    $cuercodeErrorSeverityMap[constant('E_STRICT')] = 'info'; // 🔵 Strict standards suggestion
+}
+
+define('CUERCODE_ERROR_SEVERITY_MAP', $cuercodeErrorSeverityMap);
+unset($cuercodeErrorSeverityMap);
 
 // ==============================================================================
 // ⚙️ Register Custom Error Handler
@@ -670,11 +690,18 @@ function getErrorCodeName(int $code): string
         E_USER_ERROR        => 'E_USER_ERROR',
         E_USER_WARNING      => 'E_USER_WARNING',
         E_USER_NOTICE       => 'E_USER_NOTICE',
-        E_STRICT            => 'E_STRICT',
         E_RECOVERABLE_ERROR => 'E_RECOVERABLE_ERROR',
         E_DEPRECATED        => 'E_DEPRECATED',
         E_USER_DEPRECATED   => 'E_USER_DEPRECATED',
     ];
+
+    // 🛡️ B-052: add the deprecated E_STRICT name only on PHP < 8.4, reading the
+    //     constant value via constant() so the deprecated constant is never
+    //     referenced literally on newer runtimes (no deprecation notice).
+    // @see https://www.php.net/manual/en/migration84.deprecated.php
+    if (version_compare(PHP_VERSION, '8.4', '<') && defined('E_STRICT')) {
+        $names[constant('E_STRICT')] = 'E_STRICT';
+    }
 
     if (isset($names[$code])) {
         return $names[$code];

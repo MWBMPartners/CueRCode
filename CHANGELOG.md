@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - QR Version/Precision Selection and iCal Timezone Support (2026-06-29)
+
+- **QR version/precision selection** (B-007 / API+UI): the `/generate` and `/preview` API endpoints now accept an optional `version` integer parameter (1–40) to pin the QR code module version, and a string literal `"auto"` (normalised to no-pin for automatic selection); OpenAPI 3.0.3 schema updated to document both forms.
+- **iCalendar timezone (TZID/VTIMEZONE)** (B-007): `buildPayload_calendar` now accepts an optional `timezone` parameter; when provided, `DTSTART` and `DTEND` are emitted as `DTSTART;TZID=<tz>:…` with a `VTIMEZONE` component generated per RFC 5545; falls back to UTC `Z` suffix when timezone is omitted or empty.
+
+### Changed - Secure-by-Default CORS on Fresh Install (2026-06-29)
+
+- **Secure-by-default CORS allowlist** (B-053): `seed_data.sql` `api_cors_allowed_origins` seed value changed from `*` to `''` (empty string); `emitCorsHeaders()` already fails closed when the allowlist is empty (denies all cross-origin requests), so fresh installs are now secure-by-default and an admin must explicitly add origins to permit cross-origin access. Existing databases are unaffected (seed only runs on fresh install). Note: intentional behavioural change — confirm acceptable before deploying.
+
+### Fixed - PHP 8.4 Deprecations, infoAppVer Standards, Config Cache, Logo Path, and OpenAPI (2026-06-29)
+
+- **PHP 8.4 E_STRICT / E_DEPRECATED elimination** (B-051): all deprecation-triggering patterns across the codebase removed; `php -l` and runtime zero-deprecation bar now met — zero `E_DEPRECATED` or `E_STRICT` output on PHP 8.4/8.5.
+- **infoAppVer.php standards pass** (B-022, B-023, B-024, B-025, B-026): `public_html/infoAppVer.php` converted to full house-style — tabs replaced with 4-space indentation; full file-header doc block added (path, copyright, `@package`/`@subpackage`/`@version`/`@since`/`@see`); `OR`/`AND` operators replaced with `||`/`&&`; uppercase `NULL` replaced with lowercase `null` (4 CI-coupled `' = NULL'` string literals on lines 68–71 intentionally retained for `deploy.yml` sed injection — verify before future reflow); section headers and consistent spacing added throughout.
+- **Config-cache invalidation** (B-004): `clearConfigCache()` in `fn_config.php` now actually evicts entries from `getConfig()`'s static `$cache`; `setConfig()` invalidates the affected key on write; request-lifetime config cache is now coherent across set/get/clear within a single request.
+- **Logo path containment annotation** (B-056): OpenAPI `logo` parameter description updated to document the server-side path-containment constraint (paths are validated via `realpath` under `CUERCODE_UPLOADS_DIR/logos`; any path resolving outside is rejected).
+- **OpenAPI XML error examples** (B-052): correct XML error response examples added to all error response codes (`400`, `401`, `404`, `413`, `415`, `429`, `500`, `501`) in `openapi.json`; every response now has both JSON and XML examples.
+- **OpenAPI `version` parameter doc/impl sync** (B-054): `version` schema in `openapi.json` updated to document both the integer form (1–40, pin module version) and the string literal `"auto"` (normalised to no-pin); the documented contract now fully reflects the implementation's accepted inputs.
+
 ### Changed - API Feature Parity, Complete OpenAPI Spec, and Uniform Endpoint Security (2026-06-29)
 
 - **API is now a strict superset of the web UI** (GitHub #45, #6): every customisation parameter available in the web UI (colours, dot/marker patterns, logo overlay and position, frame styles and labels, output format, ECC level, size, quiet zone, and all type-specific input fields) is now fully exposed and accepted by the REST API (`POST /api/v1/generate` and `POST /api/v1/preview`). `buildCustomizationFromRequest()` in `fn_api_generate.php` audited and confirmed to accept all 21 customisation parameters; the API is the parity contract.

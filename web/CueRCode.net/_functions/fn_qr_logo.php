@@ -729,11 +729,47 @@ function getLogoPathFromDatabase(int $logoId): ?string
             return null;
         }
 
-        // 📌 Try relative to the uploads/logos directory
+        // 📌 Try relative to the uploads/logos directory.
+        // 🔒 B-051 (defence-in-depth): even though logoFileName comes from a DB
+        //    row (admin-controlled, not request-supplied), an admin could set a
+        //    malformed value containing traversal segments ('../../config.php')
+        //    or an absolute path. Run the resolved path through the SAME
+        //    realpath-under-base containment guard added in cycle 5 for the
+        //    request-supplied logo path (Case 3 of getLogoPath()), so a stored
+        //    value can never escape the uploads/logos base directory either.
+        // @see getLogoPath() - Case 3 containment guard (F-017)
+        // @see isPathWithinAllowedBase()
         if (defined('CUERCODE_UPLOADS_DIR')) {
-            $fullPath = CUERCODE_UPLOADS_DIR . 'logos' . DIRECTORY_SEPARATOR . $logoFileName;
-            if (file_exists($fullPath)) {
-                return $fullPath;
+            $logosBaseDir = CUERCODE_UPLOADS_DIR . 'logos';
+
+            // 📌 Resolve the allowed base once (normalises symlinks/.. in the base).
+            $allowedBase = realpath($logosBaseDir);
+            if ($allowedBase === false) {
+                // ⚠️ Base directory missing/unresolvable — cannot contain anything.
+                return null;
+            }
+
+            // 📌 Resolve the candidate file (uploads/logos + stored filename).
+            $fullPath     = $logosBaseDir . DIRECTORY_SEPARATOR . $logoFileName;
+            $resolvedReal = realpath($fullPath);
+
+            if ($resolvedReal !== false
+                && file_exists($resolvedReal)
+                && is_file($resolvedReal)
+                && isPathWithinAllowedBase($resolvedReal, [$allowedBase])
+            ) {
+                return $resolvedReal;
+            }
+
+            // ❌ Stored filename resolved outside the base (or did not exist):
+            //    block it and log, rather than returning an escaping path.
+            if (function_exists('logError')) {
+                logError(
+                    'error',
+                    'Predefined logo path containment check failed (B-051 guard)',
+                    'Logo ID: ' . $logoId . ' | Stored filename: '
+                    . mb_substr((string) $logoFileName, 0, 200)
+                );
             }
         }
 

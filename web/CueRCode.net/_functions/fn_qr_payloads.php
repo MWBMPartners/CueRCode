@@ -12,10 +12,11 @@
  * placeholder replacement) or delegates to a type-specific builder function
  * for complex payloads (vCard, iCalendar, Zoom, Wi-Fi, etc.).
  *
- * Supported QR code types (21 total):
+ * Supported QR code types (26 total):
  *   - url, text, email, phone, sms, whatsapp, zoom, geo, vcard, calendar,
  *     paypal, bitcoin, mp3, video, pdf, image, appstore, facebook, youtube,
- *     wifi, linkedin
+ *     wifi, linkedin, facebook_messenger, instagram, rating, deeplink,
+ *     gs1_product
  *
  * @package     CueRCode
  * @subpackage  QR Generation
@@ -1037,11 +1038,27 @@ function vcardEscape(string $value): string
  * Date/time values should be provided in ISO 8601 format (e.g., 2026-03-15T10:00:00)
  * and are converted to iCalendar format (YYYYMMDDTHHmmss).
  *
- * @param array $inputData Required: 'title', 'start_date'; Optional: 'end_date', 'location', 'description'
+ * 🕒 Timezone handling (B-007):
+ *   - WITHOUT a 'tz' field (default, back-compatible): DTSTART/DTEND are emitted
+ *     as bare "floating" local date-times (YYYYMMDDTHHmmss, no TZID, no Z) and
+ *     the wall-clock is interpreted via strtotime() in the process default
+ *     timezone — byte-for-byte identical to the historical output.
+ *   - WITH an optional 'tz' field (an IANA timezone name, e.g. "Europe/London"
+ *     or "America/New_York"): the supplied wall-clock times are interpreted in
+ *     THAT zone, DTSTART/DTEND are tagged ";TZID=<tz>", and a minimal RFC 5545
+ *     VTIMEZONE component (a single STANDARD subcomponent carrying the zone's
+ *     UTC offset at the event instant) is emitted before the VEVENT so the
+ *     ";TZID=" reference resolves. An unknown IANA name throws.
+ *
+ * @param array $inputData Required: 'title', 'start_date';
+ *                         Optional: 'end_date', 'location', 'description', 'tz'
+ *                         ('timezone' is accepted as an alias for 'tz')
  *
  * @return string The iCalendar VEVENT payload string
  *
  * @see https://datatracker.ietf.org/doc/html/rfc5545 iCalendar specification
+ * @see https://datatracker.ietf.org/doc/html/rfc5545#section-3.6.5 VTIMEZONE
+ * @see https://www.php.net/manual/en/class.datetimezone.php
  * @see https://www.php.net/manual/en/function.date.php
  * @see https://www.php.net/manual/en/function.strtotime.php
  *
@@ -1052,6 +1069,7 @@ function vcardEscape(string $value): string
  *       'end_date'    => '2026-03-15T11:00:00',
  *       'location'    => 'Conference Room A',
  *       'description' => 'Weekly team sync',
+ *       'tz'          => 'Europe/London',
  *   ]);
  */
 function buildPayload_calendar(array $inputData): string
@@ -1098,6 +1116,18 @@ function buildPayload_calendar(array $inputData): string
     }
     $description = trim($descriptionValue);
 
+    // 🕒 B-007: optional IANA timezone name. 'tz' is the canonical field name;
+    //    'timezone' is accepted as a friendly alias. Absent/empty → the historical
+    //    floating-local-time behaviour is preserved exactly (no TZID, no VTIMEZONE).
+    if (isset($inputData['tz'])) {
+        $tzValue = $inputData['tz'];
+    } elseif (isset($inputData['timezone'])) {
+        $tzValue = $inputData['timezone'];
+    } else {
+        $tzValue = '';
+    }
+    $tz = trim((string) $tzValue);
+
     // ❌ Validate required fields
     if ($title === '') {
         throw new \InvalidArgumentException('Event title is required for calendar-type QR codes.');
@@ -1107,6 +1137,97 @@ function buildPayload_calendar(array $inputData): string
         throw new \InvalidArgumentException('Start date is required for calendar-type QR codes.');
     }
 
+    // ==================================================================
+    // 🕒 B-007: timezone-aware path
+    // When a 'tz' is supplied, interpret the wall-clock start/end IN that zone,
+    // tag DTSTART/DTEND with ";TZID=<tz>", and emit a minimal VTIMEZONE so the
+    // reference resolves per RFC 5545. The default (no-tz) path below is left
+    // byte-for-byte unchanged for back-compat.
+    // @see https://www.php.net/manual/en/class.datetimezone.php
+    // @see https://datatracker.ietf.org/doc/html/rfc5545#section-3.6.5
+    // ==================================================================
+    if ($tz !== '') {
+        // ✅ Validate the IANA timezone name. DateTimeZone throws on an unknown
+        //    identifier; we re-wrap it as an InvalidArgumentException for parity
+        //    with the other validation failures in this builder.
+        try {
+            $timezone = new \DateTimeZone($tz);
+        } catch (\Exception $e) {
+            throw new \InvalidArgumentException(
+                'Invalid timezone: "' . $tz . '". Use an IANA timezone name (e.g., Europe/London).'
+            );
+        }
+
+        // 📌 Interpret the supplied wall-clock times AS LOCAL TIMES in $tz.
+        try {
+            $startDt = new \DateTime($startDate, $timezone);
+        } catch (\Exception $e) {
+            throw new \InvalidArgumentException(
+                'Invalid start date format: "' . $startDate . '". Use ISO 8601 format (e.g., 2026-03-15T10:00:00).'
+            );
+        }
+
+        if ($endDate !== '') {
+            try {
+                $endDt = new \DateTime($endDate, $timezone);
+            } catch (\Exception $e) {
+                throw new \InvalidArgumentException(
+                    'Invalid end date format: "' . $endDate . '". Use ISO 8601 format.'
+                );
+            }
+        } else {
+            // 📌 Default: event lasts 1 hour (clone so the start instant is intact).
+            $endDt = clone $startDt;
+            $endDt->modify('+1 hour');
+        }
+
+        // 📌 Local (zone-relative) iCalendar date-times — NO trailing 'Z': the
+        //    ";TZID=" parameter supplies the zone, per RFC 5545 §3.3.5.
+        $icalStart = $startDt->format('Ymd\THis');
+        $icalEnd   = $endDt->format('Ymd\THis');
+
+        // 📌 Build the minimal VTIMEZONE block for $tz using the UTC offset that
+        //    is effective at the event's start instant. A single STANDARD
+        //    subcomponent is the minimal RFC-5545-valid form: it carries the
+        //    offset the ";TZID=" reference needs to resolve.
+        $vtimezoneLines = buildICalVTimezone($timezone, $startDt);
+
+        // ==================================================================
+        // 📋 Assemble the iCalendar payload (timezone-aware)
+        // ==================================================================
+        $lines = [];
+        $lines[] = 'BEGIN:VCALENDAR';
+        $lines[] = 'VERSION:2.0';
+        $lines[] = 'PRODID:-//CueRCode//QR Code Generator//EN';
+
+        // 📌 VTIMEZONE precedes the VEVENT so the ";TZID=" reference resolves.
+        foreach ($vtimezoneLines as $vtzLine) {
+            $lines[] = $vtzLine;
+        }
+
+        $lines[] = 'BEGIN:VEVENT';
+        $lines[] = 'DTSTART;TZID=' . $tz . ':' . $icalStart;
+        $lines[] = 'DTEND;TZID=' . $tz . ':' . $icalEnd;
+        $lines[] = 'SUMMARY:' . icalEscape($title);
+
+        if ($location !== '') {
+            $lines[] = 'LOCATION:' . icalEscape($location);
+        }
+
+        if ($description !== '') {
+            $lines[] = 'DESCRIPTION:' . icalEscape($description);
+        }
+
+        $lines[] = 'END:VEVENT';
+        $lines[] = 'END:VCALENDAR';
+
+        // 📌 Join lines with CRLF (as required by RFC 5545)
+        return implode("\r\n", $lines);
+    }
+
+    // ==================================================================
+    // 🕒 Default (no-tz) path — UNCHANGED historical behaviour
+    // ==================================================================
     // 📌 Convert date strings to iCalendar format (YYYYMMDDTHHmmss)
     // @see https://www.php.net/manual/en/function.strtotime.php
     // @see https://www.php.net/manual/en/function.date.php
@@ -1165,6 +1286,88 @@ function buildPayload_calendar(array $inputData): string
 
     // 📌 Join lines with CRLF (as required by RFC 5545)
     return implode("\r\n", $lines);
+}
+
+// ==============================================================================
+// 🕒 buildICalVTimezone() - Minimal RFC 5545 VTIMEZONE component
+// ==============================================================================
+
+/**
+ * 🕒 Build a minimal RFC 5545 VTIMEZONE component for a given IANA timezone
+ *
+ * Produces a single-subcomponent VTIMEZONE block carrying the UTC offset that
+ * is effective at the supplied reference instant. This is the minimal valid
+ * form that lets a ";TZID=<tz>" date-time reference resolve in a scanning
+ * calendar app: it pins the named zone to a concrete offset.
+ *
+ * The subcomponent is labelled DAYLIGHT when the reference instant is in DST
+ * for the zone, otherwise STANDARD (RFC 5545 requires at least one STANDARD or
+ * DAYLIGHT subcomponent). TZOFFSETFROM/TZOFFSETTO are both set to the effective
+ * offset (no transition is modelled — this is a deliberately minimal block, not
+ * a full historical transition table).
+ *
+ * @param \DateTimeZone $timezone The validated IANA timezone
+ * @param \DateTime     $reference The instant whose offset/DST state to capture
+ *
+ * @return array<int,string> The VTIMEZONE component lines (BEGIN…END inclusive)
+ *
+ * @see https://datatracker.ietf.org/doc/html/rfc5545#section-3.6.5
+ * @see https://www.php.net/manual/en/datetimezone.gettransitions.php
+ * @see https://www.php.net/manual/en/datetime.format.php
+ */
+function buildICalVTimezone(\DateTimeZone $timezone, \DateTime $reference): array
+{
+    // 📌 UTC offset (seconds) effective at the reference instant.
+    $offsetSeconds = $timezone->getOffset($reference);
+
+    // 📌 Format the offset as the RFC 5545 ±HHMM(SS) UTC-offset value.
+    if ($offsetSeconds < 0) {
+        $sign = '-';
+    } else {
+        $sign = '+';
+    }
+    $absSeconds = abs($offsetSeconds);
+    $offHours   = intdiv($absSeconds, 3600);
+    $offMinutes = intdiv($absSeconds % 3600, 60);
+    $offSecs    = $absSeconds % 60;
+
+    $utcOffset = $sign
+        . str_pad((string) $offHours, 2, '0', STR_PAD_LEFT)
+        . str_pad((string) $offMinutes, 2, '0', STR_PAD_LEFT);
+    // 📌 Include seconds only when the zone's offset has a non-zero seconds part
+    //    (rare historical zones); keeps the common ±HHMM form otherwise.
+    if ($offSecs !== 0) {
+        $utcOffset .= str_pad((string) $offSecs, 2, '0', STR_PAD_LEFT);
+    }
+
+    // 📌 DST state at the reference instant decides STANDARD vs DAYLIGHT.
+    if ($reference->format('I') === '1') {
+        $subComponent = 'DAYLIGHT';
+    } else {
+        $subComponent = 'STANDARD';
+    }
+
+    // 📌 Human-readable abbreviation for the zone at the reference instant
+    //    (e.g. GMT, BST, EST). icalEscape() guards against any stray separators.
+    $tzName = icalEscape($reference->format('T'));
+
+    // 📌 DTSTART inside a VTIMEZONE subcomponent is a LOCAL date-time (no TZID,
+    //    no Z) marking when this offset rule begins to apply. For a minimal,
+    //    single-offset block we anchor it at the reference instant's local time.
+    $subDtStart = $reference->format('Ymd\THis');
+
+    $lines = [];
+    $lines[] = 'BEGIN:VTIMEZONE';
+    $lines[] = 'TZID:' . $timezone->getName();
+    $lines[] = 'BEGIN:' . $subComponent;
+    $lines[] = 'DTSTART:' . $subDtStart;
+    $lines[] = 'TZOFFSETFROM:' . $utcOffset;
+    $lines[] = 'TZOFFSETTO:' . $utcOffset;
+    $lines[] = 'TZNAME:' . $tzName;
+    $lines[] = 'END:' . $subComponent;
+    $lines[] = 'END:VTIMEZONE';
+
+    return $lines;
 }
 
 // ==============================================================================

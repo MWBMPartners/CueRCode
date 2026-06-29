@@ -263,6 +263,118 @@ assertEquals(
 );
 
 // ==============================================================================
+// 🔧 buildCustomizationFromRequest() — QR version param (B-055)
+// ==============================================================================
+// The openapi spec documents an optional 'version' customisation param (1-40,
+// or 'auto'/absent => library auto-select). These assertions prove the parser
+// accepts a valid version, coerces a numeric string, treats 'auto'/absent as
+// "no pin" (key omitted), and PRESERVES out-of-range / malformed values so that
+// validateCustomization() can reject them with a 400 (no silent clamp, no
+// untyped pass-through).
+// @see web/CueRCode.net/_functions/fn_api_generate.php - buildCustomizationFromRequest()
+// @see web/CueRCode.net/_functions/fn_api_generate.php - validateCustomization()
+// ==============================================================================
+
+// ✅ A valid integer version is accepted and coerced to int.
+assertEquals(
+    7,
+    buildCustomizationFromRequest(['version' => 7])['version'] ?? null,
+    'buildCustomizationFromRequest accepts a valid integer version (7)'
+);
+
+// ✅ A clean numeric string (as JSON/form might send) is coerced to int.
+assertEquals(
+    25,
+    buildCustomizationFromRequest(['version' => '25'])['version'] ?? null,
+    'buildCustomizationFromRequest coerces a numeric-string version to int'
+);
+
+// ✅ Boundary values 1 and 40 are accepted as-is.
+assertEquals(
+    1,
+    buildCustomizationFromRequest(['version' => 1])['version'] ?? null,
+    'buildCustomizationFromRequest accepts the lower-bound version 1'
+);
+assertEquals(
+    40,
+    buildCustomizationFromRequest(['version' => 40])['version'] ?? null,
+    'buildCustomizationFromRequest accepts the upper-bound version 40'
+);
+
+// ✅ 'auto' (any case / whitespace) => no version key (library auto-selects).
+assertFalse(
+    array_key_exists('version', buildCustomizationFromRequest(['version' => 'auto'])),
+    'buildCustomizationFromRequest treats version="auto" as no pin (key omitted)'
+);
+assertFalse(
+    array_key_exists('version', buildCustomizationFromRequest(['version' => '  Auto '])),
+    'buildCustomizationFromRequest treats version="  Auto " (mixed case/space) as no pin'
+);
+
+// ✅ Absent version => no version key (auto-select).
+assertFalse(
+    array_key_exists('version', buildCustomizationFromRequest([])),
+    'buildCustomizationFromRequest omits version when not supplied (auto-select)'
+);
+
+// ✅ Out-of-range integers are RETAINED (not clamped) so validation can reject.
+assertEquals(
+    99,
+    buildCustomizationFromRequest(['version' => 99])['version'] ?? null,
+    'buildCustomizationFromRequest retains an out-of-range version (99) for validation'
+);
+assertEquals(
+    0,
+    buildCustomizationFromRequest(['version' => 0])['version'] ?? null,
+    'buildCustomizationFromRequest retains version=0 for validation (not coerced to auto)'
+);
+
+// ==============================================================================
+// ✅ validateCustomization() — QR version range enforcement (B-055)
+// ==============================================================================
+// A pinned version MUST be an integer in 1..40; anything else is a 400-class
+// validation error (returns a non-null message). 'auto'/absent never reach
+// validation as a 'version' key, so they cannot trip this.
+// ==============================================================================
+
+// ✅ A valid in-range version passes validation (null = no error).
+assertEquals(
+    null,
+    validateCustomization(buildCustomizationFromRequest(['version' => 10])),
+    'validateCustomization accepts an in-range version (10)'
+);
+
+// ✅ Absent version passes validation.
+assertEquals(
+    null,
+    validateCustomization(buildCustomizationFromRequest([])),
+    'validateCustomization accepts an omitted version (auto-select)'
+);
+
+// ✅ Over-range version is REJECTED (non-null error message).
+assertTrue(
+    validateCustomization(buildCustomizationFromRequest(['version' => 99])) !== null,
+    'validateCustomization rejects an over-range version (99)'
+);
+
+// ✅ Zero / below-range version is REJECTED.
+assertTrue(
+    validateCustomization(buildCustomizationFromRequest(['version' => 0])) !== null,
+    'validateCustomization rejects a below-range version (0)'
+);
+
+// ✅ A non-numeric, non-'auto' version is RETAINED and REJECTED (no pass-through).
+$badVersionCustom = buildCustomizationFromRequest(['version' => 'huge']);
+assertTrue(
+    array_key_exists('version', $badVersionCustom),
+    'buildCustomizationFromRequest retains a non-numeric version for validation'
+);
+assertTrue(
+    validateCustomization($badVersionCustom) !== null,
+    'validateCustomization rejects a non-numeric, non-"auto" version'
+);
+
+// ==============================================================================
 // 🔁 Regression guard — pre-existing params still parse as before
 // ==============================================================================
 // The new code must not have disturbed the format / size / ecc / pattern /
@@ -421,4 +533,39 @@ if (!$qrLibraryLoaded) {
             'mapOutputFormat("' . $fmt . '") returns a non-empty outputInterface class'
         );
     }
+
+    // ==========================================================================
+    // ⚙️ buildQROptions() — QR version mapping reaches QROptions (B-055)
+    // ==========================================================================
+    // A pinned version (1-40) must set QROptions::$version; an omitted/auto
+    // version must leave the library default Version::AUTO (-1). We read the
+    // property back to PROVE the mapping fired.
+    // @see web/CueRCode.net/_functions/fn_qr_options.php - buildQROptions()
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/Common/Version.php - AUTO = -1
+    // ==========================================================================
+
+    // 📌 A pinned in-range version is applied verbatim.
+    $optVersion = buildQROptions(['format' => 'png', 'version' => 12, 'payload' => 'x']);
+    assertEquals(
+        12,
+        $optVersion->version,
+        'buildQROptions maps a pinned version=12 -> QROptions::$version === 12'
+    );
+
+    // 📌 An omitted version leaves the library auto-select default (Version::AUTO).
+    $optVersionAuto = buildQROptions(['format' => 'png', 'payload' => 'x']);
+    assertEquals(
+        \chillerlan\QRCode\Common\Version::AUTO,
+        $optVersionAuto->version,
+        'buildQROptions leaves QROptions::$version === Version::AUTO when version omitted'
+    );
+
+    // 📌 An out-of-range version that somehow reaches buildQROptions falls back
+    //    to AUTO (defence-in-depth; validateCustomization() would 400 it first).
+    $optVersionBad = buildQROptions(['format' => 'png', 'version' => 999, 'payload' => 'x']);
+    assertEquals(
+        \chillerlan\QRCode\Common\Version::AUTO,
+        $optVersionBad->version,
+        'buildQROptions falls back to Version::AUTO for an out-of-range version'
+    );
 }

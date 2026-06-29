@@ -48,6 +48,7 @@ if (basename($scriptFilenameValue) === basename(__FILE__)) {
 
 use chillerlan\QRCode\QROptions;
 use chillerlan\QRCode\Common\EccLevel;
+use chillerlan\QRCode\Common\Version as QRCodeVersion;
 use chillerlan\QRCode\Data\QRMatrix;
 use chillerlan\QRCode\Output\QROutputInterface;
 use chillerlan\QRCode\Output\QRGdImagePNG;
@@ -82,6 +83,7 @@ use chillerlan\QRCode\Output\QRFpdf;
  *   - 'logo_size_pct' (int)     Logo size as percentage of QR code (default: 20)
  *   - 'transparent'   (bool)    Whether background should be transparent (default: false)
  *   - 'quiet_zone'    (bool)    Whether to add the quiet-zone margin (default: true)
+ *   - 'version'       (int)     Fixed QR version 1-40 (omit for Version::AUTO auto-select)
  *   - 'gradient'      (array)   Gradient config: [type, color1, color2, direction] (SVG only)
  *   - 'payload'       (string)  The data payload (used for scale calculation)
  *
@@ -211,6 +213,26 @@ function buildQROptions(array $customization): QROptions
         $addQuietzone = true;
     }
 
+    // 📌 QR code version (module grid size). B-055: when the caller pins a
+    //    version (integer 1-40) we set QROptions->version so the grid is fixed;
+    //    when omitted we leave the library default (Version::AUTO = -1) so the
+    //    smallest version that fits the payload at the chosen ECC is auto-chosen.
+    // 🔧 The chillerlan QROptions setter (set_version) itself clamps a non-AUTO
+    //    value to 1..40, but we ALSO clamp here defensively so a stray value can
+    //    never produce an unexpected pin. A value outside 1..40 (or any non-int)
+    //    falls back to AUTO rather than guessing.
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/QROptionsTrait.php - set_version()
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/Common/Version.php - AUTO = -1
+    if (isset($customization['version'])
+        && is_int($customization['version'])
+        && $customization['version'] >= 1
+        && $customization['version'] <= 40
+    ) {
+        $qrVersion = $customization['version'];
+    } else {
+        $qrVersion = QRCodeVersion::AUTO;
+    }
+
     // 📌 Gradient configuration (SVG only)
     if (isset($customization['gradient'])) {
         $gradient = $customization['gradient'];
@@ -259,6 +281,10 @@ function buildQROptions(array $customization): QROptions
         //    the 4-module margin; true (default) keeps it for scan reliability.
         // @see chillerlan\QRCode\QROptionsTrait::$addQuietzone
         'addQuietzone'    => $addQuietzone,
+        // 🔧 B-055: pin the QR version when the caller requested one (1-40),
+        //    otherwise Version::AUTO lets the library pick the smallest fit.
+        // @see chillerlan\QRCode\QROptionsTrait::$version / set_version()
+        'version'         => $qrVersion,
     ];
 
     // 📌 Set output type if applicable (GD image formats need outputType)
