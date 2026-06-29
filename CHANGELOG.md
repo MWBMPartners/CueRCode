@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Colourblind Toggle, Cookie Consent Banner, and Social OG Image (2026-06-29)
+
+- **Colourblind-friendly UI toggle** (FG-023): CSS custom-property palettes for protanopia, deuteranopia, and tritanopia using Okabe-Ito-derived colours (each primary colour ≥4.5:1 contrast on white for WCAG AA compliance), applied via a `data-cuercode-cvd` attribute on `<html>`; keyboard-operable Bootstrap dropdown picker added to the navbar beside the existing theme toggle (options: None / Protanopia / Deuteranopia / Tritanopia); selection persisted to localStorage and re-applied before paint via a head script mirroring the existing theme-toggle pattern; shared `storageKeys` map and `storageGet`/`storageSet` helpers with try/catch factored into `cuercode-common.js`.
+- **Cookie/storage-consent banner** (FG-026): dismissible, non-modal consent banner added in `footer.php` (`role="region"`, `aria-label`, links to `/privacy`); revealed by JS only when the consent localStorage key is absent (unacknowledged); honours `prefers-reduced-motion`; uses shared `storageGet`/`storageSet` helpers.
+- **Social sharing OG image** (FG-024): 1200×630 `og-image.png` created at `/assets/img/branding/og-image.png` — the exact path already referenced in `header.php` — fixing broken social previews; built with PHP GD/FreeType compositing existing brand assets (brand-teal diagonal gradient background, white rounded panel with drop shadow, `logo-mark.png`, CueRCode wordmark with auto-fit font sizing, cyan accent rule, and tagline); generator script preserved at `tools/generate-og-image.php`.
+
 ### Added - QR Types, vCard 4.0, and Legal Pages (2026-06-29)
 
 - **Facebook Messenger QR type** (FG-025): new `buildPayload_facebook_messenger` builder generates `m.me/{username}` URLs; strips leading `@`, validates handle format; matching `tblQRCodeTypes` seed row with `NULL` payloadTemplate so the builder runs (no template short-circuit).

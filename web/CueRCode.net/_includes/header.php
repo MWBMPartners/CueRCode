@@ -266,6 +266,26 @@ if (function_exists('isDebugMode')) {
             }
         })();
     </script>
+
+    <!-- ====================================================================
+         ♿ Colourblind (CVD) Palette - apply persisted choice before paint
+         Mirrors the theme block above so the chosen colourblind-safe palette
+         is applied to <html> before first paint, avoiding a flash of the
+         default brand colours. The data-cuercode-cvd attribute is consumed
+         by the [data-cuercode-cvd="..."] rules in cuercode.css. (FG-023)
+         @see https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors
+         ==================================================================== -->
+    <script>
+        /* ♿ Apply saved colourblind palette preference pre-paint */
+        (function() {
+            var cvd = localStorage.getItem('cuercode-cvd');
+            var valid = ['protanopia', 'deuteranopia', 'tritanopia'];
+            if (valid.indexOf(cvd) !== -1) {
+                document.documentElement.setAttribute('data-cuercode-cvd', cvd);
+            }
+            /* 'none' or absent leaves the attribute off => default brand palette */
+        })();
+    </script>
 </head>
 <body class="<?php echo htmlspecialchars($bodyClass, ENT_QUOTES, 'UTF-8'); ?>">
     <a href="#main-content" class="visually-hidden-focusable">Skip to main content</a>
@@ -308,6 +328,56 @@ if (function_exists('isDebugMode')) {
 
                 <!-- 🔧 Right-side items -->
                 <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+                    <!-- ====================================================
+                         ♿ Colourblind-friendly palette picker (FG-023)
+                         A Bootstrap dropdown of menuitemradio options.
+                         JS (cuercode-common.js) persists the choice in
+                         localStorage and toggles the data-cuercode-cvd
+                         attribute on <html>; the pre-paint block in <head>
+                         re-applies it on load. Keyboard operable via the
+                         native <button>s + Bootstrap's dropdown arrow keys.
+                         @see https://getbootstrap.com/docs/5.3/components/dropdowns/
+                         ==================================================== -->
+                    <li class="nav-item dropdown">
+                        <button class="btn btn-link nav-link dropdown-toggle" id="cvd-toggle"
+                                type="button" data-bs-toggle="dropdown" aria-expanded="false"
+                                title="Colourblind-friendly palette"
+                                aria-label="Choose colourblind-friendly palette">
+                            <i class="fa-solid fa-eye-low-vision" aria-hidden="true"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end" role="menu"
+                            aria-label="Colourblind-friendly palette">
+                            <li role="presentation">
+                                <button class="dropdown-item cvd-option" type="button"
+                                        role="menuitemradio" aria-checked="true"
+                                        data-cvd="none">
+                                    <i class="fa-solid fa-check cvd-check me-2" aria-hidden="true"></i>None (default)
+                                </button>
+                            </li>
+                            <li role="presentation">
+                                <button class="dropdown-item cvd-option" type="button"
+                                        role="menuitemradio" aria-checked="false"
+                                        data-cvd="protanopia">
+                                    <i class="fa-solid fa-check cvd-check me-2" aria-hidden="true"></i>Protanopia (red-blind)
+                                </button>
+                            </li>
+                            <li role="presentation">
+                                <button class="dropdown-item cvd-option" type="button"
+                                        role="menuitemradio" aria-checked="false"
+                                        data-cvd="deuteranopia">
+                                    <i class="fa-solid fa-check cvd-check me-2" aria-hidden="true"></i>Deuteranopia (green-blind)
+                                </button>
+                            </li>
+                            <li role="presentation">
+                                <button class="dropdown-item cvd-option" type="button"
+                                        role="menuitemradio" aria-checked="false"
+                                        data-cvd="tritanopia">
+                                    <i class="fa-solid fa-check cvd-check me-2" aria-hidden="true"></i>Tritanopia (blue-blind)
+                                </button>
+                            </li>
+                        </ul>
+                    </li>
+
                     <!-- 🌙 Dark/Light Mode Toggle -->
                     <li class="nav-item">
                         <button class="btn btn-link nav-link" id="theme-toggle"

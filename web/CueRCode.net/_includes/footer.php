@@ -272,5 +272,39 @@ if (function_exists('isDebugMode')) {
     </div>
     <?php } ?>
 
+    <!-- ====================================================================
+         🍪 Cookie / Storage Consent Notice (FG-026)
+         A dismissible, non-modal banner (role="region") shown until the
+         user acknowledges it. Gated on the 'cuercode-consent' localStorage
+         key by cuercode-common.js (initCookieBanner). The banner starts
+         hidden and is revealed by JS only when no acknowledgement exists,
+         so users who have already dismissed it never see a flash. It does
+         NOT trap focus and the rest of the page stays usable.
+         @see https://www.w3.org/WAI/ARIA/apg/patterns/
+         ==================================================================== -->
+    <div id="cuercode-cookie-banner" role="region" aria-label="Cookie notice" hidden>
+        <div class="container">
+            <div class="cuercode-cookie-inner">
+                <p class="cuercode-cookie-text">
+                    <i class="fa-solid fa-cookie-bite me-1" aria-hidden="true"></i>
+                    CueRCode uses essential browser storage only (your theme,
+                    colourblind-palette and this notice preference). No
+                    non-essential or tracking storage is set. See our
+                    <a href="/privacy" class="text-cuercode-primary">Privacy Policy</a>
+                    for details.
+                </p>
+                <div class="cuercode-cookie-actions">
+                    <button type="button" class="btn btn-sm" id="cuercode-cookie-accept">
+                        Got it
+                    </button>
+                    <button type="button" class="btn btn-sm btn-link text-body-secondary"
+                            id="cuercode-cookie-close" aria-label="Dismiss cookie notice">
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
