@@ -85,28 +85,34 @@ Since Dreamhost shared hosting has no CLI/Composer access:
 
 PHP 8.4/8.5 zero-deprecation is a hard Definition-of-Done gate. As of cycle 10, zero `E_DEPRECATED` or `E_STRICT` notices are emitted by any file under `web/CueRCode.net/`. Any future change must preserve this bar — run `php -l` and verify no deprecation output before committing.
 
-### deploy.yml CI-Coupling — `'= NULL'` String Literals in infoAppVer.php
+### deploy.yml Build-Info Injection — Marker-Comment Scheme (resolved #47, 2026-07-10)
 
-**Do not reformat lines 68–71 of `web/CueRCode.net/public_html/infoAppVer.php`** without first updating `.github/workflows/deploy.yml`.
+**Historical note (superseded):** earlier cycles coupled `deploy.yml`'s build-info injection to a literal, case-sensitive `' = NULL'` (uppercase) string match on the four `Repo.Commit.*` assignment lines in `infoAppVer.php`. This was fragile — any reflow/reindent of those lines would silently break the sed substitution and ship `NULL` commit info to production with no error — and it forced those four lines to stay uppercase `NULL` while every other null in the file was house-standard lowercase.
 
-These four lines contain the literal string `= NULL` (uppercase, with a leading space before `=`) in PHP assignment statements for `Repo.Commit.*` fields:
+**Current scheme (deep-sweep #47):** each of the four Repo→Commit assignments now carries a stable trailing anchor comment instead of relying on the literal value:
 
 ```php
-$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]    = NULL;
-$app["Application"]["Version"]["Repo"]["Commit"]["Short"]  = NULL;
-$app["Application"]["Version"]["Repo"]["Commit"]["Date"]   = NULL;
-$app["Application"]["Version"]["Repo"]["Commit"]["URL"]    = NULL;
+$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Full"]  = null; // @build-info: commit-sha-full
+$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Short"] = null; // @build-info: commit-sha-short
+$app["Application"]["Version"]["Repo"]["Commit"]["Date"]         = null; // @build-info: commit-date
+$app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @build-info: commit-url
 ```
 
-The `deploy.yml` workflow uses a literal `sed` injection that targets the string `= NULL` (with leading space) exactly to replace these values with real commit metadata before SFTP upload. If the casing, spacing, or structure of these lines changes, the sed substitution will silently fail and production builds will ship `NULL` commit info.
+`.github/workflows/deploy.yml`'s "Inject commit info into infoAppVer.php" step now matches the `// @build-info: <key>` anchor text (e.g. `s|= null; // @build-info: commit-sha-full|= "${COMMIT_SHA}"; // @build-info: commit-sha-full|`), not the assignment's casing or spacing. This means:
 
-The uppercase `NULL` in these four lines is therefore intentional and must be preserved until `deploy.yml` is updated to match any new format. All other `NULL` → `null` lowercase normalisation (B-025) has been applied; these four are the only retained exception.
+- All four values are now house-standard lowercase `null` in the committed source — no more retained-uppercase exception.
+- The file can be reflowed/reindented freely as long as the anchor comment text (`commit-sha-full`, `commit-sha-short`, `commit-date`, `commit-url`) is preserved verbatim.
+- The scheme applies identically to **all three** `infoAppVer.php` copies (`public_html/`, `public_html_dev_alpha/`, `public_html_dev_beta/`) — `deploy.yml`'s injection step already runs `find "$STAGING_DIR" -name "infoAppVer.php"` against whichever copy is staged for the branch being deployed (alpha/beta branches get their own commit metadata injected the same way main does).
 
-**Follow-up:** a future task should update `deploy.yml` to use a more robust injection method (e.g. `jq`-equivalent or PHP-based substitution) so these lines can be normalised to lowercase `null` without CI risk. Track under a new backlog item when addressed.
+**Do not remove the anchor comments** without updating `deploy.yml` to match — that is now the only load-bearing part of these four lines.
 
-### dev_alpha / dev_beta infoAppVer.php Copies
+### dev_alpha / dev_beta infoAppVer.php Copies (resolved #47, 2026-07-10)
 
-`web/CueRCode.net/public_html_dev_alpha/infoAppVer.php` and `web/CueRCode.net/public_html_dev_beta/infoAppVer.php` are derivative copies of the production `infoAppVer.php`. They have NOT yet received the cycle-10 standards pass (tabs→spaces, doc header, `||`/`&&`, lowercase null, section spacing). A follow-up standards pass is needed on these two files to bring them into sync with the production copy.
+`web/CueRCode.net/public_html_dev_alpha/infoAppVer.php` and `web/CueRCode.net/public_html_dev_beta/infoAppVer.php` have now received the full standards pass (tabs→spaces, doc header with `Path:`/`@copyright`, `||`/`&&`, lowercase `null` incl. the build-info lines above, section spacing, no trailing `?>`) bringing them in sync with the production copy. All `$app` values (including each channel's own Version Number, `0.1.0`) were preserved unchanged.
+
+### Dev-Environment Access Control — Fail-Closed by Default (resolved #47, 2026-07-10)
+
+`public_html_dev_alpha/.htaccess` and `public_html_dev_beta/.htaccess` previously shipped with `Require valid-user` commented out and no active deny rule, leaving both dev environments unprotected as committed. Both now default to `Require all denied` (Apache 2.4+, with an Apache 2.2 `Order deny,allow`/`Deny from all` fallback) as the active rule. The Basic-Auth block is retained, fully commented, with numbered steps for the owner to create a `.htpasswd` file on the server and switch over. **Before either dev channel goes live, the owner must deliberately opt in** — it is denied-by-default, not open-by-default.
 
 ---
 

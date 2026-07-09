@@ -1,6 +1,6 @@
 # 🤝 CueRCode — Session Handoff
 
-> **Last updated:** 2026-07-09 (Deep-Planning Round 1, Fable planning lead)
+> **Last updated:** 2026-07-10 (Deep sweep #47 addendum — see §7 below; Round-1 planning content in §1-6 otherwise unchanged from 2026-07-09)
 > **Read this first when resuming work on CueRCode from a cold start.**
 > Companion docs: `PROJECT_ROADMAP.md` (repo root — the master launch plan this handoff summarises), `PROJECT.md` (autopilot memory/backlog), `.dev-team/autopilot.json` (machine state), `VERIFICATION.md` + `verdict.json` (independent verify evidence).
 
@@ -81,3 +81,17 @@ Owner-gated live tests: **#13, #17, #18, #22** (= epic E10, the soft-launch gate
 6. On finishing any item: run the per-item flow above and refresh this HANDOFF's §1/§3/§4 status lines.
 
 **Do-not list:** no `git push`/deploy/live-testing without owner; no `git config`/remote edits; no production-code edits during planning rounds; drafts of new issues live in PROJECT_ROADMAP.md until the conductor files them.
+
+---
+
+## 7. Deep-sweep addendum (2026-07-10, GitHub issue #47, branch `launch-prep/2026-07-10`)
+
+Executed the "Security / Syntax / Lint Deep-Review Plan" from PROJECT_ROADMAP.md — the DS-1..DS-10 worklist plus the full scan matrix, **including the `public_html_dev_alpha`/`public_html_dev_beta` env copies** that every prior cycle explicitly skipped. Full findings→fixes detail lives in SECURITY.md ("Deep-sweep pass (#47)" section) and CHANGELOG.md (Security/Fixed entry, 2026-07-10). Summary:
+
+- **Fixed:** DS-1 (dev-env `.htaccess` now fail-closed `Require all denied` by default, Basic-Auth block commented with owner instructions), DS-2 (dev_alpha/dev_beta `infoAppVer.php` full standards pass), DS-3 (`deploy.yml` build-info injection moved to a marker-comment scheme — `// @build-info: <key>` anchors — decoupling it from the literal `NULL` casing; all 4 lines now lowercase `null` in all 3 `infoAppVer.php` copies), DS-4 partial (F-004: SRI added for Bootstrap CSS/JS bundle only — version-matched against `public_html_landing/index.php`; FontAwesome/jQuery left as explicit TODOs, no guessed hashes), DS-5 (`validateImageUpload()` docblock-annotated as the reserved E3 upload-path validator), DS-6 (install.sql passwordHash comment bcrypt→Argon2id), DS-9 (empty stray `.openai/` removed).
+- **Reported, not deleted:** DS-10 — `.claude/ProjectcBrief_Chat.claude` vs `.claude/ProjectBrief_Chat.claude` are genuinely different historical chat transcripts (not a true duplicate), left for an explicit owner decision.
+- **New finding fixed (not on the original DS list):** trailing `?>` in `public_html/api/docs/index.php` removed (last remaining entry page with one). 32 files across the tree were also found missing the `Path:`/`@copyright` docblock fields the project's own CLAUDE.md mandates — fixed mechanically across all of them (script-verified idempotent).
+- **Deferred, as directed:** DS-7 (F-006 per-record salt — schema change, folds into E3/E4 migration, gate G-010), DS-8 (F-012 bot-protection keys — owner-supplied), CSP `unsafe-inline`→nonce (needs live UI verification, tracked under F-004 in SECURITY.md).
+- **Re-scan evidence:** 123/123 `php -l` clean (was 122 at last count — one new file since), 400/400 `php tests/run.php` assertions green, zero deprecations across all 18 `_functions/fn_*.php` files, zero new OWASP-relevant findings on re-audit of all six Phase-0 surfaces (SQLi/XSS/CSRF/dangerous-functions/secrets/path-traversal probes all clean).
+- **Not touched (owner-gated, unchanged from §1-6):** PR #46 merge, deploy secrets, live-server verification (#13/#17/#18/#22), E1a-E12 roadmap epics — none of that was in scope for issue #47.
+- **Commits:** made directly on `launch-prep/2026-07-10` (this session did not create a new branch — it was already checked out). Work is commit-only per the issue directive; the conductor pushes.
