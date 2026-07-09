@@ -19,11 +19,17 @@
  *     assignment via a case-sensitive sed; the literal single-space spacing
  *     around its equals sign must be kept, and the Number assignment must
  *     appear exactly once in the file (so the workflow's grep stays unambiguous).
- *   - .github/workflows/deploy.yml injects build provenance by matching the
- *     four Repo→Commit assignments against a literal single-space ` = NULL`
- *     (UPPERCASE) pattern at deploy time. Those four right-hand sides are
- *     therefore kept as the uppercase NULL token with single-space alignment on
- *     purpose; every other null below uses the house-standard lowercase null.
+ *   - .github/workflows/deploy.yml injects build provenance (commit SHA, short
+ *     SHA, date, URL) at deploy time by matching four `// @build-info: ...`
+ *     trailing anchor comments on the Repo→Commit assignments below — NOT by
+ *     matching the literal `null` value. The four anchor comments
+ *     (`commit-sha-full`, `commit-sha-short`, `commit-date`, `commit-url`)
+ *     must be preserved verbatim (here AND on the public_html_dev_alpha /
+ *     public_html_dev_beta copies) or the injection silently no-ops and ships
+ *     `null` commit info. This marker-based scheme replaces the previous
+ *     fragile `' = NULL'` (uppercase) literal-value string-match injection —
+ *     all four values below are therefore house-standard lowercase `null`,
+ *     same as every other null in this file.
  *
  * @package     CueRCode
  * @subpackage  Configuration
@@ -63,12 +69,13 @@ if ((strpos(__DIR__, 'public_html_dev_alpha') !== false) || (strpos(__DIR__, 'pu
 }
 
 // 🏗️ Repo build provenance (populated by the GitHub Actions deploy workflow).
-// ⚠️ deploy.yml matches the literal ` = NULL` (UPPERCASE) on these four lines to
-//    inject the commit SHA/date/URL — keep them uppercase so injection works.
-$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Full"] = NULL;
-$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Short"] = NULL;
-$app["Application"]["Version"]["Repo"]["Commit"]["Date"] = NULL;
-$app["Application"]["Version"]["Repo"]["Commit"]["URL"] = NULL;
+// ⚙️ deploy.yml matches the `// @build-info: ...` anchor comments below (NOT
+//    the literal value) — keep the anchor text intact even if this block is
+//    reflowed or reindented.
+$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Full"]  = null; // @build-info: commit-sha-full
+$app["Application"]["Version"]["Repo"]["Commit"]["SHA"]["Short"] = null; // @build-info: commit-sha-short
+$app["Application"]["Version"]["Repo"]["Commit"]["Date"]         = null; // @build-info: commit-date
+$app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @build-info: commit-url
 
 // ==============================================================================
 // 🏢 Vendor

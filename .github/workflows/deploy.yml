@@ -222,25 +222,36 @@ jobs:
           BRANCH="${{ github.ref_name }}"
 
           # 🔍 Find all infoAppVer.php files in the staging area
+          #
+          # ⚙️ Marker-based injection (replaces the old fragile literal
+          #    `' = NULL'` (UPPERCASE) string-match): each of the four
+          #    Repo→Commit assignments in infoAppVer.php carries a stable
+          #    trailing anchor comment (`// @build-info: <key>`) instead of
+          #    relying on the exact casing/spacing of the right-hand side
+          #    value. This means the assignments can be house-standard
+          #    lowercase `null` (matching every other null in the file) and
+          #    the file can be reflowed/reindented without silently breaking
+          #    the injection — only the anchor comment text is load-bearing.
+          #    See web/CueRCode.net/public_html/infoAppVer.php header comment.
           find "$STAGING_DIR" -name "infoAppVer.php" -type f | while read -r VERFILE; do
             echo "📝 Injecting build info into: ${VERFILE#$STAGING_DIR/}"
 
             # 🔗 Inject full commit SHA
-            sed -i "s|\[\"Commit\"\]\[\"SHA\"\]\[\"Full\"\] = NULL|\[\"Commit\"\]\[\"SHA\"\]\[\"Full\"\] = \"${COMMIT_SHA}\"|" "$VERFILE"
+            sed -i "s|= null; // @build-info: commit-sha-full|= \"${COMMIT_SHA}\"; // @build-info: commit-sha-full|" "$VERFILE"
 
             # 🔗 Inject short SHA
-            sed -i "s|\[\"Commit\"\]\[\"SHA\"\]\[\"Short\"\] = NULL|\[\"Commit\"\]\[\"SHA\"\]\[\"Short\"\] = \"${SHORT_SHA}\"|" "$VERFILE"
+            sed -i "s|= null; // @build-info: commit-sha-short|= \"${SHORT_SHA}\"; // @build-info: commit-sha-short|" "$VERFILE"
 
             # 📅 Inject commit date
-            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"Date\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"Date\"\] = \"${COMMIT_DATE}\"|" "$VERFILE"
+            sed -i "s|= null; // @build-info: commit-date|= \"${COMMIT_DATE}\"; // @build-info: commit-date|" "$VERFILE"
 
             # 🔗 Inject commit URL
-            sed -i "s|\[\"Repo\"\]\[\"Commit\"\]\[\"URL\"\] = NULL|\[\"Repo\"\]\[\"Commit\"\]\[\"URL\"\] = \"${REPO_URL}/commit/${COMMIT_SHA}\"|" "$VERFILE"
+            sed -i "s|= null; // @build-info: commit-url|= \"${REPO_URL}/commit/${COMMIT_SHA}\"; // @build-info: commit-url|" "$VERFILE"
 
             # 🏷️ For production (main) builds, clear the Development Status
             if [[ "$BRANCH" == "main" ]]; then
-              sed -i '/\["Development"\]\["Status"\]/{ s/= "Alpha"/= NULL/; s/= "Beta"/= NULL/ }' "$VERFILE"
-              echo "  🏷️ Development Status set to NULL (production)"
+              sed -i '/\["Development"\]\["Status"\]/{ s/= "Alpha"/= null/; s/= "Beta"/= null/ }' "$VERFILE"
+              echo "  🏷️ Development Status set to null (production)"
             fi
 
             # ✅ Verify
