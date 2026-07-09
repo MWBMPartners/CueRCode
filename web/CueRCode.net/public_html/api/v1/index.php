@@ -4,6 +4,8 @@
  * 🌐 CueRCode - REST API v1 Router
  * ==============================================================================
  *
+ * Path: public_html/api/v1/index.php
+ *
  * Central entry point for all REST API v1 requests. All requests are routed
  * here via .htaccess RewriteRule, which passes the request path as the
  * 'route' query parameter.
@@ -34,6 +36,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/reserved.variables.server.php

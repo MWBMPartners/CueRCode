@@ -4,6 +4,8 @@
  * 🏠 CueRCode - Main QR Code Generator Page
  * ==============================================================================
  *
+ * Path: public_html/index.php
+ *
  * The primary page for the CueRCode service. Provides a responsive two-column
  * layout with QR type selection, dynamic content form, customization tabs
  * (Colors, Design, Logo, Frame, Options), and a live AJAX preview panel.
@@ -18,6 +20,7 @@
  *
  * @package     CueRCode
  * @subpackage  Pages
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://getbootstrap.com/docs/5.3/layout/grid/

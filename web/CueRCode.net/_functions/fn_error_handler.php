@@ -4,6 +4,8 @@
  * 🚨 CueRCode - Error and Exception Handler
  * ==============================================================================
  *
+ * Path: _functions/fn_error_handler.php
+ *
  * Registers custom error, exception, and shutdown handlers to capture all
  * PHP errors and exceptions. Errors are logged to the tblErrorLog database
  * table with full context (backtrace, request details, headers, etc.).
@@ -17,6 +19,7 @@
  *
  * @package     CueRCode
  * @subpackage  Error Handling
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/function.set-error-handler.php

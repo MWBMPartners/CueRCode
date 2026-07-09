@@ -4,6 +4,8 @@
  * 📊 CueRCode - Activity Logging
  * ==============================================================================
  *
+ * Path: _functions/fn_activity_log.php
+ *
  * Provides functions for logging application activity events to the
  * tblActivityLog database table. This covers normal operational events
  * (not just errors), such as QR code generation, setting changes, API
@@ -14,6 +16,7 @@
  *
  * @package     CueRCode
  * @subpackage  Logging
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php

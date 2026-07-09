@@ -4,6 +4,8 @@
  * 🔐 CueRCode - API Authentication & Rate Limiting
  * ==============================================================================
  *
+ * Path: _functions/fn_api_auth.php
+ *
  * Provides functions for authenticating REST API requests and enforcing
  * rate limits. Supports two authentication methods:
  *
@@ -25,6 +27,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/function.hash-hmac.php

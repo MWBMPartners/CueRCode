@@ -4,6 +4,8 @@
  * ⚙️ CueRCode - Configuration Manager
  * ==============================================================================
  *
+ * Path: _functions/fn_config.php
+ *
  * Provides functions for reading and writing application settings stored in
  * the tblSettings database table. Settings marked as isSensitive are
  * automatically encrypted/decrypted using fn_encryption.php.
@@ -16,6 +18,7 @@
  *
  * @package     CueRCode
  * @subpackage  Configuration
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/language.types.type-juggling.php

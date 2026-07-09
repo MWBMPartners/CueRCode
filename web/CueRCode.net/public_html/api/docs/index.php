@@ -4,6 +4,8 @@
  * 📖 CueRCode - API Documentation Page (Swagger UI)
  * ==============================================================================
  *
+ * Path: public_html/api/docs/index.php
+ *
  * Renders the interactive API documentation using Swagger UI. The Swagger UI
  * library is loaded from the unpkg CDN and pointed at the OpenAPI 3.0
  * specification file at /api/v1/openapi.json.
@@ -13,6 +15,7 @@
  *
  * @package     CueRCode
  * @subpackage  API Documentation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://swagger.io/tools/swagger-ui/ Swagger UI
@@ -314,4 +317,3 @@ X-RateLimit-Remaining: 58</code></pre>
 // 📄 Load Footer Template
 // ==============================================================================
 require_once CUERCODE_INCLUDES_DIR . 'footer.php';
-?>

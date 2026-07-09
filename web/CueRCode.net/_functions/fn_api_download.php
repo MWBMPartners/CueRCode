@@ -4,6 +4,8 @@
  * 📥 CueRCode - API Download Handler
  * ==============================================================================
  *
+ * Path: _functions/fn_api_download.php
+ *
  * Provides the handler function for downloading previously generated QR codes
  * via their UUID. Looks up the QR code record in tblQRCodes, locates the
  * file on the filesystem, and streams it to the client with the correct
@@ -17,6 +19,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/function.readfile.php

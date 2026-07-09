@@ -4,6 +4,8 @@
  * 📦 CueRCode - QR Code Payload Builders
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_payloads.php
+ *
  * Provides functions for building QR code data payloads (the actual content
  * encoded into the QR code) based on the QR code type selected by the user.
  *
@@ -20,6 +22,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/function.urlencode.php

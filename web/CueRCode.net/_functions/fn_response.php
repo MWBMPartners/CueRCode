@@ -4,6 +4,8 @@
  * 📤 CueRCode - Response Formatting
  * ==============================================================================
  *
+ * Path: _functions/fn_response.php
+ *
  * Provides standardised functions for sending HTTP responses in JSON and
  * XML formats. Used by both the REST API and internal AJAX endpoints to
  * ensure consistent response structure and proper HTTP headers.
@@ -22,6 +24,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/function.json-encode.php

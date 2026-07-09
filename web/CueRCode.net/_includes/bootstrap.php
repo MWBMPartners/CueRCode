@@ -4,6 +4,8 @@
  * 🚀 CueRCode - Master Bootstrap / Initialisation File
  * ==============================================================================
  *
+ * Path: _includes/bootstrap.php
+ *
  * This file is the single entry point for initialising the CueRCode application.
  * It loads all required components in the correct order: autoloader, database,
  * functions, error handlers, and configuration.
@@ -13,6 +15,7 @@
  *
  * @package     CueRCode
  * @subpackage  Core
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/function.require-once.php

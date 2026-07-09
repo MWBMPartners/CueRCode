@@ -4,6 +4,8 @@
  * 📦 CueRCode - API Bulk QR Generation Handler (FG-003 / #32)
  * ==============================================================================
  *
+ * Path: _functions/fn_api_bulk.php
+ *
  * Provides the handler and pure helper functions for the synchronous bulk
  * QR code generation API endpoint:
  *
@@ -59,6 +61,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2 (FG-003 bulk generation)
  * @see         fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization()

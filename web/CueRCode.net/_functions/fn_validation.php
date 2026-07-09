@@ -4,6 +4,8 @@
  * ✅ CueRCode - Input Validation and Sanitisation
  * ==============================================================================
  *
+ * Path: _functions/fn_validation.php
+ *
  * Provides functions for validating and sanitising user input. All user-facing
  * input must pass through these functions before being used in database queries,
  * file operations, or output rendering.
@@ -20,6 +22,7 @@
  *
  * @package     CueRCode
  * @subpackage  Validation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/filter.filters.sanitize.php
@@ -515,6 +518,20 @@ function sanitizeFileName(string $filename): string
 /**
  * 🖼️ Validate an uploaded image file
  *
+ * ⚠️ RESERVED / DORMANT (DS-5, SECURITY.md coverage ledger): this function
+ * currently has NO call sites anywhere in the codebase. It is deliberately
+ * KEPT (not dead code to delete) because it is the reserved validator for the
+ * account-era logo-UPLOAD path (Epic E3, multipart/form-data `$_FILES['logo']`
+ * uploads once authenticated accounts exist) — see PROJECT_ROADMAP.md Epic E3.
+ * Today's ANONYMOUS Phase-1 logo path does NOT use $_FILES at all: it accepts
+ * a base64 data-URI in the JSON customization payload, which is validated and
+ * size/dimension-capped by saveBase64LogoToTemp() in fn_qr_logo.php (decoded-
+ * byte cap + getimagesize() pixel-dimension guard, F-005). Do NOT wire this
+ * function into a route that does not exist yet — when the E3 file-upload
+ * route ships, call this function first (before move_uploaded_file()) and
+ * apply the SAME decoded-size/pixel-dimension caps used by
+ * saveBase64LogoToTemp() for consistency between the two logo-intake paths.
+ *
  * Performs comprehensive validation of an uploaded image file:
  *   1. Checks that the file was uploaded via HTTP POST (is_uploaded_file)
  *   2. Checks for upload errors ($_FILES error codes)
@@ -539,6 +556,9 @@ function sanitizeFileName(string $filename): string
  * @see https://www.php.net/manual/en/function.getimagesize.php
  * @see https://www.php.net/manual/en/function.mime-content-type.php
  * @see https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+ * @see web/CueRCode.net/_functions/fn_qr_logo.php saveBase64LogoToTemp() — the
+ *      active anonymous-era logo intake path this function is the future
+ *      account-era counterpart to.
  *
  * @example
  *   $result = validateImageUpload($_FILES['logo'], 2 * 1024 * 1024); // 2MB max

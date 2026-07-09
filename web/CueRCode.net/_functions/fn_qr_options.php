@@ -4,6 +4,8 @@
  * ⚙️ CueRCode - QR Code Options Builder
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_options.php
+ *
  * Provides functions for mapping UI customization choices (colors, format,
  * size, pattern, logo space, gradient, etc.) to a QROptions object from
  * the chillerlan/php-qrcode v5.x library.
@@ -17,6 +19,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://php-qrcode.readthedocs.io/ chillerlan/php-qrcode documentation

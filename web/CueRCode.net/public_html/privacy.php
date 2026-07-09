@@ -4,6 +4,8 @@
  * 🔒 CueRCode - Privacy / Data Protection & Cookies Policy Page
  * ==============================================================================
  *
+ * Path: public_html/privacy.php
+ *
  * Displays the multi-jurisdiction Privacy, Data Protection & Cookies Policy
  * for the CueRCode platform.
  *
@@ -23,6 +25,7 @@
  *
  * @package     CueRCode
  * @subpackage  Legal
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     2.0.0
  * @since       Phase 1
  */

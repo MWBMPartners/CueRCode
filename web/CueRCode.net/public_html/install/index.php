@@ -4,6 +4,8 @@
  * 🔧 CueRCode - Web-Based Database Installer
  * ==============================================================================
  *
+ * Path: public_html/install/index.php
+ *
  * This script provides a web-based interface for installing the CueRCode
  * database schema and seed data. It checks prerequisites, creates tables,
  * and populates initial data.
@@ -13,6 +15,7 @@
  *
  * @package     CueRCode
  * @subpackage  Installation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/book.mysqli.php

@@ -4,6 +4,8 @@
  * 🖼️ CueRCode - Logo Overlay for QR Codes
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_logo.php
+ *
  * Provides functions for overlaying logos (brand marks, icons, images) onto
  * generated QR codes. Supports both raster (PNG, JPG, GIF, WEBP) and vector
  * (SVG) QR code outputs.
@@ -19,6 +21,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/book.image.php GD library documentation

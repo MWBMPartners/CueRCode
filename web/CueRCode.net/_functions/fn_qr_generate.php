@@ -4,6 +4,8 @@
  * 🎯 CueRCode - QR Code Generation Orchestrator
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_generate.php
+ *
  * The main entry point for QR code generation. This file orchestrates the
  * entire generation pipeline:
  *
@@ -26,6 +28,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://php-qrcode.readthedocs.io/ chillerlan/php-qrcode documentation

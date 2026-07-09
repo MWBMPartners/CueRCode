@@ -4,12 +4,15 @@
  * 🗄️ CueRCode - Database Connection Manager
  * ==============================================================================
  *
+ * Path: _includes/db_connect.php
+ *
  * Provides a singleton-like database connection using MySQLi.
  * Loads credentials from _auth_keys/auth_creds.php (site-specific first,
  * then server-wide fallback). Uses prepared statements exclusively.
  *
  * @package     CueRCode
  * @subpackage  Database
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/book.mysqli.php

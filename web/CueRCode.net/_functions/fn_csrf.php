@@ -4,6 +4,8 @@
  * 🛡️ CueRCode - CSRF Protection
  * ==============================================================================
  *
+ * Path: _functions/fn_csrf.php
+ *
  * Provides Cross-Site Request Forgery (CSRF) protection using random tokens
  * stored in the PHP session. Every state-changing request (POST, PUT, DELETE)
  * must include a valid CSRF token to be processed.
@@ -28,6 +30,7 @@
  *
  * @package     CueRCode
  * @subpackage  Security
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html

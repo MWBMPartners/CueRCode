@@ -4,6 +4,8 @@
  * 🔐 CueRCode - Encryption Utilities
  * ==============================================================================
  *
+ * Path: _functions/fn_encryption.php
+ *
  * Provides functions for encrypting and decrypting sensitive data using
  * AES-256-GCM with salt. Used for storing sensitive settings (API keys,
  * SSO credentials, etc.) in the database securely.
@@ -12,6 +14,7 @@
  *
  * @package     CueRCode
  * @subpackage  Security
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/function.openssl-encrypt.php

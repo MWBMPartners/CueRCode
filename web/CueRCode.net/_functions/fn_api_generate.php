@@ -4,6 +4,8 @@
  * 🎯 CueRCode - API Generate & Preview Handlers
  * ==============================================================================
  *
+ * Path: _functions/fn_api_generate.php
+ *
  * Provides handler functions for the QR code generation and preview API
  * endpoints. These functions process incoming JSON request data, validate
  * inputs, delegate to the core QR generation pipeline, and return
@@ -26,6 +28,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         fn_qr_generate.php - generateQRCode(), generatePreview()

@@ -346,7 +346,7 @@ CREATE TABLE IF NOT EXISTS `tblAPIRateLog` (
 CREATE TABLE IF NOT EXISTS `tblUsers` (
     `userID`          INT UNSIGNED    NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing user identifier',
     `email`           VARCHAR(255)    NOT NULL                 COMMENT '📧 User email address (unique, used for login)',
-    `passwordHash`    VARCHAR(255)    NOT NULL                 COMMENT '🔐 Password hash (bcrypt via password_hash())',
+    `passwordHash`    VARCHAR(255)    NOT NULL                 COMMENT '🔐 Password hash (Argon2id via password_hash(..., PASSWORD_ARGON2ID))',
     `displayName`     VARCHAR(100)    NULL                     COMMENT '📝 User display name',
     `firstName`       VARCHAR(100)    NULL                     COMMENT '📝 User first name',
     `lastName`        VARCHAR(100)    NULL                     COMMENT '📝 User last name',
