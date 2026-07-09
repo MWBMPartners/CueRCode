@@ -178,6 +178,24 @@
             customization.version = parseInt(versionVal, 10);
         }
 
+        /* ♿ Accessible QR preset (E5 / #48): 'accessible' when the toggle is
+           checked, 'none' otherwise. The API treats 'none' as a complete
+           no-op, so it is always safe to send. */
+        if ($('#opt-accessible-preset').is(':checked')) {
+            customization.preset = 'accessible';
+        } else {
+            customization.preset = 'none';
+        }
+
+        /* 📏 Intended scan distance (cm), used server-side to compute the
+           recommended print size via the 10:1 rule. Only sent when the user
+           has entered a positive value - omitted otherwise (matches the
+           "when set" contract). */
+        var scanDistanceVal = parseInt($('#opt-scan-distance').val(), 10);
+        if (scanDistanceVal && scanDistanceVal > 0) {
+            customization.scan_distance_cm = scanDistanceVal;
+        }
+
         /* 📌 Include uploaded logo base64 data if present */
         if (uploadedLogoBase64 && customization.logo === 'upload') {
             customization.logo_data = uploadedLogoBase64;
@@ -821,14 +839,21 @@
      * When the hex text input changes, validates and updates the colour picker.
      * Also triggers a preview update on any colour change.
      *
-     * @param {string} pickerId - The colour picker element ID (with #)
-     * @param {string} hexId    - The hex text input element ID (with #)
+     * @param {string} pickerId          - The colour picker element ID (with #)
+     * @param {string} hexId             - The hex text input element ID (with #)
+     * @param {Function} [onChange]      - Optional extra callback fired after a
+     *                                     valid colour change (e.g. to refresh a
+     *                                     live contrast read-out). Used by the
+     *                                     fg/bg pairs only - @see updateContrastReadout()
      */
-    function setupColourSync(pickerId, hexId) {
+    function setupColourSync(pickerId, hexId, onChange) {
         /* 📌 Colour picker -> hex text input */
         $(pickerId).on('input change', function () {
             $(hexId).val($(this).val());
             triggerPreview();
+            if (typeof onChange === 'function') {
+                onChange();
+            }
         });
 
         /* 📌 Hex text input -> colour picker */
@@ -845,8 +870,161 @@
             if (CueRCode.isValidHexColor(hex)) {
                 $(pickerId).val(hex);
                 triggerPreview();
+                if (typeof onChange === 'function') {
+                    onChange();
+                }
             }
         });
+    }
+
+    // ==========================================================================
+    // ♿ Accessibility Helpers (E5 / #48) - WCAG contrast + print-size calculator
+    // ==========================================================================
+    // Client-side mirrors of qrContrastRatio() and qrRecommendedPrintSizeMm()
+    // (web/CueRCode.net/_functions/fn_qr_options.php) so the live UI read-outs
+    // update instantly (no AJAX round-trip needed). The server remains the
+    // AUTHORITATIVE calculation - these are for immediate user feedback only;
+    // the final /generate and /preview responses carry the server-computed
+    // values in `data.metadata` whenever preset=accessible is sent.
+    // ==========================================================================
+
+    /**
+     * ♿ Convert a hex colour string to an [r, g, b] array (0-255 each)
+     *
+     * Mirrors hexToRgb() in fn_qr_options.php: supports 3/6/8-digit hex, with
+     * or without a leading '#'. Malformed input falls back to black, matching
+     * the PHP implementation's fallback.
+     *
+     * @param {string} hex
+     * @returns {Array<number>} [r, g, b]
+     */
+    function hexToRgbClient(hex) {
+        var h = (hex || '').replace('#', '').trim();
+
+        if (h.length === 3) {
+            h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+        }
+        if (h.length === 8) {
+            h = h.substring(0, 6);
+        }
+        if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) {
+            return [0, 0, 0];
+        }
+
+        return [
+            parseInt(h.substring(0, 2), 16),
+            parseInt(h.substring(2, 4), 16),
+            parseInt(h.substring(4, 6), 16)
+        ];
+    }
+
+    /**
+     * ♿ Compute the WCAG 2.1 contrast ratio between two hex colours
+     *
+     * Client-side mirror of qrContrastRatio() (fn_qr_options.php): sRGB
+     * linearisation -> relative luminance -> (lighter + 0.05) / (darker + 0.05).
+     *
+     * @param {string} hexA
+     * @param {string} hexB
+     * @returns {number} Contrast ratio, 1.0-21.0
+     *
+     * @see https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+     */
+    function computeContrastRatio(hexA, hexB) {
+        function lineariseChannel(channel) {
+            var normalised = channel / 255;
+            if (normalised <= 0.03928) {
+                return normalised / 12.92;
+            }
+            return Math.pow((normalised + 0.055) / 1.055, 2.4);
+        }
+
+        function relativeLuminance(rgb) {
+            return (0.2126 * lineariseChannel(rgb[0]))
+                + (0.7152 * lineariseChannel(rgb[1]))
+                + (0.0722 * lineariseChannel(rgb[2]));
+        }
+
+        var luminanceA = relativeLuminance(hexToRgbClient(hexA));
+        var luminanceB = relativeLuminance(hexToRgbClient(hexB));
+        var lighter = Math.max(luminanceA, luminanceB);
+        var darker = Math.min(luminanceA, luminanceB);
+
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    /**
+     * ♿ Compute the recommended minimum print size (mm) from a scan distance (cm)
+     *
+     * Client-side mirror of qrRecommendedPrintSizeMm() (fn_qr_options.php):
+     * the 10:1 scan-distance rule with a 20mm practical floor.
+     *
+     * @param {number} scanDistanceCm
+     * @returns {number} Recommended print size in millimetres (>= 20)
+     */
+    function computeRecommendedPrintSizeMm(scanDistanceCm) {
+        var distanceCm = Math.max(0, scanDistanceCm || 0);
+        var distanceMm = distanceCm * 10;
+        var recommendedMm = Math.ceil(distanceMm / 10);
+
+        return Math.max(20, recommendedMm);
+    }
+
+    /**
+     * ♿ Refresh the live WCAG contrast read-out from the current fg/bg colours
+     *
+     * Updates the role="status" ratio text, and shows/hides the role="alert"
+     * warning banner: red/blocking language below 3:1 (matches the Accessible
+     * QR preset's hard rejection), amber/advisory language from 3:1 up to
+     * 4.5:1 (matches the preset's non-blocking warning band).
+     */
+    function updateContrastReadout() {
+        var fg = $('#opt-fg-color').val();
+        var bg = $('#opt-bg-color').val();
+        var ratio = computeContrastRatio(fg, bg);
+        var ratioDisplay = ratio.toFixed(2);
+
+        $('#contrast-ratio-value').text('Contrast ratio: ' + ratioDisplay + ':1');
+
+        var $warning = $('#contrast-warning');
+
+        if (ratio < 3) {
+            $warning.removeClass('d-none alert-warning').addClass('alert-danger').text(
+                'This colour pair fails WCAG contrast (' + ratioDisplay + ':1). The Accessible QR '
+                + 'preset will reject it - use at least 3:1 contrast (4.5:1 recommended).'
+            );
+        } else if (ratio < 4.5) {
+            $warning.removeClass('d-none alert-danger').addClass('alert-warning').text(
+                'Contrast is ' + ratioDisplay + ':1 - below the recommended WCAG AA level of 4.5:1. '
+                + 'Consider a higher-contrast colour pair for maximum readability.'
+            );
+        } else {
+            $warning.addClass('d-none');
+        }
+    }
+
+    /**
+     * ♿ Refresh the live physical print-size recommendation from the scan-distance input
+     *
+     * Reads #opt-scan-distance and writes a human-readable recommendation
+     * into the role="status" #print-size-readout element.
+     */
+    function updatePrintSizeReadout() {
+        var scanDistanceVal = parseInt($('#opt-scan-distance').val(), 10);
+        var $readout = $('#print-size-readout');
+
+        if (!scanDistanceVal || scanDistanceVal <= 0 || isNaN(scanDistanceVal)) {
+            $readout.text('Enter a scan distance to see the recommended minimum print size.');
+            return;
+        }
+
+        var sizeMm = computeRecommendedPrintSizeMm(scanDistanceVal);
+        var sizeCm = (sizeMm / 10).toFixed(1);
+
+        $readout.text(
+            'Recommended minimum print size: ' + sizeMm + 'mm (' + sizeCm + 'cm) square, '
+            + 'per the 10:1 scan-distance rule.'
+        );
     }
 
     // ==========================================================================
@@ -1517,9 +1695,11 @@
         // 🎨 Colour Picker Synchronisation
         // ======================================================================
 
-        /* 📌 Set up two-way sync for each colour picker / hex input pair */
-        setupColourSync('#opt-fg-color', '#opt-fg-color-hex');
-        setupColourSync('#opt-bg-color', '#opt-bg-color-hex');
+        /* 📌 Set up two-way sync for each colour picker / hex input pair.
+           The fg/bg pair also refreshes the live WCAG contrast read-out
+           (E5 / #48) on every valid colour change. */
+        setupColourSync('#opt-fg-color', '#opt-fg-color-hex', updateContrastReadout);
+        setupColourSync('#opt-bg-color', '#opt-bg-color-hex', updateContrastReadout);
         setupColourSync('#opt-marker-color', '#opt-marker-color-hex');
         setupColourSync('#opt-frame-color', '#opt-frame-color-hex');
 
@@ -1634,6 +1814,24 @@
         $('#opt-logo-size').on('input', handleLogoSizeChange);
 
         // ======================================================================
+        // ♿ Accessible QR preset (E5 / #48)
+        // ======================================================================
+
+        /* 📌 Toggling the Accessible QR preset re-requests a preview so the
+           enforced ECC/quiet-zone/version take effect immediately. */
+        $('#opt-accessible-preset').on('change', function () {
+            triggerPreview();
+        });
+
+        /* 📌 Scan-distance input: refresh the local print-size read-out
+           instantly (a pure calculation - no AJAX round-trip needed) AND
+           request a fresh preview so the server-side metadata stays in sync. */
+        $('#opt-scan-distance').on('input', function () {
+            updatePrintSizeReadout();
+            triggerPreview();
+        });
+
+        // ======================================================================
         // 📥 Download Button
         // ======================================================================
 
@@ -1690,6 +1888,12 @@
             initFormatDisplay = 'PNG';
         }
         $('#download-format-label').text(initFormatDisplay);
+
+        /* ♿ Initialise the accessibility read-outs (E5 / #48) from the
+           server-rendered default colours/scan-distance so they are never
+           blank on first paint. */
+        updateContrastReadout();
+        updatePrintSizeReadout();
     });
 
     // ==========================================================================

@@ -916,6 +916,59 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                             Leave on <strong>Auto</strong> unless you need a fixed size. A version too small for the data will be rejected.
                                         </small>
                                     </div>
+
+                                    <!-- ================================================
+                                         ♿ Accessible QR preset (E5 / #48)
+                                         ISO/IEC 18004 + WCAG 2.1 accessibility enforcement:
+                                         forced ECC H, forced quiet zone, auto-minimised
+                                         version, WCAG contrast validation, and a physical
+                                         print-size calculator (10:1 scan-distance rule).
+                                         ================================================ -->
+                                    <div class="mb-2 p-3 border rounded" id="accessible-qr-panel">
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" role="switch"
+                                                   id="opt-accessible-preset" name="preset"
+                                                   aria-describedby="accessible-preset-help">
+                                            <label class="form-check-label fw-semibold" for="opt-accessible-preset">
+                                                <i class="fa-solid fa-universal-access me-1" aria-hidden="true"></i> Accessible QR
+                                            </label>
+                                        </div>
+                                        <small class="text-body-secondary d-block mb-3" id="accessible-preset-help">
+                                            When enabled: forces Error Correction to <strong>High (30%)</strong>, forces the
+                                            <strong>quiet zone</strong> on, auto-selects the smallest QR version that fits your
+                                            data, and enforces WCAG 2.1 colour contrast on the foreground/background above
+                                            (codes under <strong>3:1</strong> contrast are rejected; under <strong>4.5:1</strong>
+                                            triggers a warning). Overrides the ECC, Quiet Zone, and QR Version choices above
+                                            while enabled.
+                                        </small>
+
+                                        <!-- 🎨 Live WCAG contrast read-out (always visible - useful even before enabling
+                                             the toggle, mirrors the roadmap's "standalone" framing for the contrast check). -->
+                                        <div class="mb-3">
+                                            <span class="form-label d-block fw-semibold mb-1" id="contrast-readout-label">
+                                                <i class="fa-solid fa-circle-half-stroke me-1" aria-hidden="true"></i> Foreground/background contrast
+                                            </span>
+                                            <div id="contrast-readout" role="status" aria-live="polite"
+                                                 aria-labelledby="contrast-readout-label" class="small">
+                                                <span id="contrast-ratio-value">Enter colours above to see the contrast ratio.</span>
+                                            </div>
+                                            <div id="contrast-warning" class="alert alert-warning py-1 px-2 mt-2 mb-0 small d-none" role="alert"></div>
+                                        </div>
+
+                                        <!-- 📏 Physical print-size calculator (10:1 scan-distance rule) -->
+                                        <div>
+                                            <label for="opt-scan-distance" class="form-label fw-semibold">
+                                                <i class="fa-solid fa-ruler me-1" aria-hidden="true"></i> Intended scan distance (cm)
+                                            </label>
+                                            <input type="number" class="form-control" id="opt-scan-distance" name="scan_distance_cm"
+                                                   min="1" max="10000" step="1" placeholder="e.g. 100"
+                                                   aria-describedby="print-size-readout">
+                                            <small class="text-body-secondary mt-1 d-block" id="print-size-readout"
+                                                   role="status" aria-live="polite">
+                                                Enter a scan distance to see the recommended minimum print size.
+                                            </small>
+                                        </div>
+                                    </div>
                                 </div>
 
                             </div>

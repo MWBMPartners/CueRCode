@@ -197,9 +197,18 @@ function validateRequestFieldLengths(array $requestData): ?string
  *           "frame_label": "",
  *           "frame_color": "",
  *           "transparent": false,
- *           "quiet_zone": true
+ *           "quiet_zone": true,
+ *           "preset": "none",
+ *           "scan_distance_cm": 100
  *       }
  *   }
+ *
+ * 🔧 preset="accessible" (E5 / #48) forces ecc=H + quiet_zone=true + an
+ *    auto-selected version, rejects the request with 422 when fg_color/
+ *    bg_color contrast is below WCAG 3:1, and adds a `metadata` object
+ *    (contrast_ratio, contrast_warning, recommended_print_size_mm) to the
+ *    success response. scan_distance_cm (optional) drives the print-size
+ *    recommendation via the 10:1 rule. @see fn_qr_options.php - applyAccessiblePreset()
  *
  * @param array $requestData The parsed JSON request body
  *
@@ -279,7 +288,52 @@ function handleGenerate(array $requestData): void
     $customization = buildCustomizationFromRequest($rawCustomization);
 
     // ==================================================================
-    // 📌 Step 3: Validate customization values
+    // 📌 Step 3: Load QR generation functions if not already loaded
+    // The QR generation files are not loaded by bootstrap.php by default
+    // since they are only needed for QR code operations. Moved ahead of
+    // validation (was Step 4) because the accessible-preset enforcement
+    // immediately below lives in fn_qr_options.php and must run before the
+    // customisation is validated/generated.
+    // @see fn_qr_payloads.php, fn_qr_options.php, fn_qr_generate.php
+    // ==================================================================
+    loadQRGenerationFunctions();
+
+    // ==================================================================
+    // ♿ Step 3a: Apply the "Accessible QR" preset (E5 / #48)
+    // A complete no-op unless customization['preset'] === 'accessible'. When
+    // active it forces ecc=H + quiet_zone=true + auto version, and evaluates
+    // the chosen fg/bg contrast against WCAG thresholds. A sub-3:1 ratio is
+    // rejected here with a 422 (distinct from the 400s validateCustomization()
+    // returns for malformed values); a 3:1-4.5:1 ratio is allowed through but
+    // recorded as a warning surfaced in the success response metadata below.
+    // @see fn_qr_options.php - applyAccessiblePreset()
+    // ==================================================================
+    if (function_exists('applyAccessiblePreset')) {
+        $customization = applyAccessiblePreset($customization);
+    }
+
+    $accessibleMeta = null;
+    if (isset($customization['_accessible_meta']) && is_array($customization['_accessible_meta'])) {
+        $accessibleMeta = $customization['_accessible_meta'];
+        // 🧹 Never let the internal bookkeeping key reach buildQROptions()/
+        //    generateQRCode() - it is meaningless to the QR engine.
+        unset($customization['_accessible_meta']);
+
+        if (isset($accessibleMeta['contrast_level']) && $accessibleMeta['contrast_level'] === 'fail') {
+            errorResponse(
+                'Accessible preset rejected: the foreground/background contrast ratio ('
+                    . $accessibleMeta['contrast_ratio']
+                    . ':1) is below the WCAG minimum of 3:1 required for the accessible preset. '
+                    . 'Choose a higher-contrast foreground/background colour pair.',
+                422,
+                'ACCESSIBLE_CONTRAST_TOO_LOW'
+            );
+            return; // @codeCoverageIgnore - errorResponse exits
+        }
+    }
+
+    // ==================================================================
+    // 📌 Step 4: Validate customization values
     // ==================================================================
     $validationError = validateCustomization($customization);
 
@@ -287,14 +341,6 @@ function handleGenerate(array $requestData): void
         errorResponse($validationError, 400, 'INVALID_CUSTOMIZATION');
         return;
     }
-
-    // ==================================================================
-    // 📌 Step 4: Load QR generation functions if not already loaded
-    // The QR generation files are not loaded by bootstrap.php by default
-    // since they are only needed for QR code operations.
-    // @see fn_qr_payloads.php, fn_qr_options.php, fn_qr_generate.php
-    // ==================================================================
-    loadQRGenerationFunctions();
 
     // ==================================================================
     // 📌 Step 5: Call the core generation function
@@ -344,6 +390,27 @@ function handleGenerate(array $requestData): void
         'mime_type'    => $result['mimeType'],
         'format'       => $format,
     ];
+
+    // ♿ Accessible-preset metadata (E5 / #48): only present when the request
+    //    used preset=accessible. Surfaces the computed WCAG contrast ratio,
+    //    a sub-AA warning (when 3:1 <= ratio < 4.5:1), and the physical
+    //    print-size recommendation (when scan_distance_cm was supplied), so
+    //    the UI/API caller never needs to recompute any of this itself.
+    // @see fn_qr_options.php - applyAccessiblePreset(), qrRecommendedPrintSizeMm()
+    if ($accessibleMeta !== null) {
+        $responseData['metadata'] = [
+            'accessible'                => true,
+            'contrast_ratio'            => $accessibleMeta['contrast_ratio'],
+            'recommended_print_size_mm' => $accessibleMeta['recommended_print_size_mm'],
+        ];
+
+        if (isset($accessibleMeta['contrast_level']) && $accessibleMeta['contrast_level'] === 'warning') {
+            $responseData['metadata']['contrast_warning'] =
+                'Contrast ratio ' . $accessibleMeta['contrast_ratio']
+                . ':1 is below the recommended WCAG AA level of 4.5:1. Consider a higher-contrast '
+                . 'colour pair for maximum readability.';
+        }
+    }
 
     // 📝 Log the API generation activity
     if (function_exists('logActivity')) {
@@ -459,7 +526,46 @@ function handlePreview(array $requestData): void
     $customization['save_file'] = false;
 
     // ==================================================================
-    // 📌 Step 3: Validate customization values
+    // 📌 Step 3: Load QR generation functions
+    // Moved ahead of validation (was Step 4) - the accessible-preset
+    // enforcement immediately below lives in fn_qr_options.php and must run
+    // before the customisation is validated/generated.
+    // ==================================================================
+    loadQRGenerationFunctions();
+
+    // ==================================================================
+    // ♿ Step 3a: Apply the "Accessible QR" preset (E5 / #48)
+    // A complete no-op unless customization['preset'] === 'accessible'. See
+    // handleGenerate() for the full rationale; the preview endpoint mirrors
+    // the same enforcement + contrast-rejection + metadata behaviour so the
+    // live UI preview and the final /generate call never disagree.
+    // @see fn_qr_options.php - applyAccessiblePreset()
+    // @see handleGenerate() - identical logic, documented in full there
+    // ==================================================================
+    if (function_exists('applyAccessiblePreset')) {
+        $customization = applyAccessiblePreset($customization);
+    }
+
+    $accessibleMeta = null;
+    if (isset($customization['_accessible_meta']) && is_array($customization['_accessible_meta'])) {
+        $accessibleMeta = $customization['_accessible_meta'];
+        unset($customization['_accessible_meta']);
+
+        if (isset($accessibleMeta['contrast_level']) && $accessibleMeta['contrast_level'] === 'fail') {
+            errorResponse(
+                'Accessible preset rejected: the foreground/background contrast ratio ('
+                    . $accessibleMeta['contrast_ratio']
+                    . ':1) is below the WCAG minimum of 3:1 required for the accessible preset. '
+                    . 'Choose a higher-contrast foreground/background colour pair.',
+                422,
+                'ACCESSIBLE_CONTRAST_TOO_LOW'
+            );
+            return; // @codeCoverageIgnore - errorResponse exits
+        }
+    }
+
+    // ==================================================================
+    // 📌 Step 4: Validate customization values
     // ==================================================================
     $validationError = validateCustomization($customization);
 
@@ -467,11 +573,6 @@ function handlePreview(array $requestData): void
         errorResponse($validationError, 400, 'INVALID_CUSTOMIZATION');
         return;
     }
-
-    // ==================================================================
-    // 📌 Step 4: Load QR generation functions
-    // ==================================================================
-    loadQRGenerationFunctions();
 
     // ==================================================================
     // 📌 Step 5: Call the core preview function
@@ -512,6 +613,24 @@ function handlePreview(array $requestData): void
         'image'     => $result['data'],
         'mime_type' => $result['mimeType'],
     ];
+
+    // ♿ Accessible-preset metadata (E5 / #48) - identical shape to
+    // handleGenerate() so the live preview and the final download agree.
+    // @see handleGenerate() - full rationale documented there
+    if ($accessibleMeta !== null) {
+        $responseData['metadata'] = [
+            'accessible'                => true,
+            'contrast_ratio'            => $accessibleMeta['contrast_ratio'],
+            'recommended_print_size_mm' => $accessibleMeta['recommended_print_size_mm'],
+        ];
+
+        if (isset($accessibleMeta['contrast_level']) && $accessibleMeta['contrast_level'] === 'warning') {
+            $responseData['metadata']['contrast_warning'] =
+                'Contrast ratio ' . $accessibleMeta['contrast_ratio']
+                . ':1 is below the recommended WCAG AA level of 4.5:1. Consider a higher-contrast '
+                . 'colour pair for maximum readability.';
+        }
+    }
 
     successResponse($responseData, 'QR code preview generated successfully.');
 }
@@ -795,6 +914,39 @@ function buildCustomizationFromRequest(array $raw): array
     // 📌 Gradient (array, SVG only)
     if (isset($raw['gradient']) && is_array($raw['gradient'])) {
         $customization['gradient'] = $raw['gradient'];
+    }
+
+    // 📌 Accessibility preset (string enum: none, accessible) - E5 (#48)
+    // 🔧 PARITY: the UI's "Accessible QR" toggle sends preset=accessible; the
+    //    API accepts + allowlists it so it is a strict superset of the UI.
+    //    'none' (the default) preserves EXACTLY today's behaviour - the value
+    //    is only ever inspected by applyAccessiblePreset() (fn_qr_options.php),
+    //    which is a complete no-op for anything other than 'accessible'.
+    // @see fn_qr_options.php - applyAccessiblePreset()
+    // @see cuercode-generator.js - collectCustomization() (preset)
+    if (isset($raw['preset'])) {
+        $preset = strtolower(trim((string) $raw['preset']));
+    } else {
+        $preset = 'none';
+    }
+    $validPresets = ['none', 'accessible'];
+    if (in_array($preset, $validPresets, true)) {
+        $customization['preset'] = $preset;
+    } else {
+        $customization['preset'] = 'none';
+    }
+
+    // 📌 Intended scan distance in centimetres (int, optional) - E5 (#48)
+    // 🔧 Used only to compute the physical print-size recommendation (the
+    //    10:1 rule, @see qrRecommendedPrintSizeMm()). Absent/blank means "no
+    //    recommendation requested". Clamped to a sane positive range (1cm to
+    //    100m) - a defensive bound, not a UX limit; the calculator itself
+    //    still applies its own 20mm floor at the small end.
+    // @see fn_qr_options.php - qrRecommendedPrintSizeMm(), applyAccessiblePreset()
+    // @see cuercode-generator.js - collectCustomization() (scan_distance_cm)
+    if (isset($raw['scan_distance_cm']) && $raw['scan_distance_cm'] !== '' && $raw['scan_distance_cm'] !== null) {
+        $scanDistanceCm = (int) $raw['scan_distance_cm'];
+        $customization['scan_distance_cm'] = max(1, min(10000, $scanDistanceCm));
     }
 
     return $customization;

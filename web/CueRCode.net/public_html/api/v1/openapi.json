@@ -143,6 +143,19 @@
                                             "logo_size_pct": 25
                                         }
                                     }
+                                },
+                                "accessible_preset": {
+                                    "summary": "Accessible QR preset (E5 / #48) with a print-size recommendation",
+                                    "value": {
+                                        "type": "url",
+                                        "input": { "url": "https://example.com" },
+                                        "customization": {
+                                            "preset": "accessible",
+                                            "fg_color": "#000000",
+                                            "bg_color": "#ffffff",
+                                            "scan_distance_cm": 100
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -171,6 +184,26 @@
                                                 "download_url": "/api/v1/download/a1b2c3d4-e5f6-4890-abcd-ef1234567890",
                                                 "mime_type": "image/png",
                                                 "format": "png"
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    },
+                                    "success_accessible": {
+                                        "summary": "JSON success with preset=accessible metadata (E5 / #48)",
+                                        "value": {
+                                            "success": true,
+                                            "message": "QR code generated successfully.",
+                                            "data": {
+                                                "uuid": "a1b2c3d4-e5f6-4890-abcd-ef1234567890",
+                                                "image": "data:image/png;base64,iVBORw0KGgo...",
+                                                "download_url": "/api/v1/download/a1b2c3d4-e5f6-4890-abcd-ef1234567890",
+                                                "mime_type": "image/png",
+                                                "format": "png",
+                                                "metadata": {
+                                                    "accessible": true,
+                                                    "contrast_ratio": 21.0,
+                                                    "recommended_print_size_mm": 100
+                                                }
                                             },
                                             "timestamp": "2026-02-27T12:00:00+00:00"
                                         }
@@ -828,7 +861,7 @@
                 }
             },
             "UnprocessableEntity": {
-                "description": "QR code generation failed (e.g., invalid payload data for the chosen type)",
+                "description": "QR code generation failed (e.g., invalid payload data for the chosen type), OR the `preset: accessible` contrast rejection below",
                 "content": {
                     "application/json": {
                         "schema": { "$ref": "#/components/schemas/ErrorResponse" },
@@ -840,6 +873,16 @@
                                     "message": "QR code generation failed: Invalid payload data.",
                                     "data": {},
                                     "error_code": "GENERATION_FAILED",
+                                    "timestamp": "2026-02-27T12:00:00+00:00"
+                                }
+                            },
+                            "accessible_contrast_too_low": {
+                                "summary": "preset=accessible rejected: fg/bg contrast below WCAG 3:1 (E5 / #48)",
+                                "value": {
+                                    "success": false,
+                                    "message": "Accessible preset rejected: the foreground/background contrast ratio (1.61:1) is below the WCAG minimum of 3:1 required for the accessible preset. Choose a higher-contrast foreground/background colour pair.",
+                                    "data": {},
+                                    "error_code": "ACCESSIBLE_CONTRAST_TOO_LOW",
                                     "timestamp": "2026-02-27T12:00:00+00:00"
                                 }
                             }
@@ -1080,6 +1123,18 @@
                         "maximum": 40,
                         "description": "Optional fixed QR code version (1-40) controlling the module grid size (modules = 4 * version + 17). When omitted, the smallest version that fits the payload at the chosen ECC level is selected automatically."
                     },
+                    "preset": {
+                        "type": "string",
+                        "enum": ["none", "accessible"],
+                        "default": "none",
+                        "description": "Customisation preset. `none` (default) applies no additional rules. `accessible` enforces an accessibility-focused configuration per ISO/IEC 18004 + WCAG 2.1: forces `ecc` to `H`, forces `quiet_zone` to `true`, DROPS any pinned `version` so the smallest auto-fit version is used, and evaluates the WCAG contrast ratio of `fg_color`/`bg_color`. A contrast ratio below 3:1 causes the request to be REJECTED with HTTP 422 (error_code `ACCESSIBLE_CONTRAST_TOO_LOW`); a ratio from 3:1 up to (but not including) 4.5:1 is allowed through but reported as a non-blocking warning in the response `data.metadata.contrast_warning` field. See the /generate 422 response for a worked example."
+                    },
+                    "scan_distance_cm": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10000,
+                        "description": "Optional intended scanning distance in centimetres, used only to compute a recommended physical print size via the 10:1 scan-distance rule (recommended size ≈ scan distance / 10, with a 20mm practical floor). When supplied together with `preset: accessible`, the recommendation is returned in the response as `data.metadata.recommended_print_size_mm`. Has no effect on the generated image itself."
+                    },
                     "gradient": {
                         "type": "object",
                         "description": "Gradient fill for the dark modules (SVG output only). Advanced feature; not exposed in the standard web UI. Ignored for non-SVG formats.",
@@ -1170,6 +1225,9 @@
                                 "type": "string",
                                 "description": "Output format used",
                                 "example": "png"
+                            },
+                            "metadata": {
+                                "$ref": "#/components/schemas/AccessibleMetadata"
                             }
                         }
                     },
@@ -1197,10 +1255,41 @@
                                 "type": "string",
                                 "description": "MIME type (always image/png for previews)",
                                 "example": "image/png"
+                            },
+                            "metadata": {
+                                "$ref": "#/components/schemas/AccessibleMetadata"
                             }
                         }
                     },
                     "timestamp": { "type": "string", "format": "date-time" }
+                }
+            },
+            "AccessibleMetadata": {
+                "type": "object",
+                "description": "Present in /generate and /preview responses ONLY when the request's customization.preset was 'accessible' (E5 / #48). Absent entirely for preset=none (the default).",
+                "properties": {
+                    "accessible": {
+                        "type": "boolean",
+                        "example": true,
+                        "description": "Always true when this object is present."
+                    },
+                    "contrast_ratio": {
+                        "type": "number",
+                        "format": "float",
+                        "example": 21.0,
+                        "description": "The WCAG contrast ratio computed between fg_color and bg_color, rounded to 2 decimal places. Range 1.0-21.0."
+                    },
+                    "contrast_warning": {
+                        "type": "string",
+                        "description": "Present ONLY when 3:1 <= contrast_ratio < 4.5:1 - a non-blocking accessibility warning (requests below 3:1 are rejected with HTTP 422 instead; see the /generate 422 response).",
+                        "example": "Contrast ratio 3.5:1 is below the recommended WCAG AA level of 4.5:1. Consider a higher-contrast colour pair for maximum readability."
+                    },
+                    "recommended_print_size_mm": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Recommended minimum print size (width = height) in millimetres, computed from the request's scan_distance_cm via the 10:1 scan-distance rule (20mm practical floor). Null when scan_distance_cm was not supplied.",
+                        "example": 100
+                    }
                 }
             },
             "TypesResponse": {
