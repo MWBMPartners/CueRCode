@@ -4,6 +4,8 @@
  * 📄 CueRCode - Shared HTML Footer Template
  * ==============================================================================
  *
+ * Path: _includes/footer.php
+ *
  * Outputs the page footer, JavaScript resources (jQuery, Bootstrap JS,
  * custom scripts), debug panel (if debug mode active), and closing HTML tags.
  *
@@ -15,6 +17,7 @@
  *
  * @package     CueRCode
  * @subpackage  Templates
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  */
@@ -117,6 +120,10 @@ if (function_exists('isDebugMode')) {
          📦 JavaScript: jQuery (CDN with local fallback)
          @see https://jquery.com/
          ==================================================================== -->
+    <!-- TODO F-004: capture SRI hash for jquery@3.7.1 at live deploy —
+         public_html_landing/index.php does not reference jQuery, so no
+         existing verified hash can be safely copied for this version. Do NOT
+         guess a hash: an incorrect integrity value BLOCKS the resource. -->
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
             crossorigin="anonymous"></script>
     <script>
@@ -130,7 +137,10 @@ if (function_exists('isDebugMode')) {
          📦 JavaScript: Bootstrap 5.3 Bundle (CDN with local fallback)
          @see https://getbootstrap.com/docs/5.3/getting-started/javascript/
          ==================================================================== -->
+    <!-- 🔒 F-004 (SRI, DS-4): hash copied verbatim from
+         public_html_landing/index.php (same pinned version, bootstrap@5.3.3) -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
             crossorigin="anonymous"></script>
     <script>
         /* 🔄 Bootstrap JS CDN fallback to local copy */

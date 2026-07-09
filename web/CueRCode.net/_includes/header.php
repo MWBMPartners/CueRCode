@@ -4,6 +4,8 @@
  * 📄 CueRCode - Shared HTML Header Template
  * ==============================================================================
  *
+ * Path: _includes/header.php
+ *
  * Outputs the HTML document head, meta tags, CSS resources (Bootstrap,
  * FontAwesome, custom CSS), and the responsive navigation bar.
  *
@@ -18,6 +20,7 @@
  *
  * @package     CueRCode
  * @subpackage  Templates
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  */
@@ -196,8 +199,11 @@ if (function_exists('isDebugMode')) {
          🎨 CSS: Bootstrap 5.3 (CDN with local fallback)
          @see https://getbootstrap.com/docs/5.3/getting-started/introduction/
          ==================================================================== -->
+    <!-- 🔒 F-004 (SRI, DS-4): hash copied verbatim from
+         public_html_landing/index.php (same pinned version, bootstrap@5.3.3) -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           rel="stylesheet"
+          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YcnS/1Wtrhbf+PbQz4jN4dVFTJOPHcR1VVIwQ"
           crossorigin="anonymous"
           id="bootstrap-css">
     <script>
@@ -234,6 +240,10 @@ if (function_exists('isDebugMode')) {
          🎨 CSS: FontAwesome (CDN with local fallback)
          @see https://fontawesome.com/docs
          ==================================================================== -->
+    <!-- TODO F-004: capture SRI hash for font-awesome@6.5.1 at live deploy —
+         public_html_landing/index.php does not reference FontAwesome, so no
+         existing verified hash can be safely copied for this version. Do NOT
+         guess a hash: an incorrect integrity value BLOCKS the resource. -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
           rel="stylesheet"
           crossorigin="anonymous"
