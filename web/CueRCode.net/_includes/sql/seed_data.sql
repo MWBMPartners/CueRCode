@@ -114,7 +114,17 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('email', 'graph_client_id', '', 'string', 1, 1, 'Microsoft Entra ID app registration (client) ID - ENCRYPTED, owner-set via admin only, never commit'),
 ('email', 'graph_client_secret', '', 'string', 1, 1, 'Microsoft Entra ID app registration client secret value - ENCRYPTED, owner-set via admin only, never commit'),
 ('email', 'graph_token_cache', '', 'json', 1, 0, 'Runtime OAuth2 access-token cache (access_token + expires_at), auto-managed by getGraphAccessToken() - ENCRYPTED, not owner-editable, do not populate manually'),
-('email', 'email_queue_autoprocess', '0', 'boolean', 0, 1, 'Opportunistic shutdown-hook queue processing (≤2 sends/request) - 0 = OFF (recommended: use a Dreamhost panel cron job hitting the queue processor instead); 1 = ON');
+('email', 'email_queue_autoprocess', '0', 'boolean', 0, 1, 'Opportunistic shutdown-hook queue processing (≤2 sends/request) - 0 = OFF (recommended: use a Dreamhost panel cron job hitting the queue processor instead); 1 = ON'),
+
+-- 💳 Billing / Premium Tier Settings (Epic E4 - #25/#26/#53)
+-- ------------------------------------------------------------------------------
+-- Small, admin-editable config that the gating engine (fn_features.php) reads
+-- via getConfig() - these are NOT hardcoded in PHP, so an owner can change the
+-- pricing page URL or the past_due downgrade tier without a deploy. The plan
+-- catalogue itself (prices/features/limits) lives in tblSubscriptionPlans, not
+-- here - these two rows are gating BEHAVIOUR knobs, not plan data.
+('billing', 'billing_upgrade_url', '/pricing', 'url', 0, 1, 'URL shown to a caller denied a gated feature/limit (requireFeatureOr402() + the bulk-generate over-cap response) - a future plan-selection/pricing page; owner-editable, no code change needed to point it elsewhere'),
+('billing', 'billing_past_due_downgrade_plan_key', 'free', 'string', 0, 1, 'The tblSubscriptionPlans.planKey the gating engine falls back to for CREATING new gated objects while a subscription is past_due (existing objects remain readable regardless) - see fn_features.php effectivePlanForGating()');
 
 -- ==============================================================================
 -- 📱 QR Code Type Definitions (tblQRCodeTypes)
@@ -348,13 +358,98 @@ INSERT INTO `tblPredefinedLogos` (`logoName`, `logoLabel`, `logoFileName`, `logo
 ('qrcode',      'QR Code',      'qrcode.svg',       'utility',   48);
 
 -- ==============================================================================
+-- 💳 Subscription Plans (tblSubscriptionPlans) - Epic E4, #25/#26/#53
+-- ==============================================================================
+-- The FOUR seeded tiers from PROJECT_ROADMAP.md "Premium Tier Design" -
+-- anonymous (not logged in), free (registered account, no payment), pro
+-- (paid individual), business (paid organisation). These rows are the ONLY
+-- place tier behaviour is defined - `_functions/fn_features.php` reads
+-- featuresJSON/limitsJSON generically (no per-feature/per-tier PHP branches),
+-- so editing a row here (via SQL/phpMyAdmin today, the admin plan editor once
+-- Epic E3's admin stage ships) changes what that tier can do with ZERO code
+-- changes and no deploy.
+--
+-- featuresJSON - flat object of booleans. Seeded keys (all six wired to the
+-- PROJECT_ROADMAP.md tier matrix; add more any time - an absent key reads as
+-- `false` via fn_features.php's fail-closed default, so rollout is opt-in):
+--   expiry_scheduling      - QR expiry & scheduling (FG-005)
+--   password_protected_qr  - password-protected QR unlock (FG-004)
+--   sso                    - SSO sign-in (Epic E2)
+--   organisations          - organisation accounts/roles (Epic E3 org stage)
+--   webhooks               - outbound event webhooks (FG-013)
+--   csv_export             - analytics CSV/JSON export (Epic E11)
+--
+-- limitsJSON - flat object of integers, where -1 means UNLIMITED. Seeded keys
+-- (add more any time - an absent key reads as 0 via fn_features.php's
+-- fail-closed default):
+--   saved_codes             - max codes in the saved-codes library (Epic E3)
+--   bulk_batch_size         - max items per /api/v1/bulk-generate request
+--                             (THIS STAGE'S wired gate - fn_api_bulk.php)
+--   dynamic_codes           - max editable-destination dynamic QR codes (E1)
+--   api_keys                - max active tblAPIKeys rows per subject
+--   analytics_days          - scan-analytics retention window (Epic E11)
+--   api_rate_limit_per_min  - synced onto tblAPIKeys.rateLimitPerMin
+--                             (fn_features.php syncApiKeyLimitsForUser())
+--   api_rate_limit_per_day  - synced onto tblAPIKeys.rateLimitPerDay
+--
+-- ⚠️ priceMonthly/priceYearly/currency below are PLACEHOLDER example values
+-- (owner has not set final pricing) - purely config, changeable via a single
+-- UPDATE statement with no code impact whatsoever.
+--
+-- 🆕 TO ADD A FIFTH TIER (e.g. an "enterprise" plan): simply
+--   INSERT INTO `tblSubscriptionPlans`
+--       (`planKey`, `planName`, `priceMonthly`, `priceYearly`, `currency`,
+--        `featuresJSON`, `limitsJSON`, `sortOrder`)
+--   VALUES ('enterprise', 'Enterprise', 199.99, 1999.99, 'GBP',
+--       '{"expiry_scheduling":true, ... }', '{"saved_codes":-1, ...}', 4);
+-- No PHP file needs to change - the moment an active tblSubscriptions row
+-- points a user/org at 'enterprise', fn_features.php resolves it.
+--
+-- @see _functions/fn_features.php
+-- @see DEV_NOTES.md - "How to add or modify a premium tier"
+-- ==============================================================================
+
+INSERT INTO `tblSubscriptionPlans`
+    (`planKey`, `planName`, `description`, `priceMonthly`, `priceYearly`, `currency`, `featuresJSON`, `limitsJSON`, `isActive`, `sortOrder`)
+VALUES
+
+-- 👤 Anonymous - not logged in. Generous acquisition funnel: full static QR
+-- customisation, but no persistence/dynamism/volume/premium features.
+('anonymous', 'Anonymous', 'Generate QR codes instantly with no account required.', 0.00, 0.00, 'GBP',
+ '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false}',
+ '{"saved_codes": 0, "bulk_batch_size": 25, "dynamic_codes": 0, "api_keys": 0, "analytics_days": 0, "api_rate_limit_per_min": 10, "api_rate_limit_per_day": 100}',
+ 1, 0),
+
+-- 🆓 Free - a registered, unpaid account. Adds persistence (saved codes),
+-- a small dynamic-QR allowance, and one API key, still no premium features.
+('free', 'Free', 'Create a free account to save your codes and unlock a few extras.', 0.00, 0.00, 'GBP',
+ '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false}',
+ '{"saved_codes": 25, "bulk_batch_size": 50, "dynamic_codes": 3, "api_keys": 1, "analytics_days": 0, "api_rate_limit_per_min": 30, "api_rate_limit_per_day": 2000}',
+ 1, 1),
+
+-- 💎 Pro - paid individual tier. Unlocks expiry/scheduling, password
+-- protection, webhooks, and analytics export; SSO/organisations stay Business-only.
+('pro', 'Pro', 'For individuals who need dynamic QR codes, analytics, and automation.', 4.99, 49.99, 'GBP',
+ '{"expiry_scheduling": true, "password_protected_qr": true, "sso": false, "organisations": false, "webhooks": true, "csv_export": true}',
+ '{"saved_codes": 500, "bulk_batch_size": 500, "dynamic_codes": 100, "api_keys": 5, "analytics_days": 90, "api_rate_limit_per_min": 120, "api_rate_limit_per_day": 20000}',
+ 1, 2),
+
+-- 🏢 Business - paid organisation tier. Every feature flag on, effectively
+-- unlimited saved codes (fair use), the largest bulk/API allowances.
+('business', 'Business', 'For teams and organisations that need SSO, roles, and enterprise-scale volume.', 19.99, 199.99, 'GBP',
+ '{"expiry_scheduling": true, "password_protected_qr": true, "sso": true, "organisations": true, "webhooks": true, "csv_export": true}',
+ '{"saved_codes": -1, "bulk_batch_size": 2000, "dynamic_codes": 1000, "api_keys": 20, "analytics_days": 1095, "api_rate_limit_per_min": 600, "api_rate_limit_per_day": 100000}',
+ 1, 3);
+
+-- ==============================================================================
 -- ✅ Seed Data Complete
 -- ==============================================================================
 -- Inserted:
---   - 54 default settings across 6 groups (email group now Microsoft Graph -
---     based settings, Epic E8/#29, replacing the earlier unused SMTP stubs)
+--   - 56 default settings across 7 groups (email group is Microsoft Graph -
+--     based settings, Epic E8/#29; new billing group, Epic E4/#25/#26/#53)
 --   - 26 QR code type definitions with form field schemas
 --   - 25 predefined logo entries
+--   - 4 subscription plan tiers (anonymous/free/pro/business, Epic E4/#53)
 --
 -- 📌 The application is now ready for use.
 --    Remove or restrict access to the /install/ directory.

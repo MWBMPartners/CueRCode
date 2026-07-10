@@ -71,6 +71,7 @@ $apiFunctionFiles = [
     'fn_email.php',          // 📧 queueEmail() (Epic E8) - needed by fn_auth.php's verification/reset emails
     'fn_auth.php',           // 🔐 Registration/login/session/reset engine (Epic E3 stage 1)
     'fn_api_accounts.php',   // 🌐 Account HTTP handlers (Epic E3 stage 1)
+    'fn_features.php',       // 💳 Premium tier / feature gating engine (Epic E4/#53) - planForUser(), featureEnabled(), limitFor()
 ];
 
 foreach ($apiFunctionFiles as $apiFile) {
@@ -166,11 +167,22 @@ if ($route !== '') {
 // 📋 Route Definitions
 // ==============================================================================
 // Each route is defined with:
-//   - 'pattern'   (string)    Route pattern (with {param} placeholders)
-//   - 'methods'   (array)     Allowed HTTP methods
-//   - 'handler'   (string)    Handler function name
-//   - 'auth'      (bool)      Whether authentication is required
-//   - 'rateLimit' (bool)      Whether rate limiting applies
+//   - 'pattern'         (string)      Route pattern (with {param} placeholders)
+//   - 'methods'         (array)       Allowed HTTP methods
+//   - 'handler'         (string)      Handler function name
+//   - 'auth'            (bool)        Whether authentication is required
+//   - 'rateLimit'       (bool)        Whether rate limiting applies
+//   - 'requiredFeature' (string|null) Epic E4/#53 - a tblSubscriptionPlans
+//     featuresJSON key (e.g. 'webhooks') that must be enabled on the caller's
+//     plan for this route to proceed, or null for no feature gate. UNUSED
+//     (every route below is null) as of this framework stage - no existing
+//     route needs a boolean feature gate yet (the one gate this stage wires,
+//     bulk-generate's item-count cap, is a LIMIT, not a boolean feature, so
+//     it is enforced inside handleBulkGenerate() via limitFor() instead, not
+//     here). The dispatch section below already calls requireFeatureOr402()
+//     whenever a future route sets this to a non-null key - see "🔐 Feature
+//     Gate (Epic E4/#53)" further down - so adding a gated route later is a
+//     one-line change to that route's definition, zero router-logic changes.
 // ==============================================================================
 
 /**
@@ -185,6 +197,7 @@ $routes = [
         'handler'   => 'handleGenerate',
         'auth'      => true,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 POST /api/v1/preview - Generate a preview QR code
@@ -194,6 +207,7 @@ $routes = [
         'handler'   => 'handlePreview',
         'auth'      => true,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 POST /api/v1/bulk-generate - Generate many QR codes and stream a ZIP
@@ -206,6 +220,7 @@ $routes = [
         'handler'   => 'handleBulkGenerate',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 GET /api/v1/download/{uuid} - Download a generated QR code
@@ -215,6 +230,7 @@ $routes = [
         'handler'   => 'handleDownload',
         'auth'      => true,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 GET /api/v1/types - List available QR code types
@@ -224,6 +240,7 @@ $routes = [
         'handler'   => 'handleGetTypes',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 GET /api/v1/formats - List supported output formats
@@ -233,6 +250,7 @@ $routes = [
         'handler'   => 'handleGetFormats',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 GET /api/v1/health - Health check endpoint
@@ -242,6 +260,7 @@ $routes = [
         'handler'   => 'handleHealthCheck',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // ==========================================================================
@@ -266,6 +285,7 @@ $routes = [
         'handler'   => 'handleAuthRegister',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 POST /api/v1/auth/login - Authenticate and issue a session
@@ -275,6 +295,7 @@ $routes = [
         'handler'   => 'handleAuthLogin',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 POST /api/v1/auth/logout - Revoke the current session
@@ -284,6 +305,7 @@ $routes = [
         'handler'   => 'handleAuthLogout',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 POST /api/v1/auth/verify-email - Consume an email verification token
@@ -293,6 +315,7 @@ $routes = [
         'handler'   => 'handleAuthVerifyEmail',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 POST /api/v1/auth/request-password-reset - Request a password reset email
@@ -302,6 +325,7 @@ $routes = [
         'handler'   => 'handleAuthRequestPasswordReset',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 
     // 📌 POST /api/v1/auth/reset-password - Consume a password reset token
@@ -311,6 +335,7 @@ $routes = [
         'handler'   => 'handleAuthResetPassword',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
     ],
 ];
 
@@ -426,6 +451,44 @@ if ($matchedRoute['auth'] === true && $auth['authenticated'] === false) {
     }
 
     errorResponse($authErrorMsg, 401, $authErrorCode);
+}
+
+// ==============================================================================
+// 🔐 Feature Gate (Epic E4/#53)
+// ==============================================================================
+// Enforces a route's 'requiredFeature' (see the route table comment above),
+// if one is set. UNUSED today - every route above defines it as null, so
+// this block never triggers yet - but it is fully wired so a future gated
+// route (e.g. a webhooks CRUD route requiring the 'webhooks' feature) is a
+// one-line change to that route's 'requiredFeature' value, nothing here.
+// Resolves the caller's userID the same way handleBulkGenerate() does
+// (resolveUserIdFromAuth()) so a session-authenticated web UI user and an
+// API-key request both gate against their OWN plan, not the anonymous plan.
+// @see fn_features.php - requireFeatureOr402(), resolveUserIdFromAuth()
+// ==============================================================================
+
+if (isset($matchedRoute['requiredFeature']) && $matchedRoute['requiredFeature'] !== null) {
+    if (function_exists('resolveUserIdFromAuth')) {
+        $featureGateUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $featureGateUserId = null;
+    }
+
+    if (function_exists('requireFeatureOr402')) {
+        $featureDenied = requireFeatureOr402((string) $matchedRoute['requiredFeature'], $featureGateUserId);
+
+        if ($featureDenied !== null) {
+            errorResponse(
+                $featureDenied['message'],
+                $featureDenied['httpCode'],
+                $featureDenied['errorCode'],
+                [
+                    'upgrade_url' => $featureDenied['upgradeUrl'],
+                    'feature'     => $featureDenied['feature'],
+                ]
+            );
+        }
+    }
 }
 
 // ==============================================================================

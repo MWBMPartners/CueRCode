@@ -703,9 +703,178 @@ CREATE TABLE IF NOT EXISTS `tblInvitations` (
   COMMENT='✉️ Pending/accepted organisation invitations (schema stub - org UI/logic deferred to a later E3 stage)';
 
 -- ==============================================================================
+-- 📋 Table 19: tblSubscriptionPlans (Epic E4 - #25/#26/#53, PROJECT_ROADMAP.md
+--    "Premium Tier Design")
+-- ==============================================================================
+-- 💳 THE SINGLE SOURCE OF TRUTH for every premium tier CueRCode offers. This
+-- table is deliberately DATA-DRIVEN so that adding a brand-new tier, moving a
+-- feature between tiers, or changing a price point NEVER requires a code
+-- deploy - only an INSERT/UPDATE against this table (via the admin plan
+-- editor once it ships, or directly via SQL/phpMyAdmin today). The gating
+-- engine (`_functions/fn_features.php`) reads featuresJSON/limitsJSON with
+-- fully GENERIC key lookups - it contains zero per-feature/per-tier branches,
+-- so a key that does not exist yet in any plan's JSON simply resolves to a
+-- fail-closed default (false / 0) until an admin adds it to a plan row.
+--
+-- featuresJSON shape - a flat JSON object of booleans, e.g.:
+--   {"expiry_scheduling": true, "password_protected_qr": true, "sso": false,
+--    "organisations": false, "webhooks": true, "csv_export": true}
+--
+-- limitsJSON shape - a flat JSON object of integers, where -1 means
+-- UNLIMITED, e.g.:
+--   {"saved_codes": 500, "bulk_batch_size": 500, "dynamic_codes": 100,
+--    "api_keys": 5, "analytics_days": 90, "api_rate_limit_per_min": 120,
+--    "api_rate_limit_per_day": 20000}
+--
+-- To add a new tier: INSERT a new row with a unique planKey and its own
+-- featuresJSON/limitsJSON - `fn_features.php` resolves ANY planKey found on
+-- an active tblSubscriptions row with no code change whatsoever. To add a
+-- new gated feature/limit to the app: just start reading it via
+-- featureEnabled()/limitFor() in the new code path, then set its value on
+-- whichever plan rows should have it (defaults to denied/0 everywhere it is
+-- absent, so a rollout is opt-in per plan). See DEV_NOTES.md "How to add or
+-- modify a premium tier" for the full walkthrough + worked SQL examples.
+--
+-- @see https://dev.mysql.com/doc/refman/8.0/en/json.html JSON column type
+-- @see _functions/fn_features.php - planByKey(), featureEnabled(), limitFor()
+-- @see seed_data.sql - the four seeded tiers (anonymous/free/pro/business)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblSubscriptionPlans` (
+    `planID`        INT UNSIGNED    NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing plan identifier',
+    `planKey`       VARCHAR(32)     NOT NULL                 COMMENT '🏷️ Machine-readable UNIQUE plan key (anonymous, free, pro, business, or any future custom tier) - this is the only value fn_features.php ever matches against, never a hardcoded name',
+    `planName`      VARCHAR(100)    NOT NULL                 COMMENT '📝 Human-readable display name (e.g. "Pro")',
+    `description`   VARCHAR(500)    NULL                     COMMENT '📖 Short marketing description for a future pricing/plan-selection page',
+    `priceMonthly`  DECIMAL(10,2)   NOT NULL DEFAULT 0.00    COMMENT '💷 Monthly price in `currency` (0.00 for the anonymous/free tiers) - admin-editable config, not code',
+    `priceYearly`   DECIMAL(10,2)   NOT NULL DEFAULT 0.00    COMMENT '💷 Yearly price in `currency` (0.00 for the anonymous/free tiers) - admin-editable config, not code',
+    `currency`      CHAR(3)         NOT NULL DEFAULT 'GBP'   COMMENT '💱 ISO 4217 currency code the two price columns above are denominated in',
+    `featuresJSON`  JSON            NOT NULL                 COMMENT '🚩 Flat JSON object of boolean feature flags for this tier - SINGLE SOURCE OF TRUTH read generically by fn_features.php::featureEnabled(); see this table''s header comment for the shape',
+    `limitsJSON`    JSON            NOT NULL                 COMMENT '🔢 Flat JSON object of numeric limits for this tier (-1 = unlimited) - SINGLE SOURCE OF TRUTH read generically by fn_features.php::limitFor(); see this table''s header comment for the shape',
+    `isActive`      TINYINT(1)      NOT NULL DEFAULT 1       COMMENT '✅ 1 = selectable/resolvable, 0 = retired (existing subscribers keep their subscription row; the plan is just hidden from new signups)',
+    `sortOrder`     INT             NOT NULL DEFAULT 0       COMMENT '📊 Display order for a future pricing page / admin plan editor (E3 admin stage)',
+    `createdAt`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Record creation timestamp',
+    `updatedAt`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+
+    PRIMARY KEY (`planID`),
+    UNIQUE KEY `idx_plan_key` (`planKey`),
+    INDEX `idx_plan_active_sort` (`isActive`, `sortOrder`)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💳 Extensible, data-driven subscription tier definitions (Epic E4) - plans/features/limits/prices are 100% DB config, admin-editable, zero-code-change extensible';
+
+-- ==============================================================================
+-- 📋 Table 20: tblSubscriptions (Epic E4 - #25/#26/#53)
+-- ==============================================================================
+-- Links a subscribing subject - EITHER an individual user OR an organisation,
+-- never both - to the plan they are currently on. `fn_features.php` resolves
+-- the caller's EFFECTIVE plan by looking up the single ACTIVE-ish (active /
+-- trialing / past_due) row here for their userID/orgID; cancelled/expired
+-- rows are historical and no longer resolve (the subject falls back to the
+-- free/anonymous plan on next resolution).
+--
+-- Exactly one active/trialing/past_due subscription per subject (userID OR
+-- orgID) is an APPLICATION-LEVEL invariant enforced by the (deferred) plan
+-- change / webhook handling code, not a DB constraint - MySQL cannot express
+-- "at most one row where status IN (...)" per nullable FK declaratively
+-- without a generated/virtual-column workaround that would needlessly
+-- complicate a table that is intentionally simple pending the E4 payments
+-- stage.
+--
+-- @see _functions/fn_features.php - resolveActiveSubscription(), planForUser(), planForOrg()
+-- @see PROJECT_ROADMAP.md - Epic E4 "Enforcement design"
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblSubscriptions` (
+    `subscriptionID`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing subscription identifier',
+    `userID`                  INT UNSIGNED    NULL                     COMMENT '👤 FK tblUsers - the subscribing individual account (NULL when this is an org-level subscription instead)',
+    `orgID`                   INT UNSIGNED    NULL                     COMMENT '🏢 FK tblOrganisations - the subscribing organisation (NULL when this is an individual subscription instead). Exactly one of userID/orgID is expected to be non-NULL per row - see this table''s header comment',
+    `planID`                  INT UNSIGNED    NOT NULL                 COMMENT '🔗 FK tblSubscriptionPlans - the plan this subscription currently grants',
+    `status`                  ENUM(
+                                  'active',
+                                  'trialing',
+                                  'past_due',
+                                  'cancelled',
+                                  'expired'
+                              )             NOT NULL DEFAULT 'active' COMMENT '📊 Lifecycle status - past_due keeps READ access to existing gated objects but the gating engine downgrades the EFFECTIVE plan for CREATING new gated objects until payment recovers (fn_features.php); cancelled/expired subscriptions simply stop resolving (subject falls back to the free/anonymous plan)',
+    `currentPeriodStart`      DATETIME        NULL                     COMMENT '📅 Start of the current billing period (owner-facing display + proration math once payments ship)',
+    `currentPeriodEnd`        DATETIME        NULL                     COMMENT '📅 End of the current billing period - the (deferred) PayPal webhook renews this on each successful billing-cycle payment',
+    `provider`                VARCHAR(32)     NULL                     COMMENT '🏦 Payment provider identifier (paypal, ...) - NULL for a manually-granted/comp subscription with no external billing relationship',
+    `providerSubscriptionRef` VARCHAR(255)    NULL                     COMMENT '🆔 The provider-side subscription/agreement identifier (e.g. a PayPal subscription ID such as I-XXXXXXXXXXXX) - used to correlate inbound webhook events back to this row',
+    `createdAt`               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Subscription record creation timestamp',
+    `updatedAt`               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+
+    PRIMARY KEY (`subscriptionID`),
+    INDEX `idx_subscription_user` (`userID`, `status`),
+    INDEX `idx_subscription_org` (`orgID`, `status`),
+    INDEX `idx_subscription_plan` (`planID`),
+    INDEX `idx_subscription_provider_ref` (`providerSubscriptionRef`),
+
+    CONSTRAINT `fk_subscription_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_subscription_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_subscription_plan` FOREIGN KEY (`planID`)
+        REFERENCES `tblSubscriptionPlans` (`planID`)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💳 Active/historical subscriptions linking a user OR an organisation to a plan (Epic E4)';
+
+-- ==============================================================================
+-- 📋 Table 21: tblPayments (Epic E4 - #25/#26/#53, SCHEMA ONLY this stage)
+-- ==============================================================================
+-- Payment/transaction ledger per subscription. This table is created now so
+-- the NEXT E4 stage (the PayPal Subscriptions webhook listener, owner-gated
+-- on PayPal business credentials - see DEV_NOTES.md "Deferred: PayPal
+-- Subscriptions webhook") has somewhere to write to on day one; nothing in
+-- this codebase populates it yet.
+--
+-- `providerTxnRef` is UNIQUE so that a re-delivered webhook event (PayPal, or
+-- any provider, routinely retries delivery until it gets a 2xx) is processed
+-- IDEMPOTENTLY - a second INSERT attempt for the same providerTxnRef fails
+-- the unique constraint and the webhook handler treats that as "already
+-- processed, no-op" rather than double-crediting a payment.
+--
+-- The FK to tblSubscriptions uses ON DELETE RESTRICT (not CASCADE, unlike
+-- most FKs in this file) deliberately - a payment/financial audit record
+-- must never silently disappear as a side effect of deleting its parent
+-- subscription row; deleting a subscription with payment history attached
+-- must fail loudly and be a conscious, separate decision.
+--
+-- @see PROJECT_ROADMAP.md - Epic E4 "Enforcement design" point 5
+-- @see DEV_NOTES.md - "Deferred: PayPal Subscriptions webhook" for the full plan
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblPayments` (
+    `paymentID`       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing payment identifier',
+    `subscriptionID`  BIGINT UNSIGNED NOT NULL                 COMMENT '🔗 FK tblSubscriptions - the subscription this payment applies to',
+    `provider`        VARCHAR(32)     NOT NULL                 COMMENT '🏦 Payment provider identifier (paypal, ...)',
+    `providerTxnRef`  VARCHAR(255)    NOT NULL                 COMMENT '🆔 Provider transaction/event identifier - UNIQUE so a re-delivered webhook is idempotent (a duplicate INSERT attempt simply fails and is treated as already-processed)',
+    `amount`          DECIMAL(10,2)   NOT NULL                 COMMENT '💷 Amount captured/refunded, denominated in `currency`',
+    `currency`        CHAR(3)         NOT NULL DEFAULT 'GBP'   COMMENT '💱 ISO 4217 currency code for `amount`',
+    `status`          VARCHAR(32)     NOT NULL DEFAULT 'completed' COMMENT '📊 Provider-reported payment status (completed, refunded, failed, reversed, ...) - deliberately free text (not an ENUM) because it mirrors the payment provider''s own vocabulary rather than an internal state machine, and a future second provider may use different terms',
+    `rawWebhookJSON`  JSON            NULL                     COMMENT '📦 Full raw webhook payload for audit/debugging/replay - schema-only this stage; populated once the PayPal webhook listener ships (public_html/api/v1/webhooks/paypal/, see DEV_NOTES.md)',
+    `createdAt`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Payment record creation timestamp',
+
+    PRIMARY KEY (`paymentID`),
+    UNIQUE KEY `idx_payment_provider_txn` (`providerTxnRef`),
+    INDEX `idx_payment_subscription` (`subscriptionID`),
+    INDEX `idx_payment_created` (`createdAt`),
+
+    CONSTRAINT `fk_payment_subscription` FOREIGN KEY (`subscriptionID`)
+        REFERENCES `tblSubscriptions` (`subscriptionID`)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💳 Payment/transaction log per subscription (schema only this stage - populated by the deferred PayPal webhook listener)';
+
+-- ==============================================================================
 -- ✅ Installation Complete
 -- ==============================================================================
--- All 18 tables have been created:
+-- All 21 tables have been created:
 --   1. tblSettings              - Application configuration (now incl. per-record encryptionSalt, F-006/G-010)
 --   2. tblErrorLog              - Error/exception logging
 --   3. tblActivityLog           - Activity tracking
@@ -724,6 +893,9 @@ CREATE TABLE IF NOT EXISTS `tblInvitations` (
 --  16. tblWebAuthnCredentials   - WebAuthn/passkey credentials (G-006 schema stub)
 --  17. tblOrganisationMembers   - Organisation membership + roles (Epic E3 org stage stub)
 --  18. tblInvitations           - Organisation invitations (Epic E3 org stage stub)
+--  19. tblSubscriptionPlans     - Data-driven premium tier definitions (Epic E4, #25/#26/#53)
+--  20. tblSubscriptions         - User/org subscriptions to a plan (Epic E4, #25/#26/#53)
+--  21. tblPayments              - Payment ledger, schema only (Epic E4, #25/#26/#53)
 --
 -- 📌 Next step: Run seed_data.sql to populate initial data.
 -- ==============================================================================

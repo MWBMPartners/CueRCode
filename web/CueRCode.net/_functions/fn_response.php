@@ -353,6 +353,12 @@ function xmlResponse(array $data, int $httpCode = 200): void
  * @param string $message   Human-readable error message
  * @param int    $httpCode  HTTP status code (default: 400)
  * @param string $errorCode Machine-readable error code for programmatic handling (default: '')
+ * @param array  $extraData Additive optional top-level fields to merge into the response
+ *                          payload alongside 'error_code' (Epic E4, #53) - e.g.
+ *                          ['upgrade_url' => '/pricing', 'feature' => 'webhooks'] for a
+ *                          plan-gating denial. Keys here never overwrite 'success'/
+ *                          'message'/'data' (existing callers are completely unaffected
+ *                          by this additive parameter).
  *
  * @return void (script execution terminates via exit)
  *
@@ -363,8 +369,9 @@ function xmlResponse(array $data, int $httpCode = 200): void
  *   errorResponse('Invalid API key', 401, 'AUTH_FAILED');
  *   errorResponse('QR code not found', 404, 'NOT_FOUND');
  *   errorResponse('Rate limit exceeded', 429, 'RATE_LIMIT');
+ *   errorResponse('Too many items.', 413, 'BULK_TOO_MANY_ITEMS', ['upgrade_url' => '/pricing']);
  */
-function errorResponse(string $message, int $httpCode = 400, string $errorCode = ''): void
+function errorResponse(string $message, int $httpCode = 400, string $errorCode = '', array $extraData = []): void
 {
     // 📋 Build the error response payload
     $payload = [
@@ -376,6 +383,16 @@ function errorResponse(string $message, int $httpCode = 400, string $errorCode =
     // 📌 Include error_code only if provided
     if ($errorCode !== '') {
         $payload['error_code'] = $errorCode;
+    }
+
+    // 📌 Merge in any additive extra top-level fields (Epic E4, #53) - e.g. an
+    // 'upgrade_url'/'feature' hint on a plan-gating denial. Never allowed to
+    // clobber the core response shape.
+    foreach ($extraData as $extraKey => $extraValue) {
+        if ($extraKey === 'success' || $extraKey === 'message' || $extraKey === 'data') {
+            continue;
+        }
+        $payload[$extraKey] = $extraValue;
     }
 
     // 📝 Log errors with severity >= 400 to the error log

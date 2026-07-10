@@ -50,7 +50,9 @@
  *                           A manifest.txt inside records per-item outcomes,
  *                           so individual failures NEVER abort the whole batch.
  *   - 400 BULK_*            Malformed body / no items / bad item shape.
- *   - 413 PAYLOAD_TOO_LARGE Too many items (see api_bulk_max_items, default 100).
+ *   - 413 BULK_TOO_MANY_ITEMS  Too many items for the caller's plan (see
+ *                              "Bulk generation limits" below, Epic E4) - the
+ *                              response includes an 'upgrade_url' hint.
  *   - 415                   Wrong Content-Type (enforced by the router).
  *   - 429 RATE_LIMIT        Rate limited (enforced by the router).
  *   - 501 ZIP_UNAVAILABLE   The PHP zip extension is not installed.
@@ -63,10 +65,11 @@
  * @subpackage  API
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
- * @since       Phase 2 (FG-003 bulk generation)
+ * @since       Phase 2 (FG-003 bulk generation; Epic E4/#53 plan-based cap)
  * @see         fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization()
  * @see         fn_qr_generate.php  - generateQRCode()
  * @see         fn_response.php     - errorResponse()
+ * @see         fn_features.php     - limitFor('bulk_batch_size', ...), resolveUserIdFromAuth()
  * @see         https://www.php.net/manual/en/class.ziparchive.php
  * @see         https://www.php.net/manual/en/function.str-getcsv.php
  */
@@ -85,17 +88,20 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 }
 
 // ==============================================================================
-// 📌 Bulk generation limits
+// 📌 Bulk generation limits (Epic E4, #53 - plan-based, replaces the old
+//    fixed global cap)
 // ==============================================================================
-
-/**
- * @var int Default maximum number of items accepted in a single bulk request.
- * Overridable via the 'api_bulk_max_items' setting. Bounds the synchronous
- * work (and ZIP size) a single request can trigger.
- */
-if (!defined('CUERCODE_API_BULK_MAX_ITEMS_DEFAULT')) {
-    define('CUERCODE_API_BULK_MAX_ITEMS_DEFAULT', 100);
-}
+// The maximum item count per bulk request is now the caller's PLAN limit -
+// tblSubscriptionPlans.limitsJSON's 'bulk_batch_size' key, resolved via
+// fn_features.php's limitFor('bulk_batch_size', $currentUserId) at the call
+// site inside handleBulkGenerate() below. There is deliberately no separate
+// 'getBulkMaxItems()'/'api_bulk_max_items' global setting any more - a single
+// source of truth (the plan row) replaces the old fixed default (previously
+// 100 for everyone, anonymous included). Anonymous callers resolve to the
+// 'anonymous' plan's bulk_batch_size (seeded 25); a logged-in user or an
+// API-key request resolves to that user's actual plan via
+// resolveUserIdFromAuth($auth) (fn_features.php).
+// ==============================================================================
 
 /**
  * @var array Reserved customization column names for CSV parsing. A CSV column
@@ -111,37 +117,6 @@ if (!defined('CUERCODE_API_BULK_CSV_RESERVED')) {
         'format,size,ecc,fg_color,bg_color,marker_color,pattern,logo,'
         . 'logo_size_pct,frame_style,frame_label,frame_color,transparent'
     );
-}
-
-// ==============================================================================
-// 🔢 getBulkMaxItems() - Resolve the configured max item count
-// ==============================================================================
-
-/**
- * 🔢 Resolve the maximum bulk item count from config (with a safe default).
- *
- * Reads the 'api_bulk_max_items' setting when getConfig() is available,
- * falling back to CUERCODE_API_BULK_MAX_ITEMS_DEFAULT. A non-positive or
- * absurd configured value is clamped to the default so a misconfiguration
- * cannot disable the cap or make it pathologically large.
- *
- * @return int The effective maximum item count (>= 1).
- *
- * @see https://www.php.net/manual/en/function.intval.php
- */
-function getBulkMaxItems(): int
-{
-    $max = CUERCODE_API_BULK_MAX_ITEMS_DEFAULT;
-
-    if (function_exists('getConfig')) {
-        $configured = (int) getConfig('api_bulk_max_items', CUERCODE_API_BULK_MAX_ITEMS_DEFAULT);
-        // 📌 Clamp to a sane range: at least 1, never more than 1000.
-        if ($configured >= 1 && $configured <= 1000) {
-            $max = $configured;
-        }
-    }
-
-    return $max;
 }
 
 // ==============================================================================
@@ -657,15 +632,18 @@ function bulkRequestWantsAveryLayout(array $requestData): ?string
  *      manifest rather than aborting the batch.
  *   8. Stream the ZIP with application/zip + attachment Content-Disposition.
  *
- * @param array $auth The authentication context from the router (unused for
- *                    generation itself, but accepted so the handler signature
- *                    matches the router's auth-aware dispatch and future
- *                    per-key behaviour can hook in).
+ * @param array $auth The authentication context from the router. Used (Epic
+ *                    E4/#53) to resolve the caller's plan-based bulk_batch_size
+ *                    limit via resolveUserIdFromAuth($auth) + limitFor()
+ *                    (fn_features.php) - an anonymous caller (or when
+ *                    fn_features.php is unavailable) falls back to the
+ *                    'anonymous' plan's seeded limit (25).
  *
  * @return void (streams the ZIP or Avery-sheet PDF and exits, or sends an error response)
  *
  * @see fn_qr_generate.php  - generateQRCode()
  * @see fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization()
+ * @see fn_features.php     - limitFor(), resolveUserIdFromAuth()
  * @see handleBulkAverySheet() - the Avery-sheet fork (E5 / #49)
  * @see https://www.php.net/manual/en/class.ziparchive.php
  */
@@ -751,8 +729,37 @@ function handleBulkGenerate(array $auth): void
 
     // ==================================================================
     // 📌 Step 4: Validate the item list (cap + per-item shape).
+    // 🔢 Epic E4/#53: the cap is now the caller's PLAN limit
+    // ('bulk_batch_size' in tblSubscriptionPlans.limitsJSON), resolved via
+    // fn_features.php - resolveUserIdFromAuth() maps the router's $auth
+    // context (session/CSRF user, or an API key's owning user) to a userID,
+    // then limitFor() reads that user's (or the anonymous plan's, if no
+    // subject resolves) allowance. Both helpers degrade gracefully if
+    // fn_features.php is not loaded for some reason (defensive
+    // function_exists() guards, matching this codebase's house style).
     // ==================================================================
-    $maxItems       = getBulkMaxItems();
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
+
+    if (function_exists('limitFor')) {
+        $maxItems = limitFor('bulk_batch_size', $currentUserId);
+    } else {
+        // 🚨 Fail-safe: fn_features.php unavailable - fall back to the
+        // anonymous plan's seeded default rather than an unbounded/absent cap.
+        $maxItems = 25;
+    }
+
+    // 📌 A resolved limit of 0 or less would make bulk generation entirely
+    // unusable even for the most restrictive real tier - that should never
+    // happen for a correctly-seeded 'anonymous' plan (bulk_batch_size: 25),
+    // but guard against a misconfigured plan row zeroing this out by mistake.
+    if ($maxItems <= 0) {
+        $maxItems = 25;
+    }
+
     $validationError = validateBulkRequest($items, $maxItems);
 
     if ($validationError !== null) {
@@ -766,7 +773,19 @@ function handleBulkGenerate(array $auth): void
         } else {
             $errorCode = 'BULK_VALIDATION_ERROR';
         }
-        errorResponse((string) $validationError['error'], $httpCode, $errorCode);
+
+        // 📌 Epic E4/#53: the over-cap error is plan-dependent, so add an
+        // upgrade hint. Every other validation error (empty batch, malformed
+        // item, ...) is unrelated to plan tier and gets no extra data.
+        $extraData = [];
+        if ($errorCode === 'BULK_TOO_MANY_ITEMS' && function_exists('resolveUpgradeUrl')) {
+            $extraData = [
+                'upgrade_url' => resolveUpgradeUrl(),
+                'plan_limit'  => $maxItems,
+            ];
+        }
+
+        errorResponse((string) $validationError['error'], $httpCode, $errorCode, $extraData);
         return;
     }
 

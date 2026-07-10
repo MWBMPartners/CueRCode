@@ -13,12 +13,23 @@
  *   - parseBulkCsv()        (header detection, column classification)
  *   - validateBulkRequest() (cap enforcement, per-item shape validation)
  *   - bulkBuildFilename()   (safe ZIP entry naming)
- *   - getBulkMaxItems()     (default cap when getConfig() is unavailable)
  *
  * These helpers perform NO database, filesystem, or QR-library work, so they
  * run fully self-contained under the CLI harness via requireFn(). The handler
  * handleBulkGenerate() itself (which streams a real ZIP over HTTP) is NOT
  * unit-tested here — that full HTTP + ZipArchive path needs live verification.
+ *
+ * ⚠️ Epic E4/#53 note: the item-count cap used to be a fixed global default
+ * (`getBulkMaxItems()`/`api_bulk_max_items`, removed this stage) - it is now
+ * the caller's PLAN limit (`bulk_batch_size`), resolved by
+ * `fn_features.php`'s `limitFor()` inside `handleBulkGenerate()` itself, NOT
+ * by a pure helper in this file any more. `validateBulkRequest()` below still
+ * takes `$maxItems` as a plain int parameter (unchanged, still pure/testable
+ * in isolation) - only WHERE that int comes from changed. The plan-resolution
+ * side of the new mechanism (anonymous/free/pro/business `bulk_batch_size`
+ * values, past_due downgrade) is covered by `tests/test_features.php`'s
+ * scratch-DB integration section instead, since it is inherently
+ * DB-dependent (a real tblSubscriptionPlans/tblSubscriptions read).
  *
  * ⚠️ Lives under repo-root tests/ - never deployed.
  *
@@ -26,8 +37,10 @@
  * @subpackage  Tests
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
- * @since       Phase 2 (FG-003 bulk generation)
+ * @since       Phase 2 (FG-003 bulk generation; Epic E4/#53 cap note above)
  * @see         web/CueRCode.net/_functions/fn_api_bulk.php
+ * @see         web/CueRCode.net/_functions/fn_features.php
+ * @see         tests/test_features.php - the plan-based bulk_batch_size gate coverage
  * @see         https://www.php.net/manual/en/function.str-getcsv.php
  */
 
@@ -41,23 +54,6 @@
 // ==============================================================================
 
 requireFn('fn_api_bulk.php');
-
-// ==============================================================================
-// 🔢 getBulkMaxItems() - default cap (getConfig() absent under the harness)
-// ==============================================================================
-
-// 📌 With no getConfig() defined in the test process, the default cap applies.
-assertEquals(
-    100,
-    getBulkMaxItems(),
-    'getBulkMaxItems: returns the default cap (100) when getConfig() is unavailable'
-);
-
-assertEquals(
-    100,
-    CUERCODE_API_BULK_MAX_ITEMS_DEFAULT,
-    'getBulkMaxItems: the default-cap constant is 100'
-);
 
 // ==============================================================================
 // 🧹 parseBulkInput() - valid items-array shape
