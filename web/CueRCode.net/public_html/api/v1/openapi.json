@@ -1680,7 +1680,53 @@
                         "$ref": "#/components/responses/UnsupportedMediaType"
                     },
                     "429": {
-                        "$ref": "#/components/responses/RateLimited"
+                        "description": "Too many requests. Two distinct causes share this status code on `/save` specifically: (1) the router's generic per-key/per-IP rate limit (`RATE_LIMIT_EXCEEDED`), or (2) `SAVE_LOCK_BUSY` - the per-user `saved_codes` advisory lock (SECURITY.md F-023, closing a plan-limit TOCTOU race) timed out because another `/save` request for this SAME account is already mid-flight. Both include a `Retry-After` header; back off and retry.",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying",
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            },
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "rate_limited": {
+                                        "summary": "Router-level rate limit exceeded",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Rate limit exceeded. Please wait before making another request.",
+                                            "data": {},
+                                            "error_code": "RATE_LIMIT_EXCEEDED",
+                                            "timestamp": "2026-07-10T12:00:00+00:00"
+                                        }
+                                    },
+                                    "save_lock_busy": {
+                                        "summary": "Per-user saved_codes advisory-lock contention (F-023)",
+                                        "value": {
+                                            "success": false,
+                                            "message": "The saved-codes service is busy processing another request for your account. Please try again shortly.",
+                                            "data": {},
+                                            "error_code": "SAVE_LOCK_BUSY",
+                                            "timestamp": "2026-07-10T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -3052,7 +3098,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {

@@ -67,6 +67,34 @@
  *     so a soft-deleted code is invisible to list/get/patch/delete/download
  *     and does NOT count against the caller's saved_codes plan limit.
  *
+ * Concurrency posture - the saved_codes plan-limit TOCTOU fix (SECURITY.md
+ * F-023, HIGH, closed 2026-07-10):
+ *   - `POST /save`'s plan-limit CHECK (countSavedQrCodesForUser() vs.
+ *     limitFor('saved_codes', ...)) and the claim UPDATE that follows it are
+ *     NOT independent statements any more for a genuinely new claim - they
+ *     are serialised, per caller, by a MySQL SESSION advisory lock
+ *     (acquireSaveLimitLock()/releaseSaveLimitLock() below). Without this,
+ *     N truly-concurrent /save requests for N DIFFERENT unclaimed UUIDs from
+ *     the SAME user could each pass the count check before any claim
+ *     landed, blowing straight past the caller's plan cap - proven live
+ *     against a scratch database: 5 parallel OS processes took a cap-2 user
+ *     to 6 saved codes (see SECURITY.md F-023 for the full before/after
+ *     evidence). The pre-existing `UPDATE ... WHERE (userID IS NULL OR
+ *     userID = ?)` guard only ever stopped two requests racing for the SAME
+ *     qrID - it does nothing when the qrIDs differ, which is exactly the
+ *     gap this closes.
+ *   - A transaction + `SELECT ... FOR UPDATE` would NOT have fixed this: the
+ *     row being claimed is, at SELECT time, owned by NOBODY
+ *     (`userID IS NULL`), so there is no row yet "belonging" to this user's
+ *     future claim for row-level locking to lock against (a phantom-row
+ *     problem - InnoDB can only lock rows that already match a WHERE
+ *     predicate at lock time, and this user's claim doesn't match any row
+ *     until AFTER the race is already lost).
+ *   - `GET_LOCK()` returning 0 (timeout) or NULL (error) fails SAFE: the
+ *     request is rejected with `429 SAVE_LOCK_BUSY` + a `Retry-After` header
+ *     rather than proceeding unserialised, which would silently reopen the
+ *     exact race this fix exists to close.
+ *
  * @package     CueRCode
  * @subpackage  API
  * @copyright   2025–2026 MWBM Partners Ltd
@@ -125,6 +153,37 @@ if (!defined('CUERCODE_QRCODES_MAX_PER_PAGE')) {
 /** @var int Maximum length of the ?type= filter (matches tblQRCodeTypes.typeName VARCHAR(100)). */
 if (!defined('CUERCODE_QRCODES_MAX_TYPE_FILTER_LEN')) {
     define('CUERCODE_QRCODES_MAX_TYPE_FILTER_LEN', 100);
+}
+
+/**
+ * @var string Prefix for the per-user MySQL advisory lock name used to
+ * serialise the `saved_codes` plan-limit check + claim (SECURITY.md F-023 -
+ * closes a TOCTOU race; see acquireSaveLimitLock()/releaseSaveLimitLock()
+ * and handleSaveQRCode() below). The full lock name is this prefix
+ * concatenated with the caller's userID (e.g. "cuercode_save:42") - well
+ * under MySQL's 64-character GET_LOCK() name limit for any realistic
+ * userID.
+ */
+if (!defined('CUERCODE_SAVE_LOCK_NAME_PREFIX')) {
+    define('CUERCODE_SAVE_LOCK_NAME_PREFIX', 'cuercode_save:');
+}
+
+/**
+ * @var int Seconds GET_LOCK() will wait for the per-user save-limit lock
+ * before giving up (returning 0). Kept short - the critical section it
+ * guards is a handful of fast, indexed queries, never anything slow.
+ */
+if (!defined('CUERCODE_SAVE_LOCK_TIMEOUT_SECONDS')) {
+    define('CUERCODE_SAVE_LOCK_TIMEOUT_SECONDS', 5);
+}
+
+/**
+ * @var int Retry-After header value (seconds) sent with the 429 response
+ * when GET_LOCK() times out - a short backoff, since lock contention on
+ * this critical section is expected to clear in well under a second.
+ */
+if (!defined('CUERCODE_SAVE_LOCK_RETRY_AFTER_SECONDS')) {
+    define('CUERCODE_SAVE_LOCK_RETRY_AFTER_SECONDS', 2);
 }
 
 // ==============================================================================
@@ -442,6 +501,113 @@ function countSavedQrCodesForUser(int $userId): int
 }
 
 // ------------------------------------------------------------------------
+// 🔒 acquireSaveLimitLock() / releaseSaveLimitLock() - Per-user MySQL
+//    advisory lock serialising the saved_codes count-check + claim
+//    (SECURITY.md F-023 - closes the TOCTOU race documented in this file's
+//    header docblock and in handleSaveQRCode() below).
+// ------------------------------------------------------------------------
+
+/**
+ * 🔒 Acquire a per-user MySQL SESSION advisory lock guarding the
+ * `saved_codes` plan-limit count-check + claim critical section.
+ *
+ * WHY an advisory lock and not a transaction + `SELECT ... FOR UPDATE`: the
+ * code being claimed is, at SELECT time, owned by NOBODY (`userID IS
+ * NULL`) - row-level locking can only lock rows that already match a WHERE
+ * predicate, so there is no row yet "belonging" to this user's future claim
+ * to lock against (a phantom-row problem). A per-user advisory lock instead
+ * serialises the ENTIRE check+claim critical section for one user,
+ * regardless of which qrID(s) are involved - exactly the property needed:
+ * N concurrent /save calls for N DIFFERENT unclaimed UUIDs from the SAME
+ * user must not all pass the count check before any claim lands.
+ *
+ * `GET_LOCK()`/`RELEASE_LOCK()` are SESSION- (connection-)scoped in MySQL.
+ * `dbQuery()` -> `getDB()` (`_includes/db_connect.php`) returns the SAME
+ * cached `mysqli` connection for the lifetime of one PHP request (a static
+ * variable, not a fresh connection per call), so the lock acquired here,
+ * the count-check, the claim UPDATE, and `releaseSaveLimitLock()` below all
+ * run on that ONE connection - never split across two different sessions,
+ * which would make the lock meaningless.
+ *
+ * Nested-safe: MySQL (5.7.5+) allows one session to hold multiple
+ * DIFFERENT named locks simultaneously without releasing an existing one,
+ * and re-acquiring the SAME name from the SAME session that already holds
+ * it succeeds immediately (still released by a single RELEASE_LOCK() call -
+ * not reference-counted). This codebase never calls
+ * acquireSaveLimitLock() re-entrantly, but the property holds regardless.
+ *
+ * @param int $userId The tblUsers.userID to lock (one advisory lock per user).
+ *
+ * @return bool True if the lock was acquired within
+ *              CUERCODE_SAVE_LOCK_TIMEOUT_SECONDS; false on timeout
+ *              (another /save for this SAME user is already mid-flight) or
+ *              on any DB error - FAIL SAFE: the caller must NOT proceed
+ *              unserialised when this returns false.
+ *
+ * @see https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_get-lock
+ */
+function acquireSaveLimitLock(int $userId): bool
+{
+    if (!function_exists('dbQuery')) {
+        return false;
+    }
+
+    $lockName = CUERCODE_SAVE_LOCK_NAME_PREFIX . $userId;
+
+    try {
+        $lockStmt = dbQuery(
+            'SELECT GET_LOCK(?, ?) AS `lockResult`',
+            'si',
+            [$lockName, CUERCODE_SAVE_LOCK_TIMEOUT_SECONDS]
+        );
+        $lockRow = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Save-limit advisory lock acquisition failed', 'userID: ' . $userId . ' | ' . $e->getMessage());
+        }
+        return false;
+    }
+
+    // 📌 GET_LOCK() returns 1 (acquired), 0 (timeout), or NULL (error) -
+    // ANYTHING other than a genuine 1 is treated as "not acquired."
+    return $lockRow !== null && isset($lockRow['lockResult']) && (int) $lockRow['lockResult'] === 1;
+}
+
+/**
+ * 🔓 Release the per-user advisory lock acquired by acquireSaveLimitLock().
+ *
+ * Best-effort by design: a failure to release is logged but never thrown,
+ * and never leaves the lock stuck - the lock is connection-scoped, and
+ * MySQL automatically releases ALL of a session's advisory locks the moment
+ * that connection closes (i.e. at the end of this PHP request, whether via
+ * a normal return OR `exit()` inside errorResponse()/successResponse()), so
+ * a release failure here cannot leave the lock held indefinitely for
+ * future requests.
+ *
+ * @param int $userId The SAME tblUsers.userID passed to acquireSaveLimitLock().
+ *
+ * @return void
+ */
+function releaseSaveLimitLock(int $userId): void
+{
+    if (!function_exists('dbQuery')) {
+        return;
+    }
+
+    $lockName = CUERCODE_SAVE_LOCK_NAME_PREFIX . $userId;
+
+    try {
+        $releaseStmt = dbQuery('SELECT RELEASE_LOCK(?) AS `releaseResult`', 's', [$lockName]);
+        $releaseStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('warning', 'Save-limit advisory lock release failed', 'userID: ' . $userId . ' | ' . $e->getMessage());
+        }
+    }
+}
+
+// ------------------------------------------------------------------------
 // 🎨 regenerateQrOutputForPatch() - Re-render an existing payload with new
 //    customisation (PATCH /qrcodes/{uuid} when "customization" is supplied)
 // ------------------------------------------------------------------------
@@ -673,32 +839,12 @@ function handleSaveQRCode(array $requestBody, array $auth): void
 
     $isNewClaim = ($existingOwnerId === null);
 
-    if ($isNewClaim) {
-        $savedCount = countSavedQrCodesForUser($currentUserId);
-        $limit      = function_exists('limitFor') ? limitFor('saved_codes', $currentUserId) : 0;
-
-        // 🔢 -1 = unlimited (see fn_features.php's limitFor() convention).
-        if ($limit !== -1 && $savedCount >= $limit) {
-            $extraData = ['plan_limit' => $limit];
-            if (function_exists('resolveUpgradeUrl')) {
-                $extraData['upgrade_url'] = resolveUpgradeUrl();
-            }
-
-            errorResponse(
-                'You have reached your plan\'s saved-codes limit (' . $limit . '). '
-                . 'Upgrade your plan to save more codes.',
-                402,
-                'SAVED_CODES_LIMIT_REACHED',
-                $extraData
-            );
-            return;
-        }
-    }
-
     // 📌 Resolve the effective label/is_public to persist - an omitted field
     // preserves the row's EXISTING value (so calling /save a second time on an
     // already-owned code without repeating every field is a harmless no-op
-    // for that field).
+    // for that field). Pure computation - deliberately resolved BEFORE the
+    // locked critical section below so nothing but real DB work happens
+    // while the per-user advisory lock is held.
     if ($labelValidation['provided']) {
         $effectiveLabel = $labelValidation['value'];
     } else {
@@ -714,38 +860,174 @@ function handleSaveQRCode(array $requestBody, array $auth): void
         $effectiveIsPublic = $isNewClaim ? 0 : (int) $row['isPublic'];
     }
 
-    try {
-        // 🔒 Atomic claim: the WHERE guard re-checks ownership at UPDATE time
-        // (not merely at the SELECT above) so two concurrent /save calls for
-        // the same anonymous code cannot both "win" the claim.
-        $updateStmt = dbQuery(
-            'UPDATE `tblQRCodes` SET `userID` = ?, `qrLabel` = ?, `isPublic` = ?, `updatedAt` = NOW() '
-            . 'WHERE `qrID` = ? AND (`userID` IS NULL OR `userID` = ?) AND `deletedAt` IS NULL',
-            'isiii',
-            [$currentUserId, $effectiveLabel, $effectiveIsPublic, (int) $row['qrID'], $currentUserId]
-        );
-        $updateStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('error', 'Save QR code failed', 'uuid: ' . $uuid . ' | ' . $e->getMessage());
+    // ==================================================================
+    // 🔒 F-023 FIX: atomic saved_codes count-check + claim critical section
+    // ==================================================================
+    // TOCTOU (High, SECURITY.md F-023): the saved_codes plan-limit COUNT
+    // check and the claim UPDATE used to be two independent statements with
+    // no serialisation between them. N TRULY-CONCURRENT /save requests for N
+    // DIFFERENT unclaimed UUIDs from the SAME user could each pass the count
+    // check before any claim landed, blowing straight past the plan cap
+    // (proven live: 5 parallel OS processes took a cap-2 user to 6 saved
+    // codes - see SECURITY.md F-023 for the full before/after evidence).
+    // The `UPDATE ... WHERE (userID IS NULL OR userID = ?)` guard a few
+    // lines below only ever stopped two requests racing for the SAME qrID -
+    // it does nothing when the qrIDs differ, which is exactly the gap this
+    // closes.
+    //
+    // Fixed with acquireSaveLimitLock()/releaseSaveLimitLock() (defined
+    // above) - a per-user MySQL SESSION advisory lock - rather than a
+    // transaction + `SELECT ... FOR UPDATE`: the code being claimed is, at
+    // SELECT time, owned by NOBODY (`userID IS NULL`), so there is no row
+    // yet "belonging" to this user's future claim for row-level locking to
+    // lock against (a phantom-row problem). The advisory lock instead
+    // serialises the WHOLE check+claim section per user, which is the
+    // property actually needed. Only a genuinely NEW claim needs this lock -
+    // an already-owned code being re-saved has no plan-limit check to race
+    // ($isNewClaim above), so $lockAcquired stays false and that path runs
+    // exactly as it did before this fix.
+    //
+    // ⚠️ errorResponse()/successResponse() call exit() internally, and
+    // PHP's `finally` block does NOT run past an exit() call (only a normal
+    // return or a thrown exception triggers `finally` - verified: exit()
+    // bypasses it entirely). So NEITHER function may be called from inside
+    // the try{} below - the critical section only ever populates $outcome,
+    // the lock is released in `finally` (guaranteed - normal completion,
+    // any caught exception, AND the belt-and-braces outer catch all funnel
+    // through it), and errorResponse()/successResponse() are called
+    // AFTERWARDS, once the lock is provably already free.
+    // ==================================================================
+
+    $lockAcquired = false;
+
+    if ($isNewClaim) {
+        $lockAcquired = acquireSaveLimitLock($currentUserId);
+
+        if (!$lockAcquired) {
+            // ⏱️ GET_LOCK() timed out (another /save for this SAME user is
+            // already mid-flight) or errored. FAIL SAFE - do NOT proceed
+            // unserialised; that would silently reopen the exact race this
+            // fix exists to close.
+            if (!headers_sent()) {
+                header('Retry-After: ' . CUERCODE_SAVE_LOCK_RETRY_AFTER_SECONDS);
+            }
+
+            errorResponse(
+                'The saved-codes service is busy processing another request for your account. '
+                . 'Please try again shortly.',
+                429,
+                'SAVE_LOCK_BUSY'
+            );
+            return; // @codeCoverageIgnore - errorResponse() exits
         }
-        errorResponse('This QR code could not be saved. Please try again.', 500, 'SAVE_FAILED');
-        return;
     }
 
-    // ✅ Re-fetch to confirm the caller now genuinely owns the row - sidesteps
-    // mysqli affected_rows' "0 rows" ambiguity (matched-but-unchanged vs.
-    // matched-nothing) with a definitive read instead.
-    $confirmedRow = fetchQrCodeRowByUuid($uuid);
+    // 📌 $outcome is populated ONLY inside the try/finally below and
+    // consumed ONLY after it - see the "why" comment block above.
+    $outcome = null;
 
-    if ($confirmedRow === null || $confirmedRow['userID'] === null || (int) $confirmedRow['userID'] !== $currentUserId) {
+    try {
+        if ($isNewClaim) {
+            $savedCount = countSavedQrCodesForUser($currentUserId);
+            $limit      = function_exists('limitFor') ? limitFor('saved_codes', $currentUserId) : 0;
+
+            // 🔢 -1 = unlimited (see fn_features.php's limitFor() convention).
+            if ($limit !== -1 && $savedCount >= $limit) {
+                $outcome = ['type' => 'limit_reached', 'limit' => $limit];
+            }
+        }
+
+        if ($outcome === null) {
+            try {
+                // 🔒 Atomic claim: the WHERE guard re-checks ownership at
+                // UPDATE time (not merely at the SELECT above) so two
+                // concurrent /save calls for the SAME anonymous code cannot
+                // both "win" the claim - defence in depth alongside the
+                // per-user advisory lock above, which closes the
+                // DIFFERENT-qrID race the WHERE guard alone cannot.
+                $updateStmt = dbQuery(
+                    'UPDATE `tblQRCodes` SET `userID` = ?, `qrLabel` = ?, `isPublic` = ?, `updatedAt` = NOW() '
+                    . 'WHERE `qrID` = ? AND (`userID` IS NULL OR `userID` = ?) AND `deletedAt` IS NULL',
+                    'isiii',
+                    [$currentUserId, $effectiveLabel, $effectiveIsPublic, (int) $row['qrID'], $currentUserId]
+                );
+                $updateStmt->close();
+            } catch (\Throwable $e) {
+                if (function_exists('logError')) {
+                    logError('error', 'Save QR code failed', 'uuid: ' . $uuid . ' | ' . $e->getMessage());
+                }
+                $outcome = ['type' => 'save_failed'];
+            }
+        }
+
+        if ($outcome === null) {
+            // ✅ Re-fetch to confirm the caller now genuinely owns the row -
+            // sidesteps mysqli affected_rows' "0 rows" ambiguity
+            // (matched-but-unchanged vs. matched-nothing) with a definitive
+            // read instead.
+            $confirmedRow = fetchQrCodeRowByUuid($uuid);
+
+            if ($confirmedRow === null || $confirmedRow['userID'] === null || (int) $confirmedRow['userID'] !== $currentUserId) {
+                $outcome = ['type' => 'conflict'];
+            } else {
+                $outcome = ['type' => 'success', 'row' => $confirmedRow];
+            }
+        }
+    } catch (\Throwable $e) {
+        // 🛡️ Belt-and-braces: every DB call above already has its own
+        // catch, so this should never trigger in practice - but if some
+        // OTHER unexpected throwable escaped, it still cannot leave the
+        // lock held (the finally below still runs for a caught-here
+        // exception; only exit() would skip it, and nothing in this try
+        // calls exit()).
+        if (function_exists('logError')) {
+            logError('error', 'Unexpected error in save critical section', 'uuid: ' . $uuid . ' | ' . $e->getMessage());
+        }
+        $outcome = ['type' => 'save_failed'];
+    } finally {
+        if ($lockAcquired) {
+            releaseSaveLimitLock($currentUserId);
+        }
+    }
+
+    // ==================================================================
+    // 📤 React to the outcome - the per-user lock (if any was acquired) is
+    // now guaranteed released, so it is safe to call errorResponse()/
+    // successResponse() (both call exit()) from here on.
+    // ==================================================================
+
+    if ($outcome['type'] === 'limit_reached') {
+        $extraData = ['plan_limit' => $outcome['limit']];
+        if (function_exists('resolveUpgradeUrl')) {
+            $extraData['upgrade_url'] = resolveUpgradeUrl();
+        }
+
+        errorResponse(
+            'You have reached your plan\'s saved-codes limit (' . $outcome['limit'] . '). '
+            . 'Upgrade your plan to save more codes.',
+            402,
+            'SAVED_CODES_LIMIT_REACHED',
+            $extraData
+        );
+        return; // @codeCoverageIgnore - errorResponse() exits
+    }
+
+    if ($outcome['type'] === 'save_failed') {
+        errorResponse('This QR code could not be saved. Please try again.', 500, 'SAVE_FAILED');
+        return; // @codeCoverageIgnore - errorResponse() exits
+    }
+
+    if ($outcome['type'] === 'conflict') {
         errorResponse(
             'This QR code could not be saved (it may have just been claimed by another request).',
             409,
             'SAVE_CONFLICT'
         );
-        return;
+        return; // @codeCoverageIgnore - errorResponse() exits
     }
+
+    // 🎉 Only 'success' remains at this point.
+    $confirmedRow = $outcome['row'];
 
     if (function_exists('logActivity')) {
         logActivity(
