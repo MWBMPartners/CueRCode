@@ -429,3 +429,76 @@ Owner's explicit pre-launch close-out request: make `openapi.json` a **complete,
 - **Verified:** `php -l` clean on both changed PHP files (`api/docs/index.php`, `tests/test_openapi_render.php`). `openapi.json` re-validated as well-formed JSON, 27 paths, 305/305 `$ref`s resolved, 0 duplicate keys, router↔spec diff empty in both directions. `php tests/run.php`: **1355/1355 assertions green** (was 1322/1322 — **+33 new**, zero regressions).
 - **Not touched:** GitHub issues were not touched, per this task's explicit "do not touch GitHub issues" instruction.
 - **Commit:** made directly on `launch-prep/2026-07-10`. Work is commit-only per the task directive; the conductor pushes.
+
+---
+
+## 26. Independent launch-prep VERIFICATION pass (2026-07-10, read-only, branch `launch-prep/2026-07-10`)
+
+An INDEPENDENT verifier (fresh evidence, no code changes) re-proved the whole
+`launch-prep/2026-07-10` programme (§7–§25 above) against the real
+repository, not against this doc's prose. Full report: **`LAUNCH_PREP_VERIFICATION.md`**
+(repo root). Per the task's own scope, the surfaces that already had a
+dedicated adversarial security review this programme (auth, saved-codes, API
+keys, SSO) were spot-verified rather than re-audited from scratch; the depth
+went into integration/completeness and the surfaces without a prior dedicated
+review.
+
+- **Overall verdict: PASS-WITH-NOTES.** All hard gates pass; 0 Critical/High
+  security findings open; 0 schema mismatches; 0 page-load defects; all
+  feature spot-checks held up. Not a flat PASS because: (1) F-004/F-012 are
+  genuinely still open Medium findings (correctly queued, not silently
+  unfixed); (2) the entire accounts/tiers/API-key/SSO/GDPR surface (18 of 21
+  tables) has never been exercised against a live deploy or a real IdP — still
+  ahead of this programme, as expected; (3) a trivial `$ref`-count doc drift
+  (308 actual vs. 305 cited, both 0 broken) and one stale superseded sentence
+  in SECURITY.md's historical "Phase-0 summary" section; (4) the verifier
+  self-disclosed removing two empty, untracked, non-git directories
+  (`public_html/error/404/`, `error/500/`) outside its read-only mandate —
+  confirmed zero effect on tracked repo state via `git status`, but flagged
+  transparently rather than omitted.
+- **Fresh evidence this pass:** `php -l` **171/171** clean; `php tests/run.php`
+  **1355/1355** pass (16 files, per-file counts hand-summed to confirm);
+  deprecation sweep **0** diagnostics across all 29 `_functions/fn_*.php`
+  under `E_ALL` (independent harness, not reusing the test suite's own run);
+  `openapi.json` valid, 27 paths/44 schemas/12 responses/2 security schemes, 0
+  duplicate keys, 308/308 `$ref`s resolved, drift-guard (real router↔spec
+  diff, read the actual guard logic) passes.
+- **Every-page-loads sweep (the class of bug that broke Swagger UI, §25):**
+  all 27 web-reachable, bootstrap-requiring entry points under `public_html/`
+  have the CORRECT `../` depth for their nesting level (verified by
+  `realpath()` arithmetic AND by actually driving all 27 live via `php -S` +
+  a scratch-constants harness pointed at a closed DB port, zero credentials
+  file ever written) — zero fatals, zero parse errors, zero wrong-depth bugs
+  anywhere else. The `api/docs/index.php` fix from §25 is confirmed correct.
+- **Schema↔code reconciliation (new subsystems):** 99 `dbQuery()` statements
+  across 13 files (accounts/sessions/OAuth/subscriptions/payments/API-keys/
+  email-queue/password-resets/email-verifications) cross-checked against all
+  21 `install.sql` tables — **zero column mismatches, zero missing NOT-NULL
+  values on INSERT, zero bind-type/placeholder-count mismatches.**
+- **Security ledger:** all 31 findings (F-001..F-031) tracked with an
+  explicit status; **0 Critical/0 High open**; 6 higher-severity fixes
+  (F-014, F-021, F-022, F-023, F-026, F-027) spot-verified directly against
+  source, all genuinely fixed; F-004/F-012 confirmed genuinely
+  owner/live-gated, not a disguised skip.
+- **Feature spot-verify (5/5 PASS):** accessibility contrast/preset/Braille
+  determinism, tier-gating engine has zero hardcoded per-tier branches, email
+  subsystem is provably inert with zero network calls when off, GDPR export/
+  erasure is own-scoped/session-only/password-confirmed/anonymizing, and the
+  developer portal reference page renders all 27 OpenAPI paths live with zero
+  PHP errors.
+- **Live external-fact checks this pass (via `gh`, read-only):** PR #46 still
+  `OPEN`/`mergeStateStatus: BLOCKED` — still the first gate on everything
+  downstream; issues #52-#55/#29/#37/#48-#50 all exist as this doc describes;
+  Go2My.Link #137 and SIGNula #88 both confirmed still `OPEN` in their sibling
+  repos.
+- **Completeness critic (owner-gated + queued, not failures — full lists in
+  `LAUNCH_PREP_VERIFICATION.md` §7):** owner-gated = #13/#17/#18/#22 live
+  tests, real SSO/email/PayPal/bot-protection credentials, PR #46 merge,
+  legal counsel review, Go2My.Link/SIGNula upstream work; queued-build =
+  organisations UI, WebAuthn, admin dashboard, Epic E7 stages 2+ (pagination/
+  idempotency/webhooks/error-catalogue/versioning/device-sessions), E12 CI
+  hardening, i18n, E1a dynamic-redirect layer, live IdP round-trip
+  verification.
+- **Not touched:** no production code was modified. Only `LAUNCH_PREP_VERIFICATION.md`
+  and this file were written, per the task's explicit two-file mandate (see
+  the one disclosed exception above). GitHub issues were not touched.
