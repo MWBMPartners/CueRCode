@@ -135,6 +135,10 @@ curl -X POST https://cuercode.net/api/v1/generate \
 
 Registration verification, password resets, and organisation invitations are sent via the **Microsoft Graph API** (client-credentials grant, M365 shared mailbox Send-As) - never PHP's `mail()`. The whole subsystem (`_functions/fn_email.php`) is **inert by default**: the `email_enabled` kill-switch seeds to `0` and every Graph credential seeds empty, so no email can be sent (and no network call is attempted) until an owner completes the M365 app registration and fills the settings via the admin UI. See [DEV_NOTES.md](DEV_NOTES.md#email-subsystem-microsoft-graph---epic-e8-29) for the full setup runbook. Google Workspace (#30) is a future driver slot behind the same `email_provider` setting.
 
+## 🔐 User Accounts (Epic E3 stage 1)
+
+The auth API foundation is now live in code (schema/crypto/password/engine/API), pending live-server verification: `POST /api/v1/auth/register|login|logout|verify-email|request-password-reset|reset-password`. Argon2id password hashing (`PASSWORD_ARGON2ID`), per-record encryption salt for sensitive settings, single-use hashed+expiring tokens, database-backed sessions with session-id rotation on login, account lockout after repeated failed logins, and strict anti-enumeration (register/login/reset-request return identical response shapes regardless of account existence) - see [DEV_NOTES.md](DEV_NOTES.md#authentication-model-epic-e3-stage-1-52111214-2026-07-10) for the full model. **Account UI pages, saved-codes library, organisations, WebAuthn, and the admin dashboard are not yet built** - this stage is API/engine only.
+
 ## 🔮 Future Integration
 
 - 🔗 **Go2My.Link**: URL shortener integration for dynamic QR code links

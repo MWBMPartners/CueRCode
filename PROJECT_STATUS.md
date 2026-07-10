@@ -1,7 +1,7 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-03-23
-**🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification
+**📅 Last Updated:** 2026-07-10 (Epic E3 stage 1 - accounts foundation, #52/#11/#12/#14/#15)
+**🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 
 ---
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | Core QR Engine | [#1](https://github.com/MWBMPartners/CueRCode/milestone/1) | #1-#9, #39-#43 | 🔄 Audit gaps open |
 | 1.5 | Live Server Testing | [#2](https://github.com/MWBMPartners/CueRCode/milestone/2) | #13, #17, #18, #22 | ⬜ Pending |
-| 2 | User Accounts & Organisations | [#3](https://github.com/MWBMPartners/CueRCode/milestone/3) | #11, #12, #14-#16, #19-#21, #23-#24 | 📋 Planned |
+| 2 | User Accounts & Organisations | [#3](https://github.com/MWBMPartners/CueRCode/milestone/3) | #11, #12, #14-#16, #19-#21, #23-#24 | 🔄 Stage 1 addressed in code (2026-07-10, Epic E3) — schema/Argon2id/auth engine/auth API for #11/#12/#14/#15; needs live-server verification |
 | 3 | Premium Features & Payments | [#4](https://github.com/MWBMPartners/CueRCode/milestone/4) | #25, #26 | 📋 Planned |
 | 4 | Integrations | [#5](https://github.com/MWBMPartners/CueRCode/milestone/5) | #27-#30 | 📋 Planned |
 | 5 | Advanced Features & Polish | [#6](https://github.com/MWBMPartners/CueRCode/milestone/6) | #31-#34 | 📋 Planned |
@@ -29,7 +29,7 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | Stage | Description | Issues | Status |
 | --- | --- | --- | --- |
 | 1 | Project Foundation & Directory Structure | [#1](https://github.com/MWBMPartners/CueRCode/issues/1) | ⬜ Needs live server verification |
-| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ⚠️ Stubs for tblUsers/tblOrganisations (Phase 2); 3 missing QR seed rows added (cycle 6); deeplink + gs1_product seed rows added (cycle 8) |
+| 2 | Database Schema & SQL Installation | [#2](https://github.com/MWBMPartners/CueRCode/issues/2) | ✅ tblUsers fully implemented + 7 new accounts/sessions/orgs tables added (Epic E3 stage 1, 2026-07-10, 18 tables total); 3 missing QR seed rows added (cycle 6); deeplink + gs1_product seed rows added (cycle 8) |
 | 3 | Core PHP Framework | [#3](https://github.com/MWBMPartners/CueRCode/issues/3) | ⬜ Needs live server verification |
 | 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 26/26 QR types now in code (cycle 8); JPEG XL missing (host-dependent); needs live-server verification |
 | 5 | Responsive Web UI | [#5](https://github.com/MWBMPartners/CueRCode/issues/5) | ⚠️ Colourblind mode + cookie-consent banner added in code (cycle 7); no i18n; needs live-server verification (#22) |
@@ -74,11 +74,11 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 
 | Issue | Task | Status |
 | --- | --- | --- |
-| [#11](https://github.com/MWBMPartners/CueRCode/issues/11) | Database schema: User accounts, organisations, and roles tables | 📋 |
-| [#12](https://github.com/MWBMPartners/CueRCode/issues/12) | User registration with email verification | 📋 |
-| [#14](https://github.com/MWBMPartners/CueRCode/issues/14) | User login, logout, and session management | 📋 |
-| [#15](https://github.com/MWBMPartners/CueRCode/issues/15) | Password reset flow | 📋 |
-| [#16](https://github.com/MWBMPartners/CueRCode/issues/16) | WebAuthn/Passkey support (Windows Hello, Touch ID, Face ID) | 📋 |
+| [#11](https://github.com/MWBMPartners/CueRCode/issues/11) | Database schema: User accounts, organisations, and roles tables | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `tblUsers` rebuilt + 7 new tables added to `install.sql`; needs live-server verification |
+| [#12](https://github.com/MWBMPartners/CueRCode/issues/12) | User registration with email verification | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `registerUser()`/`verifyEmailToken()` (`fn_auth.php`) + `POST /api/v1/auth/register`+`/verify-email`; needs live-server verification |
+| [#14](https://github.com/MWBMPartners/CueRCode/issues/14) | User login, logout, and session management | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `loginUser()`/`logoutCurrentUser()`/`currentUser()` (`fn_auth.php`, Argon2id + lockout + database-backed sessions) + `POST /api/v1/auth/login`+`/logout`; needs live-server verification |
+| [#15](https://github.com/MWBMPartners/CueRCode/issues/15) | Password reset flow | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `requestPasswordReset()`/`resetPasswordWithToken()` (`fn_auth.php`) + `POST /api/v1/auth/request-password-reset`+`/reset-password`; needs live-server verification |
+| [#16](https://github.com/MWBMPartners/CueRCode/issues/16) | WebAuthn/Passkey support (Windows Hello, Touch ID, Face ID) | 📋 (schema stub `tblWebAuthnCredentials` added, Epic E3 stage 1; implementation deferred to E3 stage 7, G-006) |
 | [#19](https://github.com/MWBMPartners/CueRCode/issues/19) | OAuth SSO: Microsoft 365 login | 📋 |
 | [#20](https://github.com/MWBMPartners/CueRCode/issues/20) | OAuth SSO: Google Workspace login | 📋 |
 | [#21](https://github.com/MWBMPartners/CueRCode/issues/21) | Organisation creation and management | 📋 |
