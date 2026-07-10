@@ -2,7 +2,7 @@
     "openapi": "3.0.3",
     "info": {
         "title": "CueRCode API",
-        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Rate Limiting\n\nAll endpoints are rate limited (the `/health` endpoint is exempt in practice). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above.",
+        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`, `/save`, `/qrcodes`, `/qrcodes/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Saved-Codes Library (Epic E3 stage 2a)\n\n`POST /save` claims a previously-generated QR code (by its `uuid`) into the authenticated caller's account, subject to the caller's plan `saved_codes` limit (`402 SAVED_CODES_LIMIT_REACHED` at/over the cap). `GET /qrcodes` lists ONLY the caller's own saved codes (paginated, optionally filtered by `type`). `GET/PATCH/DELETE /qrcodes/{uuid}` operate on a single saved code: ownership is re-checked on every request from the caller's authenticated identity, never from a client-supplied field. A code that is neither owned by the caller nor marked `is_public` is reported as `404` (never `403`) to avoid disclosing that a private UUID belonging to someone else exists. `DELETE` soft-deletes (frees a `saved_codes` slot; the row is retained for audit purposes). `is_public: true` (opt-in; default `false`) grants read/download access to any authenticated caller but never write access - only the owner may `PATCH`/`DELETE`.\n\n## Rate Limiting\n\nAll endpoints are rate limited (the `/health` endpoint is exempt in practice). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above.",
         "version": "1.0.0",
         "contact": {
             "name": "CueRCode Support",
@@ -39,6 +39,10 @@
         {
             "name": "Accounts",
             "description": "Registration, email verification, login/session, logout, and password reset (Epic E3 stage 1)"
+        },
+        {
+            "name": "Saved Codes",
+            "description": "Claim, list, fetch, update, and delete saved QR codes - ownership-scoped (Epic E3 stage 2a, #52/#24)"
         }
     ],
     "paths": {
@@ -1551,6 +1555,439 @@
                     }
                 }
             }
+        },
+        "/save": {
+            "post": {
+                "tags": [
+                    "Saved Codes"
+                ],
+                "summary": "Save a generated QR code to your account",
+                "description": "Claim a previously-generated QR code (by the `uuid` returned from POST /generate) into the authenticated caller's account, or - if the caller already owns it - update its label/visibility. Enforces the caller's plan `saved_codes` limit (`-1` = unlimited) ONLY for a genuinely NEW claim; re-saving an already-owned code never consumes a fresh slot. A code already claimed by a DIFFERENT user is reported as `404` (never `403`/`409` at this stage) to avoid disclosing that the UUID belongs to somebody else. Requires a valid CSRF token (web UI) or API key belonging to an authenticated account.",
+                "operationId": "saveQRCode",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SaveRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "An already-owned code's label/visibility was updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SaveResponse"
+                                }
+                            }
+                        }
+                    },
+                    "201": {
+                        "description": "The code was newly claimed into the caller's account",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SaveResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Newly saved",
+                                        "value": {
+                                            "success": true,
+                                            "message": "QR code saved to your account.",
+                                            "data": {
+                                                "uuid": "a1b2c3d4-e5f6-4890-abcd-ef1234567890",
+                                                "label": "My homepage QR",
+                                                "is_public": false
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "402": {
+                        "$ref": "#/components/responses/PaymentRequired"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "404": {
+                        "description": "The UUID does not exist, has been deleted, or is already saved to a DIFFERENT account (indistinguishable from not-found - see description above)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "not_found": {
+                                        "summary": "Unknown, deleted, or someone-else's UUID",
+                                        "value": {
+                                            "success": false,
+                                            "message": "QR code not found.",
+                                            "data": {},
+                                            "error_code": "NOT_FOUND",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Lost a race to a concurrent claim of the same code",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/qrcodes": {
+            "get": {
+                "tags": [
+                    "Saved Codes"
+                ],
+                "summary": "List your saved QR codes",
+                "description": "Lists ONLY the authenticated caller's own saved QR codes - never another user's rows, public or otherwise. Supports pagination (`page`, `per_page`, capped at 100) and an optional `type` filter matching the QR code type name.",
+                "operationId": "listQRCodes",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "description": "1-based page number (default 1; clamped up to 1 if lower)",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 1
+                        }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "required": false,
+                        "description": "Items per page (default 20; capped at 100)",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100,
+                            "default": 20
+                        }
+                    },
+                    {
+                        "name": "type",
+                        "in": "query",
+                        "required": false,
+                        "description": "Filter to a single QR code type name (e.g. \"url\", \"wifi\")",
+                        "schema": {
+                            "type": "string",
+                            "maxLength": 100,
+                            "example": "url"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The caller's saved QR codes, paginated",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/QrCodeListResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    }
+                }
+            }
+        },
+        "/qrcodes/{uuid}": {
+            "get": {
+                "tags": [
+                    "Saved Codes"
+                ],
+                "summary": "Fetch one saved QR code",
+                "description": "Allowed only if the caller owns the code OR it is marked `is_public: true` - otherwise `404` (never `403`, to avoid disclosing that a private UUID belonging to someone else exists).",
+                "operationId": "getQRCodeItem",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "required": true,
+                        "description": "The UUID v4 identifier of the saved QR code",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid",
+                            "example": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The QR code (caller owns it, or it is public)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/QrCodeDetailResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "404": {
+                        "description": "Not found, deleted, or not owned-and-not-public (identical response for all three - see description above)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "not_found": {
+                                        "summary": "Unknown, deleted, or not-yours-and-not-public",
+                                        "value": {
+                                            "success": false,
+                                            "message": "QR code not found.",
+                                            "data": {},
+                                            "error_code": "NOT_FOUND",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            },
+            "patch": {
+                "tags": [
+                    "Saved Codes"
+                ],
+                "summary": "Update a saved QR code you own",
+                "description": "Update the `label`, `is_public` visibility, and/or visual `customization` of a saved code the caller OWNS. Ownership is checked BEFORE any other field is read - a non-owned code (including a PUBLIC one; `is_public` never grants write access) is reported as `404`. When `customization` is supplied, the QR image is regenerated in place from the code's existing payload (its `download_url`/`uuid` do not change) and `qrFilePath`/`qrOptions`/`qrOutputFormat` are updated. Content/destination changes are out of scope for this stage.",
+                "operationId": "patchQRCodeItem",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "required": true,
+                        "description": "The UUID v4 identifier of the saved QR code",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid",
+                            "example": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchQrCodeRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "The saved QR code was updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PatchQrCodeResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "404": {
+                        "description": "Not owned by the caller (or does not exist / was deleted) - identical response either way",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "Saved Codes"
+                ],
+                "summary": "Delete a saved QR code you own",
+                "description": "Soft-deletes (sets `deletedAt`; the row is retained for audit purposes) a saved code the caller OWNS, freeing one `saved_codes` plan slot. Ownership is checked before any mutation; a non-owned code is reported as `404`.",
+                "operationId": "deleteQRCodeItem",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "required": true,
+                        "description": "The UUID v4 identifier of the saved QR code",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid",
+                            "example": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The saved QR code was deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Deleted",
+                                        "value": {
+                                            "success": true,
+                                            "message": "QR code deleted successfully.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "404": {
+                        "description": "Not owned by the caller (or does not exist / already deleted) - identical response either way",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
         }
     },
     "components": {
@@ -1882,6 +2319,48 @@
                     "application/xml": {
                         "schema": {
                             "$ref": "#/components/schemas/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "PaymentRequired": {
+                "description": "The caller's plan does not allow this action at its current usage level (Epic E4/#53 feature/limit gating). The response includes `upgrade_url` and `plan_limit` alongside the standard error shape.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "upgrade_url": {
+                                            "type": "string",
+                                            "example": "/pricing"
+                                        },
+                                        "plan_limit": {
+                                            "type": "integer",
+                                            "description": "The caller's current plan limit for this action (-1 = unlimited, so this response is unreachable at -1)",
+                                            "example": 25
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "examples": {
+                            "saved_codes_limit": {
+                                "summary": "Saved-codes plan limit reached",
+                                "value": {
+                                    "success": false,
+                                    "message": "You have reached your plan's saved-codes limit (25). Upgrade your plan to save more codes.",
+                                    "data": {},
+                                    "error_code": "SAVED_CODES_LIMIT_REACHED",
+                                    "upgrade_url": "/pricing",
+                                    "plan_limit": 25,
+                                    "timestamp": "2026-02-27T12:00:00+00:00"
+                                }
+                            }
                         }
                     }
                 }
@@ -2573,7 +3052,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -2728,6 +3207,234 @@
                                         "nullable": true
                                     }
                                 }
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "SaveRequest": {
+                "type": "object",
+                "required": [
+                    "uuid"
+                ],
+                "properties": {
+                    "uuid": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The UUID returned by a prior POST /generate call",
+                        "example": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                    },
+                    "label": {
+                        "type": "string",
+                        "maxLength": 150,
+                        "nullable": true,
+                        "description": "Caller-supplied nickname for this saved code. Omit to leave unchanged; an explicit empty string or null clears it.",
+                        "example": "My homepage QR"
+                    },
+                    "is_public": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Opt-in: when true, this code becomes readable/downloadable by ANY authenticated caller, not just the owner. Defaults to false (private) for a NEW claim; omitted on an already-owned code leaves its current visibility unchanged."
+                    }
+                }
+            },
+            "SaveResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code saved to your account."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "uuid": {
+                                "type": "string",
+                                "format": "uuid"
+                            },
+                            "label": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "is_public": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "QrCodeSummary": {
+                "type": "object",
+                "description": "One saved QR code as returned by GET /qrcodes and GET /qrcodes/{uuid}. Never includes the owner's userID/email - a public code viewed by a non-owner must not disclose who owns it.",
+                "properties": {
+                    "uuid": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "type": {
+                        "type": "string",
+                        "nullable": true,
+                        "example": "url"
+                    },
+                    "label": {
+                        "type": "string",
+                        "nullable": true,
+                        "example": "My homepage QR"
+                    },
+                    "format": {
+                        "type": "string",
+                        "example": "png"
+                    },
+                    "is_public": {
+                        "type": "boolean"
+                    },
+                    "download_count": {
+                        "type": "integer"
+                    },
+                    "download_url": {
+                        "type": "string",
+                        "example": "/api/v1/download/a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "QrCodeListResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Saved QR codes retrieved successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "items": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/QrCodeSummary"
+                                }
+                            },
+                            "pagination": {
+                                "type": "object",
+                                "properties": {
+                                    "page": {
+                                        "type": "integer",
+                                        "example": 1
+                                    },
+                                    "per_page": {
+                                        "type": "integer",
+                                        "example": 20
+                                    },
+                                    "total": {
+                                        "type": "integer",
+                                        "example": 3
+                                    },
+                                    "total_pages": {
+                                        "type": "integer",
+                                        "example": 1
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "QrCodeDetailResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code retrieved successfully."
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/QrCodeSummary"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "PatchQrCodeRequest": {
+                "type": "object",
+                "description": "All fields optional, but at least one of label/is_public/customization must be present (else 400 NO_FIELDS). \"customization\" fields omitted from a partial update inherit the code's EXISTING stored value.",
+                "properties": {
+                    "label": {
+                        "type": "string",
+                        "maxLength": 150,
+                        "nullable": true,
+                        "example": "Renamed QR"
+                    },
+                    "is_public": {
+                        "type": "boolean"
+                    },
+                    "customization": {
+                        "$ref": "#/components/schemas/Customization"
+                    }
+                }
+            },
+            "PatchQrCodeResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code updated successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "uuid": {
+                                "type": "string",
+                                "format": "uuid"
+                            },
+                            "label": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "is_public": {
+                                "type": "boolean"
+                            },
+                            "format": {
+                                "type": "string"
+                            },
+                            "updated_at": {
+                                "type": "string",
+                                "format": "date-time"
                             }
                         }
                     },

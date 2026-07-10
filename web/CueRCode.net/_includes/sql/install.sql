@@ -223,8 +223,19 @@ CREATE TABLE IF NOT EXISTS `tblQRCodes` (
     `orgID`           INT UNSIGNED      NULL                     COMMENT '🏢 Owning organisation ID (Phase 2)',
     `apiKeyID`        INT UNSIGNED      NULL                     COMMENT '🔑 API key used for generation (NULL = web UI)',
 
+    -- 📚 Saved-codes library (Epic E3 stage 2a, #52/#24, B-001/B-002) - once a
+    -- code is claimed by a user via POST /api/v1/save, `qrLabel` is the
+    -- caller's own nickname for it (editable via PATCH /api/v1/qrcodes/{uuid});
+    -- `deletedAt` is the soft-delete marker set by DELETE /api/v1/qrcodes/{uuid}
+    -- (see DEV_NOTES.md/SECURITY.md for the soft-vs-hard-delete decision) -
+    -- every saved-codes query (list/get/patch/delete/save-limit-count) filters
+    -- `deletedAt IS NULL`, so a deleted row both disappears from the caller's
+    -- library AND frees a saved-codes slot without losing the audit trail.
+    `qrLabel`         VARCHAR(150)      NULL                     COMMENT '🏷️ Caller-supplied nickname for a saved code (NULL = unlabelled)',
+    `deletedAt`       DATETIME          NULL                     COMMENT '🗑️ Soft-delete timestamp (NULL = active); set by DELETE /api/v1/qrcodes/{uuid}',
+
     -- 📊 Metadata
-    `isPublic`        TINYINT(1)        NOT NULL DEFAULT 0       COMMENT '🌐 1 = visible in public gallery (future feature)',
+    `isPublic`        TINYINT(1)        NOT NULL DEFAULT 0       COMMENT '🌐 1 = readable/downloadable by ANY caller regardless of ownership (default 0 = private to the owner - Epic E3 stage 2a)',
     `downloadCount`   INT UNSIGNED      NOT NULL DEFAULT 0       COMMENT '📥 Number of times this QR code has been downloaded',
     `requestIP`       VARCHAR(45)       NULL                     COMMENT '🌍 IP address of the request that generated this code',
     `userAgent`       VARCHAR(500)      NULL                     COMMENT '🖥️ User agent of the generating request',
@@ -237,6 +248,7 @@ CREATE TABLE IF NOT EXISTS `tblQRCodes` (
     UNIQUE KEY `idx_qr_uuid` (`qrUUID`),
     INDEX `idx_qr_type` (`qrTypeID`),
     INDEX `idx_qr_user` (`userID`),
+    INDEX `idx_qr_user_active` (`userID`, `deletedAt`),
     INDEX `idx_qr_org` (`orgID`),
     INDEX `idx_qr_created` (`createdAt`),
     INDEX `idx_qr_format` (`qrOutputFormat`),

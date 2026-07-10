@@ -42,7 +42,7 @@
 #    API accepts, and Max-Age caches the preflight result. They do not by
 #    themselves grant any origin access without a matching Allow-Origin.
 <IfModule mod_headers.c>
-    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header set Access-Control-Allow-Methods "GET, POST, PATCH, DELETE, OPTIONS"
     Header set Access-Control-Allow-Headers "Content-Type, X-API-Key, X-CSRF-Token, Accept"
     Header set Access-Control-Max-Age "3600"
 </IfModule>

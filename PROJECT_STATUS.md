@@ -1,6 +1,6 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-07-10 (Epic E3 stage 1 - accounts foundation, #52/#11/#12/#14/#15)
+**📅 Last Updated:** 2026-07-10 (Epic E3 stage 2a - saved-codes API + ownership/IDOR enforcement, #52/#24)
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | Core QR Engine | [#1](https://github.com/MWBMPartners/CueRCode/milestone/1) | #1-#9, #39-#43 | 🔄 Audit gaps open |
 | 1.5 | Live Server Testing | [#2](https://github.com/MWBMPartners/CueRCode/milestone/2) | #13, #17, #18, #22 | ⬜ Pending |
-| 2 | User Accounts & Organisations | [#3](https://github.com/MWBMPartners/CueRCode/milestone/3) | #11, #12, #14-#16, #19-#21, #23-#24 | 🔄 Stage 1 addressed in code (2026-07-10, Epic E3) — schema/Argon2id/auth engine/auth API for #11/#12/#14/#15; needs live-server verification |
+| 2 | User Accounts & Organisations | [#3](https://github.com/MWBMPartners/CueRCode/milestone/3) | #11, #12, #14-#16, #19-#21, #23-#24 | 🔄 Stage 1 (2026-07-10) — schema/Argon2id/auth engine/auth API for #11/#12/#14/#15; Stage 2a (2026-07-10) — saved-codes API (`/save`, `/qrcodes` CRUD) with ownership/IDOR enforcement for #24 (B-001/B-002); all needs live-server verification |
 | 3 | Premium Features & Payments | [#4](https://github.com/MWBMPartners/CueRCode/milestone/4) | #25, #26 | 📋 Planned |
 | 4 | Integrations | [#5](https://github.com/MWBMPartners/CueRCode/milestone/5) | #27-#30 | 📋 Planned |
 | 5 | Advanced Features & Polish | [#6](https://github.com/MWBMPartners/CueRCode/milestone/6) | #31-#34 | 📋 Planned |
@@ -83,7 +83,7 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | [#20](https://github.com/MWBMPartners/CueRCode/issues/20) | OAuth SSO: Google Workspace login | 📋 |
 | [#21](https://github.com/MWBMPartners/CueRCode/issues/21) | Organisation creation and management | 📋 |
 | [#23](https://github.com/MWBMPartners/CueRCode/issues/23) | User profile management and avatar support | 📋 |
-| [#24](https://github.com/MWBMPartners/CueRCode/issues/24) | Saved QR codes and user QR code library | 📋 |
+| [#24](https://github.com/MWBMPartners/CueRCode/issues/24) | Saved QR codes and user QR code library | 🔄 API addressed in code (Epic E3 stage 2a, 2026-07-10) — `POST /api/v1/save` + `GET/PATCH/DELETE /api/v1/qrcodes/{uuid}` + `GET /api/v1/qrcodes` (`fn_api_qrcodes.php`), ownership/IDOR-enforced (404, never 403), `saved_codes` plan-limit 402, soft-delete; account/library UI pages still needed (E3 stage 5); needs live-server verification |
 
 **Recommended build order:** #11 -> #12 -> #14 -> #15 -> #23 -> #16 -> #19 -> #20 -> #21 -> #24
 

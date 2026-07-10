@@ -28,6 +28,11 @@
  *   GET    /api/v1/types             List available QR code types
  *   GET    /api/v1/formats           List supported output formats
  *   GET    /api/v1/health            Health check endpoint
+ *   POST   /api/v1/save              Save a generated QR code to the caller's account (Epic E3 stage 2a)
+ *   GET    /api/v1/qrcodes           List the caller's OWN saved QR codes (paginated)
+ *   GET    /api/v1/qrcodes/{uuid}    Fetch one saved QR code (owner or public only)
+ *   PATCH  /api/v1/qrcodes/{uuid}    Update a saved QR code the caller OWNS
+ *   DELETE /api/v1/qrcodes/{uuid}    Soft-delete a saved QR code the caller OWNS
  *
  * Authentication:
  *   - X-API-Key header: API key authentication for external consumers
@@ -72,6 +77,7 @@ $apiFunctionFiles = [
     'fn_auth.php',           // 🔐 Registration/login/session/reset engine (Epic E3 stage 1)
     'fn_api_accounts.php',   // 🌐 Account HTTP handlers (Epic E3 stage 1)
     'fn_features.php',       // 💳 Premium tier / feature gating engine (Epic E4/#53) - planForUser(), featureEnabled(), limitFor()
+    'fn_api_qrcodes.php',    // 📚 Saved-codes API: /save, /qrcodes CRUD, ownership predicates (Epic E3 stage 2a, #52/#24)
 ];
 
 foreach ($apiFunctionFiles as $apiFile) {
@@ -103,7 +109,7 @@ if (!headers_sent()) {
         emitCorsHeaders();
     }
 
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, X-API-Key, X-CSRF-Token, Accept');
     header('Access-Control-Max-Age: 86400');
 
@@ -334,6 +340,51 @@ $routes = [
         'methods'   => ['POST'],
         'handler'   => 'handleAuthResetPassword',
         'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+    ],
+
+    // ==========================================================================
+    // 📚 Saved-codes routes (Epic E3 stage 2a, #52/#24, B-001/B-002)
+    // ==========================================================================
+    // The app's first OWNERSHIP-SCOPED resource surface. All four routes
+    // require 'auth' => true (the router's normal 401-on-failure gate, same
+    // as /generate and /download/{uuid}) - unlike the pre-authentication
+    // account routes above, these operate on an ALREADY-authenticated
+    // identity, so the standard 401 (not a bespoke 403) is the correct code.
+    // Ownership itself is enforced inside each handler (fn_api_qrcodes.php),
+    // never by the router - see that file's IDOR posture docblock.
+    // ==========================================================================
+
+    // 📌 POST /api/v1/save - Claim a generated QR code into the caller's account
+    [
+        'pattern'   => 'save',
+        'methods'   => ['POST'],
+        'handler'   => 'handleSaveQRCode',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+    ],
+
+    // 📌 GET /api/v1/qrcodes - List ONLY the caller's own saved QR codes
+    [
+        'pattern'   => 'qrcodes',
+        'methods'   => ['GET'],
+        'handler'   => 'handleListQRCodes',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+    ],
+
+    // 📌 GET/PATCH/DELETE /api/v1/qrcodes/{uuid} - Single saved QR code.
+    // One route table entry shared by all three methods (the router matches
+    // by PATTERN, not pattern+method) - handleQrCodeItem() dispatches by
+    // $_SERVER['REQUEST_METHOD'] to the method-specific handler.
+    [
+        'pattern'   => 'qrcodes/{uuid}',
+        'methods'   => ['GET', 'PATCH', 'DELETE'],
+        'handler'   => 'handleQrCodeItem',
+        'auth'      => true,
         'rateLimit' => true,
         'requiredFeature' => null,
     ],
@@ -724,7 +775,10 @@ switch ($handlerFunction) {
         } else {
             $uuid = '';
         }
-        handleDownload($uuid);
+        // 🔐 Epic E3 stage 2a: $auth is now passed through so handleDownload()
+        // can enforce owner-or-public on a SAVED (claimed) code - see
+        // fn_api_download.php's docblock amendment for the full rule.
+        handleDownload($uuid, $auth);
         break;
 
     case 'handleGetTypes':
@@ -761,6 +815,23 @@ switch ($handlerFunction) {
 
     case 'handleAuthResetPassword':
         handleAuthResetPassword($requestBody);
+        break;
+
+    case 'handleSaveQRCode':
+        handleSaveQRCode($requestBody, $auth);
+        break;
+
+    case 'handleListQRCodes':
+        handleListQRCodes($auth);
+        break;
+
+    case 'handleQrCodeItem':
+        if (isset($routeParams['uuid'])) {
+            $uuid = $routeParams['uuid'];
+        } else {
+            $uuid = '';
+        }
+        handleQrCodeItem($uuid, $requestBody, $auth);
         break;
 
     default:
