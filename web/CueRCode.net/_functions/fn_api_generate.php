@@ -340,6 +340,27 @@ function handleGenerate(array $requestData): void
     }
 
     // ==================================================================
+    // 🛡️ Step 3b: Reject an unsafe base64 SVG logo (F-024, #52)
+    // Checked BEFORE validateCustomization() so a malicious SVG logo gets a
+    // distinct, actionable 422 rather than falling through to a generic 400
+    // INVALID_CUSTOMIZATION or — worse — silently generating a logo-less QR
+    // code (saveBase64LogoToTemp() rejecting the logo further downstream is
+    // a silent no-logo fallback, not a visible error). The ACTUAL security
+    // enforcement (never writing unscreened SVG bytes to disk) lives in
+    // saveBase64LogoToTemp() itself (fn_qr_logo.php) — this is the
+    // API-contract layer on top of that, for a clear caller-facing error.
+    // @see fn_qr_logo.php - rejectUnsafeBase64SvgLogo(), screenBase64LogoDataUri()
+    // ==================================================================
+    if (function_exists('rejectUnsafeBase64SvgLogo')) {
+        $logoSvgRejection = rejectUnsafeBase64SvgLogo($customization);
+
+        if ($logoSvgRejection !== null) {
+            errorResponse($logoSvgRejection, 422, 'LOGO_SVG_REJECTED');
+            return; // @codeCoverageIgnore - errorResponse exits
+        }
+    }
+
+    // ==================================================================
     // 📌 Step 4: Validate customization values
     // ==================================================================
     $validationError = validateCustomization($customization);
@@ -567,6 +588,22 @@ function handlePreview(array $requestData): void
                 422,
                 'ACCESSIBLE_CONTRAST_TOO_LOW'
             );
+            return; // @codeCoverageIgnore - errorResponse exits
+        }
+    }
+
+    // ==================================================================
+    // 🛡️ Step 3b: Reject an unsafe base64 SVG logo (F-024, #52)
+    // Mirrors handleGenerate()'s identical check so the live preview and the
+    // final /generate call never disagree about a rejected logo.
+    // @see fn_qr_logo.php - rejectUnsafeBase64SvgLogo(), screenBase64LogoDataUri()
+    // @see handleGenerate() - identical logic, documented in full there
+    // ==================================================================
+    if (function_exists('rejectUnsafeBase64SvgLogo')) {
+        $logoSvgRejection = rejectUnsafeBase64SvgLogo($customization);
+
+        if ($logoSvgRejection !== null) {
+            errorResponse($logoSvgRejection, 422, 'LOGO_SVG_REJECTED');
             return; // @codeCoverageIgnore - errorResponse exits
         }
     }

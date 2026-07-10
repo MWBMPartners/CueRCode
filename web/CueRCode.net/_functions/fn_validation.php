@@ -512,6 +512,136 @@ function sanitizeFileName(string $filename): string
 }
 
 // ==============================================================================
+// 🛡️ screenSvgLogoContent() - Shared SVG active-content screener (F-024)
+// ==============================================================================
+
+/**
+ * 🛡️ Screen raw SVG markup for active/script content (XSS vectors)
+ *
+ * SHARED screener used by BOTH logo-intake paths so they enforce the SAME
+ * rule set instead of drifting:
+ *   1. The multipart `$_FILES` upload path — validateImageUpload() (below,
+ *      this file) calls this function for the `image/svg+xml` branch.
+ *   2. The JSON API's base64 `data:image/svg+xml;base64,...` path —
+ *      `saveBase64LogoToTemp()` (fn_qr_logo.php) calls this function before
+ *      writing decoded SVG bytes to disk. Closes F-024 (SECURITY.md): the
+ *      base64 path previously enforced ONLY the F-005 size/pixel caps and
+ *      let unscreened SVG bytes reach `overlayLogoOnSVG()`'s output.
+ *
+ * This is a DEFENSIVE, deny-list content screen — not a full XML sanitiser.
+ * When in doubt it rejects, on the theory that a false-positive (a clean SVG
+ * momentarily rejected) is far cheaper than a false-negative (a malicious SVG
+ * logo reaching the browser inside the generated QR code's own SVG markup).
+ *
+ * Vectors covered (case-insensitive; matched anywhere in the raw markup so
+ * they cannot be smuggled inside CDATA sections, comments, or attribute
+ * values):
+ *   - `<script` .................. embedded JavaScript
+ *   - `on*=` ...................... inline DOM event-handler attributes
+ *                                   (onclick, onload, onerror, onmouseover, …)
+ *   - `javascript:` / `vbscript:` . scriptable URI schemes in any attribute
+ *   - `data:` ..................... data URIs (can smuggle nested active
+ *                                   content, e.g. a `data:image/svg+xml`
+ *                                   payload containing its OWN `<script>`)
+ *   - `<foreignObject` ............ embeds arbitrary (X)HTML inside SVG
+ *   - `<!DOCTYPE` / `<!ENTITY` .... XXE / "billion laughs" entity-expansion
+ *   - `@import` ................... CSS `@import` (can load external CSS)
+ *   - `expression(` ............... legacy CSS `expression()` code execution
+ *   - `attributeName="on...` ...... SMIL `<animate>`/`<set>` retargeting an
+ *                                   event-handler attribute dynamically,
+ *                                   bypassing a naive static `on*=` scan
+ *   - non-local `href`/`xlink:href` any `href`/`xlink:href` value that is
+ *                                   NOT a same-document `#fragment` — blocks
+ *                                   `<use>`/`<image>` pulling in EXTERNAL SVG
+ *                                   content (which could itself carry script)
+ *
+ * @param string $svgContent The raw SVG markup (already decoded — NOT a data
+ *                            URI or base64 string) to screen.
+ *
+ * @return array{valid: bool, error: string|null} 'valid' is true when no
+ *              disallowed construct was found; 'error' is a human-readable
+ *              reason when 'valid' is false, otherwise null.
+ *
+ * @see https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+ * @see https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing
+ * @see https://developer.mozilla.org/en-US/docs/Web/SVG/Element/foreignObject
+ * @see https://developer.mozilla.org/en-US/docs/Web/SVG/Element/animate
+ * @see fn_qr_logo.php - saveBase64LogoToTemp() (the base64 intake caller)
+ *
+ * @example
+ *   screenSvgLogoContent('<svg><path d="M0 0h10v10H0z"/></svg>');
+ *   // Returns: ['valid' => true, 'error' => null]
+ *
+ *   screenSvgLogoContent('<svg onload="alert(1)"></svg>');
+ *   // Returns: ['valid' => false, 'error' => 'SVG content contains a
+ *   //   disallowed construct: inline event-handler attribute (on*=).']
+ */
+function screenSvgLogoContent(string $svgContent): array
+{
+    // 📌 Default result: clean until a disallowed construct is found.
+    $result = [
+        'valid' => true,
+        'error' => null,
+    ];
+
+    // ==================================================================
+    // 📌 Step 1: Simple deny-list of dangerous inline constructs
+    // Each pattern is matched case-insensitively against the RAW markup.
+    // The array key is the regex; the value is the human-readable label
+    // used in the rejection message.
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    // ==================================================================
+    $dangerousPatterns = [
+        '/<script\b/i'                              => 'embedded <script> element',
+        '/\bon[a-z]+\s*=/i'                          => 'inline event-handler attribute (on*=)',
+        '/javascript\s*:/i'                          => 'javascript: URI scheme',
+        '/vbscript\s*:/i'                             => 'vbscript: URI scheme',
+        '/data\s*:/i'                                 => 'data: URI (potential embedded active content)',
+        '/<foreignObject\b/i'                         => '<foreignObject> element (can embed arbitrary HTML)',
+        '/<!doctype/i'                                => 'DOCTYPE declaration (XXE / entity-expansion risk)',
+        '/<!entity/i'                                 => 'ENTITY declaration (XXE / "billion laughs" risk)',
+        '/@import/i'                                  => 'CSS @import',
+        '/expression\s*\(/i'                          => 'CSS expression()',
+        '/attributeName\s*=\s*["\']?\s*on[a-z]+/i'    => 'SMIL animation (<animate>/<set>) retargeting an event-handler attribute',
+    ];
+
+    foreach ($dangerousPatterns as $pattern => $label) {
+        if (preg_match($pattern, $svgContent) === 1) {
+            $result['valid'] = false;
+            $result['error'] = 'SVG content contains a disallowed construct: ' . $label . '.';
+            return $result;
+        }
+    }
+
+    // ==================================================================
+    // 📌 Step 2: Non-local href / xlink:href references
+    // A legitimate logo SVG never needs to reference anything OUTSIDE its
+    // own markup — internal same-document fragment refs (href="#id",
+    // used by <use>/<symbol> reuse) are the only accepted form. Anything
+    // else (an absolute/relative URL, a protocol-relative "//host/..."
+    // reference, or an empty-scheme reference) is rejected: it could pull
+    // in an externally-hosted SVG/HTML document carrying its own script.
+    // \b before "href" matches both "href=" and "xlink:href=" (the ':' is a
+    // non-word character, so the boundary lands correctly either way).
+    // @see https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/href
+    // ==================================================================
+    if (preg_match_all('/\bhref\s*=\s*["\']([^"\']*)["\']/i', $svgContent, $hrefMatches) > 0) {
+        foreach ($hrefMatches[1] as $hrefValue) {
+            $hrefValue = trim($hrefValue);
+
+            if ($hrefValue !== '' && !str_starts_with($hrefValue, '#')) {
+                $result['valid'] = false;
+                $result['error'] = 'SVG content contains a disallowed construct: '
+                    . 'external or non-local href/xlink:href reference.';
+                return $result;
+            }
+        }
+    }
+
+    return $result;
+}
+
+// ==============================================================================
 // 🖼️ validateImageUpload() - Image file upload validation
 // ==============================================================================
 
@@ -727,26 +857,23 @@ function validateImageUpload(array $file, int $maxSize = 5242880): array
     } else {
         // 🔒 SVG-specific validation: check for potentially dangerous content
         // SVGs can contain embedded scripts, event handlers, and external references.
+        // 🛡️ F-024 (#52): the actual pattern set now lives in the SHARED
+        //    screenSvgLogoContent() helper (defined earlier in this file) so
+        //    this multipart upload path and the JSON API's base64 logo_data
+        //    path (fn_qr_logo.php - saveBase64LogoToTemp()) enforce IDENTICAL
+        //    screening instead of the base64 path having none at all.
+        // @see screenSvgLogoContent() - the shared screener
         // @see https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
         $svgContent = file_get_contents($file['tmp_name']);
 
         if ($svgContent !== false) {
-            // 📌 Check for common SVG attack vectors (case-insensitive)
-            $dangerousPatterns = [
-                '/<script/i',           // Embedded JavaScript
-                '/on[a-z]+\s*=/i',      // Event handlers (onclick, onload, onerror, etc.)
-                '/javascript\s*:/i',    // JavaScript protocol in href/xlink
-                '/data\s*:/i',          // Data URIs (can embed scripts)
-                '/<foreignObject/i',    // foreignObject can embed arbitrary HTML
-            ];
+            $svgScreen = screenSvgLogoContent($svgContent);
 
-            foreach ($dangerousPatterns as $pattern) {
-                if (preg_match($pattern, $svgContent) === 1) {
-                    $result['error'] = 'SVG file contains potentially unsafe content '
-                        . '(scripts, event handlers, or embedded data). '
-                        . 'Please upload a clean SVG file.';
-                    return $result;
-                }
+            if ($svgScreen['valid'] === false) {
+                $result['error'] = 'SVG file contains potentially unsafe content: '
+                    . $svgScreen['error']
+                    . ' Please upload a clean SVG file.';
+                return $result;
             }
         }
     }

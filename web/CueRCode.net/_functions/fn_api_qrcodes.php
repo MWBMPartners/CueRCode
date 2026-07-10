@@ -1396,6 +1396,23 @@ function handlePatchQRCode(string $uuid, array $requestBody, array $auth): void
             }
         }
 
+        // --------------------------------------------------------------
+        // 🛡️ Reject an unsafe base64 SVG logo (F-024, #52)
+        // Mirrors fn_api_generate.php's handleGenerate()/handlePreview()
+        // identical check, so a PATCH that swaps in a malicious SVG logo
+        // gets the SAME distinct 422 LOGO_SVG_REJECTED instead of a
+        // generic 400 or a silently logo-less regeneration.
+        // @see fn_qr_logo.php - rejectUnsafeBase64SvgLogo()
+        // --------------------------------------------------------------
+        if (function_exists('rejectUnsafeBase64SvgLogo')) {
+            $logoSvgRejection = rejectUnsafeBase64SvgLogo($customization);
+
+            if ($logoSvgRejection !== null) {
+                errorResponse($logoSvgRejection, 422, 'LOGO_SVG_REJECTED');
+                return;
+            }
+        }
+
         $validationError = validateCustomization($customization);
 
         if ($validationError !== null) {

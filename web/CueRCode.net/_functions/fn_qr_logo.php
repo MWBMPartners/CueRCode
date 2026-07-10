@@ -864,6 +864,59 @@ function saveBase64LogoToTemp(string $dataUri): ?string
         return null;
     }
 
+    // 🛡️ F-024 (#52): screen SVG content for active/script vectors using the
+    //    SAME shared screener the multipart $_FILES upload path uses
+    //    (screenSvgLogoContent(), fn_validation.php). BEFORE this fix, the
+    //    base64 data-URI path enforced ONLY the F-005 size/pixel caps above,
+    //    so an unscreened malicious SVG logo could reach the QR's own SVG
+    //    output verbatim via overlayLogoOnSVG() (which embeds the RAW logo
+    //    bytes as a nested <image href="data:image/svg+xml;base64,...">).
+    //
+    //    Runs whenever the declared extension is 'svg' (from the data URI's
+    //    MIME sub-type) OR — defensively — whenever the decoded bytes sniff
+    //    as SVG regardless of the declared MIME (a mislabelled sub-type must
+    //    not bypass the screen). Deliberately placed BEFORE any disk I/O
+    //    (tempnam()/file_put_contents() below) so a rejected payload never
+    //    touches the filesystem at all.
+    //
+    //    Raster logos (PNG/JPG/GIF/WEBP) are entirely unaffected — this
+    //    block is a no-op for them, and the existing F-005 byte/pixel caps
+    //    above still apply to every format exactly as before.
+    // @see screenSvgLogoContent() (fn_validation.php) - the shared screener
+    // @see overlayLogoOnSVG() (this file) - where unscreened bytes would land
+    // @see rejectUnsafeBase64SvgLogo() (this file) - the API-facing 422 pre-check
+    $looksLikeSvg = ($extension === 'svg') || (stripos($imageData, '<svg') !== false);
+
+    if ($looksLikeSvg) {
+        if (function_exists('screenSvgLogoContent')) {
+            $svgScreen = screenSvgLogoContent($imageData);
+
+            if ($svgScreen['valid'] === false) {
+                if (function_exists('logError')) {
+                    logError(
+                        'warning',
+                        'Base64 logo rejected: unsafe SVG content (F-024)',
+                        (string) $svgScreen['error']
+                    );
+                }
+                return null;
+            }
+        } else {
+            // ⚠️ fn_validation.php is not loaded, so the screener is
+            //    unavailable. FAIL CLOSED for SVG rather than silently
+            //    accepting unscreened active content — raster logos are
+            //    unaffected by this else-branch entirely.
+            if (function_exists('logError')) {
+                logError(
+                    'error',
+                    'Base64 SVG logo rejected: screenSvgLogoContent() unavailable (fail-closed, F-024)',
+                    ''
+                );
+            }
+            return null;
+        }
+    }
+
     // 📌 Create a temporary file with the appropriate extension
     // @see https://www.php.net/manual/en/function.tempnam.php
     // @see https://www.php.net/manual/en/function.sys-get-temp-dir.php
@@ -944,6 +997,148 @@ function saveBase64LogoToTemp(string $dataUri): ?string
     }
 
     return $tempFileWithExt;
+}
+
+// ==============================================================================
+// 🔍 screenBase64LogoDataUri() - Pure pre-check: is this a malicious SVG? (F-024)
+// ==============================================================================
+
+/**
+ * 🔍 Pre-screen a base64 logo data URI for malicious SVG content, WITHOUT
+ *    writing anything to disk
+ *
+ * A pure, read-only companion to saveBase64LogoToTemp()'s in-line SVG screen
+ * (above): it decodes the data URI in memory only and, if the content is SVG
+ * (declared MIME `image/svg+xml` OR sniffed `<svg` content regardless of the
+ * declared MIME), runs it through the SAME shared screenSvgLogoContent()
+ * screener (fn_validation.php) used by both logo intake paths.
+ *
+ * This exists so the JSON API handlers (fn_api_generate.php, fn_api_qrcodes.php)
+ * can reject a malicious SVG logo EARLY, with a distinct, actionable HTTP 422
+ * `LOGO_SVG_REJECTED` error — rather than the request silently succeeding
+ * with the logo quietly dropped (which is what happens further downstream if
+ * saveBase64LogoToTemp() alone returns null: the generation pipeline's logo
+ * overlay step treats a null logo path as "no logo" and continues).
+ *
+ * Non-SVG data URIs, and anything that is not a well-formed
+ * `data:image/...;base64,...` string, are left alone here (returns null) —
+ * saveBase64LogoToTemp() handles the normal decode-failure / size-cap paths
+ * for those on its own.
+ *
+ * @param string $dataUri Candidate `data:image/...;base64,...` string (or any
+ *                         other string — non-matching input returns null).
+ *
+ * @return string|null A human-readable rejection reason if unsafe SVG content
+ *                      was found, or null if the input is safe / not an SVG
+ *                      data URI / not decodable here.
+ *
+ * @see screenSvgLogoContent() (fn_validation.php) - the shared screener
+ * @see saveBase64LogoToTemp() (this file) - the actual write-path enforcement
+ * @see rejectUnsafeBase64SvgLogo() (this file) - the customization-shaped wrapper
+ */
+function screenBase64LogoDataUri(string $dataUri): ?string
+{
+    // 📌 Same data-URI shape saveBase64LogoToTemp() expects.
+    if (preg_match('/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/s', trim($dataUri), $matches) !== 1) {
+        return null;
+    }
+
+    $subtype = strtolower($matches[1]);
+
+    // 📌 Decode in memory only - no filesystem I/O for this pre-check.
+    // @see https://www.php.net/manual/en/function.base64-decode.php
+    $decoded = base64_decode($matches[2], true);
+
+    if ($decoded === false) {
+        // ❌ Not decodable here; saveBase64LogoToTemp() rejects invalid base64
+        //    itself when the real decode is attempted.
+        return null;
+    }
+
+    // 📌 Treat as SVG if the declared MIME sub-type says so, OR the decoded
+    //    bytes sniff as SVG regardless of what the MIME sub-type claims (a
+    //    mislabelled sub-type must not bypass the screen).
+    $looksLikeSvg = ($subtype === 'svg+xml') || (stripos($decoded, '<svg') !== false);
+
+    if (!$looksLikeSvg) {
+        return null;
+    }
+
+    if (!function_exists('screenSvgLogoContent')) {
+        // ⚠️ fn_validation.php not loaded — fail closed for SVG rather than
+        //    silently accept unscreened active content.
+        return 'SVG safety screening is unavailable; SVG logo rejected as a precaution.';
+    }
+
+    $screen = screenSvgLogoContent($decoded);
+
+    if ($screen['valid'] === false) {
+        return (string) $screen['error'];
+    }
+
+    return null;
+}
+
+// ==============================================================================
+// 🚫 rejectUnsafeBase64SvgLogo() - API-facing customization pre-check (F-024)
+// ==============================================================================
+
+/**
+ * 🚫 Check a built customization array for a malicious base64 SVG logo
+ *
+ * Thin wrapper around screenBase64LogoDataUri() that knows the SHAPE of the
+ * customization array produced by fn_api_generate.php's
+ * buildCustomizationFromRequest(): a logo can arrive as EITHER
+ * `customization['logo_data']` (the companion field sent alongside
+ * `logo === 'upload'`) OR directly as `customization['logo']` (a client MAY
+ * supply a `data:image/...;base64,...` string there directly — getLogoPath()
+ * Case 2 accepts that shape too). Both are checked so neither entry point
+ * can bypass the screen.
+ *
+ * Intended to be called by every JSON API handler that reaches
+ * validateCustomization() — handleGenerate()/handlePreview()
+ * (fn_api_generate.php) and the PATCH /qrcodes/{uuid} handler
+ * (fn_api_qrcodes.php) — immediately BEFORE that call, so a malicious SVG
+ * logo is rejected with a clear, distinct HTTP 422 `LOGO_SVG_REJECTED`
+ * instead of falling through to a generic 400 `INVALID_CUSTOMIZATION` or
+ * (worse) silently generating a logo-less QR code.
+ *
+ * @param array $customization The built customization array (post
+ *                              buildCustomizationFromRequest()).
+ *
+ * @return string|null A ready-to-display rejection message, or null if no
+ *                      unsafe SVG logo was found.
+ *
+ * @see screenBase64LogoDataUri() (this file) - the actual decode + screen
+ * @see fn_api_generate.php - handleGenerate(), handlePreview()
+ * @see fn_api_qrcodes.php  - the PATCH /qrcodes/{uuid} handler
+ */
+function rejectUnsafeBase64SvgLogo(array $customization): ?string
+{
+    $candidates = [];
+
+    if (isset($customization['logo_data']) && is_string($customization['logo_data'])) {
+        $candidates[] = $customization['logo_data'];
+    }
+
+    if (isset($customization['logo']) && is_string($customization['logo'])) {
+        $candidates[] = $customization['logo'];
+    }
+
+    foreach ($candidates as $candidate) {
+        if (!function_exists('screenBase64LogoDataUri')) {
+            break;
+        }
+
+        $reason = screenBase64LogoDataUri($candidate);
+
+        if ($reason !== null) {
+            return 'Logo rejected: the SVG logo contains disallowed active content ('
+                . $reason . ') Use a clean SVG or a raster image (PNG/JPG/GIF/WEBP) instead.';
+        }
+    }
+
+    return null;
 }
 
 // ==============================================================================
