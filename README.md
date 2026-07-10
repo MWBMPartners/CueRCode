@@ -112,6 +112,7 @@ CueRCode/
   rendered directly from `openapi.json` (no hand-copied duplicate), an errors/rate-limit reference, code
   samples (curl/PHP/JavaScript/Python), and integration recipes.
 - 🧪 **Interactive Swagger UI**: `/api/docs/` - explore and try out every endpoint against the live spec.
+- ✅ **`openapi.json` is drift-free (2026-07-10 refresh)**: every one of the 27 documented paths (25 real `api/v1` routes + 2 SSO browser-redirect routes intentionally included for completeness) matches the router's route table exactly - a router↔spec diff and the API-key scope allowlist are both enforced by an automated drift-guard test (`tests/test_openapi_render.php`) that fails the build the moment either side changes without the other.
 
 ### 💡 Quick Example
 

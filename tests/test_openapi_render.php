@@ -353,8 +353,10 @@ assertFalse(
     'oapiOperationHasRateLimitHeaders() returns false when no response declares one'
 );
 
-// 📌 Real spec: /generate's 200 response declares rate-limit headers; /health's
-// 200 response does not (documented as "exempt in practice").
+// 📌 Real spec: /generate's 200 response declares rate-limit headers, and so
+// does /health's - health is NOT exempt from rate limiting (the router applies
+// the same per-key/per-IP check to every route; a prior revision of this spec
+// incorrectly documented health as exempt - see the 2026-07-10 OpenAPI refresh).
 $generateResponses = $realSpec['paths']['/generate']['post']['responses'];
 $healthResponses    = $realSpec['paths']['/health']['get']['responses'];
 
@@ -362,9 +364,9 @@ assertTrue(
     oapiOperationHasRateLimitHeaders($generateResponses, $realSpec),
     '/generate\'s real 200 response declares X-RateLimit-* headers'
 );
-assertFalse(
+assertTrue(
     oapiOperationHasRateLimitHeaders($healthResponses, $realSpec),
-    '/health\'s real 200 response does NOT declare X-RateLimit-* headers (exempt in practice)'
+    '/health\'s real 200 response DOES declare X-RateLimit-* headers (not exempt from rate limiting)'
 );
 
 // ==============================================================================
@@ -430,3 +432,247 @@ assertContains(
     $renderedGenerateResponses,
     'oapiRenderResponses() resolves the $ref\'d shared "Unauthorized" response and renders its example error_code'
 );
+
+// ==============================================================================
+// 🛡️ DRIFT GUARD (2026-07-10 OpenAPI refresh) - router route table ⇄ openapi.json
+// ==============================================================================
+// The single biggest risk to "the OpenAPI spec fully and accurately describes
+// the CURRENT API" is silent drift: a route added/removed/changed in the real
+// router (public_html/api/v1/index.php) without a matching openapi.json edit.
+// This section parses the REAL router source's `$routes` table (regex, not an
+// `include` - the router file has side effects like CORS headers on load) and
+// diffs its {pattern, methods} set against the real openapi.json's `paths`.
+//
+// Two SSO browser-redirect paths (auth/{provider}, auth/callback/{provider})
+// are DELIBERATELY documented in openapi.json for completeness even though
+// they are NOT registered in the api/v1 router's $routes table at all - they
+// live at public_html/auth/index.php + public_html/auth/callback/index.php,
+// outside the versioned JSON API (see each path's own `servers` override and
+// the "SSO" tag description). They are the only permitted spec-has-no-route
+// exceptions; anything else on either side of the diff is a real drift bug.
+// ==============================================================================
+
+$routerSourcePath = CUERCODE_SITE_ROOT . 'public_html' . DIRECTORY_SEPARATOR
+    . 'api' . DIRECTORY_SEPARATOR . 'v1' . DIRECTORY_SEPARATOR . 'index.php';
+
+assertTrue(
+    is_file($routerSourcePath),
+    'the real router source file exists at the expected path: ' . $routerSourcePath
+);
+
+$routerSource = (string) file_get_contents($routerSourcePath);
+
+// 📌 Extract every ['pattern' => '...', 'methods' => [...]] entry from the
+// $routes table. This is a text-level parse (not include()) so this test file
+// never triggers the router's own header()/CORS/exit side effects.
+preg_match_all(
+    '/\'pattern\'\s*=>\s*\'([^\']+)\',\s*\n\s*\'methods\'\s*=>\s*\[([^\]]+)\]/',
+    $routerSource,
+    $routeMatches,
+    PREG_SET_ORDER
+);
+
+assertTrue(
+    count($routeMatches) >= 20,
+    'router source regex extracted a plausible number of routes (>= 20): found ' . count($routeMatches)
+);
+
+$routerRoutes = [];
+foreach ($routeMatches as $routeMatch) {
+    $routerPath = '/' . $routeMatch[1];
+    preg_match_all("/'([A-Za-z]+)'/", $routeMatch[2], $methodMatches);
+    $routerRoutes[$routerPath] = array_map('strtoupper', $methodMatches[1]);
+}
+
+// 📌 Every router route must have a matching openapi.json path with every one
+// of its HTTP methods declared.
+$missingFromSpec = [];
+foreach ($routerRoutes as $routerPath => $routerMethods) {
+    if (!isset($realSpec['paths'][$routerPath])) {
+        $missingFromSpec[] = $routerPath;
+        continue;
+    }
+    foreach ($routerMethods as $routerMethod) {
+        $lowerMethod = strtolower($routerMethod);
+        if (!isset($realSpec['paths'][$routerPath][$lowerMethod])) {
+            $missingFromSpec[] = $routerMethod . ' ' . $routerPath;
+        }
+    }
+}
+
+assertEquals(
+    [],
+    $missingFromSpec,
+    'every router route (path + method) has a matching openapi.json path+method - '
+    . 'DRIFT GUARD: if this fails, a real route is undocumented (list: ' . implode(', ', $missingFromSpec) . ')'
+);
+
+// 📌 The reverse direction: every openapi.json path must correspond to a real
+// router route, EXCEPT the two documented-as-out-of-scope SSO browser routes.
+$ssoOutOfRouterScopePaths = ['/auth/{provider}', '/auth/callback/{provider}'];
+
+$specPathsNotInRouter = [];
+foreach (array_keys($realSpec['paths']) as $specPath) {
+    if (in_array($specPath, $ssoOutOfRouterScopePaths, true)) {
+        continue;
+    }
+    if (!isset($routerRoutes[$specPath])) {
+        $specPathsNotInRouter[] = $specPath;
+    }
+}
+
+assertEquals(
+    [],
+    $specPathsNotInRouter,
+    'every non-SSO openapi.json path corresponds to a real router route - '
+    . 'DRIFT GUARD: if this fails, the spec documents a path the router no longer serves (list: '
+    . implode(', ', $specPathsNotInRouter) . ')'
+);
+
+// 📌 Exactly the 2 SSO exemptions, no more - if a THIRD spec path with no
+// router route ever appears, the loop above already caught it via a non-empty
+// $specPathsNotInRouter; this just double-checks the exemption list itself is
+// still both present and NOT silently grown.
+foreach ($ssoOutOfRouterScopePaths as $ssoPath) {
+    assertTrue(
+        isset($realSpec['paths'][$ssoPath]),
+        'the expected SSO out-of-router-scope path is still documented: ' . $ssoPath
+    );
+    assertFalse(
+        isset($routerRoutes[$ssoPath]),
+        'the SSO path ' . $ssoPath . ' is confirmed NOT a real api/v1 router route (still an intentional exemption)'
+    );
+}
+
+// ==============================================================================
+// 🔑 DRIFT GUARD - the 7-scope API-key allowlist (fn_api_keys.php ⇄ openapi.json)
+// ==============================================================================
+// fn_api_keys.php's CUERCODE_API_KEY_SCOPE_ALLOWLIST is the single source of
+// truth for which scopes an API key can be granted. openapi.json's
+// ApiKeyCreateRequest.scopes.items.enum must list EXACTLY the same set, in the
+// same order (the info.description prose also names them - checked below too).
+// ==============================================================================
+
+requireFn('fn_api_keys.php');
+
+assertTrue(
+    defined('CUERCODE_API_KEY_SCOPE_ALLOWLIST'),
+    'fn_api_keys.php defines CUERCODE_API_KEY_SCOPE_ALLOWLIST'
+);
+
+$codeScopeAllowlist = defined('CUERCODE_API_KEY_SCOPE_ALLOWLIST') ? CUERCODE_API_KEY_SCOPE_ALLOWLIST : [];
+
+$specScopeEnum = $realSpec['components']['schemas']['ApiKeyCreateRequest']['properties']['scopes']['items']['enum'] ?? null;
+
+assertTrue(
+    is_array($specScopeEnum),
+    'openapi.json ApiKeyCreateRequest.scopes.items.enum is a declared array'
+);
+
+assertEquals(
+    $codeScopeAllowlist,
+    $specScopeEnum,
+    'DRIFT GUARD: openapi.json\'s ApiKeyCreateRequest scope enum matches fn_api_keys.php\'s '
+    . 'CUERCODE_API_KEY_SCOPE_ALLOWLIST exactly (same values, same order)'
+);
+
+assertEquals(
+    7,
+    count($codeScopeAllowlist),
+    'the API-key scope allowlist has exactly 7 entries (generate, preview, download, bulk, '
+    . 'qrcodes:read, qrcodes:write, save)'
+);
+
+foreach ($codeScopeAllowlist as $expectedScope) {
+    assertContains(
+        $expectedScope,
+        (string) ($realSpec['info']['description'] ?? ''),
+        'openapi.json info.description prose names the scope: ' . $expectedScope
+    );
+}
+
+// ==============================================================================
+// 🔒 DRIFT GUARD - securitySchemes are declared and correctly named
+// ==============================================================================
+
+assertTrue(
+    isset($realSpec['components']['securitySchemes']['ApiKeyAuth']),
+    'openapi.json declares the ApiKeyAuth security scheme'
+);
+assertTrue(
+    isset($realSpec['components']['securitySchemes']['CsrfAuth']),
+    'openapi.json declares the CsrfAuth security scheme'
+);
+assertEquals(
+    'apiKey',
+    $realSpec['components']['securitySchemes']['ApiKeyAuth']['type'] ?? null,
+    'ApiKeyAuth is declared as an apiKey-type security scheme'
+);
+assertEquals(
+    'X-API-Key',
+    $realSpec['components']['securitySchemes']['ApiKeyAuth']['name'] ?? null,
+    'ApiKeyAuth reads the X-API-Key header (matches fn_api_auth.php\'s authenticateAPIRequest())'
+);
+assertEquals(
+    'X-CSRF-Token',
+    $realSpec['components']['securitySchemes']['CsrfAuth']['name'] ?? null,
+    'CsrfAuth reads the X-CSRF-Token header (matches fn_api_auth.php\'s authenticateAPIRequest())'
+);
+
+// ==============================================================================
+// 🩺 DRIFT GUARD - every route the router marks 'rateLimit' => true has a
+// 429 response declared in openapi.json (spot-checks the two easiest-to-miss
+// anonymous/public routes, since the earlier oapiOperationHasRateLimitHeaders()
+// assertions already prove /generate and /health both carry X-RateLimit-*
+// headers on 200).
+// ==============================================================================
+
+foreach (['/types', '/formats', '/health', '/bulk-generate'] as $rateLimitedPath) {
+    $pathMethods = $realSpec['paths'][$rateLimitedPath] ?? [];
+    $hasA429 = false;
+    foreach ($pathMethods as $methodKey => $operation) {
+        if (!is_array($operation) || !isset($operation['responses']) || !is_array($operation['responses'])) {
+            continue;
+        }
+        if (isset($operation['responses']['429'])) {
+            $hasA429 = true;
+            break;
+        }
+    }
+    assertTrue(
+        $hasA429,
+        'DRIFT GUARD: ' . $rateLimitedPath . ' declares a 429 response (every router route is rate-limited)'
+    );
+}
+
+// ==============================================================================
+// 🧯 DRIFT GUARD - the shared ServiceUnavailable (503) response component
+// exists and is actually referenced by at least the routes known to emit a
+// real SERVICE_UNAVAILABLE 503 from their handlers (fn_api_generate.php,
+// fn_api_bulk.php, fn_api_qrcodes.php, fn_api_accounts.php/fn_auth.php,
+// fn_api_account.php, fn_api_keys.php all call errorResponse(..., 503,
+// 'SERVICE_UNAVAILABLE') from a pre-flight dbQuery()-unavailable guard).
+// ==============================================================================
+
+assertTrue(
+    isset($realSpec['components']['responses']['ServiceUnavailable']),
+    'openapi.json declares the shared components/responses/ServiceUnavailable (503) response'
+);
+
+foreach (['/generate', '/preview', '/save', '/keys'] as $mustHave503Path) {
+    $pathMethods = $realSpec['paths'][$mustHave503Path] ?? [];
+    $hasA503 = false;
+    foreach ($pathMethods as $methodKey => $operation) {
+        if (!is_array($operation) || !isset($operation['responses']) || !is_array($operation['responses'])) {
+            continue;
+        }
+        if (isset($operation['responses']['503'])) {
+            $hasA503 = true;
+            break;
+        }
+    }
+    assertTrue(
+        $hasA503,
+        'DRIFT GUARD: ' . $mustHave503Path . ' declares a 503 response (matches its handler\'s real SERVICE_UNAVAILABLE guard)'
+    );
+}

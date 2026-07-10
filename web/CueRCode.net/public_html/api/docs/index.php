@@ -28,9 +28,18 @@
 // ==============================================================================
 // This file is located at: public_html/api/docs/index.php
 // Bootstrap is at:         _includes/bootstrap.php
+// Path: ../../ goes to public_html/, then ../ goes to site root, then _includes/
+// (public_html/api/docs/ is TWO directories deep under public_html/ - "api" and
+// "docs" - so escaping to site root needs THREE '../' segments, exactly like the
+// other two-deep entry points public_html/api/v1/index.php and
+// public_html/developers/reference/index.php. A prior revision of this file
+// used only two '../' segments, which resolved to public_html/_includes/
+// bootstrap.php - a path that does not exist - fataling this page 100% of the
+// time (2026-07-10 OpenAPI refresh: caught by driving this page live via
+// php -S during Swagger UI render verification).
 // @see https://www.php.net/manual/en/function.require-once.php
 // ==============================================================================
-require_once __DIR__ . '/../../_includes/bootstrap.php';
+require_once __DIR__ . '/../../../_includes/bootstrap.php';
 
 // ==============================================================================
 // ⚙️ Page Configuration
