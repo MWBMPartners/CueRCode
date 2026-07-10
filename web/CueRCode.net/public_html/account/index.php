@@ -107,6 +107,7 @@ $passwordMessage = null;
 $sessionMessage  = null;
 $qrMessage       = null;
 $apiKeyMessage   = null;
+$ssoMessage      = null; // Epic E2, #55/#19/#20/#28 - linked-provider unlink feedback
 $logoutRequested = false;
 
 // 📌 Epic E7 stage 1 (#54): holds the FULL raw key from a just-created or
@@ -369,6 +370,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // ------------------------------------------------------------------
+    // 🔗 Unlink a linked SSO provider (Epic E2, #55/#19/#20/#28)
+    // ------------------------------------------------------------------
+    if (isset($_POST['oauth_unlink_submit'])) {
+        if (!accountPagePostCsrfValid()) {
+            $ssoMessage = ['success' => false, 'text' => 'Your session has expired. Please reload the page and try again.'];
+        } else {
+            $targetOauthId = isset($_POST['oauth_id']) ? (int) $_POST['oauth_id'] : 0;
+
+            if ($targetOauthId <= 0) {
+                $ssoMessage = ['success' => false, 'text' => 'That linked account could not be found.'];
+            } else {
+                $unlinkResult = unlinkOAuthProviderForUser($currentUserId, $targetOauthId);
+                $ssoMessage   = ['success' => $unlinkResult['success'], 'text' => $unlinkResult['message']];
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 🚪 Logout
     // ------------------------------------------------------------------
     if (isset($_POST['logout_submit']) && accountPagePostCsrfValid()) {
@@ -466,6 +485,39 @@ $savedCodesTotalPages = $pagination['per_page'] > 0 ? (int) ceil($savedCodesTota
 $activeSessions = listUserSessions($currentUserId, $currentSessionToken);
 
 // ==============================================================================
+// 🔗 Linked SSO providers (Epic E2, #55/#19/#20/#28)
+// ==============================================================================
+// Every provider is listed either as "linked" (with an unlink form) or as an
+// available "Link" button - but the "Link" button is rendered ONLY when that
+// provider is enabled+configured (ssoProviderIsUsable()), same gating as the
+// login/register page buttons.
+// ==============================================================================
+
+$linkedSsoProviders = listLinkedOAuthProvidersForUser($currentUserId);
+
+$linkedSsoProviderKeys = [];
+foreach ($linkedSsoProviders as $linkedProviderRow) {
+    $linkedSsoProviderKeys[] = $linkedProviderRow['provider'];
+}
+
+$availableSsoProviders = [];
+foreach (ssoSupportedProviders() as $ssoProviderKey) {
+    if (in_array($ssoProviderKey, $linkedSsoProviderKeys, true)) {
+        continue;
+    }
+
+    $ssoProviderMeta = ssoProviderUiMeta($ssoProviderKey);
+
+    if ($ssoProviderMeta['usable']) {
+        $availableSsoProviders[] = $ssoProviderMeta;
+    }
+}
+
+// 🛡️ Never let the UI offer to unlink the account's LAST sign-in method -
+// mirrors unlinkOAuthProviderForUser()'s own server-side enforcement.
+$accountHasPasswordSet = userHasPasswordSet($currentUserId);
+
+// ==============================================================================
 // ⚙️ Page Variables
 // ==============================================================================
 
@@ -498,6 +550,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <li class="nav-item"><a class="nav-link" href="#profile-section">Profile</a></li>
                     <li class="nav-item"><a class="nav-link" href="#library-section">Saved codes</a></li>
                     <li class="nav-item"><a class="nav-link" href="#security-section">Security</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#sso-section">Linked accounts</a></li>
                     <li class="nav-item"><a class="nav-link" href="#api-keys-section">API keys</a></li>
                 </ul>
             </nav>
@@ -766,6 +819,89 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </li>
                         <?php } ?>
                     </ul>
+                    <?php } ?>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 🔗 Linked Accounts / SSO Section (Epic E2, #55/#19/#20/#28)
+                 ================================================================ -->
+            <div class="card shadow-sm mb-4" id="sso-section">
+                <div class="card-header bg-transparent">
+                    <h2 class="h5 mb-0"><i class="fa-solid fa-link me-2" aria-hidden="true"></i>Linked accounts</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-body-secondary">
+                        Sign in faster by linking a Microsoft 365 or Google account. Every SSO identity is linked to
+                        THIS CueRCode account only - it is never used to auto-link a different account, even if the
+                        email addresses match.
+                    </p>
+
+                    <?php if ($ssoMessage !== null) { ?>
+                    <div class="alert <?php echo $ssoMessage['success'] ? 'alert-success' : 'alert-danger'; ?>"
+                         role="<?php echo $ssoMessage['success'] ? 'status' : 'alert'; ?>" id="sso-message">
+                        <i class="fa-solid <?php echo $ssoMessage['success'] ? 'fa-circle-check' : 'fa-triangle-exclamation'; ?> me-1" aria-hidden="true"></i>
+                        <?php echo htmlspecialchars($ssoMessage['text'], ENT_QUOTES, 'UTF-8'); ?>
+                    </div>
+                    <?php } ?>
+
+                    <h3 class="h6 fw-bold">Currently linked</h3>
+                    <?php if (empty($linkedSsoProviders)) { ?>
+                    <p class="text-body-secondary" id="sso-linked-list-empty">No providers linked yet.</p>
+                    <?php } else { ?>
+                    <ul class="list-group mb-3" id="sso-linked-list">
+                        <?php foreach ($linkedSsoProviders as $linkedProvider) { ?>
+                        <?php
+                        // 🛡️ Never offer to unlink the account's LAST sign-in
+                        // method (no password set AND this is the only linked
+                        // provider) - mirrors unlinkOAuthProviderForUser()'s
+                        // own server-side enforcement, rendered here too so
+                        // the control is not misleadingly shown as available.
+                        $isOnlyCredential = (!$accountHasPasswordSet && count($linkedSsoProviders) <= 1);
+                        ?>
+                        <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2"
+                            data-oauth-id="<?php echo (int) $linkedProvider['id']; ?>">
+                            <div>
+                                <i class="<?php echo htmlspecialchars(ssoProviderIconClass($linkedProvider['provider']), ENT_QUOTES, 'UTF-8'); ?> me-1" aria-hidden="true"></i>
+                                <strong><?php echo htmlspecialchars($linkedProvider['display_name'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                                <div class="small text-body-secondary">
+                                    <code><?php echo htmlspecialchars($linkedProvider['masked_subject'], ENT_QUOTES, 'UTF-8'); ?></code>
+                                    &middot; Linked <?php echo htmlspecialchars(date('j M Y', strtotime($linkedProvider['linked_at'])), ENT_QUOTES, 'UTF-8'); ?>
+                                </div>
+                            </div>
+                            <?php if ($isOnlyCredential) { ?>
+                            <span class="badge text-bg-secondary" title="Set a password before unlinking your only sign-in method">
+                                Only sign-in method
+                            </span>
+                            <?php } else { ?>
+                            <form method="POST" action="/account/#sso-section" class="unlink-sso-form">
+                                <?php echo csrfField(); ?>
+                                <input type="hidden" name="oauth_unlink_submit" value="1">
+                                <input type="hidden" name="oauth_id" value="<?php echo (int) $linkedProvider['id']; ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                    <i class="fa-solid fa-link-slash me-1" aria-hidden="true"></i> Unlink
+                                </button>
+                            </form>
+                            <?php } ?>
+                        </li>
+                        <?php } ?>
+                    </ul>
+                    <?php } ?>
+
+                    <?php if (!empty($availableSsoProviders)) { ?>
+                    <h3 class="h6 fw-bold">Link another provider</h3>
+                    <div class="d-flex gap-2 flex-wrap" id="sso-link-buttons">
+                        <?php foreach ($availableSsoProviders as $availableProvider) { ?>
+                        <form method="POST" action="/auth/<?php echo rawurlencode($availableProvider['provider']); ?>" class="d-inline">
+                            <?php echo csrfField(); ?>
+                            <input type="hidden" name="next" value="/account/#sso-section">
+                            <button type="submit" class="btn btn-outline-secondary btn-sm">
+                                <i class="<?php echo htmlspecialchars($availableProvider['iconClass'], ENT_QUOTES, 'UTF-8'); ?> me-1" aria-hidden="true"></i>
+                                Link <?php echo htmlspecialchars($availableProvider['displayName'], ENT_QUOTES, 'UTF-8'); ?>
+                            </button>
+                        </form>
+                        <?php } ?>
+                    </div>
                     <?php } ?>
                 </div>
             </div>

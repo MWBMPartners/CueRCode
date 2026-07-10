@@ -144,6 +144,19 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 continue;
                             }
 
+                            // 🔀 Epic E2 (#55/#19/#20/#28): a path CAN carry its own
+                            // `servers` override (OpenAPI 3.0 §4.7.9.1) when it lives
+                            // OUTSIDE the global `/api/v1` base - the SSO browser-
+                            // redirect routes (/auth/{provider}, /auth/callback/
+                            // {provider}) do exactly this so they render with their
+                            // REAL site-root path instead of a misleading
+                            // "/api/v1/auth/..." prefix.
+                            if (isset($pathItem['servers'][0]['url']) && is_string($pathItem['servers'][0]['url'])) {
+                                $pathBase = $pathItem['servers'][0]['url'];
+                            } else {
+                                $pathBase = '/api/v1';
+                            }
+
                             foreach ($pathItem as $method => $operation) {
                                 $methodLower = strtolower((string) $method);
 
@@ -161,6 +174,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                                 $operations[] = [
                                     'path'      => (string) $pathKey,
+                                    'fullPath'  => $pathBase . (string) $pathKey,
                                     'method'    => $methodLower,
                                     'anchor'    => $anchorId,
                                     'operation' => $operation,
@@ -183,7 +197,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <span class="badge <?php echo htmlspecialchars(oapiMethodBadgeClass($opEntry['method']), ENT_QUOTES, 'UTF-8'); ?>">
                                         <?php echo htmlspecialchars(strtoupper($opEntry['method']), ENT_QUOTES, 'UTF-8'); ?>
                                     </span>
-                                    <code>/api/v1/<?php echo htmlspecialchars($opEntry['path'], ENT_QUOTES, 'UTF-8'); ?></code>
+                                    <code><?php echo htmlspecialchars($opEntry['fullPath'], ENT_QUOTES, 'UTF-8'); ?></code>
                                     <?php if ($summary !== '') { ?>
                                         - <?php echo htmlspecialchars($summary, ENT_QUOTES, 'UTF-8'); ?>
                                     <?php } ?>
@@ -199,6 +213,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <?php foreach ($operations as $opEntry) {
                         $method    = $opEntry['method'];
                         $path      = $opEntry['path'];
+                        $fullPath  = $opEntry['fullPath'];
                         $anchor    = $opEntry['anchor'];
                         $operation = $opEntry['operation'];
 
@@ -214,7 +229,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <span class="badge <?php echo htmlspecialchars(oapiMethodBadgeClass($method), ENT_QUOTES, 'UTF-8'); ?> me-2">
                                 <?php echo htmlspecialchars(strtoupper($method), ENT_QUOTES, 'UTF-8'); ?>
                             </span>
-                            <code class="fs-6"><?php echo htmlspecialchars('/api/v1/' . $path, ENT_QUOTES, 'UTF-8'); ?></code>
+                            <code class="fs-6"><?php echo htmlspecialchars($fullPath, ENT_QUOTES, 'UTF-8'); ?></code>
                             <?php foreach ($tags as $tag) { ?>
                                 <span class="badge text-bg-light border ms-1"><?php echo htmlspecialchars((string) $tag, ENT_QUOTES, 'UTF-8'); ?></span>
                             <?php } ?>

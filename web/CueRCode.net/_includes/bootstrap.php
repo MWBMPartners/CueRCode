@@ -190,6 +190,14 @@ $functionFiles = [
     'fn_email.php',
     'fn_auth.php',           // 🔐 currentUser()/requireAuth()/session engine (Epic E3)
     'fn_features.php',       // 💳 planForUser()/limitFor()/featureEnabled() (Epic E4 framework, used by the account dashboard + generator "Save" gating)
+    // 🔐 Epic E2 (#55/#19/#20/#28): the OIDC/OAuth2 SSO client engine is a
+    // GLOBAL bootstrap include (not just an API-router file) so that
+    // login/index.php, register/index.php, and account/index.php can all
+    // call ssoProviderIsUsable()/ssoProviderUiMeta() to decide whether to
+    // render a provider's "Sign in with ..." button - every provider is
+    // INERT by default (sso_enabled + sso_<provider>_enabled both seed 0),
+    // so loading this file globally attempts zero outbound network calls.
+    'fn_oauth.php',
 ];
 
 foreach ($functionFiles as $functionFile) {

@@ -107,6 +107,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_submit'])) {
 }
 
 // ==============================================================================
+// 🔐 SSO providers (Epic E2, #55/#19/#20/#28) - rendered ONLY when a
+// provider is both enabled AND fully configured (ssoProviderIsUsable()) -
+// signing up via SSO auto-verifies the email through the IdP, so these
+// buttons double as an instant-registration path (see fn_oauth.php's
+// decideOAuthAccountLinkAction() 'create_new' branch).
+// ==============================================================================
+
+$ssoRegisterProviders = [];
+
+if (function_exists('ssoSupportedProviders')) {
+    foreach (ssoSupportedProviders() as $ssoProviderKey) {
+        $ssoProviderMeta = ssoProviderUiMeta($ssoProviderKey);
+
+        if ($ssoProviderMeta['usable']) {
+            $ssoRegisterProviders[] = $ssoProviderMeta;
+        }
+    }
+}
+
+// ==============================================================================
 // ⚙️ Page Variables
 // ==============================================================================
 
@@ -171,6 +191,26 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     JavaScript is disabled - this form will submit normally and reload the page.
                                 </div>
                             </noscript>
+
+                            <?php if (!empty($ssoRegisterProviders)) { ?>
+                            <!-- ================================================
+                                 🔐 SSO sign-up buttons (Epic E2, #55/#19/#20/#28)
+                                 ================================================ -->
+                            <div class="d-grid gap-2 mb-3" id="sso-register-buttons">
+                                <?php foreach ($ssoRegisterProviders as $ssoProvider) { ?>
+                                <a class="btn btn-outline-secondary"
+                                   href="/auth/<?php echo rawurlencode($ssoProvider['provider']); ?>">
+                                    <i class="<?php echo htmlspecialchars($ssoProvider['iconClass'], ENT_QUOTES, 'UTF-8'); ?> me-2" aria-hidden="true"></i>
+                                    Sign up with <?php echo htmlspecialchars($ssoProvider['displayName'], ENT_QUOTES, 'UTF-8'); ?>
+                                </a>
+                                <?php } ?>
+                            </div>
+                            <div class="d-flex align-items-center my-3" role="separator" aria-label="or">
+                                <hr class="flex-grow-1">
+                                <span class="px-2 text-body-secondary small">or use your email</span>
+                                <hr class="flex-grow-1">
+                            </div>
+                            <?php } ?>
 
                             <form method="POST" action="/register/" id="register-form" novalidate>
                                 <?php echo csrfField(); ?>

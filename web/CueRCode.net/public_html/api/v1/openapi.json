@@ -51,6 +51,10 @@
         {
             "name": "API Keys",
             "description": "Self-service API key create/list/rotate/revoke - own-scoped, CSRF/session-only (Epic E7 stage 1, #54). See the top-level description's \"Self-Service API Keys & Scopes\" section for the full model."
+        },
+        {
+            "name": "SSO",
+            "description": "OIDC/OAuth2 single sign-on - Microsoft 365 and Google now, SIGNula behind a flag pending upstream OIDC support (Epic E2, #55/#19/#20/#28). These are BROWSER-REDIRECT routes (302s and HTML error pages, never JSON) documented here for completeness only - they are NOT part of the versioned /api/v1 JSON contract above; see each path's per-operation `servers` override."
         }
     ],
     "paths": {
@@ -2691,6 +2695,190 @@
                     },
                     "429": {
                         "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/auth/{provider}": {
+            "servers": [
+                {
+                    "url": "",
+                    "description": "Site root (NOT /api/v1) - this route lives at https://cuercode.net/auth/{provider}, outside the versioned JSON API"
+                }
+            ],
+            "get": {
+                "tags": [
+                    "SSO"
+                ],
+                "summary": "Begin an SSO sign-in/link attempt (BROWSER REDIRECT, not JSON)",
+                "description": "⚠️ NOT a JSON API endpoint - this is a browser-redirect route (Epic E2, #55/#19/#20/#28), documented here for completeness only. A visitor's browser navigates here directly (an <a href> on the login/register page for an anonymous sign-in); the response is an HTTP 302 redirect to the provider's own authorize URL (PKCE S256 challenge + a fresh `state`/`nonce` bound to the visitor's session), never a JSON body. If the visitor is ALREADY authenticated, a bare GET instead renders a one-click HTML confirmation page containing the CSRF-protected POST form that actually begins the \"link an additional provider\" flow (see the POST variant below) - a link never begins from a bare GET with no CSRF token. Renders an accessible HTML error page (not JSON) if the provider is unknown or not currently enabled+configured (ssoProviderIsUsable()).",
+                "operationId": "ssoBeginAuth",
+                "parameters": [
+                    {
+                        "name": "provider",
+                        "in": "path",
+                        "required": true,
+                        "description": "SSO provider key",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "microsoft",
+                                "google",
+                                "signula"
+                            ],
+                            "example": "microsoft"
+                        }
+                    },
+                    {
+                        "name": "next",
+                        "in": "query",
+                        "required": false,
+                        "description": "Optional post-login destination - MUST be a same-site, root-relative path (validated against an allowlist via resolveSafeSameSiteRedirect(); an absolute URL, protocol-relative //host, or a javascript:/other scheme silently falls back to /account/)",
+                        "schema": {
+                            "type": "string",
+                            "example": "/account/"
+                        }
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirecting the browser to the provider's authorize URL"
+                    },
+                    "200": {
+                        "description": "An accessible HTML page: either an error (unknown/disabled provider) or, when already authenticated, the one-click link-confirmation form"
+                    },
+                    "404": {
+                        "description": "Unknown provider key"
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "SSO"
+                ],
+                "summary": "Begin a \"link an additional provider\" attempt (authenticated, CSRF-protected, BROWSER REDIRECT)",
+                "description": "⚠️ NOT a JSON API endpoint. Used by the account-settings \"Link ...\" buttons (public_html/account/index.php), which render this as a real <form method=\"POST\"> with a CSRF token - required because, unlike the anonymous GET sign-in flow above, this action affects an ALREADY-authenticated account (Epic E2's \"CSRF on the initiation\" requirement). On success, 302-redirects to the provider's authorize URL exactly like the GET variant; the CALLBACK then links the verified identity onto the CURRENTLY authenticated account rather than creating/logging into a different one - see decideOAuthAccountLinkAction().",
+                "operationId": "ssoBeginLinkAuth",
+                "security": [
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "provider",
+                        "in": "path",
+                        "required": true,
+                        "description": "SSO provider key",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "microsoft",
+                                "google",
+                                "signula"
+                            ],
+                            "example": "microsoft"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "csrf_token": {
+                                        "type": "string",
+                                        "description": "The CSRF token from csrfField()/csrfMeta()"
+                                    },
+                                    "next": {
+                                        "type": "string",
+                                        "example": "/account/#sso-section"
+                                    }
+                                },
+                                "required": [
+                                    "csrf_token"
+                                ]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "302": {
+                        "description": "Redirecting the browser to the provider's authorize URL"
+                    },
+                    "200": {
+                        "description": "An accessible HTML error page (invalid/expired CSRF token, unknown/disabled provider)"
+                    }
+                }
+            }
+        },
+        "/auth/callback/{provider}": {
+            "servers": [
+                {
+                    "url": "",
+                    "description": "Site root (NOT /api/v1) - this is the EXACT redirect_uri every provider is registered with: https://cuercode.net/auth/callback/{provider}"
+                }
+            ],
+            "get": {
+                "tags": [
+                    "SSO"
+                ],
+                "summary": "OAuth2/OIDC callback (BROWSER REDIRECT, not JSON)",
+                "description": "⚠️ NOT a JSON API endpoint - documented here for completeness only. This is the provider's own redirect back to this app after the visitor authenticates/consents (or declines). Verifies `state` (CSRF/replay defence, single-use), exchanges `code` + the PKCE `code_verifier` for tokens at the provider's token endpoint (≤10s), cryptographically verifies the `id_token` (JWKS fetch+cache, RS256-only signature check via openssl_verify(), then iss/aud/exp/iat/nonce claim validation), then applies the account-linking decision table (create a pre-verified account / log an existing linked user in / link an additional provider onto the CURRENTLY authenticated account / refuse - see decideOAuthAccountLinkAction()'s full rationale). On a genuine sign-in outcome, issues a normal CueRCode session via the same hardened path every other login uses (PHP session ID regenerated - session-fixation mitigation). Responds with an HTTP 302 redirect to the caller's (re-validated, same-site-only) safe post-login destination on success, or an accessible HTML error page on any failure - NEVER a JSON body, and no internal error detail beyond a safe generic message.",
+                "operationId": "ssoCallback",
+                "parameters": [
+                    {
+                        "name": "provider",
+                        "in": "path",
+                        "required": true,
+                        "description": "SSO provider key",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "microsoft",
+                                "google",
+                                "signula"
+                            ],
+                            "example": "microsoft"
+                        }
+                    },
+                    {
+                        "name": "code",
+                        "in": "query",
+                        "required": false,
+                        "description": "The authorization code issued by the provider (absent when `error` is present instead)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "required": false,
+                        "description": "The state value round-tripped from the initiation request - verified against the session-bound value (single-use; burned on read regardless of outcome)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "error",
+                        "in": "query",
+                        "required": false,
+                        "description": "Set by the IdP itself when the visitor cancelled consent or the IdP encountered its own error (e.g. access_denied) - when present, code/state are not processed at all",
+                        "schema": {
+                            "type": "string",
+                            "example": "access_denied"
+                        }
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Sign-in/link completed - redirecting to the caller's safe post-login destination"
+                    },
+                    "200": {
+                        "description": "An accessible HTML error page - invalid/expired/replayed state, failed token exchange, failed id_token verification (bad iss/aud/exp/nonce/signature), unverified-email refusal (SSO_EMAIL_NOT_VERIFIED), email-collision refusal (SSO_EMAIL_COLLISION - requires manual link), provider-already-linked-to-a-different-account refusal (SSO_ALREADY_LINKED_ELSEWHERE), or an IdP-reported error/cancellation"
                     }
                 }
             }

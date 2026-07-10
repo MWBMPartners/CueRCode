@@ -51,6 +51,26 @@
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^api/v1/(.+)$ api/v1/index.php?route=$1 [QSA,L]
 
+    # 🔐 SSO / OIDC clean-URL routing (Epic E2, #55/#19/#20/#28)
+    # These are BROWSER-REDIRECT routes (not the JSON API above) - each maps
+    # a per-provider path segment to a single thin dispatcher file so the
+    # exact redirect_uri registered with each IdP
+    # (https://cuercode.net/auth/callback/<provider>) resolves to a real
+    # request path without needing a physical directory per provider.
+    # The callback rule is listed FIRST (more specific: 2 segments after
+    # auth/) so it is matched before the single-segment initiation rule below
+    # ever gets a chance to (Apache still evaluates both in order regardless,
+    # but the patterns are mutually exclusive by segment count anyway).
+    # @see public_html/auth/callback/index.php - completeAuth() + account linking
+    # @see public_html/auth/index.php          - beginAuth() (initiation)
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^auth/callback/([a-z0-9_-]+)/?$ auth/callback/index.php?provider=$1 [QSA,L]
+
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^auth/([a-z0-9_-]+)/?$ auth/index.php?provider=$1 [QSA,L]
+
     # 📄 Default directory index
     DirectoryIndex index.php index.html
 </IfModule>

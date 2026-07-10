@@ -124,7 +124,60 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 -- catalogue itself (prices/features/limits) lives in tblSubscriptionPlans, not
 -- here - these two rows are gating BEHAVIOUR knobs, not plan data.
 ('billing', 'billing_upgrade_url', '/pricing', 'url', 0, 1, 'URL shown to a caller denied a gated feature/limit (requireFeatureOr402() + the bulk-generate over-cap response) - a future plan-selection/pricing page; owner-editable, no code change needed to point it elsewhere'),
-('billing', 'billing_past_due_downgrade_plan_key', 'free', 'string', 0, 1, 'The tblSubscriptionPlans.planKey the gating engine falls back to for CREATING new gated objects while a subscription is past_due (existing objects remain readable regardless) - see fn_features.php effectivePlanForGating()');
+('billing', 'billing_past_due_downgrade_plan_key', 'free', 'string', 0, 1, 'The tblSubscriptionPlans.planKey the gating engine falls back to for CREATING new gated objects while a subscription is past_due (existing objects remain readable regardless) - see fn_features.php effectivePlanForGating()'),
+
+-- 🔐 SSO / OIDC Client Settings (Epic E2 - #55/#19/#20/#28)
+-- ------------------------------------------------------------------------------
+-- ⚠️  INERT BY DEFAULT (mirrors the email_enabled kill-switch pattern above):
+--     `sso_enabled` is a MASTER switch (0 = the whole subsystem is off) AND
+--     each provider has its OWN `sso_<provider>_enabled` flag (also 0) - BOTH
+--     must be 1, plus a non-empty client_id/client_secret/discovery_url,
+--     before `ssoProviderIsUsable()` (fn_oauth.php) will render that
+--     provider's "Sign in with ..." button or accept a callback for it. A
+--     fresh install therefore attempts ZERO outbound SSO-related network
+--     calls until an owner deliberately configures + enables a provider.
+--
+-- 🔑 The `_client_id`/`_client_secret` pairs are isSensitive=1 (AES-256-GCM
+--     encrypted at rest via fn_encryption.php, same as the Graph email
+--     credentials above) and seed EMPTY - never commit real values here; fill
+--     them via the admin settings UI only. `_discovery_url` seeds a stable,
+--     PUBLIC, tenant-agnostic OIDC discovery endpoint for Microsoft/Google
+--     (safe to ship - it identifies no owner secret) so a fresh install only
+--     needs client_id/client_secret + the enabled flags to go live; override
+--     it if a single-tenant Entra ID endpoint is preferred. `_scopes`
+--     defaults to the minimal OIDC set (openid + email + profile) needed to
+--     resolve a verified email address for account linking.
+--
+-- 🧪 `signula` is present in the provider registry (tblUserOAuth.provider
+--     ENUM already includes it) but its `_discovery_url` seeds EMPTY on
+--     purpose: SIGNula.id is not yet an OIDC identity provider (credential-
+--     proxy API only - see PROJECT_ROADMAP.md Epic E2 upstream findings and
+--     SIGNula issue #88) - `ssoProviderIsUsable()` fails closed on the empty
+--     discovery URL regardless of its enabled flag, so this provider stays
+--     structurally inert until upstream IdP work lands, with no special-case
+--     code required.
+--
+-- @see _functions/fn_oauth.php - ssoProviderConfig()/ssoProviderIsUsable()
+-- @see DEV_NOTES.md - "SSO / OIDC Client (Epic E2)" for the owner IdP-registration runbook
+('sso', 'sso_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for the entire SSO subsystem - 0 = fully inert regardless of any per-provider flag below'),
+
+('sso', 'sso_microsoft_enabled', '0', 'boolean', 0, 1, 'Enable "Sign in with Microsoft 365" - requires sso_enabled=1 plus a client ID/secret below'),
+('sso', 'sso_microsoft_client_id', '', 'string', 1, 1, 'Microsoft Entra ID (Azure AD) app registration (client) ID - ENCRYPTED, owner-set via admin only, never commit'),
+('sso', 'sso_microsoft_client_secret', '', 'string', 1, 1, 'Microsoft Entra ID app registration client secret VALUE - ENCRYPTED, owner-set via admin only, never commit'),
+('sso', 'sso_microsoft_discovery_url', 'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration', 'url', 0, 1, 'OIDC discovery document URL (multi-tenant "common" endpoint - supports both work/school and personal Microsoft accounts). Override with a tenant-specific URL to restrict sign-in to a single Entra ID tenant.'),
+('sso', 'sso_microsoft_scopes', 'openid email profile', 'string', 0, 1, 'Space-separated OIDC scopes requested from Microsoft'),
+
+('sso', 'sso_google_enabled', '0', 'boolean', 0, 1, 'Enable "Sign in with Google" - requires sso_enabled=1 plus a client ID/secret below'),
+('sso', 'sso_google_client_id', '', 'string', 1, 1, 'Google Cloud Console OAuth 2.0 client ID - ENCRYPTED, owner-set via admin only, never commit'),
+('sso', 'sso_google_client_secret', '', 'string', 1, 1, 'Google Cloud Console OAuth 2.0 client secret - ENCRYPTED, owner-set via admin only, never commit'),
+('sso', 'sso_google_discovery_url', 'https://accounts.google.com/.well-known/openid-configuration', 'url', 0, 1, 'Google OIDC discovery document URL (stable, public - no owner-specific value)'),
+('sso', 'sso_google_scopes', 'openid email profile', 'string', 0, 1, 'Space-separated OIDC scopes requested from Google'),
+
+('sso', 'sso_signula_enabled', '0', 'boolean', 0, 1, 'Enable "Sign in with SIGNula" - EXPERIMENTAL/pending upstream OIDC support (SIGNula issue #88); stays inert regardless of this flag while sso_signula_discovery_url is empty'),
+('sso', 'sso_signula_client_id', '', 'string', 1, 1, 'SIGNula.id OAuth client ID - ENCRYPTED, owner-set via admin only, never commit (not usable until SIGNula ships an OIDC IdP surface)'),
+('sso', 'sso_signula_client_secret', '', 'string', 1, 1, 'SIGNula.id OAuth client secret - ENCRYPTED, owner-set via admin only, never commit (not usable until SIGNula ships an OIDC IdP surface)'),
+('sso', 'sso_signula_discovery_url', '', 'url', 0, 1, 'OIDC discovery document URL - deliberately seeded EMPTY: SIGNula.id does not yet expose /.well-known/openid-configuration (credential-proxy API only, see PROJECT_ROADMAP.md Epic E2 and SIGNula issue #88). Fill in once upstream ships.'),
+('sso', 'sso_signula_scopes', 'openid email profile', 'string', 0, 1, 'Space-separated OIDC scopes to request from SIGNula once its OIDC IdP surface exists');
 
 -- ==============================================================================
 -- 📱 QR Code Type Definitions (tblQRCodeTypes)
@@ -445,8 +498,11 @@ VALUES
 -- ✅ Seed Data Complete
 -- ==============================================================================
 -- Inserted:
---   - 56 default settings across 7 groups (email group is Microsoft Graph -
---     based settings, Epic E8/#29; new billing group, Epic E4/#25/#26/#53)
+--   - 72 default settings across 8 groups (email group is Microsoft Graph -
+--     based settings, Epic E8/#29; billing group, Epic E4/#25/#26/#53; new
+--     sso group - 16 settings, Epic E2/#55/#19/#20/#28 - every provider
+--     seeded INERT: sso_enabled=0, all sso_<provider>_enabled=0, all
+--     client_id/client_secret empty)
 --   - 26 QR code type definitions with form field schemas
 --   - 25 predefined logo entries
 --   - 4 subscription plan tiers (anonymous/free/pro/business, Epic E4/#53)

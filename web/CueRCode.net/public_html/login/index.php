@@ -140,6 +140,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
 }
 
 // ==============================================================================
+// 🔐 SSO providers (Epic E2, #55/#19/#20/#28) - rendered ONLY when a
+// provider is both enabled AND fully configured (ssoProviderIsUsable()) -
+// a fresh install therefore shows NO SSO buttons at all until an owner
+// deliberately configures + enables at least one provider.
+// ==============================================================================
+
+$ssoLoginProviders = [];
+
+if (function_exists('ssoSupportedProviders')) {
+    foreach (ssoSupportedProviders() as $ssoProviderKey) {
+        $ssoProviderMeta = ssoProviderUiMeta($ssoProviderKey);
+
+        if ($ssoProviderMeta['usable']) {
+            $ssoLoginProviders[] = $ssoProviderMeta;
+        }
+    }
+}
+
+// ==============================================================================
 // ⚙️ Page Variables
 // ==============================================================================
 
@@ -215,6 +234,26 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </button>
                                 </div>
                             </form>
+
+                            <?php if (!empty($ssoLoginProviders)) { ?>
+                            <!-- ================================================
+                                 🔐 SSO sign-in buttons (Epic E2, #55/#19/#20/#28)
+                                 ================================================ -->
+                            <div class="d-flex align-items-center my-3" role="separator" aria-label="or">
+                                <hr class="flex-grow-1">
+                                <span class="px-2 text-body-secondary small">or</span>
+                                <hr class="flex-grow-1">
+                            </div>
+                            <div class="d-grid gap-2" id="sso-login-buttons">
+                                <?php foreach ($ssoLoginProviders as $ssoProvider) { ?>
+                                <a class="btn btn-outline-secondary"
+                                   href="/auth/<?php echo rawurlencode($ssoProvider['provider']); ?><?php echo ($nextUrl !== '/account/') ? '?next=' . rawurlencode($nextUrl) : ''; ?>">
+                                    <i class="<?php echo htmlspecialchars($ssoProvider['iconClass'], ENT_QUOTES, 'UTF-8'); ?> me-2" aria-hidden="true"></i>
+                                    Sign in with <?php echo htmlspecialchars($ssoProvider['displayName'], ENT_QUOTES, 'UTF-8'); ?>
+                                </a>
+                                <?php } ?>
+                            </div>
+                            <?php } ?>
 
                             <p class="text-center mt-3 mb-0">
                                 Don't have an account? <a href="/register/">Create one</a>

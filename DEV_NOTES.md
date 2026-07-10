@@ -312,6 +312,39 @@ Both columns are flat JSON objects - no nesting, no per-tier PHP branches read t
 
 **Not built this stage:** an expiry-date INPUT on `POST /keys` (the column IS enforced - see above - just not settable via this stage's own UI/API); per-key IP allowlisting; a `keys:manage` scope for machine-to-machine key provisioning (see the "owner/design decision" above); org-owned keys (`tblAPIKeys.orgID` exists but nothing in this codebase populates it yet, unchanged from `resolveUserIdFromAuth()`'s pre-existing note). This stage ALSO closes the `FG-019`/README.md "self-service API-key management (needs E6)" note from Epic E3 stage 2b - it shipped as Epic E7 stage 1 instead, since the actual key-lifecycle work (not developer-portal docs) was the real dependency, not E6.
 
+### SSO / OIDC Client (Epic E2, #55/#19/#20/#28, 2026-07-10)
+
+`_functions/fn_oauth.php` is a generic, provider-agnostic OAuth2/OIDC authorization-code + PKCE client (Microsoft 365 + Google now; SIGNula present but structurally inert - see below). Read its own docblock first (it documents the full security posture); this section records the OWNER-FACING setup runbook and the design decisions.
+
+**Inert by default, same convention as `fn_email.php`'s `email_enabled`.** A MASTER `sso_enabled` switch (tblSettings, group `sso`) AND a per-provider `sso_<provider>_enabled` switch both default to `0`, and every provider's `client_id`/`client_secret` seed EMPTY. `ssoProviderIsUsable($provider)` is the single gate every entry point (login/register button rendering, `beginAuth()`, `completeAuth()`) checks - it fails closed the instant ANY of these is unset, so this whole subsystem attempts ZERO outbound network calls on a fresh install.
+
+**Owner setup to activate Microsoft 365:**
+
+1. **Register an app** (Microsoft Entra ID / Azure AD → App registrations → New registration). Choose "Accounts in any organizational directory and personal Microsoft accounts" (multi-tenant) to match the seeded `common` discovery endpoint, or a single-tenant option if you intend to override `sso_microsoft_discovery_url` with your own tenant ID.
+2. **Add a Web platform redirect URI**: exactly `https://cuercode.net/auth/callback/microsoft` (must match byte-for-byte - Entra ID rejects a mismatched `redirect_uri` outright).
+3. **Add the `openid`, `email`, `profile` delegated Microsoft Graph permissions** (these are the OIDC standard scopes - no admin consent should be required for them).
+4. **Create a client secret** (App registration → Certificates & secrets → New client secret) - copy the VALUE (not the secret ID) immediately, it is shown once.
+5. **Fill the settings via the admin UI** (never commit real values - all seed EMPTY): `sso_microsoft_client_id` (the app registration's Application (client) ID), `sso_microsoft_client_secret` (the secret VALUE from step 4).
+6. **Flip `sso_microsoft_enabled` to `1`**, and the master **`sso_enabled` to `1`** (if not already on for another provider).
+
+**Owner setup to activate Google:**
+
+1. **Create OAuth credentials** (Google Cloud Console → APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application).
+2. **Add an Authorized redirect URI**: exactly `https://cuercode.net/auth/callback/google`.
+3. **Configure the OAuth consent screen** with `openid`, `email`, `profile` scopes (Google's non-sensitive standard scopes - no verification review needed for these alone).
+4. **Fill the settings via the admin UI**: `sso_google_client_id`, `sso_google_client_secret`.
+5. **Flip `sso_google_enabled` to `1`** (+ the master switch).
+
+**SIGNula - pending upstream (SIGNula issue #88).** `sso_signula_discovery_url` seeds EMPTY on purpose: SIGNula.id (as verified against its own repo - see PROJECT_ROADMAP.md Epic E2) is currently a credential-proxy REST API (opaque bearer tokens via `POST /api/v1/auth/login`) with **no `/authorize`, `/token`, `/userinfo`, discovery document, or JWKS** - it is not yet an OIDC identity provider. `ssoProviderIsUsable('signula')` fails closed on the empty discovery URL regardless of its own `sso_signula_enabled` flag, so no special-case code is needed to keep it inert - flipping the flag alone does nothing until an owner also fills in a real discovery URL, which cannot happen until SIGNula ships that surface upstream.
+
+**Why the redirect_uri is per-provider, not query-param-based.** Each IdP's app registration allowlists an EXACT redirect URI string; `https://cuercode.net/auth/callback/{provider}` gives each provider its own distinct, registerable URL (via a `.htaccess` clean-URL rewrite to a single `auth/callback/index.php?provider={provider}` dispatcher) rather than one shared callback URL disambiguated by a query parameter that an IdP's allowlist could not distinguish from another provider's callback anyway.
+
+**Account-linking is the core security decision - see `decideOAuthAccountLinkAction()`'s docblock in `fn_oauth.php` for the full table.** Summary: an identity ALREADY linked always logs in as that user; a BRAND NEW identity only auto-creates a local account when the IdP asserts `email_verified=true` AND no local account already claims that email; a verified email that COLLIDES with an existing (not-yet-linked) local account is REFUSED (never auto-linked - the account-takeover defence) and the visitor is told to sign in normally first and link the provider from account settings instead; an unverified email is refused outright, full stop. Linking an ADDITIONAL provider onto an already-authenticated session is a separate code path that does not re-check email verification at all, because the session itself already proves account ownership.
+
+**Why the account-settings "Link" buttons are POST forms, not plain links (the "CSRF on the initiation" requirement).** The anonymous "Sign in with ..." buttons on login/register are ordinary `<a href>` links (a plain GET) - standard OAuth-client UX, and safe because there is no existing account session for a forged request to attack; the `state` parameter is the real defence for that flow. The account-settings "Link" buttons, in contrast, affect an ALREADY-authenticated account, so `public_html/auth/index.php` requires a CSRF-token-validated POST for any authenticated caller and renders a one-click confirmation page (containing that same POST form) if it instead receives a bare GET while authenticated.
+
+**Not built this stage (deferred):** avatar sourcing from the IdP's own profile picture (`fn_auth.php`'s `resolveAvatarUrl()` still documents this as an unreachable Tier 2, by design - out of THIS stage's explicit scope, which is account-linking + session issuance, not profile enrichment); an admin "force logout of all SSO sessions" action; SIGNula (pending upstream, see above); organisation-level SSO enforcement (the `sso` feature flag already exists per-tier in `tblSubscriptionPlans.featuresJSON` from Epic E4, seeded `true` only for the `business` tier - that flag is reserved for a FUTURE "require SSO for this organisation's members" enforcement feature and is deliberately NOT used to gate whether an individual can use the Microsoft/Google sign-in buttons built here, which is a suite-wide convenience available regardless of plan).
+
 ---
 
 ## 🧪 Testing

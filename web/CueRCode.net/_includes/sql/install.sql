@@ -573,16 +573,21 @@ CREATE TABLE IF NOT EXISTS `tblEmailVerifications` (
   COMMENT='📧 Single-use, expiring email verification tokens (hashed at rest) - Epic E3 stage 1';
 
 -- ==============================================================================
--- 📋 Table 15: tblUserOAuth (Epic E2 schema stub - not implemented until E2)
+-- 📋 Table 15: tblUserOAuth (Epic E2 - #55/#19/#20/#28 - client code BUILT)
 -- ==============================================================================
--- Linked external SSO/OAuth identities per local user account. Schema-only
--- this stage (Epic E3 stage 1 folds it into the same migration event per the
--- roadmap so the whole trust-boundary schema ships together) - no OAuth
--- client code exists yet; that is Epic E2 (SIGNula.id / Microsoft / Google).
+-- Linked external SSO/OAuth identities per local user account. This schema
+-- was created in Epic E3 stage 1 (the whole trust-boundary schema shipped
+-- together) and is now BACKED by a real OIDC authorization-code+PKCE client
+-- (_functions/fn_oauth.php, Epic E2, #55/#19/#20/#28) - Microsoft 365 and
+-- Google are fully wired; 'signula' remains present in the ENUM below but
+-- stays structurally INERT (its seeded discovery URL is empty) pending
+-- upstream OIDC support in the SIGNula.id repo (issue #88).
 -- Every SSO identity MUST link to a local tblUsers account (ProjectBrief section 5.3),
--- never stand alone.
+-- never stand alone - see fn_oauth.php's decideOAuthAccountLinkAction() for
+-- the conservative (anti-account-takeover) linking decision table.
 --
 -- @see PROJECT_ROADMAP.md - Epic E2 (SIGNula.id SSO sign-in)
+-- @see _functions/fn_oauth.php - the OAuth2/OIDC client engine
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS `tblUserOAuth` (
     `oauthID`            INT UNSIGNED  NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing linked-identity identifier',
@@ -609,7 +614,7 @@ CREATE TABLE IF NOT EXISTS `tblUserOAuth` (
         ON UPDATE CASCADE
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='🔗 Linked external SSO/OAuth identities per user (Epic E2 schema stub - client code not implemented in E3 stage 1)';
+  COMMENT='🔗 Linked external SSO/OAuth identities per user (Epic E2, #55/#19/#20/#28 - Microsoft/Google client code BUILT; signula inert pending upstream)';
 
 -- ==============================================================================
 -- 📋 Table 16: tblWebAuthnCredentials (G-006 schema stub - not implemented until E3 stage 7)
@@ -901,7 +906,7 @@ CREATE TABLE IF NOT EXISTS `tblPayments` (
 --  12. tblUserSessions          - Authenticated user sessions (Epic E3 stage 1 - #14)
 --  13. tblPasswordResets        - Password reset tokens (Epic E3 stage 1 - #15)
 --  14. tblEmailVerifications    - Email verification tokens (Epic E3 stage 1 - #12)
---  15. tblUserOAuth             - Linked SSO/OAuth identities (Epic E2 schema stub)
+--  15. tblUserOAuth             - Linked SSO/OAuth identities (Epic E2, #55/#19/#20/#28 - client code BUILT)
 --  16. tblWebAuthnCredentials   - WebAuthn/passkey credentials (G-006 schema stub)
 --  17. tblOrganisationMembers   - Organisation membership + roles (Epic E3 org stage stub)
 --  18. tblInvitations           - Organisation invitations (Epic E3 org stage stub)
