@@ -33,6 +33,17 @@
  *      engine functions, and emit errorResponse()/successResponse().
  *
  * OWN-SCOPED SECURITY POSTURE (the whole point of this stage - see SECURITY.md):
+ *   - **Session-only management (F-026, #52/#54)**: all four HTTP handlers
+ *     below (handleAccountProfilePatch(), handleAccountSessionsList(),
+ *     handleAccountSessionDelete(), handleAccountChangePassword()) require
+ *     an INTERACTIVE (CSRF/session) caller - accountManagementAllowedFor()
+ *     is the FIRST statement in every one of them, refusing an
+ *     X-API-Key-authenticated request (however broadly scoped) with 403
+ *     ACCOUNT_MANAGEMENT_FORBIDDEN. API keys exist for programmatic QR
+ *     operations only; account control (profile/sessions/password) is
+ *     reserved for the user's own interactive session/token, mirroring
+ *     fn_api_keys.php's identical apiKeyManagementAllowedFor() guard - see
+ *     accountManagementAllowedFor()'s own docblock for the full rationale.
  *   - Every function/handler resolves the caller's userID from the
  *     SERVER-SIDE session/API-key identity ONLY (resolveUserIdFromAuth(),
  *     fn_features.php) - there is no "user_id"/"target_user" field anywhere
@@ -108,6 +119,57 @@ if (!defined('CUERCODE_ACCOUNT_SESSION_ID_REGEX')) {
 /** @var int Minimum new-password length fallback (matches fn_password.php's own default). */
 if (!defined('CUERCODE_ACCOUNT_PASSWORD_MIN_LENGTH_FALLBACK')) {
     define('CUERCODE_ACCOUNT_PASSWORD_MIN_LENGTH_FALLBACK', 8);
+}
+
+// ==============================================================================
+// 🔒 accountManagementAllowedFor() - session-only management guard (F-026)
+// ==============================================================================
+
+/**
+ * 🔒 Is this authentication context allowed to manage the account?
+ *
+ * **F-026 fix (#52/#54)**: account management - editing the profile
+ * (display name/avatar), listing/revoking sessions, and changing the
+ * password - is reserved for an INTERACTIVE (CSRF/session) caller ONLY.
+ * Before this fix, every route in this file was wired `auth => true,
+ * requiredScope => null` in the router with no additional guard inside the
+ * handler, so ANY authenticated API key - even one scoped ONLY for
+ * `generate`/`preview` QR operations - could edit the profile, enumerate
+ * every active session (including their masked identifiers), revoke a
+ * session out from under the legitimate owner, or drive the change-password
+ * flow. That violates least privilege and was inconsistent with this exact
+ * file's sibling, fn_api_keys.php, whose apiKeyManagementAllowedFor() has
+ * required an interactive session since Epic E7 stage 1.
+ *
+ * Mirrors fn_api_keys.php's apiKeyManagementAllowedFor() EXACTLY - both now
+ * delegate to the ONE shared primitive, isInteractiveSessionAuth()
+ * (fn_api_auth.php), so the two guards can never silently drift apart.
+ * An X-API-Key-authenticated caller - even one holding EVERY scope the
+ * allowlist defines - is refused (403 ACCOUNT_MANAGEMENT_FORBIDDEN):
+ * API keys exist for programmatic QR operations, NEVER for account
+ * control. A native app (or any other programmatic client) manages the
+ * account via the user's own interactive session/token, never via a
+ * scoped API key.
+ *
+ * @param array $auth The router's authentication context (fn_api_auth.php).
+ *
+ * @return bool True only when $auth['method'] === 'csrf'.
+ *
+ * @see fn_api_auth.php - isInteractiveSessionAuth() (the shared primitive)
+ * @see fn_api_keys.php - apiKeyManagementAllowedFor() (the identical pattern this mirrors)
+ * @see SECURITY.md     - F-026
+ */
+function accountManagementAllowedFor(array $auth): bool
+{
+    // 📌 fn_api_auth.php is always loaded before this file by the router
+    // (public_html/api/v1/index.php's $apiFunctionFiles order) - defensive
+    // function_exists() fallback keeps this file independently includable
+    // (e.g. by tests/test_account_ui.php, which never loads fn_api_auth.php).
+    if (function_exists('isInteractiveSessionAuth')) {
+        return isInteractiveSessionAuth($auth);
+    }
+
+    return isset($auth['method']) && $auth['method'] === 'csrf';
 }
 
 // ==============================================================================
@@ -786,6 +848,17 @@ function changeUserPassword(int $userID, string $currentPassword, string $newPas
  */
 function handleAccountProfilePatch(array $requestBody, array $auth): void
 {
+    // 🔐 F-026: account management is session-only - refuse an
+    // API-key-authenticated caller BEFORE resolving/touching anything else.
+    if (!accountManagementAllowedFor($auth)) {
+        errorResponse(
+            'Account management requires an interactive session; API keys cannot manage the account.',
+            403,
+            'ACCOUNT_MANAGEMENT_FORBIDDEN'
+        );
+        return;
+    }
+
     $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
 
     if ($currentUserId === null) {
@@ -898,6 +971,17 @@ function handleAccountProfilePatch(array $requestBody, array $auth): void
  */
 function handleAccountSessionsList(array $auth): void
 {
+    // 🔐 F-026: account management is session-only - refuse an
+    // API-key-authenticated caller BEFORE resolving/touching anything else.
+    if (!accountManagementAllowedFor($auth)) {
+        errorResponse(
+            'Account management requires an interactive session; API keys cannot manage the account.',
+            403,
+            'ACCOUNT_MANAGEMENT_FORBIDDEN'
+        );
+        return;
+    }
+
     $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
 
     if ($currentUserId === null) {
@@ -933,6 +1017,17 @@ function handleAccountSessionsList(array $auth): void
  */
 function handleAccountSessionDelete(string $sessionId, array $auth): void
 {
+    // 🔐 F-026: account management is session-only - refuse an
+    // API-key-authenticated caller BEFORE resolving/touching anything else.
+    if (!accountManagementAllowedFor($auth)) {
+        errorResponse(
+            'Account management requires an interactive session; API keys cannot manage the account.',
+            403,
+            'ACCOUNT_MANAGEMENT_FORBIDDEN'
+        );
+        return;
+    }
+
     if (preg_match(CUERCODE_ACCOUNT_SESSION_ID_REGEX, $sessionId) !== 1) {
         errorResponse('Invalid session identifier format.', 400, 'INVALID_REQUEST');
         return;
@@ -979,6 +1074,17 @@ function handleAccountSessionDelete(string $sessionId, array $auth): void
  */
 function handleAccountChangePassword(array $requestBody, array $auth): void
 {
+    // 🔐 F-026: account management is session-only - refuse an
+    // API-key-authenticated caller BEFORE resolving/touching anything else.
+    if (!accountManagementAllowedFor($auth)) {
+        errorResponse(
+            'Account management requires an interactive session; API keys cannot manage the account.',
+            403,
+            'ACCOUNT_MANAGEMENT_FORBIDDEN'
+        );
+        return;
+    }
+
     $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
 
     if ($currentUserId === null) {

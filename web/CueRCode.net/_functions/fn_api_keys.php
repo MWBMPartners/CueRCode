@@ -151,14 +151,28 @@ if (!defined('CUERCODE_API_KEY_ID_REGEX')) {
  * create/list/rotate/revoke API keys - an X-API-Key-authenticated caller is
  * refused (403 API_KEY_MANAGEMENT_FORBIDDEN) regardless of what scopes that
  * key holds, closing the self-escalation path where a leaked low-scope key
- * could mint itself a brand-new, broader-scoped key.
+ * could mint itself a brand-new, broader-scoped key. Delegates to
+ * isInteractiveSessionAuth() (fn_api_auth.php) - the SAME shared primitive
+ * fn_api_account.php's accountManagementAllowedFor() (F-026) now calls, so
+ * this file's own comparison and the account-management one can never
+ * silently drift apart.
  *
  * @param array $auth The router's authentication context (fn_api_auth.php).
  *
  * @return bool True only when $auth['method'] === 'csrf'.
+ *
+ * @see fn_api_auth.php - isInteractiveSessionAuth() (the shared primitive)
  */
 function apiKeyManagementAllowedFor(array $auth): bool
 {
+    // 📌 fn_api_auth.php is always loaded before this file by the router
+    // (public_html/api/v1/index.php's $apiFunctionFiles order) - defensive
+    // function_exists() fallback keeps this file independently includable
+    // (e.g. by tests/test_api_keys.php, which never loads fn_api_auth.php).
+    if (function_exists('isInteractiveSessionAuth')) {
+        return isInteractiveSessionAuth($auth);
+    }
+
     return isset($auth['method']) && $auth['method'] === 'csrf';
 }
 

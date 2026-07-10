@@ -33,14 +33,14 @@
  *   GET    /api/v1/qrcodes/{uuid}    Fetch one saved QR code (owner or public only)
  *   PATCH  /api/v1/qrcodes/{uuid}    Update a saved QR code the caller OWNS
  *   DELETE /api/v1/qrcodes/{uuid}    Soft-delete a saved QR code the caller OWNS
- *   PATCH  /api/v1/account/profile           Update the caller's OWN display name/avatar (Epic E3 stage 2b)
- *   GET    /api/v1/account/sessions          List ONLY the caller's OWN active sessions
- *   DELETE /api/v1/account/sessions/{id}     Revoke ONE of the caller's OWN sessions
- *   POST   /api/v1/account/change-password   Change the caller's OWN password
- *   POST   /api/v1/keys                      Create a self-service API key (Epic E7 stage 1, #54)
- *   GET    /api/v1/keys                      List ONLY the caller's OWN API keys (never the secret)
- *   POST   /api/v1/keys/{id}/rotate          Rotate an API key the caller OWNS
- *   DELETE /api/v1/keys/{id}                 Revoke an API key the caller OWNS
+ *   PATCH  /api/v1/account/profile           Update the caller's OWN display name/avatar (Epic E3 stage 2b) [SESSION-ONLY, F-026]
+ *   GET    /api/v1/account/sessions          List ONLY the caller's OWN active sessions [SESSION-ONLY, F-026]
+ *   DELETE /api/v1/account/sessions/{id}     Revoke ONE of the caller's OWN sessions [SESSION-ONLY, F-026]
+ *   POST   /api/v1/account/change-password   Change the caller's OWN password [SESSION-ONLY, F-026]
+ *   POST   /api/v1/keys                      Create a self-service API key (Epic E7 stage 1, #54) [SESSION-ONLY]
+ *   GET    /api/v1/keys                      List ONLY the caller's OWN API keys (never the secret) [SESSION-ONLY]
+ *   POST   /api/v1/keys/{id}/rotate          Rotate an API key the caller OWNS [SESSION-ONLY]
+ *   DELETE /api/v1/keys/{id}                 Revoke an API key the caller OWNS [SESSION-ONLY]
  *
  * Authentication:
  *   - X-API-Key header: API key authentication for external consumers
@@ -55,6 +55,20 @@
  *     gets 403 INSUFFICIENT_SCOPE listing the missing scope.
  *   - See fn_api_keys.php (CUERCODE_API_KEY_SCOPE_ALLOWLIST) for the scope
  *     taxonomy and fn_api_auth.php (apiKeyRequestHasScope()) for the check.
+ *
+ * Session-only management routes (F-026, fn_api_auth.php - isInteractiveSessionAuth()):
+ *   - The eight routes marked [SESSION-ONLY] above stay 'auth' => true /
+ *     'requiredScope' => null in THIS route table (any authenticated caller
+ *     reaches the handler), but every one of their handlers additionally
+ *     REFUSES an X-API-Key-authenticated request with 403
+ *     ACCOUNT_MANAGEMENT_FORBIDDEN (account/*) or 403
+ *     API_KEY_MANAGEMENT_FORBIDDEN (keys/*) - see fn_api_account.php's
+ *     accountManagementAllowedFor() and fn_api_keys.php's
+ *     apiKeyManagementAllowedFor(), both of which now delegate to the SAME
+ *     shared primitive, isInteractiveSessionAuth(). No 'requiredScope'
+ *     value could express this correctly (a key can never be granted
+ *     "account management" as a scope) - only a real interactive session
+ *     may manage the account or its API keys.
  *
  * @package     CueRCode
  * @subpackage  API
@@ -438,13 +452,27 @@ $routes = [
     // ==========================================================================
     // 👤 Own-account dashboard routes (Epic E3 stage 2b, #52/#12/#14/#23/#24)
     // ==========================================================================
-    // All three routes require 'auth' => true (the router's normal 401-on-
+    // All four routes require 'auth' => true (the router's normal 401-on-
     // failure gate, same as /save and /qrcodes) - every one of these acts on
     // an ALREADY-authenticated identity, resolved server-side only, never
     // from a request field. Ownership itself is enforced inside each handler
     // (fn_api_account.php) - see that file's header docblock for the full
     // IDOR/own-scope posture (sessions/profile/password are ALL own-account
     // only, never cross-user).
+    //
+    // 🔐 F-026 (#52/#54): 'requiredScope' stays null here - unlike the
+    // scope-enforced routes above, an API-key-authenticated caller cannot
+    // reach these handlers AT ALL, regardless of scope. Every one of the
+    // four handlers below (fn_api_account.php) additionally requires an
+    // INTERACTIVE (CSRF/session) caller via accountManagementAllowedFor()
+    // (the FIRST statement in each handler) - an X-API-Key-authenticated
+    // request, however broadly scoped, gets 403 ACCOUNT_MANAGEMENT_FORBIDDEN.
+    // This mirrors the "🔑 Self-service API key routes" section below
+    // exactly (fn_api_keys.php's apiKeyManagementAllowedFor()) - account
+    // control, like key management, is reserved for the user's own
+    // interactive session/token, never a scoped API key. Both guards now
+    // delegate to the SAME shared primitive, isInteractiveSessionAuth()
+    // (fn_api_auth.php).
     // ==========================================================================
 
     // 📌 PATCH /api/v1/account/profile - Update display name / avatar

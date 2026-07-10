@@ -291,6 +291,47 @@ function apiKeyRequestHasScope(array $auth, string $requiredScope): bool
 }
 
 // ==============================================================================
+// 🔒 isInteractiveSessionAuth() - shared session-only guard primitive (F-026)
+// ==============================================================================
+
+/**
+ * 🔒 Is this authentication context an INTERACTIVE (CSRF/session) caller?
+ *
+ * The single shared primitive behind every "management is session-only"
+ * guard in this codebase - both fn_api_keys.php's
+ * apiKeyManagementAllowedFor() (the original CSRF-only key-management
+ * guard, Epic E7 stage 1, #54) and fn_api_account.php's
+ * accountManagementAllowedFor() (F-026 - the account-management
+ * session-only fix, #52/#54) call THIS function rather than each
+ * re-implementing the `$auth['method'] === 'csrf'` comparison, so there is
+ * exactly ONE place that decision lives. A future third "session-only"
+ * surface should call this directly (or via a thin, purpose-named wrapper
+ * exactly like the two above) rather than re-deriving the comparison.
+ *
+ * Rationale (F-026): an X-API-Key-authenticated caller - even one holding
+ * EVERY scope the allowlist defines - must never be able to manage API
+ * keys OR manage the account itself (edit profile, list/revoke sessions,
+ * change the password). API keys exist for programmatic QR operations
+ * only; account/key control is reserved for an interactive session (the
+ * web dashboard, or a native app operating on the user's own session/
+ * token) - never a scoped key, which could otherwise self-escalate or let
+ * a leaked low-scope key seize the whole account.
+ *
+ * @param array $auth The router's authentication context
+ *                     (authenticateAPIRequest()'s return value).
+ *
+ * @return bool True only when $auth['method'] === 'csrf'.
+ *
+ * @see fn_api_keys.php    - apiKeyManagementAllowedFor()
+ * @see fn_api_account.php - accountManagementAllowedFor()
+ * @see SECURITY.md        - F-026
+ */
+function isInteractiveSessionAuth(array $auth): bool
+{
+    return isset($auth['method']) && $auth['method'] === 'csrf';
+}
+
+// ==============================================================================
 // 🔐 validateAPIKey() - Validate an API key against the database
 // ==============================================================================
 

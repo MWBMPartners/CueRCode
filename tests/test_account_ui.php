@@ -1,13 +1,14 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - Characterization Tests for Account UI (Epic E3 stage 2b)
+ * 🧪 CueRCode - Characterization Tests for Account UI (Epic E3 stage 2b, F-026)
  * ==============================================================================
  *
  * Path: tests/test_account_ui.php
  *
  * Covers the DB-INDEPENDENT, pure/near-pure surface introduced for the
- * browser account UI (#52/#12/#14/#23/#24):
+ * browser account UI (#52/#12/#14/#23/#24), PLUS the F-026 session-only
+ * account-management fix (#52/#54, 2026-07-10):
  *   - fn_auth.php    : resolveAvatarUrl() - the ProjectBrief §11.4 avatar
  *                      priority chain (local custom > Gravatar > default
  *                      placeholder; the MS365/Google SSO tier is untested
@@ -17,7 +18,20 @@
  *                      explicit SVG rejection, and a genuine tiny-PNG
  *                      decode round-trip via the REUSED saveBase64LogoToTemp()
  *                      - the only I/O this file performs is writing to
- *                      sys_get_temp_dir(), never the repo's own _uploads/).
+ *                      sys_get_temp_dir(), never the repo's own _uploads/),
+ *                      accountManagementAllowedFor() (F-026 - the session-only
+ *                      management guard's full truth table, mirroring
+ *                      fn_api_keys.php's apiKeyManagementAllowedFor() in
+ *                      test_api_keys.php's own "Section 3" exactly).
+ *   - Section 6 (static, source-text only) pins the F-026 fix's
+ *     security-critical invariants that CANNOT be proven in a no-DB,
+ *     single-process harness: every one of the four handleAccount*()
+ *     handlers checks accountManagementAllowedFor($auth) FIRST and replies
+ *     ACCOUNT_MANAGEMENT_FORBIDDEN on failure; fn_api_account.php's guard and
+ *     fn_api_keys.php's guard both delegate to the SAME shared
+ *     isInteractiveSessionAuth() primitive (fn_api_auth.php); and
+ *     openapi.json documents all four endpoints as CsrfAuth-only (never
+ *     ApiKeyAuth) with a 403 response.
  *
  * ⚠️ SKIPPED (DB/HTTP-context-dependent - out of scope for this harness, same
  *    convention as test_auth.php's own "SKIPPED" section):
@@ -34,17 +48,28 @@
  *     file) - cannot be meaningfully unit-tested outside a real request.
  *   - The four handleAccount*() HTTP handlers need $_SERVER/$_SESSION/router
  *     context - covered by the scratch-DB + php -S manual/curl verification,
- *     not unit-tested here.
+ *     not unit-tested here. **F-026 (2026-07-10, #52/#54)**: this live pack now
+ *     additionally proves, with a REAL registered account and a REAL,
+ *     fully-scoped self-service API key: `PATCH /account/profile`,
+ *     `GET /account/sessions`, `DELETE /account/sessions/{id}`, and
+ *     `POST /account/change-password` ALL return `403
+ *     ACCOUNT_MANAGEMENT_FORBIDDEN` when called with `X-API-Key` (with the
+ *     DB confirmed unchanged afterward - display name, session, and password
+ *     hash all untouched), while the IDENTICAL four calls, made instead with
+ *     the account's own session cookie + CSRF token, all succeed (`200`) -
+ *     see CHANGELOG.md/SECURITY.md (F-026) for the full pasted evidence.
  *
  * @package     CueRCode
  * @subpackage  Tests
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
- * @since       Phase 2 (Epic E3 stage 2b, #52/#12/#14/#23/#24)
+ * @since       Phase 2 (Epic E3 stage 2b, #52/#12/#14/#23/#24; F-026 fix 2026-07-10, #52/#54)
  * @see         tests/bootstrap.php  - requireFn() loader (no DB connection)
  * @see         tests/lib/assert.php - the assert* functions used below
  * @see         web/CueRCode.net/_functions/fn_auth.php
  * @see         web/CueRCode.net/_functions/fn_api_account.php
+ * @see         web/CueRCode.net/_functions/fn_api_auth.php - isInteractiveSessionAuth() (F-026 shared primitive)
+ * @see         SECURITY.md - F-026
  */
 
 // ==============================================================================
@@ -249,3 +274,165 @@ assertFalse(
     (bool) preg_match('/allowedExtensions\s*=\s*\[[^\]]*svg/i', $accountApiSource),
     'storeUserAvatarFile()\'s allowed-extensions list never includes svg'
 );
+
+// ==============================================================================
+// 🔒 Section 5: accountManagementAllowedFor() - session-only management guard (F-026)
+// ==============================================================================
+// F-026: account management (profile edit, session listing/revocation, and
+// change-password) is reserved for an INTERACTIVE (CSRF/session) caller ONLY -
+// mirrors fn_api_keys.php's apiKeyManagementAllowedFor() truth table EXACTLY
+// (test_api_keys.php's own "Section 3"), since both now delegate to the SAME
+// shared primitive, isInteractiveSessionAuth() (fn_api_auth.php). This file
+// does NOT load fn_api_auth.php (see this file's own header docblock/loader
+// list above), so accountManagementAllowedFor() genuinely exercises its OWN
+// function_exists()-guarded fallback branch (`$auth['method'] === 'csrf'`)
+// here - the identical comparison isInteractiveSessionAuth() would otherwise
+// make, just proven independently of that file.
+// ==============================================================================
+
+assertFalse(
+    function_exists('isInteractiveSessionAuth'),
+    'sanity check: isInteractiveSessionAuth() is NOT defined in this test file (fn_api_auth.php was deliberately not loaded) - the fallback branch below is genuinely exercised'
+);
+
+assertTrue(
+    accountManagementAllowedFor(['method' => 'csrf']),
+    'accountManagementAllowedFor(): a CSRF/session-authenticated caller IS allowed to manage the account'
+);
+assertFalse(
+    accountManagementAllowedFor(['method' => 'api_key']),
+    'accountManagementAllowedFor(): an API-key-authenticated caller is NEVER allowed to manage the account (F-026 - the core fix this stage exists for)'
+);
+assertFalse(
+    accountManagementAllowedFor(['method' => 'anonymous']),
+    'accountManagementAllowedFor(): an anonymous auth context is not allowed to manage the account'
+);
+assertFalse(
+    accountManagementAllowedFor([]),
+    'accountManagementAllowedFor(): a missing "method" key fails closed (not allowed)'
+);
+assertFalse(
+    accountManagementAllowedFor(['method' => 'CSRF']),
+    'accountManagementAllowedFor(): the method comparison is case-sensitive (no accidental widening via a differently-cased value)'
+);
+
+// 📌 Signature/contract check: exactly 1 parameter - mirrors
+// apiKeyManagementAllowedFor()'s own shape (no second "scopes"-style argument
+// could ever let a broadly-scoped key talk its way past this guard).
+assertTrue(
+    (new \ReflectionFunction('accountManagementAllowedFor'))->getNumberOfParameters() === 1,
+    'accountManagementAllowedFor() takes exactly 1 parameter ($auth) - no scope/bypass argument exists'
+);
+
+// ==============================================================================
+// 🔒 Section 6: F-026 static regression guards (source-text only, no execution)
+// ==============================================================================
+// SECURITY-CRITICAL invariant that a single-process, no-DB harness cannot
+// exercise directly (the four HTTP handlers need a real $_SERVER/session/
+// router context - covered by the live scratch-DB + real-HTTP evidence in
+// CHANGELOG.md/SECURITY.md instead) - pinned here as a regression guard
+// against a future "helpful" refactor silently reopening the API-key ->
+// account-management gap F-026 closes. Mirrors test_api_keys.php's own
+// Section 8 "every handler checks the guard near the top" convention exactly.
+// ==============================================================================
+
+foreach (['handleAccountProfilePatch', 'handleAccountSessionsList', 'handleAccountSessionDelete', 'handleAccountChangePassword'] as $handlerName) {
+    $handlerStart = strpos($accountApiSource, 'function ' . $handlerName . '(');
+    assertTrue($handlerStart !== false, 'sanity check: function ' . $handlerName . '() is found in fn_api_account.php');
+
+    // 📌 Grab a reasonably-sized window right after the function opens - the
+    // guard must be one of the FIRST statements, not merely present
+    // somewhere later in a long function body (handleAccountSessionDelete()
+    // in particular has a route-parameter shape check AFTER this guard, so
+    // the window must be generous enough to still land on the guard call
+    // itself, not the shape check that follows it). 500 chars (vs.
+    // test_api_keys.php's 400) - this file's guard message is longer than
+    // fn_api_keys.php's own, so the window is widened to still comfortably
+    // include the ACCOUNT_MANAGEMENT_FORBIDDEN error-code argument.
+    $handlerOpeningWindow = substr($accountApiSource, $handlerStart, 500);
+
+    assertContains(
+        'accountManagementAllowedFor($auth)',
+        $handlerOpeningWindow,
+        'F-026 regression guard: ' . $handlerName . '() checks accountManagementAllowedFor($auth) near the top of the function body'
+    );
+
+    assertContains(
+        'ACCOUNT_MANAGEMENT_FORBIDDEN',
+        $handlerOpeningWindow,
+        'F-026 regression guard: ' . $handlerName . '() replies with the ACCOUNT_MANAGEMENT_FORBIDDEN error code on guard failure'
+    );
+}
+
+// ------------------------------------------------------------------------
+// 🔗 Shared primitive: fn_api_auth.php defines isInteractiveSessionAuth(),
+// and BOTH fn_api_account.php's accountManagementAllowedFor() and
+// fn_api_keys.php's apiKeyManagementAllowedFor() delegate to it (rather than
+// two independently-maintained copies of the same `$auth['method'] === 'csrf'`
+// comparison silently drifting apart from each other).
+// ------------------------------------------------------------------------
+$authSourceForGuard = file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_auth.php');
+assertTrue(
+    is_string($authSourceForGuard) && $authSourceForGuard !== '',
+    'sanity check: fn_api_auth.php source was readable for the F-026 shared-primitive regression guard'
+);
+assertContains(
+    'function isInteractiveSessionAuth(',
+    $authSourceForGuard,
+    'F-026 regression guard: isInteractiveSessionAuth() is defined in fn_api_auth.php (the shared primitive)'
+);
+
+assertContains(
+    'isInteractiveSessionAuth($auth)',
+    $accountApiSource,
+    'F-026 regression guard: accountManagementAllowedFor() delegates to the shared isInteractiveSessionAuth() primitive'
+);
+
+$keysApiSourceForGuard = file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_keys.php');
+assertTrue(
+    is_string($keysApiSourceForGuard) && $keysApiSourceForGuard !== '',
+    'sanity check: fn_api_keys.php source was readable for the F-026 shared-primitive regression guard'
+);
+assertContains(
+    'isInteractiveSessionAuth($auth)',
+    $keysApiSourceForGuard,
+    'F-026 regression guard: apiKeyManagementAllowedFor() ALSO delegates to the shared isInteractiveSessionAuth() primitive (the two guards cannot silently drift apart)'
+);
+
+// ------------------------------------------------------------------------
+// 📜 openapi.json: the four account-management endpoints document CsrfAuth
+// as their ONLY security scheme (ApiKeyAuth removed - F-026).
+// ------------------------------------------------------------------------
+$openApiSpecPath = CUERCODE_SITE_ROOT . 'public_html' . DIRECTORY_SEPARATOR . 'api' . DIRECTORY_SEPARATOR . 'v1' . DIRECTORY_SEPARATOR . 'openapi.json';
+$openApiRaw = file_get_contents($openApiSpecPath);
+assertTrue(is_string($openApiRaw) && $openApiRaw !== '', 'sanity check: openapi.json source was readable for the F-026 regression guard');
+
+$openApiSpec = json_decode($openApiRaw, true);
+assertTrue(is_array($openApiSpec), 'sanity check: openapi.json parses as valid JSON');
+
+$f026Paths = [
+    '/account/profile'          => 'patch',
+    '/account/sessions'         => 'get',
+    '/account/sessions/{id}'    => 'delete',
+    '/account/change-password'  => 'post',
+];
+
+foreach ($f026Paths as $f026Path => $f026Method) {
+    $operation = $openApiSpec['paths'][$f026Path][$f026Method] ?? null;
+    assertTrue(
+        is_array($operation),
+        'sanity check: openapi.json declares ' . strtoupper($f026Method) . ' ' . $f026Path
+    );
+
+    $security = $operation['security'] ?? null;
+    assertEquals(
+        [['CsrfAuth' => []]],
+        $security,
+        'F-026 regression guard: ' . strtoupper($f026Method) . ' ' . $f026Path . ' declares CsrfAuth as its ONLY security scheme (ApiKeyAuth removed)'
+    );
+
+    assertTrue(
+        isset($operation['responses']['403']),
+        'F-026 regression guard: ' . strtoupper($f026Method) . ' ' . $f026Path . ' documents a 403 response'
+    );
+}

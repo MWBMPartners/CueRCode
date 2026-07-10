@@ -2073,12 +2073,9 @@
                     "Account"
                 ],
                 "summary": "Update your own display name and/or avatar",
-                "description": "Own-account only - the caller's identity is resolved server-side from the CSRF/API-key session context, never from a request field. Accepts any combination of display_name, avatar_base64, and remove_avatar (see AccountProfileUpdateRequest).",
+                "description": "Own-account only - the caller's identity is resolved server-side from the CSRF session context, never from a request field. Accepts any combination of display_name, avatar_base64, and remove_avatar (see AccountProfileUpdateRequest). **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
                 "operationId": "updateAccountProfile",
                 "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
                     {
                         "CsrfAuth": []
                     }
@@ -2121,6 +2118,28 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "account_management_forbidden": {
+                                        "summary": "API-key auth cannot manage the account",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Account management requires an interactive session; API keys cannot manage the account.",
+                                            "data": {},
+                                            "error_code": "ACCOUNT_MANAGEMENT_FORBIDDEN",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
                     "422": {
                         "$ref": "#/components/responses/UnprocessableEntity"
                     },
@@ -2136,12 +2155,9 @@
                     "Account"
                 ],
                 "summary": "List ONLY your own active sessions",
-                "description": "Returns every non-revoked, non-expired tblUserSessions row owned by the caller - the WHERE clause is unconditionally scoped to the caller's own userID; there is no parameter that widens this to another user's sessions.",
+                "description": "Returns every non-revoked, non-expired tblUserSessions row owned by the caller - the WHERE clause is unconditionally scoped to the caller's own userID; there is no parameter that widens this to another user's sessions. **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
                 "operationId": "listAccountSessions",
                 "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
                     {
                         "CsrfAuth": []
                     }
@@ -2160,6 +2176,28 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "account_management_forbidden": {
+                                        "summary": "API-key auth cannot manage the account",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Account management requires an interactive session; API keys cannot manage the account.",
+                                            "data": {},
+                                            "error_code": "ACCOUNT_MANAGEMENT_FORBIDDEN",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
                     "429": {
                         "$ref": "#/components/responses/RateLimited"
                     }
@@ -2172,12 +2210,9 @@
                     "Account"
                 ],
                 "summary": "Revoke one of your own sessions",
-                "description": "Own-account only. The UPDATE that revokes the session re-checks userID = caller in the SAME statement - a session ID that exists but belongs to a DIFFERENT user (or does not exist / is already revoked) affects zero rows and is reported as 404, never 403 (the same non-disclosure convention as DELETE /qrcodes/{uuid}).",
+                "description": "Own-account only. The UPDATE that revokes the session re-checks userID = caller in the SAME statement - a session ID that exists but belongs to a DIFFERENT user (or does not exist / is already revoked) affects zero rows and is reported as 404, never 403 (the same non-disclosure convention as DELETE /qrcodes/{uuid}). **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (this specific 403 is unrelated to the ownership-check 404 above - it fires before ownership is ever considered).",
                 "operationId": "deleteAccountSession",
                 "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
                     {
                         "CsrfAuth": []
                     }
@@ -2222,6 +2257,28 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "account_management_forbidden": {
+                                        "summary": "API-key auth cannot manage the account",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Account management requires an interactive session; API keys cannot manage the account.",
+                                            "data": {},
+                                            "error_code": "ACCOUNT_MANAGEMENT_FORBIDDEN",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not owned by the caller (or does not exist / already revoked) - identical response either way",
                         "content": {
@@ -2244,12 +2301,9 @@
                     "Account"
                 ],
                 "summary": "Change your own password",
-                "description": "Own-account only. Re-verifies current_password server-side before accepting new_password (never trusts an existing session alone for this action), then revokes every OTHER active session for the account (the CURRENT session, i.e. the one making this request, is preserved so the caller is not immediately logged out).",
+                "description": "Own-account only. Re-verifies current_password server-side before accepting new_password (never trusts an existing session alone for this action), then revokes every OTHER active session for the account (the CURRENT session, i.e. the one making this request, is preserved so the caller is not immediately logged out). **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
                 "operationId": "changeAccountPassword",
                 "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
                     {
                         "CsrfAuth": []
                     }
@@ -2295,6 +2349,28 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "account_management_forbidden": {
+                                        "summary": "API-key auth cannot manage the account",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Account management requires an interactive session; API keys cannot manage the account.",
+                                            "data": {},
+                                            "error_code": "ACCOUNT_MANAGEMENT_FORBIDDEN",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
                                 }
                             }
                         }
