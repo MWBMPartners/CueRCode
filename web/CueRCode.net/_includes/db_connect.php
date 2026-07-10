@@ -113,8 +113,23 @@ function getDB(): \mysqli
     // @see https://www.php.net/manual/en/language.variables.scope.php#language.variables.scope.static
     static $db = null;
 
-    // 🔄 Return existing connection if still alive
-    if ($db !== null && $db->ping()) {
+    // 🔄 Return the existing connection if one has already been established
+    // for this request/process.
+    //
+    // 🐘 PHP 8.4 deprecation fix: this previously guarded reuse with
+    // `$db->ping()`. mysqli::ping() is deprecated as of PHP 8.4 - its
+    // original purpose (transparently triggering a reconnect on a dead link)
+    // was removed back in PHP 8.2, so by PHP 8.4 the call did nothing but add
+    // an extra network round-trip on every single call to getDB() (which
+    // happens on every dbQuery(), not merely once per request). We now trust
+    // the cached connection for the lifetime of this request instead: a
+    // MySQLi connection does not silently drop mid-script under normal
+    // operation, and if it ever does, the failure surfaces naturally as a
+    // mysqli exception on the next real query - already handled by
+    // dbQuery()'s own try/catch - without needing a dedicated pre-flight
+    // probe through a deprecated API.
+    // @see https://www.php.net/manual/en/mysqli.ping.php
+    if ($db !== null) {
         return $db;
     }
 

@@ -67,6 +67,10 @@ $apiFunctionFiles = [
     'fn_api_bulk.php',       // 📦 Bulk generate handler (ZIP)
     'fn_api_download.php',   // 📥 Download handler
     'fn_api_types.php',      // 📋 Types, formats & health check handlers
+    'fn_password.php',       // 🔑 Argon2id password hashing (Epic E3 stage 1) - loaded before fn_auth.php
+    'fn_email.php',          // 📧 queueEmail() (Epic E8) - needed by fn_auth.php's verification/reset emails
+    'fn_auth.php',           // 🔐 Registration/login/session/reset engine (Epic E3 stage 1)
+    'fn_api_accounts.php',   // 🌐 Account HTTP handlers (Epic E3 stage 1)
 ];
 
 foreach ($apiFunctionFiles as $apiFile) {
@@ -236,6 +240,75 @@ $routes = [
         'pattern'   => 'health',
         'methods'   => ['GET'],
         'handler'   => 'handleHealthCheck',
+        'auth'      => false,
+        'rateLimit' => true,
+    ],
+
+    // ==========================================================================
+    // 🔐 Account / authentication routes (Epic E3 stage 1, #11/#12/#14/#15)
+    // ==========================================================================
+    // 'auth' is deliberately FALSE for all six routes below - the router's
+    // generic authenticateAPIRequest() gate always replies 401 on failure,
+    // but these account-management endpoints must (a) be reachable by a
+    // not-yet-authenticated visitor (register/login/reset) and (b) reply 403
+    // - the more semantically correct code for a rejected CSRF token - on a
+    // missing/invalid credential. Each handler therefore performs its OWN
+    // CSRF-or-API-key check via requireCsrfOrApiKey() (fn_api_accounts.php),
+    // reusing the exact same validateCSRFToken()/validateAPIKey() primitives.
+    // 'rateLimit' stays TRUE so the existing tblAPIRateLog/checkRateLimit
+    // mechanism (per-IP for anonymous callers) still applies to every route.
+    // ==========================================================================
+
+    // 📌 POST /api/v1/auth/register - Register a new account
+    [
+        'pattern'   => 'auth/register',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthRegister',
+        'auth'      => false,
+        'rateLimit' => true,
+    ],
+
+    // 📌 POST /api/v1/auth/login - Authenticate and issue a session
+    [
+        'pattern'   => 'auth/login',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthLogin',
+        'auth'      => false,
+        'rateLimit' => true,
+    ],
+
+    // 📌 POST /api/v1/auth/logout - Revoke the current session
+    [
+        'pattern'   => 'auth/logout',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthLogout',
+        'auth'      => false,
+        'rateLimit' => true,
+    ],
+
+    // 📌 POST /api/v1/auth/verify-email - Consume an email verification token
+    [
+        'pattern'   => 'auth/verify-email',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthVerifyEmail',
+        'auth'      => false,
+        'rateLimit' => true,
+    ],
+
+    // 📌 POST /api/v1/auth/request-password-reset - Request a password reset email
+    [
+        'pattern'   => 'auth/request-password-reset',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthRequestPasswordReset',
+        'auth'      => false,
+        'rateLimit' => true,
+    ],
+
+    // 📌 POST /api/v1/auth/reset-password - Consume a password reset token
+    [
+        'pattern'   => 'auth/reset-password',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthResetPassword',
         'auth'      => false,
         'rateLimit' => true,
     ],
@@ -601,6 +674,30 @@ switch ($handlerFunction) {
 
     case 'handleHealthCheck':
         handleHealthCheck();
+        break;
+
+    case 'handleAuthRegister':
+        handleAuthRegister($requestBody);
+        break;
+
+    case 'handleAuthLogin':
+        handleAuthLogin($requestBody);
+        break;
+
+    case 'handleAuthLogout':
+        handleAuthLogout();
+        break;
+
+    case 'handleAuthVerifyEmail':
+        handleAuthVerifyEmail($requestBody);
+        break;
+
+    case 'handleAuthRequestPasswordReset':
+        handleAuthRequestPasswordReset($requestBody);
+        break;
+
+    case 'handleAuthResetPassword':
+        handleAuthResetPassword($requestBody);
         break;
 
     default:

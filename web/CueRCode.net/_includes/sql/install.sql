@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS `tblSettings` (
     `isSensitive`   TINYINT(1)          NOT NULL DEFAULT 0       COMMENT '🔐 1 = value is encrypted with AES-256-GCM + salt',
     `isEditable`    TINYINT(1)          NOT NULL DEFAULT 1       COMMENT '✏️ 1 = can be modified via admin UI',
     `description`   VARCHAR(500)        NULL                     COMMENT '📖 Human-readable description of this setting',
+    `encryptionSalt` BINARY(16)         NULL                     COMMENT '🧂 F-006/G-010 per-record encryption salt, populated when isSensitive = 1. The authoritative salt actually travels embedded in settingValue ciphertext blob produced by encryptValue() (self describing - decryptValue() never needs this column), so this column is a DBA-visible auditability mirror proving each row genuinely uses its own independent salt rather than one shared global salt. See fn_encryption.php / fn_config.php setConfig().',
     `createdAt`     DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Record creation timestamp',
     `updatedAt`     DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
 
@@ -335,37 +336,49 @@ CREATE TABLE IF NOT EXISTS `tblAPIRateLog` (
   COMMENT='⏱️ API request rate limiting tracking log';
 
 -- ==============================================================================
--- 📋 Table 9: tblUsers (STUB - Phase 2)
+-- 📋 Table 9: tblUsers (Epic E3 stage 1 - #11/#12/#14/#15)
 -- ==============================================================================
--- User account table - created as a schema stub in Phase 1.
--- Will be fully implemented in Phase 2 with registration, authentication,
--- profile management, SSO integration, and role-based access control.
+-- User account table. Fully implemented in Epic E3 stage 1: registration,
+-- email verification, Argon2id password hashing, login with lockout, and
+-- password reset. Organisation membership/roles are tracked per-organisation in
+-- tblOrganisationMembers; orgID/roleID here remain the home-organisation quick
+-- lookup and platform-wide role respectively. SSO (Epic E2) and WebAuthn
+-- (Epic E3 stage 7) identities live in their own linked tables below.
 --
 -- @see https://www.php.net/manual/en/function.password-hash.php
+-- @see _functions/fn_password.php   - hashPassword()/verifyPassword() (Argon2id)
+-- @see _functions/fn_auth.php       - registerUser()/loginUser()/... (the auth engine)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS `tblUsers` (
-    `userID`          INT UNSIGNED    NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing user identifier',
-    `email`           VARCHAR(255)    NOT NULL                 COMMENT '📧 User email address (unique, used for login)',
-    `passwordHash`    VARCHAR(255)    NOT NULL                 COMMENT '🔐 Password hash (Argon2id via password_hash(..., PASSWORD_ARGON2ID))',
-    `displayName`     VARCHAR(100)    NULL                     COMMENT '📝 User display name',
-    `firstName`       VARCHAR(100)    NULL                     COMMENT '📝 User first name',
-    `lastName`        VARCHAR(100)    NULL                     COMMENT '📝 User last name',
-    `avatarPath`      VARCHAR(500)    NULL                     COMMENT '🖼️ Path to user avatar image',
-    `orgID`           INT UNSIGNED    NULL                     COMMENT '🏢 FK to tblOrganisations',
-    `roleID`          INT UNSIGNED    NULL                     COMMENT '🎭 User role (1=Global Admin, 2=Admin, 3=Regular User)',
-    `isActive`        TINYINT(1)      NOT NULL DEFAULT 1       COMMENT '✅ 1 = account active, 0 = deactivated',
-    `isVerified`      TINYINT(1)      NOT NULL DEFAULT 0       COMMENT '✅ 1 = email verified',
-    `lastLoginAt`     DATETIME        NULL                     COMMENT '📅 Last successful login timestamp',
-    `createdAt`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Account creation timestamp',
-    `updatedAt`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+    `userID`            INT UNSIGNED      NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing user identifier',
+    `email`             VARCHAR(255)      NOT NULL                 COMMENT '📧 User email address (unique, used for login/verification/reset - normalised lowercase before storage)',
+    `emailVerifiedAt`   DATETIME          NULL                     COMMENT '✅ Timestamp the email address was verified (NULL = not yet verified)',
+    `passwordHash`      VARCHAR(255)      NULL                     COMMENT '🔐 Password hash (Argon2id via password_hash(..., PASSWORD_ARGON2ID)) - NULL only for a future SSO-only account (Epic E2) with no local password set',
+    `displayName`       VARCHAR(100)      NULL                     COMMENT '📝 User display name',
+    `firstName`         VARCHAR(100)      NULL                     COMMENT '📝 User first name',
+    `lastName`          VARCHAR(100)      NULL                     COMMENT '📝 User last name',
+    `avatarPath`        VARCHAR(500)      NULL                     COMMENT '🖼️ Path to user avatar image',
+    `orgID`             INT UNSIGNED      NULL                     COMMENT '🏢 Home/primary organisation quick-lookup (fine-grained multi-organisation membership + per-org role lives in tblOrganisationMembers) - no FK here so tblUsers can be created before tblOrganisations in a fresh install run',
+    `roleID`            INT UNSIGNED      NULL                     COMMENT '🎭 Platform-wide role (1=Global Admin, 2=Admin, 3=Regular User) - distinct from the per-organisation role in tblOrganisationMembers.roleID',
+    `status`            ENUM(
+                            'active',
+                            'suspended',
+                            'pending'
+                        )                 NOT NULL DEFAULT 'pending' COMMENT '📊 Account lifecycle status - pending until email verified, active thereafter, suspended by an administrator (replaces the old isActive/isVerified boolean pair)',
+    `failedLoginCount`  SMALLINT UNSIGNED NOT NULL DEFAULT 0       COMMENT '🔢 Consecutive failed login attempts since the last success - drives the lockedUntil lockout below',
+    `lockedUntil`       DATETIME          NULL                     COMMENT '🔒 Account locked until this timestamp (NULL = not locked) - set once failedLoginCount reaches the security.max_login_attempts setting',
+    `lastLoginAt`       DATETIME          NULL                     COMMENT '📅 Last successful login timestamp',
+    `createdAt`         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Account creation timestamp',
+    `updatedAt`         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
 
     PRIMARY KEY (`userID`),
     UNIQUE KEY `idx_user_email` (`email`),
     INDEX `idx_user_org` (`orgID`),
-    INDEX `idx_user_active` (`isActive`)
+    INDEX `idx_user_status` (`status`),
+    INDEX `idx_user_locked` (`lockedUntil`)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='👤 User accounts (Phase 2 stub - schema only in Phase 1)';
+  COMMENT='👤 User accounts - Epic E3 stage 1 (registration, verification, login, sessions, password reset)';
 
 -- ==============================================================================
 -- 📋 Table 10: tblOrganisations (STUB - Phase 2)
@@ -447,20 +460,270 @@ CREATE TABLE IF NOT EXISTS `tblEmailQueue` (
   COMMENT='📧 Outbound transactional email queue with retry/backoff (Microsoft Graph sendMail, Epic E8)';
 
 -- ==============================================================================
+-- 📋 Table 12: tblUserSessions (Epic E3 stage 1 - #14)
+-- ==============================================================================
+-- Database-backed authenticated user sessions, independent of the PHP session
+-- store. A random 64-hex-character token is issued on successful login
+-- (fn_auth.php issueUserSession()), stored server-side only, and referenced
+-- from the PHP session ($_SESSION['cuercode_user_session_id']). Keeping this
+-- as its own table (rather than relying solely on PHP native sessions) allows
+-- targeted revocation (logout, password reset, a future "sign out this
+-- device" UI) without depending on the PHP session storage backend.
+--
+-- @see _functions/fn_auth.php - issueUserSession(), currentUser(), logoutCurrentUser()
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblUserSessions` (
+    `sessionID`   CHAR(64)        NOT NULL                 COMMENT '🔑 Primary key - random 64-char hex session token (bin2hex(random_bytes(32)))',
+    `userID`      INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the authenticated user this session belongs to',
+    `ipAddress`   VARCHAR(45)     NULL                     COMMENT '🌍 Client IP address at session creation (IPv4/IPv6)',
+    `userAgent`   VARCHAR(500)    NULL                     COMMENT '🖥️ Client user agent string at session creation',
+    `createdAt`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Session creation (login) timestamp',
+    `lastSeenAt`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Last time this session authenticated a request (opportunistically bumped by currentUser())',
+    `expiresAt`   DATETIME        NOT NULL                 COMMENT '⏰ Absolute session expiry timestamp (createdAt + security.session_lifetime)',
+    `revokedAt`   DATETIME        NULL                     COMMENT '🚫 Explicit revocation timestamp (logout, password reset, or a future admin action) - NULL = not revoked',
+
+    PRIMARY KEY (`sessionID`),
+    INDEX `idx_session_user` (`userID`),
+    INDEX `idx_session_expiry` (`expiresAt`),
+    INDEX `idx_session_revoked` (`revokedAt`),
+
+    CONSTRAINT `fk_session_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🎫 Authenticated user sessions, database-backed and independently revocable - Epic E3 stage 1';
+
+-- ==============================================================================
+-- 📋 Table 13: tblPasswordResets (Epic E3 stage 1 - #15)
+-- ==============================================================================
+-- Single-use, expiring password reset tokens. Only the SHA-256 hash of the
+-- random raw token is ever stored - the raw token is emailed once (via the
+-- password_reset template) and never persisted. requestPasswordReset()
+-- inserts a row; resetPasswordWithToken() atomically claims it (usedAt IS
+-- NULL guard) before applying the new password.
+--
+-- @see _functions/fn_auth.php - requestPasswordReset(), resetPasswordWithToken()
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblPasswordResets` (
+    `resetID`    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing reset request identifier',
+    `userID`     INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the account this reset token applies to',
+    `tokenHash`  CHAR(64)        NOT NULL                 COMMENT '🔐 SHA-256 hash of the random reset token (the raw token itself is never stored)',
+    `expiresAt`  DATETIME        NOT NULL                 COMMENT '⏰ Token expiry timestamp (short-lived, default 60 minutes)',
+    `usedAt`     DATETIME        NULL                     COMMENT '✅ Timestamp the token was consumed (NULL = still unused) - enforces single-use',
+    `requestIP`  VARCHAR(45)     NULL                     COMMENT '🌍 IP address that requested this reset (audit trail)',
+    `createdAt`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Token creation timestamp',
+
+    PRIMARY KEY (`resetID`),
+    UNIQUE KEY `idx_reset_token_hash` (`tokenHash`),
+    INDEX `idx_reset_user` (`userID`),
+    INDEX `idx_reset_expiry` (`expiresAt`),
+
+    CONSTRAINT `fk_reset_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🔑 Single-use, expiring password reset tokens (hashed at rest) - Epic E3 stage 1';
+
+-- ==============================================================================
+-- 📋 Table 14: tblEmailVerifications (Epic E3 stage 1 - #12)
+-- ==============================================================================
+-- Single-use, expiring email verification tokens issued at registration.
+-- Only the SHA-256 hash of the random raw token is stored; the raw token is
+-- emailed once (via the verification template). verifyEmailToken() atomically
+-- claims the row (usedAt IS NULL guard) then flips the owning user from
+-- pending to active.
+--
+-- @see _functions/fn_auth.php - registerUser(), verifyEmailToken()
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblEmailVerifications` (
+    `verificationID` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing verification request identifier',
+    `userID`         INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the account this verification token applies to',
+    `tokenHash`      CHAR(64)        NOT NULL                 COMMENT '🔐 SHA-256 hash of the random verification token (the raw token itself is never stored)',
+    `expiresAt`      DATETIME        NOT NULL                 COMMENT '⏰ Token expiry timestamp (default 24 hours)',
+    `usedAt`         DATETIME        NULL                     COMMENT '✅ Timestamp the token was consumed (NULL = still unused) - enforces single-use',
+    `createdAt`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Token creation timestamp',
+
+    PRIMARY KEY (`verificationID`),
+    UNIQUE KEY `idx_verification_token_hash` (`tokenHash`),
+    INDEX `idx_verification_user` (`userID`),
+    INDEX `idx_verification_expiry` (`expiresAt`),
+
+    CONSTRAINT `fk_verification_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='📧 Single-use, expiring email verification tokens (hashed at rest) - Epic E3 stage 1';
+
+-- ==============================================================================
+-- 📋 Table 15: tblUserOAuth (Epic E2 schema stub - not implemented until E2)
+-- ==============================================================================
+-- Linked external SSO/OAuth identities per local user account. Schema-only
+-- this stage (Epic E3 stage 1 folds it into the same migration event per the
+-- roadmap so the whole trust-boundary schema ships together) - no OAuth
+-- client code exists yet; that is Epic E2 (SIGNula.id / Microsoft / Google).
+-- Every SSO identity MUST link to a local tblUsers account (ProjectBrief section 5.3),
+-- never stand alone.
+--
+-- @see PROJECT_ROADMAP.md - Epic E2 (SIGNula.id SSO sign-in)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblUserOAuth` (
+    `oauthID`            INT UNSIGNED  NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing linked-identity identifier',
+    `userID`             INT UNSIGNED  NOT NULL                 COMMENT '👤 FK to tblUsers - the local account this external identity is linked to',
+    `provider`           ENUM(
+                             'signula',
+                             'microsoft',
+                             'google',
+                             'apple',
+                             'facebook'
+                         )             NOT NULL                 COMMENT '🌐 SSO/OAuth provider identifier (Epic E2)',
+    `providerSubjectID`  VARCHAR(255)  NOT NULL                 COMMENT '🆔 The stable subject/user identifier issued by the provider (e.g. an OIDC "sub" claim)',
+    `tokensEncrypted`    TEXT          NULL                     COMMENT '🔐 AES-256-GCM-encrypted provider token bundle (access/refresh) via encryptValue() - populated once Epic E2 ships',
+    `linkedAt`           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Timestamp this identity was linked to the local account',
+
+    PRIMARY KEY (`oauthID`),
+    UNIQUE KEY `idx_oauth_provider_subject` (`provider`, `providerSubjectID`),
+    UNIQUE KEY `idx_oauth_user_provider` (`userID`, `provider`),
+    INDEX `idx_oauth_user` (`userID`),
+
+    CONSTRAINT `fk_oauth_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🔗 Linked external SSO/OAuth identities per user (Epic E2 schema stub - client code not implemented in E3 stage 1)';
+
+-- ==============================================================================
+-- 📋 Table 16: tblWebAuthnCredentials (G-006 schema stub - not implemented until E3 stage 7)
+-- ==============================================================================
+-- WebAuthn/passkey credentials. Schema-only this stage - no registration or
+-- assertion verification code exists yet; that is Epic E3 stage 7, gated on
+-- G-006 (self-hosted, no-Composer FIDO2 implementation evaluation).
+--
+-- @see PROJECT_ROADMAP.md - Epic E3 stage 7 (WebAuthn/passkeys)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblWebAuthnCredentials` (
+    `webauthnID`    INT UNSIGNED    NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing credential identifier',
+    `userID`        INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the owning account',
+    `credentialID`  VARCHAR(255)    NOT NULL                 COMMENT '🆔 Base64url-encoded WebAuthn credential ID (unique per registered authenticator)',
+    `publicKey`     TEXT            NOT NULL                 COMMENT '🔐 Base64-encoded COSE public key bytes, used to verify future assertions',
+    `signCount`     BIGINT UNSIGNED NOT NULL DEFAULT 0       COMMENT '🔢 Authenticator signature counter, used for cloned-authenticator detection',
+    `transports`    VARCHAR(255)    NULL                     COMMENT '🔌 Comma-separated transport hints (usb, nfc, ble, internal)',
+    `nickname`      VARCHAR(100)    NULL                     COMMENT '📝 User-assigned label for this passkey/security key',
+    `createdAt`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Registration timestamp',
+    `lastUsedAt`    DATETIME        NULL                     COMMENT '📅 Last time this credential was used to authenticate',
+
+    PRIMARY KEY (`webauthnID`),
+    UNIQUE KEY `idx_webauthn_credential_id` (`credentialID`),
+    INDEX `idx_webauthn_user` (`userID`),
+
+    CONSTRAINT `fk_webauthn_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🔐 WebAuthn/passkey credentials (G-006 schema stub - not implemented until Epic E3 stage 7)';
+
+-- ==============================================================================
+-- 📋 Table 17: tblOrganisationMembers (Epic E3 org stage schema stub)
+-- ==============================================================================
+-- Organisation membership and per-organisation role assignment. Schema-only
+-- this stage - creation UI, role management, and enforcement are Epic E3's
+-- second (organisations) stage.
+--
+-- @see PROJECT_ROADMAP.md - Epic E3 stage 6 (Organisations - second stage)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblOrganisationMembers` (
+    `orgMemberID`  INT UNSIGNED  NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing membership identifier',
+    `orgID`        INT UNSIGNED  NOT NULL                 COMMENT '🏢 FK to tblOrganisations',
+    `userID`       INT UNSIGNED  NOT NULL                 COMMENT '👤 FK to tblUsers',
+    `roleID`       INT UNSIGNED  NOT NULL DEFAULT 3       COMMENT '🎭 Organisation-scoped role (1=Global Admin, 2=Admin, 3=Regular User per the project role model)',
+    `joinedAt`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Timestamp this user joined the organisation',
+
+    PRIMARY KEY (`orgMemberID`),
+    UNIQUE KEY `idx_org_member_unique` (`orgID`, `userID`),
+    INDEX `idx_org_member_user` (`userID`),
+
+    CONSTRAINT `fk_org_member_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_org_member_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🏢 Organisation membership and per-organisation role (schema stub - org UI/logic deferred to a later E3 stage)';
+
+-- ==============================================================================
+-- 📋 Table 18: tblInvitations (Epic E3 org stage schema stub)
+-- ==============================================================================
+-- Pending/accepted organisation invitations, tokenised the same way as
+-- password reset / email verification (hashed at rest, single use). Schema-
+-- only this stage - sending/accepting invitations needs E8 email (already
+-- available) and the organisations UI, which is a later E3 stage.
+--
+-- @see PROJECT_ROADMAP.md - Epic E3 stage 6 (Organisations - second stage)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblInvitations` (
+    `invitationID`     INT UNSIGNED  NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing invitation identifier',
+    `orgID`            INT UNSIGNED  NOT NULL                 COMMENT '🏢 FK to tblOrganisations - the organisation being invited into',
+    `email`            VARCHAR(255)  NOT NULL                 COMMENT '📧 Invited email address (need not yet have a tblUsers row)',
+    `tokenHash`        CHAR(64)      NOT NULL                 COMMENT '🔐 SHA-256 hash of the random invitation token (the raw token itself is never stored)',
+    `roleID`           INT UNSIGNED  NOT NULL DEFAULT 3       COMMENT '🎭 Role the invitee will receive on acceptance',
+    `invitedByUserID`  INT UNSIGNED  NULL                     COMMENT '👤 FK to tblUsers - who sent the invitation (NULL if the inviting account is later deleted)',
+    `expiresAt`        DATETIME      NOT NULL                 COMMENT '⏰ Invitation expiry timestamp',
+    `acceptedAt`       DATETIME      NULL                     COMMENT '✅ Timestamp the invitation was accepted (NULL = pending)',
+    `createdAt`        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Invitation creation timestamp',
+
+    PRIMARY KEY (`invitationID`),
+    UNIQUE KEY `idx_invitation_token_hash` (`tokenHash`),
+    INDEX `idx_invitation_org` (`orgID`),
+    INDEX `idx_invitation_email` (`email`),
+    INDEX `idx_invitation_expiry` (`expiresAt`),
+
+    CONSTRAINT `fk_invitation_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_invitation_inviter` FOREIGN KEY (`invitedByUserID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='✉️ Pending/accepted organisation invitations (schema stub - org UI/logic deferred to a later E3 stage)';
+
+-- ==============================================================================
 -- ✅ Installation Complete
 -- ==============================================================================
--- All 11 tables have been created:
---   1. tblSettings          - Application configuration
---   2. tblErrorLog          - Error/exception logging
---   3. tblActivityLog       - Activity tracking
---   4. tblQRCodeTypes       - QR code type definitions
---   5. tblQRCodes           - Generated QR code records
---   6. tblPredefinedLogos   - Predefined logo library
---   7. tblAPIKeys           - API key management
---   8. tblAPIRateLog        - API rate limiting
---   9. tblUsers             - User accounts (Phase 2 stub)
---  10. tblOrganisations     - Organisation accounts (Phase 2 stub)
---  11. tblEmailQueue        - Outbound email queue with retry/backoff (Epic E8)
+-- All 18 tables have been created:
+--   1. tblSettings              - Application configuration (now incl. per-record encryptionSalt, F-006/G-010)
+--   2. tblErrorLog              - Error/exception logging
+--   3. tblActivityLog           - Activity tracking
+--   4. tblQRCodeTypes           - QR code type definitions
+--   5. tblQRCodes               - Generated QR code records
+--   6. tblPredefinedLogos       - Predefined logo library
+--   7. tblAPIKeys               - API key management
+--   8. tblAPIRateLog            - API rate limiting
+--   9. tblUsers                 - User accounts (Epic E3 stage 1 - #11/#12/#14/#15)
+--  10. tblOrganisations         - Organisation accounts
+--  11. tblEmailQueue            - Outbound email queue with retry/backoff (Epic E8)
+--  12. tblUserSessions          - Authenticated user sessions (Epic E3 stage 1 - #14)
+--  13. tblPasswordResets        - Password reset tokens (Epic E3 stage 1 - #15)
+--  14. tblEmailVerifications    - Email verification tokens (Epic E3 stage 1 - #12)
+--  15. tblUserOAuth             - Linked SSO/OAuth identities (Epic E2 schema stub)
+--  16. tblWebAuthnCredentials   - WebAuthn/passkey credentials (G-006 schema stub)
+--  17. tblOrganisationMembers   - Organisation membership + roles (Epic E3 org stage stub)
+--  18. tblInvitations           - Organisation invitations (Epic E3 org stage stub)
 --
 -- 📌 Next step: Run seed_data.sql to populate initial data.
 -- ==============================================================================

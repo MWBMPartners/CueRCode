@@ -2,7 +2,7 @@
     "openapi": "3.0.3",
     "info": {
         "title": "CueRCode API",
-        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Rate Limiting\n\nAll endpoints are rate limited (the `/health` endpoint is exempt in practice). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type ≤ 64 chars, each input scalar ≤ 4096 chars, frame_label ≤ 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above.",
+        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Rate Limiting\n\nAll endpoints are rate limited (the `/health` endpoint is exempt in practice). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above.",
         "version": "1.0.0",
         "contact": {
             "name": "CueRCode Support",
@@ -35,18 +35,28 @@
         {
             "name": "System",
             "description": "Health checks and system status"
+        },
+        {
+            "name": "Accounts",
+            "description": "Registration, email verification, login/session, logout, and password reset (Epic E3 stage 1)"
         }
     ],
     "paths": {
         "/generate": {
             "post": {
-                "tags": ["Generation"],
+                "tags": [
+                    "Generation"
+                ],
                 "summary": "Generate a QR code",
                 "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.\n\nRequires authentication (API key OR CSRF token).",
                 "operationId": "generateQRCode",
                 "security": [
-                    { "ApiKeyAuth": [] },
-                    { "CsrfAuth": [] }
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
                 ],
                 "requestBody": {
                     "required": true,
@@ -134,7 +144,9 @@
                                     "summary": "Custom uploaded logo (base64 data URI)",
                                     "value": {
                                         "type": "url",
-                                        "input": { "url": "https://example.com" },
+                                        "input": {
+                                            "url": "https://example.com"
+                                        },
                                         "customization": {
                                             "ecc": "H",
                                             "logo": "upload",
@@ -148,7 +160,9 @@
                                     "summary": "Accessible QR preset (E5 / #48) with a print-size recommendation",
                                     "value": {
                                         "type": "url",
-                                        "input": { "url": "https://example.com" },
+                                        "input": {
+                                            "url": "https://example.com"
+                                        },
                                         "customization": {
                                             "preset": "accessible",
                                             "fg_color": "#000000",
@@ -161,7 +175,9 @@
                                     "summary": "Braille-caption + tactile-frame PDF print layout (E5 / #49)",
                                     "value": {
                                         "type": "url",
-                                        "input": { "url": "https://example.com" },
+                                        "input": {
+                                            "url": "https://example.com"
+                                        },
                                         "customization": {
                                             "format": "pdf",
                                             "pdf_layout": "tactile"
@@ -176,13 +192,21 @@
                     "200": {
                         "description": "QR code generated successfully",
                         "headers": {
-                            "X-RateLimit-Limit": { "$ref": "#/components/headers/X-RateLimit-Limit" },
-                            "X-RateLimit-Remaining": { "$ref": "#/components/headers/X-RateLimit-Remaining" },
-                            "X-RateLimit-Reset": { "$ref": "#/components/headers/X-RateLimit-Reset" }
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
                         },
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/GenerateResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenerateResponse"
+                                },
                                 "examples": {
                                     "success": {
                                         "summary": "JSON success",
@@ -222,7 +246,9 @@
                                 }
                             },
                             "application/xml": {
-                                "schema": { "$ref": "#/components/schemas/GenerateResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenerateResponse"
+                                },
                                 "examples": {
                                     "success_xml": {
                                         "summary": "XML success (Accept: application/xml or ?format=xml)",
@@ -236,7 +262,9 @@
                         "description": "Invalid request (missing fields, invalid JSON, over-long field, or invalid customisation)",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
                                 "examples": {
                                     "missing_type": {
                                         "summary": "Missing required field",
@@ -251,7 +279,9 @@
                                 }
                             },
                             "application/xml": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
                                 "examples": {
                                     "missing_type_xml": {
                                         "summary": "Missing required field (XML)",
@@ -261,24 +291,42 @@
                             }
                         }
                     },
-                    "401": { "$ref": "#/components/responses/Unauthorized" },
-                    "413": { "$ref": "#/components/responses/PayloadTooLarge" },
-                    "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
-                    "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-                    "429": { "$ref": "#/components/responses/RateLimited" },
-                    "500": { "$ref": "#/components/responses/ServerError" }
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    }
                 }
             }
         },
         "/preview": {
             "post": {
-                "tags": ["Generation"],
+                "tags": [
+                    "Generation"
+                ],
                 "summary": "Generate a QR code preview",
                 "description": "Generate a smaller (300px) PNG preview of a QR code. The preview is not saved to the database or filesystem. Use this for real-time previews in the UI before generating the final QR code. The `format` and `size` of any supplied customisation are overridden (always PNG, 300px); all other customisation is honoured.\n\nRequires authentication (API key OR CSRF token).",
                 "operationId": "previewQRCode",
                 "security": [
-                    { "ApiKeyAuth": [] },
-                    { "CsrfAuth": [] }
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
                 ],
                 "requestBody": {
                     "required": true,
@@ -309,13 +357,21 @@
                     "200": {
                         "description": "Preview generated successfully",
                         "headers": {
-                            "X-RateLimit-Limit": { "$ref": "#/components/headers/X-RateLimit-Limit" },
-                            "X-RateLimit-Remaining": { "$ref": "#/components/headers/X-RateLimit-Remaining" },
-                            "X-RateLimit-Reset": { "$ref": "#/components/headers/X-RateLimit-Reset" }
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
                         },
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/PreviewResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/PreviewResponse"
+                                },
                                 "examples": {
                                     "success": {
                                         "summary": "JSON success",
@@ -332,7 +388,9 @@
                                 }
                             },
                             "application/xml": {
-                                "schema": { "$ref": "#/components/schemas/PreviewResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/PreviewResponse"
+                                },
                                 "examples": {
                                     "success_xml": {
                                         "summary": "XML success",
@@ -342,26 +400,46 @@
                             }
                         }
                     },
-                    "400": { "$ref": "#/components/responses/BadRequest" },
-                    "401": { "$ref": "#/components/responses/Unauthorized" },
-                    "413": { "$ref": "#/components/responses/PayloadTooLarge" },
-                    "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
-                    "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-                    "429": { "$ref": "#/components/responses/RateLimited" },
-                    "500": { "$ref": "#/components/responses/ServerError" }
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    }
                 }
             }
         },
         "/bulk-generate": {
             "post": {
-                "tags": ["Generation"],
+                "tags": [
+                    "Generation"
+                ],
                 "summary": "Bulk generate QR codes (ZIP, or an Avery label-sheet PDF)",
-                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request is configurable (`api_bulk_max_items`, default 100); exceeding it returns `413`. Per-item failures do NOT abort the batch — each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely — a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout — a mixed-layout sheet is not a coherent single PDF); per-item failures leave that label slot blank rather than aborting the sheet. See the Customization `pdf_layout` field for the full enum.",
+                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request is configurable (`api_bulk_max_items`, default 100); exceeding it returns `413`. Per-item failures do NOT abort the batch \u2014 each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely \u2014 a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout \u2014 a mixed-layout sheet is not a coherent single PDF); per-item failures leave that label slot blank rather than aborting the sheet. See the Customization `pdf_layout` field for the full enum.",
                 "operationId": "bulkGenerateQRCodes",
                 "security": [
                     {},
-                    { "ApiKeyAuth": [] },
-                    { "CsrfAuth": [] }
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
                 ],
                 "requestBody": {
                     "required": true,
@@ -374,10 +452,26 @@
                                 "items_array": {
                                     "summary": "Explicit item list with shared defaults",
                                     "value": {
-                                        "customization": { "format": "png", "ecc": "H" },
+                                        "customization": {
+                                            "format": "png",
+                                            "ecc": "H"
+                                        },
                                         "items": [
-                                            { "type": "url", "input": { "url": "https://example.com" } },
-                                            { "type": "text", "input": { "text": "Hello" }, "customization": { "format": "svg" } }
+                                            {
+                                                "type": "url",
+                                                "input": {
+                                                    "url": "https://example.com"
+                                                }
+                                            },
+                                            {
+                                                "type": "text",
+                                                "input": {
+                                                    "text": "Hello"
+                                                },
+                                                "customization": {
+                                                    "format": "svg"
+                                                }
+                                            }
                                         ]
                                     }
                                 },
@@ -393,7 +487,7 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "ZIP archive of generated QR codes (plus manifest.txt) — OR, when the shared customization requests `format: pdf` with `pdf_layout: avery_5160`/`avery_l7160` (E5 / #49), a single combined Avery label-sheet `application/pdf` document instead. See the operation description.",
+                        "description": "ZIP archive of generated QR codes (plus manifest.txt) \u2014 OR, when the shared customization requests `format: pdf` with `pdf_layout: avery_5160`/`avery_l7160` (E5 / #49), a single combined Avery label-sheet `application/pdf` document instead. See the operation description.",
                         "headers": {
                             "Content-Disposition": {
                                 "description": "Attachment filename for download (`cuercode-bulk.zip`, or `cuercode-bulk-avery_5160.pdf`/`cuercode-bulk-avery_l7160.pdf` for the Avery-sheet response)",
@@ -404,11 +498,15 @@
                             },
                             "X-Bulk-Succeeded": {
                                 "description": "Number of items generated successfully",
-                                "schema": { "type": "integer" }
+                                "schema": {
+                                    "type": "integer"
+                                }
                             },
                             "X-Bulk-Failed": {
                                 "description": "Number of items that failed (see manifest.txt, or left blank on the Avery sheet)",
-                                "schema": { "type": "integer" }
+                                "schema": {
+                                    "type": "integer"
+                                }
                             }
                         },
                         "content": {
@@ -431,7 +529,9 @@
                         "description": "Invalid request (no items/csv, malformed item, bad CSV header)",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
                                 "examples": {
                                     "no_input": {
                                         "summary": "Neither items nor csv supplied",
@@ -451,7 +551,9 @@
                         "description": "Too many items (exceeds api_bulk_max_items, default 100) or request body too large",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
                             }
                         }
                     },
@@ -459,18 +561,28 @@
                         "description": "Avery label-sheet mode only (E5 / #49): every item failed generation, so there is nothing to place on the sheet (error_code BULK_AVERY_ALL_FAILED)",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
                             }
                         }
                     },
-                    "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
-                    "429": { "$ref": "#/components/responses/RateLimited" },
-                    "500": { "$ref": "#/components/responses/ServerError" },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    },
                     "501": {
                         "description": "Bulk ZIP generation unavailable (server missing the PHP zip extension)",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
                                 "examples": {
                                     "zip_unavailable": {
                                         "summary": "PHP zip extension missing",
@@ -491,13 +603,19 @@
         },
         "/download/{uuid}": {
             "get": {
-                "tags": ["Download"],
+                "tags": [
+                    "Download"
+                ],
                 "summary": "Download a generated QR code",
                 "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.\n\nRequires authentication (API key OR CSRF token).",
                 "operationId": "downloadQRCode",
                 "security": [
-                    { "ApiKeyAuth": [] },
-                    { "CsrfAuth": [] }
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
                 ],
                 "parameters": [
                     {
@@ -525,28 +643,64 @@
                             }
                         },
                         "content": {
-                            "image/png": { "schema": { "type": "string", "format": "binary" } },
-                            "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
-                            "image/gif": { "schema": { "type": "string", "format": "binary" } },
-                            "image/webp": { "schema": { "type": "string", "format": "binary" } },
-                            "image/svg+xml": { "schema": { "type": "string", "format": "binary" } },
-                            "application/pdf": { "schema": { "type": "string", "format": "binary" } }
+                            "image/png": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/jpeg": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/gif": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/webp": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "image/svg+xml": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "application/pdf": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
                         }
                     },
                     "400": {
                         "description": "Invalid UUID format",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
                             }
                         }
                     },
-                    "401": { "$ref": "#/components/responses/Unauthorized" },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
                     "404": {
                         "description": "QR code not found",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
                                 "examples": {
                                     "not_found": {
                                         "summary": "Unknown UUID",
@@ -562,29 +716,45 @@
                             }
                         }
                     },
-                    "429": { "$ref": "#/components/responses/RateLimited" },
-                    "500": { "$ref": "#/components/responses/ServerError" }
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    }
                 }
             }
         },
         "/types": {
             "get": {
-                "tags": ["Metadata"],
+                "tags": [
+                    "Metadata"
+                ],
                 "summary": "List available QR code types",
                 "description": "Returns all active QR code types with their form field schemas. Use this endpoint to dynamically build QR code creation forms or validate input data structures. No authentication required.",
                 "operationId": "getQRCodeTypes",
-                "security": [{}],
+                "security": [
+                    {}
+                ],
                 "responses": {
                     "200": {
                         "description": "Types retrieved successfully",
                         "headers": {
-                            "X-RateLimit-Limit": { "$ref": "#/components/headers/X-RateLimit-Limit" },
-                            "X-RateLimit-Remaining": { "$ref": "#/components/headers/X-RateLimit-Remaining" },
-                            "X-RateLimit-Reset": { "$ref": "#/components/headers/X-RateLimit-Reset" }
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
                         },
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/TypesResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/TypesResponse"
+                                },
                                 "examples": {
                                     "success": {
                                         "summary": "JSON success (truncated)",
@@ -600,7 +770,15 @@
                                                         "description": "Open a website or web page",
                                                         "category": "general",
                                                         "form_fields": [
-                                                            { "name": "url", "label": "Website URL", "type": "url", "required": true, "placeholder": "https://example.com", "maxlength": 2048, "validation": "url" }
+                                                            {
+                                                                "name": "url",
+                                                                "label": "Website URL",
+                                                                "type": "url",
+                                                                "required": true,
+                                                                "placeholder": "https://example.com",
+                                                                "maxlength": 2048,
+                                                                "validation": "url"
+                                                            }
                                                         ],
                                                         "payload_template": "{url}",
                                                         "sort_order": 1
@@ -614,7 +792,9 @@
                                 }
                             },
                             "application/xml": {
-                                "schema": { "$ref": "#/components/schemas/TypesResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/TypesResponse"
+                                },
                                 "examples": {
                                     "success_xml": {
                                         "summary": "XML success (truncated)",
@@ -624,12 +804,16 @@
                             }
                         }
                     },
-                    "429": { "$ref": "#/components/responses/RateLimited" },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
                     "500": {
                         "description": "Server error",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
                             }
                         }
                     }
@@ -638,22 +822,34 @@
         },
         "/formats": {
             "get": {
-                "tags": ["Metadata"],
+                "tags": [
+                    "Metadata"
+                ],
                 "summary": "List supported output formats",
                 "description": "Returns all supported QR code output formats with MIME types, file extensions, and feature support information (transparency, logo overlay, frame rendering). No authentication required.\n\nNote: JPEG-XL (`jxl`) is NOT returned here. Although the schema reserves a `jxl` value and the web server advertises `image/jxl`, the host's image library cannot encode JPEG-XL, so it is not an accepted output format on this deployment.",
                 "operationId": "getOutputFormats",
-                "security": [{}],
+                "security": [
+                    {}
+                ],
                 "responses": {
                     "200": {
                         "description": "Formats retrieved successfully",
                         "headers": {
-                            "X-RateLimit-Limit": { "$ref": "#/components/headers/X-RateLimit-Limit" },
-                            "X-RateLimit-Remaining": { "$ref": "#/components/headers/X-RateLimit-Remaining" },
-                            "X-RateLimit-Reset": { "$ref": "#/components/headers/X-RateLimit-Reset" }
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
                         },
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/FormatsResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/FormatsResponse"
+                                },
                                 "examples": {
                                     "success": {
                                         "summary": "JSON success",
@@ -662,12 +858,60 @@
                                             "message": "Supported output formats retrieved successfully.",
                                             "data": {
                                                 "formats": [
-                                                    { "format": "png", "mime_type": "image/png", "extension": "png", "description": "PNG image (lossless compression, transparent background support)", "supports_transparency": true, "supports_logo": true, "supports_frame": true },
-                                                    { "format": "jpg", "mime_type": "image/jpeg", "extension": "jpg", "description": "JPEG image (lossy compression, smaller file size, no transparency)", "supports_transparency": false, "supports_logo": true, "supports_frame": true },
-                                                    { "format": "gif", "mime_type": "image/gif", "extension": "gif", "description": "GIF image (lossless, limited colour palette)", "supports_transparency": true, "supports_logo": true, "supports_frame": true },
-                                                    { "format": "webp", "mime_type": "image/webp", "extension": "webp", "description": "WebP image (modern format, excellent compression)", "supports_transparency": true, "supports_logo": true, "supports_frame": true },
-                                                    { "format": "svg", "mime_type": "image/svg+xml", "extension": "svg", "description": "SVG vector graphic (scalable, ideal for print)", "supports_transparency": true, "supports_logo": true, "supports_frame": true },
-                                                    { "format": "pdf", "mime_type": "application/pdf", "extension": "pdf", "description": "PDF document (vector-based, ideal for print)", "supports_transparency": false, "supports_logo": false, "supports_frame": false }
+                                                    {
+                                                        "format": "png",
+                                                        "mime_type": "image/png",
+                                                        "extension": "png",
+                                                        "description": "PNG image (lossless compression, transparent background support)",
+                                                        "supports_transparency": true,
+                                                        "supports_logo": true,
+                                                        "supports_frame": true
+                                                    },
+                                                    {
+                                                        "format": "jpg",
+                                                        "mime_type": "image/jpeg",
+                                                        "extension": "jpg",
+                                                        "description": "JPEG image (lossy compression, smaller file size, no transparency)",
+                                                        "supports_transparency": false,
+                                                        "supports_logo": true,
+                                                        "supports_frame": true
+                                                    },
+                                                    {
+                                                        "format": "gif",
+                                                        "mime_type": "image/gif",
+                                                        "extension": "gif",
+                                                        "description": "GIF image (lossless, limited colour palette)",
+                                                        "supports_transparency": true,
+                                                        "supports_logo": true,
+                                                        "supports_frame": true
+                                                    },
+                                                    {
+                                                        "format": "webp",
+                                                        "mime_type": "image/webp",
+                                                        "extension": "webp",
+                                                        "description": "WebP image (modern format, excellent compression)",
+                                                        "supports_transparency": true,
+                                                        "supports_logo": true,
+                                                        "supports_frame": true
+                                                    },
+                                                    {
+                                                        "format": "svg",
+                                                        "mime_type": "image/svg+xml",
+                                                        "extension": "svg",
+                                                        "description": "SVG vector graphic (scalable, ideal for print)",
+                                                        "supports_transparency": true,
+                                                        "supports_logo": true,
+                                                        "supports_frame": true
+                                                    },
+                                                    {
+                                                        "format": "pdf",
+                                                        "mime_type": "application/pdf",
+                                                        "extension": "pdf",
+                                                        "description": "PDF document (vector-based, ideal for print)",
+                                                        "supports_transparency": false,
+                                                        "supports_logo": false,
+                                                        "supports_frame": false
+                                                    }
                                                 ],
                                                 "count": 6,
                                                 "default": "png"
@@ -678,7 +922,9 @@
                                 }
                             },
                             "application/xml": {
-                                "schema": { "$ref": "#/components/schemas/FormatsResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/FormatsResponse"
+                                },
                                 "examples": {
                                     "success_xml": {
                                         "summary": "XML success (truncated)",
@@ -688,24 +934,34 @@
                             }
                         }
                     },
-                    "429": { "$ref": "#/components/responses/RateLimited" },
-                    "500": { "$ref": "#/components/responses/ServerError" }
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    }
                 }
             }
         },
         "/health": {
             "get": {
-                "tags": ["System"],
+                "tags": [
+                    "System"
+                ],
                 "summary": "Health check",
                 "description": "Check the health status of the API. Returns database connectivity, application version, and PHP version. Used by monitoring systems and load balancers. No authentication required; exempt from rate limiting in practice.",
                 "operationId": "healthCheck",
-                "security": [{}],
+                "security": [
+                    {}
+                ],
                 "responses": {
                     "200": {
                         "description": "Service is healthy",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                },
                                 "examples": {
                                     "healthy": {
                                         "summary": "Healthy",
@@ -725,7 +981,9 @@
                                 }
                             },
                             "application/xml": {
-                                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                },
                                 "examples": {
                                     "healthy_xml": {
                                         "summary": "Healthy (XML)",
@@ -739,7 +997,9 @@
                         "description": "Service is degraded (e.g., database unreachable)",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                },
                                 "examples": {
                                     "degraded": {
                                         "summary": "Degraded",
@@ -759,6 +1019,535 @@
                                 }
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/auth/register": {
+            "post": {
+                "tags": [
+                    "Accounts"
+                ],
+                "summary": "Register a new account",
+                "description": "Create a new (pending) user account and queue an email-verification message. ANTI-ENUMERATION: this endpoint ALWAYS returns the same 201 response, whether the email address was brand new or already registered - the caller cannot distinguish the two outcomes. No new verification email is sent for an already-registered address. Requires a valid CSRF token (web UI) or API key.",
+                "operationId": "authRegister",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RegisterRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Registration request accepted (identical response regardless of whether the email was new or already registered)",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Registration accepted",
+                                        "value": {
+                                            "success": true,
+                                            "message": "If this email address is available for registration, a verification link has been sent to it.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "tags": [
+                    "Accounts"
+                ],
+                "summary": "Log in and establish a session",
+                "description": "Authenticate by email + password and, on success, issue a database-backed session (tblUserSessions) and regenerate the PHP session id. ANTI-ENUMERATION: every failure path (wrong password, no such account, locked account, unverified/pending account, suspended account) returns the IDENTICAL 401 response - none of these states are distinguishable from the outside. Failed attempts count towards an account lockout (security.max_login_attempts / security.lockout_duration). Requires a valid CSRF token (web UI) or API key.",
+                "operationId": "authLogin",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LoginRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Login successful - a session has been established",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/LoginResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Login success",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Logged in successfully.",
+                                            "data": {
+                                                "user": {
+                                                    "email": "jane@example.com",
+                                                    "display_name": "Jane Doe"
+                                                }
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "description": "Invalid email or password, or the account is not yet verified (a single generic message covers every failure mode - see description above)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Invalid credentials (generic)",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Invalid email or password, or the account is not yet verified.",
+                                            "data": {},
+                                            "error_code": "INVALID_CREDENTIALS",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "tags": [
+                    "Accounts"
+                ],
+                "summary": "Log out the current session",
+                "description": "Revoke the current database-backed session (if any) and rotate the PHP session id. Idempotent - calling this with no active session is a harmless no-op that still returns 200, so a status-code difference can never be used to probe session state. Requires a valid CSRF token (web UI) or API key.",
+                "operationId": "authLogout",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Logged out (idempotent - returned even if there was no active session)",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Logged out",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Logged out successfully.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/auth/verify-email": {
+            "post": {
+                "tags": [
+                    "Accounts"
+                ],
+                "summary": "Verify an email address",
+                "description": "Consume a single-use, expiring email-verification token (from the link emailed by POST /auth/register) and activate the owning account. Requires a valid CSRF token (web UI) or API key.",
+                "operationId": "authVerifyEmail",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VerifyEmailRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Email address verified; the account is now active",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Verified",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Your email address has been verified. You can now log in.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "The token is invalid, not found, or has expired",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Invalid/expired token",
+                                        "value": {
+                                            "success": false,
+                                            "message": "This verification link is invalid or has expired.",
+                                            "data": {},
+                                            "error_code": "VERIFICATION_TOKEN_INVALID",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/auth/request-password-reset": {
+            "post": {
+                "tags": [
+                    "Accounts"
+                ],
+                "summary": "Request a password reset email",
+                "description": "Queue a password-reset email if (and only if) the address belongs to an active account. ANTI-ENUMERATION: ALWAYS returns the IDENTICAL 200 response regardless of whether the email is registered - this is a hard requirement (SECURITY.md), not an implementation detail. Requires a valid CSRF token (web UI) or API key.",
+                "operationId": "authRequestPasswordReset",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RequestPasswordResetRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Request accepted (identical response regardless of whether the email is registered)",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Request accepted",
+                                        "value": {
+                                            "success": true,
+                                            "message": "If this email address is registered, a password reset link has been sent to it.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/auth/reset-password": {
+            "post": {
+                "tags": [
+                    "Accounts"
+                ],
+                "summary": "Reset a password using an emailed token",
+                "description": "Consume a single-use, expiring password-reset token (from the link emailed by POST /auth/request-password-reset) and set a new password. All existing sessions for the account are revoked on success. Requires a valid CSRF token (web UI) or API key.",
+                "operationId": "authResetPassword",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ResetPasswordRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Password reset - all existing sessions for the account have been revoked",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Reset successful",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Your password has been reset. You can now log in with your new password.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing fields, or the token is invalid/not found/expired",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Invalid/expired token",
+                                        "value": {
+                                            "success": false,
+                                            "message": "This password reset link is invalid or has expired.",
+                                            "data": {},
+                                            "error_code": "RESET_TOKEN_INVALID",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
                     }
                 }
             }
@@ -782,15 +1571,21 @@
         "headers": {
             "X-RateLimit-Limit": {
                 "description": "Maximum requests per minute",
-                "schema": { "type": "integer" }
+                "schema": {
+                    "type": "integer"
+                }
             },
             "X-RateLimit-Remaining": {
                 "description": "Remaining requests in the current window",
-                "schema": { "type": "integer" }
+                "schema": {
+                    "type": "integer"
+                }
             },
             "X-RateLimit-Reset": {
                 "description": "Unix epoch time (seconds) at which the rate limit window resets",
-                "schema": { "type": "integer" }
+                "schema": {
+                    "type": "integer"
+                }
             }
         },
         "responses": {
@@ -798,10 +1593,14 @@
                 "description": "Invalid request (missing/invalid fields, invalid JSON, over-long field, or invalid customisation)",
                 "content": {
                     "application/json": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        }
                     },
                     "application/xml": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        }
                     }
                 }
             },
@@ -809,7 +1608,9 @@
                 "description": "Authentication required or invalid credentials (missing/invalid X-API-Key or X-CSRF-Token)",
                 "content": {
                     "application/json": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "auth_required": {
                                 "summary": "No credentials supplied",
@@ -824,7 +1625,9 @@
                         }
                     },
                     "application/xml": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        }
                     }
                 }
             },
@@ -832,7 +1635,9 @@
                 "description": "Request body too large (exceeds the maximum accepted size, default 256 KiB)",
                 "content": {
                     "application/json": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "too_large": {
                                 "summary": "Body over the size cap",
@@ -847,7 +1652,9 @@
                         }
                     },
                     "application/xml": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "too_large_xml": {
                                 "summary": "Body over the size cap (XML)",
@@ -861,7 +1668,9 @@
                 "description": "Unsupported Media Type. A non-empty request body must be sent with Content-Type: application/json (an optional charset parameter is allowed).",
                 "content": {
                     "application/json": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "wrong_content_type": {
                                 "summary": "Non-JSON Content-Type",
@@ -876,7 +1685,9 @@
                         }
                     },
                     "application/xml": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "wrong_content_type_xml": {
                                 "summary": "Non-JSON Content-Type (XML)",
@@ -890,7 +1701,9 @@
                 "description": "QR code generation failed (e.g., invalid payload data for the chosen type), OR the `preset: accessible` contrast rejection below",
                 "content": {
                     "application/json": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "generation_failed": {
                                 "summary": "Generation failure",
@@ -915,7 +1728,9 @@
                         }
                     },
                     "application/xml": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "generation_failed_xml": {
                                 "summary": "Generation failure (XML)",
@@ -930,24 +1745,34 @@
                 "headers": {
                     "Retry-After": {
                         "description": "Seconds to wait before retrying",
-                        "schema": { "type": "integer" }
+                        "schema": {
+                            "type": "integer"
+                        }
                     },
                     "X-RateLimit-Limit": {
                         "description": "Maximum requests per minute",
-                        "schema": { "type": "integer" }
+                        "schema": {
+                            "type": "integer"
+                        }
                     },
                     "X-RateLimit-Remaining": {
                         "description": "Remaining requests in the current window",
-                        "schema": { "type": "integer" }
+                        "schema": {
+                            "type": "integer"
+                        }
                     },
                     "X-RateLimit-Reset": {
                         "description": "Unix epoch time (seconds) at which the rate limit window resets",
-                        "schema": { "type": "integer" }
+                        "schema": {
+                            "type": "integer"
+                        }
                     }
                 },
                 "content": {
                     "application/json": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "rate_limited": {
                                 "summary": "Too many requests",
@@ -962,7 +1787,9 @@
                         }
                     },
                     "application/xml": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "rate_limited_xml": {
                                 "summary": "Too many requests (XML)",
@@ -976,7 +1803,9 @@
                 "description": "Internal server error or a temporarily unavailable service dependency (the QR generation or types service may report 503 in some cases).",
                 "content": {
                     "application/json": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "server_error": {
                                 "summary": "Unexpected server error",
@@ -991,7 +1820,9 @@
                         }
                     },
                     "application/xml": {
-                        "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
                         "examples": {
                             "server_error_xml": {
                                 "summary": "Unexpected server error (XML)",
@@ -1000,22 +1831,100 @@
                         }
                     }
                 }
+            },
+            "Forbidden": {
+                "description": "A valid CSRF token (X-CSRF-Token header) or API key (X-API-Key header) is required",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
+                        "examples": {
+                            "csrf_invalid": {
+                                "summary": "Missing/invalid CSRF token or API key",
+                                "value": {
+                                    "success": false,
+                                    "message": "A valid CSRF token (X-CSRF-Token header) or API key (X-API-Key header) is required.",
+                                    "data": {},
+                                    "error_code": "CSRF_INVALID",
+                                    "timestamp": "2026-02-27T12:00:00+00:00"
+                                }
+                            }
+                        }
+                    },
+                    "application/xml": {
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "Conflict": {
+                "description": "The token has already been used (single-use tokens are consumed on first successful use)",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        },
+                        "examples": {
+                            "already_used": {
+                                "summary": "Token already consumed",
+                                "value": {
+                                    "success": false,
+                                    "message": "This link has already been used.",
+                                    "data": {},
+                                    "error_code": "VERIFICATION_ALREADY_USED",
+                                    "timestamp": "2026-02-27T12:00:00+00:00"
+                                }
+                            }
+                        }
+                    },
+                    "application/xml": {
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "schemas": {
             "GenerateRequest": {
                 "type": "object",
-                "required": ["type", "input"],
+                "required": [
+                    "type",
+                    "input"
+                ],
                 "properties": {
                     "type": {
                         "type": "string",
                         "maxLength": 64,
                         "enum": [
-                            "url", "text", "email", "phone", "sms", "whatsapp", "zoom",
-                            "geo", "vcard", "calendar", "paypal", "bitcoin", "mp3", "video",
-                            "pdf", "image", "appstore", "facebook", "youtube", "wifi",
-                            "linkedin", "facebook_messenger", "instagram", "rating",
-                            "deeplink", "gs1_product"
+                            "url",
+                            "text",
+                            "email",
+                            "phone",
+                            "sms",
+                            "whatsapp",
+                            "zoom",
+                            "geo",
+                            "vcard",
+                            "calendar",
+                            "paypal",
+                            "bitcoin",
+                            "mp3",
+                            "video",
+                            "pdf",
+                            "image",
+                            "appstore",
+                            "facebook",
+                            "youtube",
+                            "wifi",
+                            "linkedin",
+                            "facebook_messenger",
+                            "instagram",
+                            "rating",
+                            "deeplink",
+                            "gs1_product"
                         ],
                         "description": "The QR code type identifier (one of 26 supported types). Use the /types endpoint to retrieve the definitive active list and each type's form field schema. Maximum 64 characters.",
                         "example": "url"
@@ -1040,7 +1949,15 @@
                 "properties": {
                     "format": {
                         "type": "string",
-                        "enum": ["png", "jpg", "jpeg", "gif", "webp", "svg", "pdf"],
+                        "enum": [
+                            "png",
+                            "jpg",
+                            "jpeg",
+                            "gif",
+                            "webp",
+                            "svg",
+                            "pdf"
+                        ],
                         "default": "png",
                         "description": "Output image format. `jpeg` is an accepted alias of `jpg`. Note: JPEG-XL (`jxl`) is NOT accepted on this host (see the API description); an unrecognised value falls back to `png`."
                     },
@@ -1053,7 +1970,12 @@
                     },
                     "ecc": {
                         "type": "string",
-                        "enum": ["L", "M", "Q", "H"],
+                        "enum": [
+                            "L",
+                            "M",
+                            "Q",
+                            "H"
+                        ],
                         "default": "M",
                         "description": "Error correction level. L=7%, M=15%, Q=25%, H=30% recovery. Higher levels tolerate more damage/obstruction. The API default is M (the web UI defaults to H). Use H when adding a logo."
                     },
@@ -1076,26 +1998,46 @@
                     },
                     "pattern": {
                         "type": "string",
-                        "enum": ["square", "round", "dot"],
+                        "enum": [
+                            "square",
+                            "round",
+                            "dot"
+                        ],
                         "default": "square",
                         "description": "Module (pixel) shape style. The square/round/dot set applies to all raster and SVG output; additional decorative shapes (diamond/star/heart) are SVG-only."
                     },
                     "marker_border": {
                         "type": "string",
-                        "enum": ["square", "round", "circle", "extra-rounded"],
+                        "enum": [
+                            "square",
+                            "round",
+                            "circle",
+                            "extra-rounded"
+                        ],
                         "default": "square",
                         "description": "Finder pattern OUTER border shape."
                     },
                     "marker_center": {
                         "type": "string",
-                        "enum": ["square", "round", "circle", "diamond"],
+                        "enum": [
+                            "square",
+                            "round",
+                            "circle",
+                            "diamond"
+                        ],
                         "default": "square",
                         "description": "Finder pattern CENTRE dot shape."
                     },
                     "logo": {
                         "oneOf": [
-                            { "type": "integer", "description": "Predefined logo ID from the logo library (tblPredefinedLogos)." },
-                            { "type": "string", "description": "`upload` to use a custom logo supplied via logo_data, or a logo identifier/path." }
+                            {
+                                "type": "integer",
+                                "description": "Predefined logo ID from the logo library (tblPredefinedLogos)."
+                            },
+                            {
+                                "type": "string",
+                                "description": "`upload` to use a custom logo supplied via logo_data, or a logo identifier/path."
+                            }
                         ],
                         "description": "Logo to overlay on the QR code centre. Using a logo automatically upgrades ECC to H. Set to `upload` and provide logo_data + logo_mime for a custom image."
                     },
@@ -1106,7 +2048,13 @@
                     },
                     "logo_mime": {
                         "type": "string",
-                        "enum": ["image/png", "image/jpeg", "image/gif", "image/svg+xml", "image/webp"],
+                        "enum": [
+                            "image/png",
+                            "image/jpeg",
+                            "image/gif",
+                            "image/svg+xml",
+                            "image/webp"
+                        ],
                         "description": "MIME type of the uploaded custom logo. Used only when `logo` is `upload`."
                     },
                     "logo_size_pct": {
@@ -1118,7 +2066,15 @@
                     },
                     "frame_style": {
                         "type": "string",
-                        "enum": ["none", "simple", "rounded", "bottom-label", "top-label", "banner-bottom", "pill"],
+                        "enum": [
+                            "none",
+                            "simple",
+                            "rounded",
+                            "bottom-label",
+                            "top-label",
+                            "banner-bottom",
+                            "pill"
+                        ],
                         "default": "none",
                         "description": "Decorative frame style drawn around the QR code. Label/banner/pill styles render the frame_label text. Not applied to PDF output."
                     },
@@ -1151,7 +2107,10 @@
                     },
                     "preset": {
                         "type": "string",
-                        "enum": ["none", "accessible"],
+                        "enum": [
+                            "none",
+                            "accessible"
+                        ],
                         "default": "none",
                         "description": "Customisation preset. `none` (default) applies no additional rules. `accessible` enforces an accessibility-focused configuration per ISO/IEC 18004 + WCAG 2.1: forces `ecc` to `H`, forces `quiet_zone` to `true`, DROPS any pinned `version` so the smallest auto-fit version is used, and evaluates the WCAG contrast ratio of `fg_color`/`bg_color`. A contrast ratio below 3:1 causes the request to be REJECTED with HTTP 422 (error_code `ACCESSIBLE_CONTRAST_TOO_LOW`); a ratio from 3:1 up to (but not including) 4.5:1 is allowed through but reported as a non-blocking warning in the response `data.metadata.contrast_warning` field. See the /generate 422 response for a worked example."
                     },
@@ -1159,22 +2118,44 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 10000,
-                        "description": "Optional intended scanning distance in centimetres, used only to compute a recommended physical print size via the 10:1 scan-distance rule (recommended size ≈ scan distance / 10, with a 20mm practical floor). When supplied together with `preset: accessible`, the recommendation is returned in the response as `data.metadata.recommended_print_size_mm`. Has no effect on the generated image itself."
+                        "description": "Optional intended scanning distance in centimetres, used only to compute a recommended physical print size via the 10:1 scan-distance rule (recommended size \u2248 scan distance / 10, with a 20mm practical floor). When supplied together with `preset: accessible`, the recommendation is returned in the response as `data.metadata.recommended_print_size_mm`. Has no effect on the generated image itself."
                     },
                     "gradient": {
                         "type": "object",
                         "description": "Gradient fill for the dark modules (SVG output only). Advanced feature; not exposed in the standard web UI. Ignored for non-SVG formats.",
                         "properties": {
-                            "type": { "type": "string", "enum": ["linear", "radial"], "description": "Gradient type." },
-                            "color1": { "type": "string", "description": "Start colour (hex)." },
-                            "color2": { "type": "string", "description": "End colour (hex)." },
-                            "direction": { "type": "string", "description": "Gradient direction (e.g. horizontal, vertical, diagonal)." }
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "linear",
+                                    "radial"
+                                ],
+                                "description": "Gradient type."
+                            },
+                            "color1": {
+                                "type": "string",
+                                "description": "Start colour (hex)."
+                            },
+                            "color2": {
+                                "type": "string",
+                                "description": "End colour (hex)."
+                            },
+                            "direction": {
+                                "type": "string",
+                                "description": "Gradient direction (e.g. horizontal, vertical, diagonal)."
+                            }
                         },
                         "additionalProperties": true
                     },
                     "pdf_layout": {
                         "type": "string",
-                        "enum": ["standard", "accessible_caption", "tactile", "avery_5160", "avery_l7160"],
+                        "enum": [
+                            "standard",
+                            "accessible_caption",
+                            "tactile",
+                            "avery_5160",
+                            "avery_l7160"
+                        ],
                         "default": "standard",
                         "description": "Print layout for `format: pdf` (E5 / #49). Ignored for any other format. `standard` (default) is today's unchanged QR-only PDF, byte-for-byte. `accessible_caption` adds a large-print (>=18pt) human-readable caption plus a Grade-1 (uncontracted) Braille caption line, rendered as geometric dot patterns (not a Unicode Braille font - core PDF fonts have no Braille glyphs). `tactile` includes everything in `accessible_caption` PLUS a second, clearly-delineated page containing CueRCode's own tactile locator frame overlay guide (registration marks + orientation dot), meant to be reproduced via swell paper, a Braille embosser, or a UV-varnish/raised-ink pass aligned with page 1 - this is an original design, not a reproduction of any third-party patented locator. `avery_5160` (US Letter, 3x10) and `avery_l7160` (A4, 3x7) tile the code into an Avery address-label sheet; on `/generate` a single code fills exactly ONE label with the rest of the sheet left blank as a printable template, while `/bulk-generate` (see BulkGenerateRequest) tiles MULTIPLE items across successive labels/pages when the SAME `pdf_layout` is set at the request level. See `/accessibility` on the web UI for the print/embossing best-practice guide."
                     }
@@ -1182,7 +2163,10 @@
             },
             "BulkItem": {
                 "type": "object",
-                "required": ["type", "input"],
+                "required": [
+                    "type",
+                    "input"
+                ],
                 "description": "A single QR code request inside a bulk batch.",
                 "properties": {
                     "type": {
@@ -1195,10 +2179,16 @@
                         "description": "Type-specific input data for this item.",
                         "minProperties": 1,
                         "additionalProperties": true,
-                        "example": { "url": "https://example.com" }
+                        "example": {
+                            "url": "https://example.com"
+                        }
                     },
                     "customization": {
-                        "allOf": [{ "$ref": "#/components/schemas/Customization" }],
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Customization"
+                            }
+                        ],
                         "description": "Per-item customization. Overrides the request-level shared customization key-by-key."
                     }
                 }
@@ -1210,7 +2200,9 @@
                     "items": {
                         "type": "array",
                         "minItems": 1,
-                        "items": { "$ref": "#/components/schemas/BulkItem" },
+                        "items": {
+                            "$ref": "#/components/schemas/BulkItem"
+                        },
                         "description": "Explicit list of QR code requests. Mutually exclusive with 'csv'."
                     },
                     "csv": {
@@ -1219,7 +2211,11 @@
                         "example": "type,input.url,format\nurl,https://a.com,png\nurl,https://b.com,svg"
                     },
                     "customization": {
-                        "allOf": [{ "$ref": "#/components/schemas/Customization" }],
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Customization"
+                            }
+                        ],
                         "description": "Shared customization defaults applied to every item (overridden by per-item/per-row customization)."
                     }
                 }
@@ -1227,8 +2223,14 @@
             "GenerateResponse": {
                 "type": "object",
                 "properties": {
-                    "success": { "type": "boolean", "example": true },
-                    "message": { "type": "string", "example": "QR code generated successfully." },
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code generated successfully."
+                    },
                     "data": {
                         "type": "object",
                         "properties": {
@@ -1273,8 +2275,14 @@
             "PreviewResponse": {
                 "type": "object",
                 "properties": {
-                    "success": { "type": "boolean", "example": true },
-                    "message": { "type": "string", "example": "QR code preview generated successfully." },
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code preview generated successfully."
+                    },
                     "data": {
                         "type": "object",
                         "properties": {
@@ -1293,7 +2301,10 @@
                             }
                         }
                     },
-                    "timestamp": { "type": "string", "format": "date-time" }
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
                 }
             },
             "AccessibleMetadata": {
@@ -1327,14 +2338,22 @@
             "TypesResponse": {
                 "type": "object",
                 "properties": {
-                    "success": { "type": "boolean", "example": true },
-                    "message": { "type": "string", "example": "QR code types retrieved successfully." },
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "QR code types retrieved successfully."
+                    },
                     "data": {
                         "type": "object",
                         "properties": {
                             "types": {
                                 "type": "array",
-                                "items": { "$ref": "#/components/schemas/QRCodeType" }
+                                "items": {
+                                    "$ref": "#/components/schemas/QRCodeType"
+                                }
                             },
                             "count": {
                                 "type": "integer",
@@ -1343,7 +2362,10 @@
                             }
                         }
                     },
-                    "timestamp": { "type": "string", "format": "date-time" }
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
                 }
             },
             "QRCodeType": {
@@ -1398,20 +2420,37 @@
             "FormatsResponse": {
                 "type": "object",
                 "properties": {
-                    "success": { "type": "boolean", "example": true },
-                    "message": { "type": "string", "example": "Supported output formats retrieved successfully." },
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Supported output formats retrieved successfully."
+                    },
                     "data": {
                         "type": "object",
                         "properties": {
                             "formats": {
                                 "type": "array",
-                                "items": { "$ref": "#/components/schemas/OutputFormat" }
+                                "items": {
+                                    "$ref": "#/components/schemas/OutputFormat"
+                                }
                             },
-                            "count": { "type": "integer", "example": 6 },
-                            "default": { "type": "string", "example": "png" }
+                            "count": {
+                                "type": "integer",
+                                "example": 6
+                            },
+                            "default": {
+                                "type": "string",
+                                "example": "png"
+                            }
                         }
                     },
-                    "timestamp": { "type": "string", "format": "date-time" }
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
                 }
             },
             "OutputFormat": {
@@ -1419,7 +2458,14 @@
                 "properties": {
                     "format": {
                         "type": "string",
-                        "enum": ["png", "jpg", "gif", "webp", "svg", "pdf"],
+                        "enum": [
+                            "png",
+                            "jpg",
+                            "gif",
+                            "webp",
+                            "svg",
+                            "pdf"
+                        ],
                         "description": "Format identifier",
                         "example": "png"
                     },
@@ -1455,14 +2501,23 @@
             "HealthResponse": {
                 "type": "object",
                 "properties": {
-                    "success": { "type": "boolean", "example": true },
-                    "message": { "type": "string", "example": "Service is healthy." },
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Service is healthy."
+                    },
                     "data": {
                         "type": "object",
                         "properties": {
                             "status": {
                                 "type": "string",
-                                "enum": ["healthy", "degraded"],
+                                "enum": [
+                                    "healthy",
+                                    "degraded"
+                                ],
                                 "description": "Overall service status",
                                 "example": "healthy"
                             },
@@ -1478,7 +2533,11 @@
                             },
                             "database": {
                                 "type": "string",
-                                "enum": ["connected", "disconnected", "error"],
+                                "enum": [
+                                    "connected",
+                                    "disconnected",
+                                    "error"
+                                ],
                                 "description": "Database connectivity status",
                                 "example": "connected"
                             },
@@ -1490,13 +2549,19 @@
                             }
                         }
                     },
-                    "timestamp": { "type": "string", "format": "date-time" }
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
                 }
             },
             "ErrorResponse": {
                 "type": "object",
                 "properties": {
-                    "success": { "type": "boolean", "example": false },
+                    "success": {
+                        "type": "boolean",
+                        "example": false
+                    },
                     "message": {
                         "type": "string",
                         "description": "Human-readable error message",
@@ -1508,10 +2573,168 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED.",
                         "example": "MISSING_FIELD"
                     },
-                    "timestamp": { "type": "string", "format": "date-time" }
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "RegisterRequest": {
+                "type": "object",
+                "required": [
+                    "email",
+                    "password"
+                ],
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "maxLength": 254,
+                        "example": "jane@example.com"
+                    },
+                    "password": {
+                        "type": "string",
+                        "format": "password",
+                        "minLength": 8,
+                        "maxLength": 256,
+                        "example": "correct horse battery staple"
+                    },
+                    "display_name": {
+                        "type": "string",
+                        "maxLength": 100,
+                        "nullable": true,
+                        "example": "Jane Doe"
+                    }
+                }
+            },
+            "LoginRequest": {
+                "type": "object",
+                "required": [
+                    "email",
+                    "password"
+                ],
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "maxLength": 254,
+                        "example": "jane@example.com"
+                    },
+                    "password": {
+                        "type": "string",
+                        "format": "password",
+                        "maxLength": 256,
+                        "example": "correct horse battery staple"
+                    }
+                }
+            },
+            "VerifyEmailRequest": {
+                "type": "object",
+                "required": [
+                    "token"
+                ],
+                "properties": {
+                    "token": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "description": "The raw token from the emailed verification link",
+                        "example": "9f2b1e...64-hex-chars"
+                    }
+                }
+            },
+            "RequestPasswordResetRequest": {
+                "type": "object",
+                "required": [
+                    "email"
+                ],
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "maxLength": 254,
+                        "example": "jane@example.com"
+                    }
+                }
+            },
+            "ResetPasswordRequest": {
+                "type": "object",
+                "required": [
+                    "token",
+                    "new_password"
+                ],
+                "properties": {
+                    "token": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "description": "The raw token from the emailed reset link",
+                        "example": "9f2b1e...64-hex-chars"
+                    },
+                    "new_password": {
+                        "type": "string",
+                        "format": "password",
+                        "minLength": 8,
+                        "maxLength": 256,
+                        "example": "a new correct horse battery staple"
+                    }
+                }
+            },
+            "AuthGenericResponse": {
+                "type": "object",
+                "description": "Generic success envelope used by every account/auth endpoint below. register/request-password-reset deliberately return an IDENTICAL shape regardless of whether the target account exists (anti user-enumeration, see SECURITY.md).",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "If this email address is available for registration, a verification link has been sent to it."
+                    },
+                    "data": {
+                        "type": "object"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "LoginResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Logged in successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "user": {
+                                "type": "object",
+                                "properties": {
+                                    "email": {
+                                        "type": "string",
+                                        "format": "email"
+                                    },
+                                    "display_name": {
+                                        "type": "string",
+                                        "nullable": true
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
                 }
             }
         }

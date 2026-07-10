@@ -15,6 +15,8 @@
  *
  * Units covered (all DB-independent):
  *   - fn_encryption.php : encryptValue/decryptValue round-trip, randomised IV,
+ *                         per-record salt uniqueness (F-006/G-010, Epic E3
+ *                         stage 1 - see the "F-006/G-010" section below),
  *                         tamper rejection, hashAPIKey, generateAPIKey,
  *                         getAPIKeyPrefix.
  *   - fn_csrf.php       : generateCSRFToken + validateCSRFToken (run in a
@@ -195,7 +197,26 @@ assertTrue(
     'encryptValue uses a random IV (same plaintext -> different ciphertext)'
 );
 
-// 🔒 Explicit key/salt args are honoured and round-trip independently of defaults.
+// ==============================================================================
+// 🧂 F-006/G-010 — per-record salt (fn_encryption.php redesign, Epic E3 stage 1)
+// ==============================================================================
+// encryptValue() now auto-generates a FRESH random 16-byte salt per call
+// (instead of falling back to one shared global ENCRYPTION_SALT) and embeds
+// it directly in the returned ciphertext blob, making decryptValue() fully
+// self-describing. The optional 4th by-reference parameter lets a caller
+// capture the salt that was used (e.g. fn_config.php mirroring it into the
+// tblSettings.encryptionSalt column for DBA-visible auditability).
+// ==============================================================================
+
+$saltA = null;
+$saltB = null;
+encryptValue('same-plaintext-for-salt-check', null, null, $saltA);
+encryptValue('same-plaintext-for-salt-check', null, null, $saltB);
+
+assertEquals(16, strlen((string) $saltA), 'encryptValue() auto-generates a 16-byte per-record salt (captured via $usedSaltOut)');
+assertTrue($saltA !== $saltB, 'encryptValue() generates a DIFFERENT salt on every call (true per-record salt, not a shared global)');
+
+// 🔒 Explicit key/salt args are still honoured and round-trip independently of defaults.
 $explicitKey  = str_repeat('K', 32);
 $explicitSalt = str_repeat('S', 32);
 $ctExplicit   = encryptValue('explicit-args', $explicitKey, $explicitSalt);
@@ -205,7 +226,9 @@ assertEquals(
     'encrypt/decrypt round-trips with explicit key + salt arguments'
 );
 
-// 🛡️ Decrypting with the WRONG key throws (GCM auth tag fails to verify).
+// 🛡️ Decrypting with the WRONG key throws (GCM auth tag fails to verify) even
+// though the (now-irrelevant, since decrypt reads the embedded salt) $salt
+// argument is supplied identically to the encrypting call.
 assertThrows(
     static function () use ($ctExplicit): void {
         decryptValue($ctExplicit, str_repeat('X', 32), str_repeat('S', 32));
@@ -228,9 +251,12 @@ assertThrows(
 );
 
 // 🛡️ Tampering with the auth tag region (flip a byte inside the 16-byte tag) is rejected.
+// Packed format is now: [salt length (1 byte)][salt][IV (12 bytes)][Tag (16 bytes)][ciphertext].
+// $ciphertext used the auto-generated 16-byte salt path, so the tag begins at
+// offset 1 (length byte) + 16 (salt) + 12 (IV) = 29.
 $packed2 = base64_decode($ciphertext, true);
-// IV is 12 bytes (aes-256-gcm), tag is the next 16 bytes; index 12 is the first tag byte.
-$packed2[12] = chr(ord($packed2[12]) ^ 0xFF);
+$tagStartOffset = 1 + 16 + openssl_cipher_iv_length('aes-256-gcm');
+$packed2[$tagStartOffset] = chr(ord($packed2[$tagStartOffset]) ^ 0xFF);
 $tamperedTag = base64_encode($packed2);
 assertThrows(
     static function () use ($tamperedTag): void {
@@ -240,12 +266,12 @@ assertThrows(
     \RuntimeException::class
 );
 
-// 🛡️ Too-short input (below IV + tag + 1) throws "too short".
+// 🛡️ Too-short input (below the minimum packed length) throws "too short".
 assertThrows(
     static function (): void {
         decryptValue(base64_encode('short'));
     },
-    'decryptValue rejects data shorter than IV+tag+1 (throws RuntimeException)',
+    'decryptValue rejects data shorter than the minimum packed length (throws RuntimeException)',
     \RuntimeException::class
 );
 

@@ -295,12 +295,23 @@ function setConfig(string $key, mixed $value, array $options = []): bool
         }
     }
 
+    // 🧂 F-006/G-010: captures the per-record salt encryptValue() generates
+    // below (via its by-reference 4th parameter), so it can be mirrored into
+    // the tblSettings.encryptionSalt column for DBA-visible auditability.
+    // Stays NULL for non-sensitive settings (nothing to mirror) or when the
+    // stored value is empty (encryptValue() is never called in that case).
+    $usedSalt = null;
+
     // 🔒 Encrypt the value if marked as sensitive
     // @see fn_encryption.php - encryptValue()
     if ($effectiveSensitive === 1 && $storeValue !== null && $storeValue !== '') {
         if (function_exists('encryptValue')) {
             try {
-                $storeValue = encryptValue($storeValue);
+                // 🧂 The salt is auto-generated fresh per call (F-006/G-010 -
+                // no more shared global salt) and embedded in $storeValue
+                // itself; $usedSalt additionally captures it for the mirror
+                // column below.
+                $storeValue = encryptValue($storeValue, null, null, $usedSalt);
             } catch (\RuntimeException $e) {
                 if (function_exists('logError')) {
                     logError(
@@ -330,12 +341,15 @@ function setConfig(string $key, mixed $value, array $options = []): bool
     try {
         if ($existing !== null) {
             // ✏️ Update existing setting
+            // 🧂 encryptionSalt is refreshed alongside settingValue on every
+            // write (NULL when this write is not sensitive) so it can never
+            // drift out of sync with the ciphertext blob it mirrors.
             $stmt = dbQuery(
                 "UPDATE `tblSettings` "
-                . "SET `settingValue` = ? "
+                . "SET `settingValue` = ?, `encryptionSalt` = ? "
                 . "WHERE `settingKey` = ?",
-                'ss',
-                [$storeValue, $key]
+                'sss',
+                [$storeValue, $usedSalt, $key]
             );
         } else {
             // ➕ Insert new setting
@@ -346,9 +360,9 @@ function setConfig(string $key, mixed $value, array $options = []): bool
             }
             $stmt = dbQuery(
                 "INSERT INTO `tblSettings` "
-                . "(`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) "
-                . "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                'ssssiis',
+                . "(`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`, `encryptionSalt`) "
+                . "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                'ssssiiss',
                 [
                     $group,
                     $key,
@@ -356,7 +370,8 @@ function setConfig(string $key, mixed $value, array $options = []): bool
                     $type,
                     $effectiveSensitive,
                     $isEditableInt,
-                    $description
+                    $description,
+                    $usedSalt
                 ]
             );
         }

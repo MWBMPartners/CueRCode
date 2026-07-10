@@ -422,8 +422,12 @@ function errorResponse(string $message, int $httpCode = 400, string $errorCode =
  *       "timestamp": "..."
  *   }
  *
- * @param array  $data    The response data payload
- * @param string $message Human-readable success message (default: 'Success')
+ * @param array  $data     The response data payload
+ * @param string $message  Human-readable success message (default: 'Success')
+ * @param int    $httpCode HTTP status code for a successful response (default: 200).
+ *                          Additive parameter (Epic E3) - e.g. 201 for a resource-creating
+ *                          endpoint such as POST /api/v1/auth/register. Existing two-argument
+ *                          call sites are unaffected.
  *
  * @return void (script execution terminates via exit)
  *
@@ -434,8 +438,10 @@ function errorResponse(string $message, int $httpCode = 400, string $errorCode =
  *   );
  *
  *   successResponse(['settings' => $allSettings]);
+ *
+ *   successResponse([], 'Account created.', 201);
  */
-function successResponse(array $data, string $message = 'Success'): void
+function successResponse(array $data, string $message = 'Success', int $httpCode = 200): void
 {
     // 📋 Build the success response payload
     $payload = [
@@ -448,9 +454,9 @@ function successResponse(array $data, string $message = 'Success'): void
     $format = determineResponseFormat();
 
     if ($format === 'xml') {
-        xmlResponse($payload, 200);
+        xmlResponse($payload, $httpCode);
     } else {
-        jsonResponse($payload, 200);
+        jsonResponse($payload, $httpCode);
     }
 }
 

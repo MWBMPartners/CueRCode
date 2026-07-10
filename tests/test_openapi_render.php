@@ -13,7 +13,8 @@
  * `api/v1/openapi.json` at request time rather than duplicating its content
  * by hand, so these tests both (a) prove the helpers themselves are correct,
  * and (b) prove the actual shipped openapi.json still has the shape the
- * reference page depends on (7 paths, the Customization schema's
+ * reference page depends on (13 paths - the original 7 QR-generation paths
+ * plus the 6 Epic E3 stage 1 account/auth paths, the Customization schema's
  * accessibility params, the shared error responses).
  *
  * ⚠️ Lives under repo-root tests/ - never deployed.
@@ -54,10 +55,11 @@ assertTrue(
     'the real openapi.json has a paths object'
 );
 
-// 📌 The developer portal's reference page assumes exactly these 7 paths exist
-// (DEV_NOTES.md / PROJECT_ROADMAP.md both cite "7 paths" as the current surface).
-// If this ever fails, it means the API surface changed - update this list, not
-// the reference page (which follows automatically).
+// 📌 The developer portal's reference page assumes exactly these 13 paths
+// exist (7 original QR-generation paths + 6 Epic E3 stage 1 account/auth
+// paths added 2026-07-10). If this ever fails, it means the API surface
+// changed - update this list, not the reference page (which follows
+// automatically).
 $expectedPaths = [
     '/generate',
     '/preview',
@@ -66,6 +68,12 @@ $expectedPaths = [
     '/types',
     '/formats',
     '/health',
+    '/auth/register',
+    '/auth/login',
+    '/auth/logout',
+    '/auth/verify-email',
+    '/auth/request-password-reset',
+    '/auth/reset-password',
 ];
 
 foreach ($expectedPaths as $expectedPath) {
@@ -78,7 +86,7 @@ foreach ($expectedPaths as $expectedPath) {
 assertEquals(
     count($expectedPaths),
     count($realSpec['paths']),
-    'real openapi.json has exactly the 7 expected paths (no silent additions/removals since this test was written)'
+    'real openapi.json has exactly the 13 expected paths (no silent additions/removals since this test was written)'
 );
 
 // 📌 loadOpenApiSpecFromFile() fails closed (returns null) for a missing file -
