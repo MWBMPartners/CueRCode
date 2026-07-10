@@ -199,7 +199,8 @@ function validateRequestFieldLengths(array $requestData): ?string
  *           "transparent": false,
  *           "quiet_zone": true,
  *           "preset": "none",
- *           "scan_distance_cm": 100
+ *           "scan_distance_cm": 100,
+ *           "pdf_layout": "standard"
  *       }
  *   }
  *
@@ -209,6 +210,12 @@ function validateRequestFieldLengths(array $requestData): ?string
  *    (contrast_ratio, contrast_warning, recommended_print_size_mm) to the
  *    success response. scan_distance_cm (optional) drives the print-size
  *    recommendation via the 10:1 rule. @see fn_qr_options.php - applyAccessiblePreset()
+ *
+ * 🔧 pdf_layout (E5 / #49, format=pdf only): 'standard' (default) is today's
+ *    unchanged PDF output. 'accessible_caption' adds a large-print + Grade-1
+ *    Braille caption; 'tactile' adds a second page with a tactile locator
+ *    frame overlay guide; 'avery_5160'/'avery_l7160' render an Avery label
+ *    sheet with this code filling one label. @see fn_qr_accessible_pdf.php
  *
  * @param array $requestData The parsed JSON request body
  *
@@ -949,6 +956,29 @@ function buildCustomizationFromRequest(array $raw): array
         $customization['scan_distance_cm'] = max(1, min(10000, $scanDistanceCm));
     }
 
+    // 📌 PDF print layout (string enum) - E5 (#49). Only meaningful when
+    //    format=pdf; harmless/ignored for any other format (mirrors how
+    //    frame_style documents "not applied to PDF output" in reverse).
+    //    'standard' (default) preserves today's PDF output byte-for-byte -
+    //    fn_qr_generate.php only calls into fn_qr_accessible_pdf.php for any
+    //    OTHER value. Kept as an inline allowlist (not a call into
+    //    fn_qr_accessible_pdf.php's own normalisePdfLayout()) because this
+    //    function can run BEFORE loadQRGenerationFunctions() has loaded that
+    //    file (@see handleGenerate() Step 2 vs Step 3 ordering).
+    // @see fn_qr_accessible_pdf.php - pdfLayoutOptions(), renderAccessiblePdfLayout()
+    // @see cuercode-generator.js - collectCustomization() (pdf_layout)
+    if (isset($raw['pdf_layout'])) {
+        $pdfLayout = strtolower(trim((string) $raw['pdf_layout']));
+    } else {
+        $pdfLayout = 'standard';
+    }
+    $validPdfLayouts = ['standard', 'accessible_caption', 'tactile', 'avery_5160', 'avery_l7160'];
+    if (in_array($pdfLayout, $validPdfLayouts, true)) {
+        $customization['pdf_layout'] = $pdfLayout;
+    } else {
+        $customization['pdf_layout'] = 'standard';
+    }
+
     return $customization;
 }
 
@@ -1047,13 +1077,14 @@ function validateCustomization(array $customization): ?string
 /**
  * 📦 Load the QR code generation function files
  *
- * Loads the four QR generation function files that are not included by
+ * Loads the QR generation function files that are not included by
  * the bootstrap (they are only needed for QR generation operations):
- *   - fn_qr_payloads.php  (payload builders)
- *   - fn_qr_options.php   (options/customization mapping)
- *   - fn_qr_generate.php  (main generation orchestrator)
- *   - fn_qr_logo.php      (logo overlay functions)
- *   - fn_qr_frames.php    (frame rendering functions)
+ *   - fn_qr_payloads.php        (payload builders)
+ *   - fn_qr_options.php         (options/customization mapping)
+ *   - fn_qr_accessible_pdf.php  (Braille/tactile/Avery PDF print layouts - E5/#49)
+ *   - fn_qr_generate.php        (main generation orchestrator)
+ *   - fn_qr_logo.php            (logo overlay functions)
+ *   - fn_qr_frames.php          (frame rendering functions)
  *
  * Uses require_once so multiple calls are safe.
  *
@@ -1079,6 +1110,7 @@ function loadQRGenerationFunctions(): void
     $qrFiles = [
         'fn_qr_payloads.php',
         'fn_qr_options.php',
+        'fn_qr_accessible_pdf.php',
         'fn_qr_generate.php',
         'fn_qr_logo.php',
         'fn_qr_frames.php',

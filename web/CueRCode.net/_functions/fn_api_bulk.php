@@ -580,6 +580,55 @@ function bulkBuildFilename(int $oneBasedIndex, string $type, string $extension):
 }
 
 // ==============================================================================
+// 📄 bulkRequestWantsAveryLayout() - detect an Avery-sheet bulk request (PURE)
+// ==============================================================================
+
+/**
+ * 📄 Detect whether a bulk request's SHARED customisation asks for an Avery
+ *     label-sheet PDF instead of the default ZIP-of-images output (E5 / #49).
+ *
+ * Only the request-level (shared) 'customization' object is inspected - a
+ * per-item override cannot flip the WHOLE batch between a ZIP and a single
+ * combined PDF, since that is a request-shape decision, not a per-item one.
+ * Pure and side-effect-free: no I/O, directly unit-testable.
+ *
+ * @param array $requestData The parsed JSON request body (as passed to
+ *                            parseBulkInput()/handleBulkGenerate()).
+ *
+ * @return string|null 'avery_5160' or 'avery_l7160' when requested; null
+ *                     otherwise (the existing ZIP behaviour applies).
+ *
+ * @see fn_qr_accessible_pdf.php - averySheetSpec(), renderAveryLabelSheetPdf()
+ * @see handleBulkAverySheet() - the branch this gates
+ */
+function bulkRequestWantsAveryLayout(array $requestData): ?string
+{
+    if (!isset($requestData['customization']) || !is_array($requestData['customization'])) {
+        return null;
+    }
+
+    $sharedCustomization = $requestData['customization'];
+
+    if (!isset($sharedCustomization['format'])
+        || strtolower(trim((string) $sharedCustomization['format'])) !== 'pdf'
+    ) {
+        return null;
+    }
+
+    if (!isset($sharedCustomization['pdf_layout'])) {
+        return null;
+    }
+
+    $pdfLayout = strtolower(trim((string) $sharedCustomization['pdf_layout']));
+
+    if ($pdfLayout === 'avery_5160' || $pdfLayout === 'avery_l7160') {
+        return $pdfLayout;
+    }
+
+    return null;
+}
+
+// ==============================================================================
 // 🎯 handleBulkGenerate() - Handle a bulk QR generation API request
 // ==============================================================================
 
@@ -592,23 +641,32 @@ function bulkBuildFilename(int $oneBasedIndex, string $type, string $extension):
  *      router's responsibility, mirroring the other POST endpoints).
  *   3. parseBulkInput() -> normalised item list (or structured error).
  *   4. validateBulkRequest() -> enforce cap + per-item shape (or error).
- *   5. Load the QR generation functions and loop generateQRCode() IN-MEMORY
- *      for each item (save_file = false so nothing is written to disk; the DB
- *      record save inside generateQRCode() is best-effort and never required).
- *   6. Assemble a ZIP: one image per successful item, plus a manifest.txt that
+ *   5. Load the QR generation functions.
+ *   5a. E5/#49: if the SHARED customisation requests format=pdf with
+ *       pdf_layout=avery_5160/avery_l7160, delegate the ENTIRE request to
+ *       handleBulkAverySheet() instead - it streams a single combined Avery
+ *       label-sheet PDF (one item per label, spanning extra sheet pages as
+ *       needed) and this function returns immediately afterwards. This is a
+ *       different RESPONSE SHAPE (application/pdf, not application/zip), so
+ *       it is a fork, not an add-on to the ZIP pipeline below.
+ *   6. (default path) loop generateQRCode() IN-MEMORY for each item
+ *      (save_file = false so nothing is written to disk; the DB record save
+ *      inside generateQRCode() is best-effort and never required).
+ *   7. Assemble a ZIP: one image per successful item, plus a manifest.txt that
  *      records every item's outcome. Per-item failures are recorded in the
  *      manifest rather than aborting the batch.
- *   7. Stream the ZIP with application/zip + attachment Content-Disposition.
+ *   8. Stream the ZIP with application/zip + attachment Content-Disposition.
  *
  * @param array $auth The authentication context from the router (unused for
  *                    generation itself, but accepted so the handler signature
  *                    matches the router's auth-aware dispatch and future
  *                    per-key behaviour can hook in).
  *
- * @return void (streams the ZIP and exits, or sends an error response)
+ * @return void (streams the ZIP or Avery-sheet PDF and exits, or sends an error response)
  *
  * @see fn_qr_generate.php  - generateQRCode()
  * @see fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization()
+ * @see handleBulkAverySheet() - the Avery-sheet fork (E5 / #49)
  * @see https://www.php.net/manual/en/class.ziparchive.php
  */
 function handleBulkGenerate(array $auth): void
@@ -727,6 +785,19 @@ function handleBulkGenerate(array $auth): void
             503,
             'SERVICE_UNAVAILABLE'
         );
+        return;
+    }
+
+    // ==================================================================
+    // 📌 Step 5a: Fork to the Avery label-sheet PDF path (E5 / #49) when the
+    // SHARED customisation requests it. A single combined PDF (not a ZIP) is
+    // a different response shape, so this is a complete fork - it streams
+    // its own response and this function returns immediately afterwards.
+    // ==================================================================
+    $averyLayout = bulkRequestWantsAveryLayout($requestData);
+
+    if ($averyLayout !== null && function_exists('renderAveryLabelSheetPdf')) {
+        handleBulkAverySheet($items, $averyLayout, $auth);
         return;
     }
 
@@ -961,5 +1032,169 @@ function handleBulkGenerate(array $auth): void
     }
 
     echo $zipBytes;
+    exit;
+}
+
+// ==============================================================================
+// 📄 handleBulkAverySheet() - stream a combined Avery label-sheet PDF (E5 / #49)
+// ==============================================================================
+
+/**
+ * 📄 Build and stream a single combined Avery label-sheet PDF for a bulk request.
+ *
+ * Called from handleBulkGenerate() (Step 5a) instead of the ZIP pipeline when
+ * the request's shared customisation asks for format=pdf with
+ * pdf_layout=avery_5160/avery_l7160. For each validated item: builds the
+ * payload + QR options + raw module matrix (bypassing image rendering
+ * entirely, since only the matrix is needed for label tiling), then hands
+ * the full list to renderAveryLabelSheetPdf() (fn_qr_accessible_pdf.php),
+ * which tiles them into successive label slots across as many sheet pages
+ * as needed. Every item is FORCED onto the SAME sheet layout regardless of
+ * what its own (possibly per-item-overridden) customisation requested - a
+ * mixed-layout Avery sheet is not a coherent single PDF.
+ *
+ * Per-item failures are skipped (that label slot stays blank on the sheet)
+ * rather than aborting the whole batch, mirroring handleBulkGenerate()'s ZIP
+ * pipeline's per-item resilience; the failure/success counts are still
+ * surfaced via the same X-Bulk-Succeeded/X-Bulk-Failed response headers.
+ *
+ * @param array  $items       The normalised, already-validated item list from
+ *                            parseBulkInput()/validateBulkRequest().
+ * @param string $averyLayout 'avery_5160' or 'avery_l7160'.
+ * @param array  $auth        The authentication context (for activity logging parity
+ *                            with handleBulkGenerate()'s ZIP path).
+ *
+ * @return void (streams the PDF and exits, or sends an error response)
+ *
+ * @see fn_qr_accessible_pdf.php - renderAveryLabelSheetPdf(), buildQrMatrixForAccessiblePdf(),
+ *                                 accessiblePdfResolveDarkRgb()
+ * @see fn_api_generate.php      - buildCustomizationFromRequest(), validateCustomization()
+ * @see fn_qr_payloads.php       - buildQRPayload()
+ * @see fn_qr_options.php        - buildQROptions()
+ */
+function handleBulkAverySheet(array $items, string $averyLayout, array $auth): void
+{
+    $sheetItems       = [];
+    $failureCount     = 0;
+
+    foreach ($items as $index => $item) {
+        if (isset($item['type'])) {
+            $type = (string) $item['type'];
+        } else {
+            $type = '';
+        }
+
+        if (isset($item['input']) && is_array($item['input'])) {
+            $input = $item['input'];
+        } else {
+            $input = [];
+        }
+
+        if (isset($item['customization']) && is_array($item['customization'])) {
+            $rawCustomization = $item['customization'];
+        } else {
+            $rawCustomization = [];
+        }
+
+        if (function_exists('buildCustomizationFromRequest')) {
+            $customization = buildCustomizationFromRequest($rawCustomization);
+        } else {
+            $customization = $rawCustomization;
+        }
+
+        // 🔒 Force the SAME sheet layout regardless of what the item itself
+        //    requested - a mixed-layout Avery sheet is not a coherent PDF.
+        $customization['format']     = 'pdf';
+        $customization['pdf_layout'] = $averyLayout;
+
+        if (function_exists('validateCustomization')) {
+            $customizationError = validateCustomization($customization);
+        } else {
+            $customizationError = null;
+        }
+
+        if ($customizationError !== null) {
+            $failureCount++;
+            continue;
+        }
+
+        try {
+            $payload   = buildQRPayload($type, $input);
+            $qrOptions = buildQROptions($customization);
+            $matrix    = buildQrMatrixForAccessiblePdf($qrOptions, $payload);
+        } catch (\Throwable $e) {
+            $failureCount++;
+            if (function_exists('logError')) {
+                logError('warning', 'Bulk Avery item generation failed', $e->getMessage(), [
+                    'index' => (int) $index,
+                    'type'  => $type,
+                ]);
+            }
+            continue;
+        }
+
+        $sheetItems[] = [
+            'matrix'      => $matrix->getMatrix(true),
+            'moduleCount' => $matrix->getSize(),
+            'darkRgb'     => accessiblePdfResolveDarkRgb($customization),
+        ];
+    }
+
+    // ❌ Every item failed - nothing to render.
+    if (count($sheetItems) === 0) {
+        errorResponse(
+            'None of the requested items could be generated for the Avery label sheet.',
+            422,
+            'BULK_AVERY_ALL_FAILED'
+        );
+        return;
+    }
+
+    $pdfBytes = renderAveryLabelSheetPdf($sheetItems, $averyLayout);
+
+    // 📌 Log the activity (best-effort), mirroring the ZIP path's logging.
+    if (function_exists('logActivity')) {
+        if (isset($auth['method'])) {
+            $authMethod = (string) $auth['method'];
+        } else {
+            $authMethod = 'anonymous';
+        }
+        logActivity(
+            'api_bulk_generate',
+            'API: Bulk generated ' . count($sheetItems) . ' QR code(s) ('
+                . $failureCount . ' failed) as an Avery label-sheet PDF ('
+                . $averyLayout . ').',
+            'qr_code',
+            null,
+            [
+                'requested'  => count($items),
+                'succeeded'  => count($sheetItems),
+                'failed'     => $failureCount,
+                'authType'   => $authMethod,
+                'endpoint'   => 'bulk-generate',
+                'pdf_layout' => $averyLayout,
+            ]
+        );
+    }
+
+    // 📌 Stream the PDF with download headers, mirroring the ZIP path's headers.
+    // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
+    if (!headers_sent()) {
+        http_response_code(200);
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="cuercode-bulk-' . $averyLayout . '.pdf"');
+        header('Content-Length: ' . strlen($pdfBytes));
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('X-Content-Type-Options: nosniff');
+        // 📌 Surface batch counts in headers for non-UI consumers.
+        header('X-Bulk-Succeeded: ' . count($sheetItems));
+        header('X-Bulk-Failed: ' . $failureCount);
+        if (function_exists('emitCorsHeaders')) {
+            emitCorsHeaders();
+        }
+    }
+
+    echo $pdfBytes;
     exit;
 }

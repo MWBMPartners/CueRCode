@@ -255,6 +255,60 @@ function generateQRCode(string $typeName, array $inputData, array $customization
     }
 
     // ==================================================================
+    // ♿ Step 4a: Accessible/tactile/Avery PDF layout composition (E5 / #49)
+    // Only applies when format === 'pdf' AND a non-'standard' pdf_layout was
+    // requested. 'standard' (the default/absent case) is a COMPLETE NO-OP -
+    // $qrOutput stays EXACTLY the chillerlan QRFpdf bytes from Step 4 above,
+    // preserving byte-for-byte compatibility with pre-#49 PDF output. A
+    // composition failure falls back to the standard PDF already in
+    // $qrOutput rather than failing the whole generation.
+    // @see fn_qr_accessible_pdf.php - normalisePdfLayout(), renderAccessiblePdfLayout()
+    // ==================================================================
+    if ($format === 'pdf') {
+        if (isset($customization['pdf_layout'])) {
+            $pdfLayoutRawValue = $customization['pdf_layout'];
+        } else {
+            $pdfLayoutRawValue = 'standard';
+        }
+
+        if (function_exists('normalisePdfLayout')) {
+            $pdfLayout = normalisePdfLayout($pdfLayoutRawValue);
+        } else {
+            $pdfLayout = 'standard';
+        }
+
+        if ($pdfLayout !== 'standard' && function_exists('renderAccessiblePdfLayout')) {
+            try {
+                if (function_exists('deriveAccessiblePdfCaptionText')) {
+                    $accessibleCaptionText = deriveAccessiblePdfCaptionText($typeName, $inputData, $payload);
+                } else {
+                    $accessibleCaptionText = $payload;
+                }
+
+                $qrOutput = renderAccessiblePdfLayout(
+                    $pdfLayout,
+                    $payload,
+                    $accessibleCaptionText,
+                    $qrOptions,
+                    $customization
+                );
+            } catch (\Throwable $e) {
+                // ⚠️ Layout composition failed - fall back to the standard
+                //    chillerlan PDF (already generated above) rather than
+                //    failing the whole request over a print-layout error.
+                if (function_exists('logError')) {
+                    logError(
+                        'warning',
+                        'Accessible PDF layout composition failed - falling back to standard PDF',
+                        $e->getMessage(),
+                        ['pdf_layout' => $pdfLayout]
+                    );
+                }
+            }
+        }
+    }
+
+    // ==================================================================
     // 📌 Determine output format details
     // @see fn_qr_options.php - mapOutputFormat()
     // ==================================================================

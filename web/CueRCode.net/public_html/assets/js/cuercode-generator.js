@@ -167,7 +167,12 @@
             format:     $('#opt-format').val(),
             size:       parseInt($('#opt-size').val(), 10),
             ecc:        $('input[name="ecc_level"]:checked').val(),
-            quiet_zone: $('#opt-quiet-zone').is(':checked')
+            quiet_zone: $('#opt-quiet-zone').is(':checked'),
+
+            /* ♿ PDF print layout (E5 / #49): only meaningful when format=pdf;
+               harmless (ignored server-side) otherwise, so it is always safe
+               to include. */
+            pdf_layout: $('#opt-pdf-layout').val()
         };
 
         /* 🔢 QR version (B-055): only send a pinned version when the user picks
@@ -1367,7 +1372,10 @@
     /**
      * 📏 Handle output format dropdown changes
      *
-     * Updates the download format label display.
+     * Updates the download format label display and shows/hides the PDF
+     * print-layout panel (E5 / #49 - only meaningful when format=pdf; the
+     * live preview is always PNG regardless of pdf_layout, so no preview
+     * refresh is needed for that panel itself).
      */
     function handleFormatChange() {
         var format = $('#opt-format').val();
@@ -1379,6 +1387,14 @@
             formatDisplay = format.toUpperCase();
         }
         $('#download-format-label').text(formatDisplay);
+
+        /* ♿ PDF print layout (E5 / #49): only relevant when format=pdf. */
+        if (format === 'pdf') {
+            $('#pdf-layout-panel').removeClass('d-none');
+        } else {
+            $('#pdf-layout-panel').addClass('d-none');
+        }
+
         triggerPreview();
     }
 
@@ -1888,6 +1904,15 @@
             initFormatDisplay = 'PNG';
         }
         $('#download-format-label').text(initFormatDisplay);
+
+        /* ♿ PDF print layout panel (E5 / #49): initial visibility mirrors
+           handleFormatChange()'s toggle, without triggering a redundant
+           preview request at page load. */
+        if ($('#opt-format').val() === 'pdf') {
+            $('#pdf-layout-panel').removeClass('d-none');
+        } else {
+            $('#pdf-layout-panel').addClass('d-none');
+        }
 
         /* ♿ Initialise the accessibility read-outs (E5 / #48) from the
            server-rendered default colours/scan-distance so they are never

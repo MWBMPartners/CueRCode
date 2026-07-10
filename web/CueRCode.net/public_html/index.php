@@ -44,6 +44,7 @@ require_once __DIR__ . '/../_includes/bootstrap.php';
 $qrFunctionFiles = [
     'fn_qr_payloads.php',
     'fn_qr_options.php',
+    'fn_qr_accessible_pdf.php',
     'fn_qr_generate.php',
     'fn_qr_logo.php',
     'fn_qr_frames.php',
@@ -237,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['qr_type'])) {
             'ecc_level', 'fg_color', 'bg_color', 'marker_color',
             'pattern', 'marker_border', 'marker_center', 'logo',
             'logo_upload', 'logo_size', 'frame_style', 'frame_label',
-            'frame_color', 'transparent_bg',
+            'frame_color', 'transparent_bg', 'pdf_layout',
         ];
 
         $inputData = [];
@@ -293,6 +294,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['qr_type'])) {
         } else {
             $custFrameColor = '';
         }
+
+        // 📌 PDF print layout (E5 / #49) - only meaningful when output_format=pdf.
+        //    Validated against the same allowlist as the API/AJAX path
+        //    (buildCustomizationFromRequest() in fn_api_generate.php).
+        if (isset($_POST['pdf_layout'])) {
+            $custPdfLayout = strtolower(trim((string) $_POST['pdf_layout']));
+        } else {
+            $custPdfLayout = 'standard';
+        }
+        $validPdfLayoutsNoJs = ['standard', 'accessible_caption', 'tactile', 'avery_5160', 'avery_l7160'];
+        if (!in_array($custPdfLayout, $validPdfLayoutsNoJs, true)) {
+            $custPdfLayout = 'standard';
+        }
+
         $customization = [
             'format'       => $postFormat,
             'size'         => $custSize,
@@ -305,6 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['qr_type'])) {
             'frame_style'  => $custFrameStyle,
             'frame_label'  => $custFrameLabel,
             'frame_color'  => $custFrameColor,
+            'pdf_layout'   => $custPdfLayout,
         ];
 
         // 📌 Handle logo from POST
@@ -841,6 +857,34 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                             <option value="gif" <?php if ($defaults['format'] === 'gif') { echo 'selected'; } ?>>GIF - Legacy compatibility</option>
                                             <option value="pdf" <?php if ($defaults['format'] === 'pdf') { echo 'selected'; } ?>>PDF - Print-ready document</option>
                                         </select>
+                                    </div>
+
+                                    <!-- ================================================
+                                         ♿ PDF print layout (E5 / #49) - shown only when
+                                         Output Format above is "pdf". Braille-caption /
+                                         tactile-frame / Avery label-sheet print templates.
+                                         Visibility toggled by handleFormatChange() in
+                                         cuercode-generator.js.
+                                         ================================================ -->
+                                    <div class="mb-4 d-none" id="pdf-layout-panel">
+                                        <label for="opt-pdf-layout" class="form-label fw-semibold">
+                                            <i class="fa-solid fa-braille me-1" aria-hidden="true"></i> PDF Print Layout
+                                        </label>
+                                        <select class="form-select" id="opt-pdf-layout" name="pdf_layout">
+                                            <option value="standard" selected>Standard - QR code only (today's PDF)</option>
+                                            <option value="accessible_caption">Accessible caption - large-print + Braille caption line</option>
+                                            <option value="tactile">Tactile frame - accessible caption + locator-frame overlay page</option>
+                                            <option value="avery_5160">Avery 5160 label sheet (US Letter, 3&times;10)</option>
+                                            <option value="avery_l7160">Avery L7160 label sheet (A4, 3&times;7)</option>
+                                        </select>
+                                        <small class="text-body-secondary mt-1 d-block">
+                                            Braille dots are Grade-1 (uncontracted) and geometrically drawn (not a
+                                            Unicode font). Avery layouts fill one label on a full printable sheet
+                                            template; use <code>/api/v1/bulk-generate</code> with the same
+                                            <code>pdf_layout</code> to fill a whole sheet from multiple codes. See the
+                                            <a href="/accessibility">accessible/tactile printing guide</a> for
+                                            best-practice sizing, placement and embossing workflow.
+                                        </small>
                                     </div>
 
                                     <!-- Output Size -->

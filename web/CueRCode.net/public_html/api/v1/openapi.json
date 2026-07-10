@@ -156,6 +156,17 @@
                                             "scan_distance_cm": 100
                                         }
                                     }
+                                },
+                                "accessible_pdf_layout": {
+                                    "summary": "Braille-caption + tactile-frame PDF print layout (E5 / #49)",
+                                    "value": {
+                                        "type": "url",
+                                        "input": { "url": "https://example.com" },
+                                        "customization": {
+                                            "format": "pdf",
+                                            "pdf_layout": "tactile"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -344,8 +355,8 @@
         "/bulk-generate": {
             "post": {
                 "tags": ["Generation"],
-                "summary": "Bulk generate QR codes (ZIP)",
-                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request is configurable (`api_bulk_max_items`, default 100); exceeding it returns `413`. Per-item failures do NOT abort the batch — each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.",
+                "summary": "Bulk generate QR codes (ZIP, or an Avery label-sheet PDF)",
+                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request is configurable (`api_bulk_max_items`, default 100); exceeding it returns `413`. Per-item failures do NOT abort the batch — each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely — a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout — a mixed-layout sheet is not a coherent single PDF); per-item failures leave that label slot blank rather than aborting the sheet. See the Customization `pdf_layout` field for the full enum.",
                 "operationId": "bulkGenerateQRCodes",
                 "security": [
                     {},
@@ -382,10 +393,10 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "ZIP archive of generated QR codes (plus manifest.txt)",
+                        "description": "ZIP archive of generated QR codes (plus manifest.txt) — OR, when the shared customization requests `format: pdf` with `pdf_layout: avery_5160`/`avery_l7160` (E5 / #49), a single combined Avery label-sheet `application/pdf` document instead. See the operation description.",
                         "headers": {
                             "Content-Disposition": {
-                                "description": "Attachment filename for download",
+                                "description": "Attachment filename for download (`cuercode-bulk.zip`, or `cuercode-bulk-avery_5160.pdf`/`cuercode-bulk-avery_l7160.pdf` for the Avery-sheet response)",
                                 "schema": {
                                     "type": "string",
                                     "example": "attachment; filename=\"cuercode-bulk.zip\""
@@ -396,12 +407,19 @@
                                 "schema": { "type": "integer" }
                             },
                             "X-Bulk-Failed": {
-                                "description": "Number of items that failed (see manifest.txt)",
+                                "description": "Number of items that failed (see manifest.txt, or left blank on the Avery sheet)",
                                 "schema": { "type": "integer" }
                             }
                         },
                         "content": {
                             "application/zip": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            },
+                            "application/pdf": {
+                                "description": "Returned instead of application/zip when pdf_layout is avery_5160/avery_l7160 (E5 / #49).",
                                 "schema": {
                                     "type": "string",
                                     "format": "binary"
@@ -431,6 +449,14 @@
                     },
                     "413": {
                         "description": "Too many items (exceeds api_bulk_max_items, default 100) or request body too large",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Avery label-sheet mode only (E5 / #49): every item failed generation, so there is nothing to place on the sheet (error_code BULK_AVERY_ALL_FAILED)",
                         "content": {
                             "application/json": {
                                 "schema": { "$ref": "#/components/schemas/ErrorResponse" }
@@ -1145,6 +1171,12 @@
                             "direction": { "type": "string", "description": "Gradient direction (e.g. horizontal, vertical, diagonal)." }
                         },
                         "additionalProperties": true
+                    },
+                    "pdf_layout": {
+                        "type": "string",
+                        "enum": ["standard", "accessible_caption", "tactile", "avery_5160", "avery_l7160"],
+                        "default": "standard",
+                        "description": "Print layout for `format: pdf` (E5 / #49). Ignored for any other format. `standard` (default) is today's unchanged QR-only PDF, byte-for-byte. `accessible_caption` adds a large-print (>=18pt) human-readable caption plus a Grade-1 (uncontracted) Braille caption line, rendered as geometric dot patterns (not a Unicode Braille font - core PDF fonts have no Braille glyphs). `tactile` includes everything in `accessible_caption` PLUS a second, clearly-delineated page containing CueRCode's own tactile locator frame overlay guide (registration marks + orientation dot), meant to be reproduced via swell paper, a Braille embosser, or a UV-varnish/raised-ink pass aligned with page 1 - this is an original design, not a reproduction of any third-party patented locator. `avery_5160` (US Letter, 3x10) and `avery_l7160` (A4, 3x7) tile the code into an Avery address-label sheet; on `/generate` a single code fills exactly ONE label with the rest of the sheet left blank as a printable template, while `/bulk-generate` (see BulkGenerateRequest) tiles MULTIPLE items across successive labels/pages when the SAME `pdf_layout` is set at the request level. See `/accessibility` on the web UI for the print/embossing best-practice guide."
                     }
                 }
             },
