@@ -17,11 +17,19 @@
  * and JS-enhanced outcomes are an identical full-page redirect to /login/,
  * so there is no UX benefit to an AJAX call for that one action.
  *
+ * Epic E7 stage 1 (#54) additionally wires the API-keys section: create
+ * (POST /keys), rotate (POST /keys/{id}/rotate), and revoke
+ * (DELETE /keys/{id}) - each AJAX call mirrors this page's own no-JS <form>
+ * fallback exactly (public_html/account/index.php). A newly-created or
+ * newly-rotated key's ONE-TIME secret is rendered client-side (never fetched
+ * again - the API never returns it a second time) with a copy-to-clipboard
+ * affordance.
+ *
  * @package     CueRCode
  * @subpackage  Frontend
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
- * @since       Phase 2 (Epic E3 stage 2b, #52/#23/#24)
+ * @since       Phase 2 (Epic E3 stage 2b, #52/#23/#24; Epic E7 stage 1, #54)
  * @see         public_html/account/index.php
  */
 
@@ -401,6 +409,312 @@
     }
 
     // ==========================================================================
+    // 🔑 API keys (Epic E7 stage 1, #54) - create, rotate, revoke
+    // ==========================================================================
+    // Every dynamic value below is inserted via jQuery .text()/.val() (never
+    // .html()/innerHTML with server-supplied data), which already escapes
+    // safely - no separate manual-escaping helper is needed in this file.
+    // ==========================================================================
+
+    /**
+     * 🖼️ Render the "one-time secret" alert for a just-created/-rotated key.
+     * The raw key is shown EXACTLY ONCE - this function is only ever called
+     * with a response the server just sent back from POST /keys or
+     * POST /keys/{id}/rotate; it is never re-fetched.
+     *
+     * @param {Object} keyData {id, api_key, prefix, name}
+     */
+    function renderApiKeyOneTimeSecret(keyData) {
+        var $existing = $('#api-key-one-time-secret');
+        if ($existing.length > 0) {
+            $existing.remove();
+        }
+
+        var $alert = $(
+            '<div class="alert alert-warning" role="alert" id="api-key-one-time-secret">'
+                + '<p class="fw-bold mb-1">'
+                + '<i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>'
+                + 'Copy this key now - you will not be able to see it again.'
+                + '</p>'
+                + '<div class="input-group">'
+                + '<input type="text" class="form-control font-monospace" readonly id="api-key-one-time-value" aria-label="Your new API key - copy it now">'
+                + '<button type="button" class="btn btn-outline-secondary" id="api-key-copy-btn" data-copy-target="api-key-one-time-value" aria-label="Copy API key to clipboard">'
+                + '<i class="fa-solid fa-copy me-1" aria-hidden="true"></i> Copy'
+                + '</button>'
+                + '</div>'
+                + '<p class="form-text mb-0 mt-1" id="api-key-one-time-meta"></p>'
+                + '</div>'
+        );
+
+        $alert.find('#api-key-one-time-value').val(keyData.api_key);
+        $alert.find('#api-key-one-time-meta').text(
+            'Name: ' + (keyData.name || '') + ' · Prefix: ' + (keyData.prefix || '')
+        );
+
+        $('#api-key-ajax-alert').after($alert);
+        $alert[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    /**
+     * 🖼️ Render the API-keys list from a JSON keys array (fully escaped - no
+     * raw HTML from the server is ever inserted directly).
+     *
+     * @param {Array} keys
+     */
+    function renderApiKeysList(keys) {
+        var $list = $('#api-keys-list');
+        var $empty = $('#api-keys-list-empty');
+
+        if (keys.length === 0) {
+            if ($list.length > 0) {
+                $list.replaceWith('<p class="text-body-secondary mb-0" id="api-keys-list-empty">You have not created any API keys yet.</p>');
+            }
+            return;
+        }
+
+        if ($list.length === 0 && $empty.length > 0) {
+            $empty.replaceWith('<div class="d-flex flex-column gap-2" id="api-keys-list"></div>');
+            $list = $('#api-keys-list');
+        }
+
+        $list.empty();
+
+        keys.forEach(function (key) {
+            var $item = $('<div class="border rounded p-3"></div>').attr('data-api-key-id', key.id);
+            var $row = $('<div class="d-flex justify-content-between align-items-start flex-wrap gap-2"></div>');
+            var $info = $('<div></div>');
+
+            var $title = $('<div class="fw-semibold"></div>').text(key.name || '');
+            if (key.is_active) {
+                $title.append(' ').append($('<span class="badge text-bg-success ms-1">Active</span>'));
+            } else {
+                $title.append(' ').append($('<span class="badge text-bg-secondary ms-1">Revoked</span>'));
+            }
+
+            var $meta = $('<div class="small text-body-secondary"></div>');
+            var lastUsedText = key.last_used_at ? key.last_used_at : 'never';
+            $meta.append($('<code></code>').text(key.prefix + '…'));
+            $meta.append(document.createTextNode(
+                ' · Created ' + (key.created_at || '')
+                + ' · Last used ' + lastUsedText
+                + ' · ' + key.rate_limits.per_min + '/min, ' + key.rate_limits.per_day + '/day'
+            ));
+
+            var $scopes = $('<div class="mt-1"></div>');
+            if (!key.scopes || key.scopes.length === 0) {
+                $scopes.append($('<span class="badge text-bg-light border text-body-secondary">No scopes granted</span>'));
+            } else {
+                key.scopes.forEach(function (scope) {
+                    $scopes.append($('<span class="badge text-bg-info-subtle border me-1"></span>').text(scope));
+                });
+            }
+
+            $info.append($title).append($meta).append($scopes);
+            $row.append($info);
+
+            if (key.is_active) {
+                var $actions = $('<div class="d-flex gap-2 flex-wrap"></div>');
+                var $rotateBtn = $('<button type="button" class="btn btn-sm btn-outline-primary rotate-api-key-btn"></button>')
+                    .attr('data-api-key-id', key.id)
+                    .html('<i class="fa-solid fa-arrows-rotate me-1" aria-hidden="true"></i> Rotate');
+                var $revokeBtn = $('<button type="button" class="btn btn-sm btn-outline-danger revoke-api-key-btn"></button>')
+                    .attr('data-api-key-id', key.id)
+                    .html('<i class="fa-solid fa-trash me-1" aria-hidden="true"></i> Revoke');
+                $actions.append($rotateBtn).append($revokeBtn);
+                $row.append($actions);
+            }
+
+            $item.append($row);
+            $list.append($item);
+        });
+    }
+
+    /**
+     * 🔄 Re-fetch and re-render the caller's own API keys list.
+     */
+    function refreshApiKeysList() {
+        CueRCode.ajax({
+            url: API_BASE + '/keys',
+            method: 'GET',
+            success: function (response) {
+                if (!response.success || !response.data || !response.data.keys) {
+                    return;
+                }
+                renderApiKeysList(response.data.keys);
+            }
+        });
+    }
+
+    function wireApiKeyCreateForm() {
+        var $form = $('#api-key-create-form');
+        if ($form.length === 0) {
+            return;
+        }
+
+        $form.on('submit', function (event) {
+            event.preventDefault();
+
+            var $btn  = $('#api-key-create-btn');
+            var name  = $('#api-key-name').val();
+            var scopes = $form.find('input[name="api_key_scopes[]"]:checked').map(function () {
+                return $(this).val();
+            }).get();
+
+            setBusy($btn, true, 'Creating...');
+
+            CueRCode.ajax({
+                url: API_BASE + '/keys',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ name: name, scopes: scopes }),
+                success: function (response) {
+                    showAlert('api-key-ajax-alert', response.message, 'success');
+                    if (response.data) {
+                        renderApiKeyOneTimeSecret(response.data);
+                    }
+                    $form[0].reset();
+                    refreshApiKeysList();
+                },
+                error: function (xhr, status) {
+                    if (status === 'abort') {
+                        return;
+                    }
+                    showAlert('api-key-ajax-alert', errorMessageFrom(xhr, 'Your API key could not be created. Please try again.'), 'danger');
+                },
+                complete: function () {
+                    setBusy($btn, false, '');
+                }
+            });
+        });
+    }
+
+    function wireApiKeyRotate() {
+        $(document).on('submit', '.rotate-api-key-form', function (event) {
+            event.preventDefault();
+            var apiKeyId = $(this).find('input[name="api_key_id"]').val();
+            performApiKeyRotate(apiKeyId, $(this).find('button[type="submit"]'));
+        });
+
+        $(document).on('click', '.rotate-api-key-btn', function () {
+            var $btn = $(this);
+            performApiKeyRotate($btn.data('api-key-id'), $btn);
+        });
+    }
+
+    function performApiKeyRotate(apiKeyId, $btn) {
+        if (!apiKeyId) {
+            return;
+        }
+
+        if (!window.confirm('Rotate this key? The OLD key will stop working immediately.')) {
+            return;
+        }
+
+        setBusy($btn, true, 'Rotating...');
+
+        CueRCode.ajax({
+            url: API_BASE + '/keys/' + encodeURIComponent(apiKeyId) + '/rotate',
+            method: 'POST',
+            success: function (response) {
+                showAlert('api-key-ajax-alert', response.message, 'success');
+                if (response.data) {
+                    renderApiKeyOneTimeSecret(response.data);
+                }
+                refreshApiKeysList();
+            },
+            error: function (xhr, status) {
+                if (status === 'abort') {
+                    return;
+                }
+                showAlert('api-key-ajax-alert', errorMessageFrom(xhr, 'That API key could not be rotated.'), 'danger');
+            },
+            complete: function () {
+                setBusy($btn, false, '');
+            }
+        });
+    }
+
+    function wireApiKeyRevoke() {
+        $(document).on('submit', '.revoke-api-key-form', function (event) {
+            event.preventDefault();
+            var apiKeyId = $(this).find('input[name="api_key_id"]').val();
+            performApiKeyRevoke(apiKeyId, $(this).find('button[type="submit"]'));
+        });
+
+        $(document).on('click', '.revoke-api-key-btn', function () {
+            var $btn = $(this);
+            performApiKeyRevoke($btn.data('api-key-id'), $btn);
+        });
+    }
+
+    function performApiKeyRevoke(apiKeyId, $btn) {
+        if (!apiKeyId) {
+            return;
+        }
+
+        if (!window.confirm('Revoke this key? Anything using it will stop working immediately.')) {
+            return;
+        }
+
+        setBusy($btn, true, 'Revoking...');
+
+        CueRCode.ajax({
+            url: API_BASE + '/keys/' + encodeURIComponent(apiKeyId),
+            method: 'DELETE',
+            success: function (response) {
+                showAlert('api-key-ajax-alert', response.message, 'success');
+                refreshApiKeysList();
+            },
+            error: function (xhr, status) {
+                if (status === 'abort') {
+                    return;
+                }
+                showAlert('api-key-ajax-alert', errorMessageFrom(xhr, 'That API key could not be revoked.'), 'danger');
+            },
+            complete: function () {
+                setBusy($btn, false, '');
+            }
+        });
+    }
+
+    /**
+     * 📋 Copy-to-clipboard affordance for the one-time-secret input. Uses the
+     * async Clipboard API when available (secure contexts / modern
+     * browsers), falling back to a select+execCommand path otherwise so the
+     * feature degrades gracefully rather than silently doing nothing.
+     */
+    function wireApiKeyCopyButton() {
+        $(document).on('click', '#api-key-copy-btn', function () {
+            var $btn = $(this);
+            var targetId = $btn.data('copy-target');
+            var $input = $('#' + targetId);
+            if ($input.length === 0) {
+                return;
+            }
+
+            var value = $input.val();
+            var originalHtml = $btn.html();
+
+            function announceCopied() {
+                $btn.html('<i class="fa-solid fa-check me-1" aria-hidden="true"></i> Copied');
+                window.setTimeout(function () { $btn.html(originalHtml); }, 1500);
+            }
+
+            if (window.navigator.clipboard && window.navigator.clipboard.writeText) {
+                window.navigator.clipboard.writeText(value).then(announceCopied, function () {
+                    $input[0].select();
+                    document.execCommand('copy');
+                    announceCopied();
+                });
+            } else {
+                $input[0].select();
+                document.execCommand('copy');
+                announceCopied();
+            }
+        });
+    }
+
+    // ==========================================================================
     // 🚀 Init
     // ==========================================================================
 
@@ -410,5 +724,9 @@
         wireChangePasswordForm();
         wireSessionRevoke();
         wireDeleteQrForms();
+        wireApiKeyCreateForm();
+        wireApiKeyRotate();
+        wireApiKeyRevoke();
+        wireApiKeyCopyButton();
     });
 }(jQuery));

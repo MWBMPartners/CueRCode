@@ -11,6 +11,14 @@
  * delete + plan usage indicator), active-session management (list/revoke/
  * sign-out-everywhere), a change-password form, and sign-out.
  *
+ * Also hosts the self-service **API keys** section (Epic E7 stage 1, #54):
+ * create (name + scope checkboxes, full key shown ONCE with a copy affordance
+ * and a role="alert" one-time-secret warning), list (prefix/name/scopes/
+ * last-used/rotate/revoke), respecting the plan `api_keys` cap. Every action
+ * has BOTH a no-JS <form> fallback (calling the SAME engine functions in
+ * fn_api_keys.php the JSON API handlers call into) and a JS-enhanced AJAX
+ * path - identical convention to every other section on this page.
+ *
  * Requires authentication - an anonymous visitor is redirected to
  * /login/?next=/account/ before any account data is touched.
  *
@@ -57,6 +65,7 @@ require_once __DIR__ . '/../../_includes/bootstrap.php';
 $accountFunctionFiles = [
     'fn_api_qrcodes.php',
     'fn_api_account.php',
+    'fn_api_keys.php',
 ];
 
 foreach ($accountFunctionFiles as $accountFile) {
@@ -97,7 +106,14 @@ $profileMessage  = null; // ['success' => bool, 'text' => string]
 $passwordMessage = null;
 $sessionMessage  = null;
 $qrMessage       = null;
+$apiKeyMessage   = null;
 $logoutRequested = false;
+
+// 📌 Epic E7 stage 1 (#54): holds the FULL raw key from a just-created or
+// just-rotated key, rendered ONCE in this same request's response body
+// (never via a redirect/query string - that would leak the secret into
+// browser history/referrer/server logs). null on every other request.
+$oneTimeApiKeySecret = null; // ['id','api_key','prefix','name']
 
 /**
  * 🛡️ Validate the CSRF token from the current $_POST body.
@@ -291,6 +307,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // ------------------------------------------------------------------
+    // 🔑 Create a new API key (Epic E7 stage 1, #54)
+    // ------------------------------------------------------------------
+    if (isset($_POST['api_key_create_submit'])) {
+        if (!accountPagePostCsrfValid()) {
+            $apiKeyMessage = ['success' => false, 'text' => 'Your session has expired. Please reload the page and try again.'];
+        } else {
+            $requestedName   = isset($_POST['api_key_name']) ? (string) $_POST['api_key_name'] : '';
+            $requestedScopes = isset($_POST['api_key_scopes']) && is_array($_POST['api_key_scopes']) ? $_POST['api_key_scopes'] : [];
+
+            $createResult = createApiKeyForUser($currentUserId, $requestedName, $requestedScopes);
+
+            if ($createResult['success']) {
+                $oneTimeApiKeySecret = $createResult['data'];
+                $apiKeyMessage        = ['success' => true, 'text' => $createResult['message']];
+            } else {
+                $apiKeyMessage = ['success' => false, 'text' => $createResult['message']];
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 🔄 Rotate an existing API key (Epic E7 stage 1, #54)
+    // ------------------------------------------------------------------
+    if (isset($_POST['api_key_rotate_submit'])) {
+        if (!accountPagePostCsrfValid()) {
+            $apiKeyMessage = ['success' => false, 'text' => 'Your session has expired. Please reload the page and try again.'];
+        } else {
+            $targetApiKeyId = isset($_POST['api_key_id']) ? trim((string) $_POST['api_key_id']) : '';
+
+            if (!isValidApiKeyId($targetApiKeyId)) {
+                $apiKeyMessage = ['success' => false, 'text' => 'That API key could not be found.'];
+            } else {
+                $rotateResult = rotateApiKeyForUser($currentUserId, (int) $targetApiKeyId);
+
+                if ($rotateResult['success']) {
+                    $oneTimeApiKeySecret = $rotateResult['data'];
+                    $apiKeyMessage        = ['success' => true, 'text' => $rotateResult['message']];
+                } else {
+                    $apiKeyMessage = ['success' => false, 'text' => $rotateResult['message']];
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 🚫 Revoke an existing API key (Epic E7 stage 1, #54)
+    // ------------------------------------------------------------------
+    if (isset($_POST['api_key_revoke_submit'])) {
+        if (!accountPagePostCsrfValid()) {
+            $apiKeyMessage = ['success' => false, 'text' => 'Your session has expired. Please reload the page and try again.'];
+        } else {
+            $targetApiKeyId = isset($_POST['api_key_id']) ? trim((string) $_POST['api_key_id']) : '';
+
+            if (isValidApiKeyId($targetApiKeyId) && revokeApiKeyForUser($currentUserId, (int) $targetApiKeyId)) {
+                $apiKeyMessage = ['success' => true, 'text' => 'API key revoked.'];
+            } else {
+                $apiKeyMessage = ['success' => false, 'text' => 'That API key could not be found.'];
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 🚪 Logout
     // ------------------------------------------------------------------
     if (isset($_POST['logout_submit']) && accountPagePostCsrfValid()) {
@@ -329,6 +407,13 @@ $savedCodesLimit = function_exists('limitFor') ? limitFor('saved_codes', $curren
 $savedCodesCount = function_exists('countSavedQrCodesForUser') ? countSavedQrCodesForUser($currentUserId) : 0;
 $atSavedCodesCap = ($savedCodesLimit !== -1 && $savedCodesCount >= $savedCodesLimit);
 $upgradeUrl      = function_exists('resolveUpgradeUrl') ? resolveUpgradeUrl() : '/pricing';
+
+// 🔑 API keys plan usage (Epic E7 stage 1, #54 - api_keys limit: anonymous=0,
+// free=1, pro=5, business=20 - seed_data.sql).
+$apiKeysLimit       = function_exists('limitFor') ? limitFor('api_keys', $currentUserId) : 0;
+$apiKeysActiveCount = function_exists('countActiveApiKeysForUser') ? countActiveApiKeysForUser($currentUserId) : 0;
+$atApiKeysCap       = ($apiKeysLimit !== -1 && $apiKeysActiveCount >= $apiKeysLimit);
+$userApiKeys        = function_exists('listApiKeysForUser') ? listApiKeysForUser($currentUserId) : [];
 
 // ==============================================================================
 // 📚 Saved codes library (server-rendered page 1 / ?page=N - no-JS friendly)
@@ -413,6 +498,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <li class="nav-item"><a class="nav-link" href="#profile-section">Profile</a></li>
                     <li class="nav-item"><a class="nav-link" href="#library-section">Saved codes</a></li>
                     <li class="nav-item"><a class="nav-link" href="#security-section">Security</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#api-keys-section">API keys</a></li>
                 </ul>
             </nav>
 
@@ -685,6 +771,175 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
             </div>
 
             <!-- ================================================================
+                 🔑 API Keys Section (Epic E7 stage 1, #54)
+                 ================================================================ -->
+            <div class="card shadow-sm mb-4" id="api-keys-section">
+                <div class="card-header bg-transparent d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h2 class="h5 mb-0"><i class="fa-solid fa-key me-2" aria-hidden="true"></i>API keys</h2>
+                    <span class="badge <?php echo $atApiKeysCap ? 'text-bg-warning' : 'text-bg-secondary'; ?>" id="api-keys-usage-badge">
+                        <?php
+                        echo htmlspecialchars((string) $apiKeysActiveCount, ENT_QUOTES, 'UTF-8');
+                        echo ' / ';
+                        echo $apiKeysLimit === -1
+                            ? 'Unlimited'
+                            : htmlspecialchars((string) $apiKeysLimit, ENT_QUOTES, 'UTF-8');
+                        ?> active
+                    </span>
+                </div>
+                <div class="card-body">
+                    <p class="text-body-secondary">
+                        API keys let external tools (scripts, partner integrations, a future companion app)
+                        call the CueRCode API on your behalf. Grant a key only the scopes an integration
+                        actually needs.
+                    </p>
+
+                    <?php if ($apiKeyMessage !== null) { ?>
+                    <div class="alert <?php echo $apiKeyMessage['success'] ? 'alert-success' : 'alert-danger'; ?>"
+                         role="<?php echo $apiKeyMessage['success'] ? 'status' : 'alert'; ?>" id="api-key-message">
+                        <i class="fa-solid <?php echo $apiKeyMessage['success'] ? 'fa-circle-check' : 'fa-triangle-exclamation'; ?> me-1" aria-hidden="true"></i>
+                        <?php echo htmlspecialchars($apiKeyMessage['text'], ENT_QUOTES, 'UTF-8'); ?>
+                    </div>
+                    <?php } ?>
+                    <div id="api-key-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
+
+                    <?php if ($oneTimeApiKeySecret !== null) { ?>
+                    <!-- ♿ role="alert": a one-time secret must be impossible to miss and is NEVER retrievable again. -->
+                    <div class="alert alert-warning" role="alert" id="api-key-one-time-secret">
+                        <p class="fw-bold mb-1">
+                            <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                            Copy this key now - you will not be able to see it again.
+                        </p>
+                        <div class="input-group">
+                            <input type="text" class="form-control font-monospace" readonly
+                                   id="api-key-one-time-value"
+                                   value="<?php echo htmlspecialchars((string) $oneTimeApiKeySecret['api_key'], ENT_QUOTES, 'UTF-8'); ?>"
+                                   aria-label="Your new API key - copy it now">
+                            <button type="button" class="btn btn-outline-secondary" id="api-key-copy-btn"
+                                    data-copy-target="api-key-one-time-value" aria-label="Copy API key to clipboard">
+                                <i class="fa-solid fa-copy me-1" aria-hidden="true"></i> Copy
+                            </button>
+                        </div>
+                        <p class="form-text mb-0 mt-1">
+                            Name: <strong><?php echo htmlspecialchars((string) $oneTimeApiKeySecret['name'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                            &middot; Prefix: <code><?php echo htmlspecialchars((string) $oneTimeApiKeySecret['prefix'], ENT_QUOTES, 'UTF-8'); ?></code>
+                        </p>
+                    </div>
+                    <?php } ?>
+
+                    <?php if ($atApiKeysCap) { ?>
+                    <!-- ♿ Upgrade prompt: visible/announced, never silently hidden -->
+                    <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2" role="alert">
+                        <span>
+                            <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                            You have reached your plan's API key limit.
+                        </span>
+                        <a href="<?php echo htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-sm btn-warning">
+                            Upgrade plan
+                        </a>
+                    </div>
+                    <?php } else { ?>
+                    <form method="POST" action="/account/#api-keys-section" class="row g-3 mb-4" id="api-key-create-form">
+                        <?php echo csrfField(); ?>
+                        <input type="hidden" name="api_key_create_submit" value="1">
+                        <div class="col-md-6">
+                            <label for="api-key-name" class="form-label">Key name</label>
+                            <input type="text" class="form-control" id="api-key-name" name="api_key_name" maxlength="100" required
+                                   placeholder="e.g. My CMS integration">
+                        </div>
+                        <div class="col-12">
+                            <fieldset>
+                                <legend class="form-label h6">Scopes</legend>
+                                <?php foreach (CUERCODE_API_KEY_SCOPE_ALLOWLIST as $scopeOption) { ?>
+                                <?php $scopeCheckboxId = 'api-key-scope-' . str_replace(':', '-', $scopeOption); ?>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" name="api_key_scopes[]"
+                                           id="<?php echo htmlspecialchars($scopeCheckboxId, ENT_QUOTES, 'UTF-8'); ?>"
+                                           value="<?php echo htmlspecialchars($scopeOption, ENT_QUOTES, 'UTF-8'); ?>">
+                                    <label class="form-check-label" for="<?php echo htmlspecialchars($scopeCheckboxId, ENT_QUOTES, 'UTF-8'); ?>">
+                                        <?php echo htmlspecialchars(apiKeyScopeLabel($scopeOption), ENT_QUOTES, 'UTF-8'); ?>
+                                    </label>
+                                </div>
+                                <?php } ?>
+                                <div class="form-text">A key with no scopes selected can authenticate but cannot access any scoped endpoint.</div>
+                            </fieldset>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary" id="api-key-create-btn">
+                                <i class="fa-solid fa-plus me-1" aria-hidden="true"></i> Create key
+                            </button>
+                        </div>
+                    </form>
+                    <?php } ?>
+
+                    <h3 class="h6 fw-bold">Your keys</h3>
+                    <?php if (empty($userApiKeys)) { ?>
+                    <p class="text-body-secondary mb-0" id="api-keys-list-empty">You have not created any API keys yet.</p>
+                    <?php } else { ?>
+                    <div class="d-flex flex-column gap-2" id="api-keys-list">
+                        <?php foreach ($userApiKeys as $apiKeyItem) { ?>
+                        <div class="border rounded p-3" data-api-key-id="<?php echo (int) $apiKeyItem['id']; ?>">
+                            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                                <div>
+                                    <div class="fw-semibold">
+                                        <?php echo htmlspecialchars((string) $apiKeyItem['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                        <?php if ($apiKeyItem['is_active']) { ?>
+                                        <span class="badge text-bg-success ms-1">Active</span>
+                                        <?php } else { ?>
+                                        <span class="badge text-bg-secondary ms-1">Revoked</span>
+                                        <?php } ?>
+                                    </div>
+                                    <div class="small text-body-secondary">
+                                        <code><?php echo htmlspecialchars((string) $apiKeyItem['prefix'], ENT_QUOTES, 'UTF-8'); ?>&hellip;</code>
+                                        &middot; Created <?php echo htmlspecialchars(date('j M Y', strtotime((string) $apiKeyItem['created_at'])), ENT_QUOTES, 'UTF-8'); ?>
+                                        &middot; Last used
+                                        <?php
+                                        if ($apiKeyItem['last_used_at'] !== null) {
+                                            echo htmlspecialchars(date('j M Y H:i', strtotime((string) $apiKeyItem['last_used_at'])), ENT_QUOTES, 'UTF-8');
+                                        } else {
+                                            echo 'never';
+                                        }
+                                        ?>
+                                        &middot; <?php echo (int) $apiKeyItem['rate_limits']['per_min']; ?>/min, <?php echo (int) $apiKeyItem['rate_limits']['per_day']; ?>/day
+                                    </div>
+                                    <div class="mt-1">
+                                        <?php if (empty($apiKeyItem['scopes'])) { ?>
+                                        <span class="badge text-bg-light border text-body-secondary">No scopes granted</span>
+                                        <?php } else { ?>
+                                        <?php foreach ($apiKeyItem['scopes'] as $grantedScope) { ?>
+                                        <span class="badge text-bg-info-subtle border me-1"><?php echo htmlspecialchars($grantedScope, ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <?php } ?>
+                                        <?php } ?>
+                                    </div>
+                                </div>
+                                <?php if ($apiKeyItem['is_active']) { ?>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <form method="POST" action="/account/#api-keys-section" class="d-inline rotate-api-key-form">
+                                        <?php echo csrfField(); ?>
+                                        <input type="hidden" name="api_key_rotate_submit" value="1">
+                                        <input type="hidden" name="api_key_id" value="<?php echo (int) $apiKeyItem['id']; ?>">
+                                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                                            <i class="fa-solid fa-arrows-rotate me-1" aria-hidden="true"></i> Rotate
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="/account/#api-keys-section" class="d-inline revoke-api-key-form">
+                                        <?php echo csrfField(); ?>
+                                        <input type="hidden" name="api_key_revoke_submit" value="1">
+                                        <input type="hidden" name="api_key_id" value="<?php echo (int) $apiKeyItem['id']; ?>">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                            <i class="fa-solid fa-trash me-1" aria-hidden="true"></i> Revoke
+                                        </button>
+                                    </form>
+                                </div>
+                                <?php } ?>
+                            </div>
+                        </div>
+                        <?php } ?>
+                    </div>
+                    <?php } ?>
+                </div>
+            </div>
+
+            <!-- ================================================================
                  🚪 Logout
                  ================================================================ -->
             <form method="POST" action="/account/">
@@ -703,6 +958,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
             apiBase: '/api/v1',
             savedCodesLimit: <?php echo json_encode($savedCodesLimit); ?>,
             savedCodesCount: <?php echo json_encode($savedCodesCount); ?>,
+            apiKeysLimit: <?php echo json_encode($apiKeysLimit); ?>,
+            apiKeysCount: <?php echo json_encode($apiKeysActiveCount); ?>,
+            apiKeyScopeAllowlist: <?php echo json_encode(CUERCODE_API_KEY_SCOPE_ALLOWLIST); ?>,
             upgradeUrl: <?php echo json_encode($upgradeUrl); ?>
         };
     </script>

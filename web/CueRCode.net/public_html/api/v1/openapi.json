@@ -2,7 +2,7 @@
     "openapi": "3.0.3",
     "info": {
         "title": "CueRCode API",
-        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`, `/save`, `/qrcodes`, `/qrcodes/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Saved-Codes Library (Epic E3 stage 2a)\n\n`POST /save` claims a previously-generated QR code (by its `uuid`) into the authenticated caller's account, subject to the caller's plan `saved_codes` limit (`402 SAVED_CODES_LIMIT_REACHED` at/over the cap). `GET /qrcodes` lists ONLY the caller's own saved codes (paginated, optionally filtered by `type`). `GET/PATCH/DELETE /qrcodes/{uuid}` operate on a single saved code: ownership is re-checked on every request from the caller's authenticated identity, never from a client-supplied field. A code that is neither owned by the caller nor marked `is_public` is reported as `404` (never `403`) to avoid disclosing that a private UUID belonging to someone else exists. `DELETE` soft-deletes (frees a `saved_codes` slot; the row is retained for audit purposes). `is_public: true` (opt-in; default `false`) grants read/download access to any authenticated caller but never write access - only the owner may `PATCH`/`DELETE`.\n\n## Rate Limiting\n\nAll endpoints are rate limited (the `/health` endpoint is exempt in practice). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above.",
+        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`, `/save`, `/qrcodes`, `/qrcodes/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Saved-Codes Library (Epic E3 stage 2a)\n\n`POST /save` claims a previously-generated QR code (by its `uuid`) into the authenticated caller's account, subject to the caller's plan `saved_codes` limit (`402 SAVED_CODES_LIMIT_REACHED` at/over the cap). `GET /qrcodes` lists ONLY the caller's own saved codes (paginated, optionally filtered by `type`). `GET/PATCH/DELETE /qrcodes/{uuid}` operate on a single saved code: ownership is re-checked on every request from the caller's authenticated identity, never from a client-supplied field. A code that is neither owned by the caller nor marked `is_public` is reported as `404` (never `403`) to avoid disclosing that a private UUID belonging to someone else exists. `DELETE` soft-deletes (frees a `saved_codes` slot; the row is retained for audit purposes). `is_public: true` (opt-in; default `false`) grants read/download access to any authenticated caller but never write access - only the owner may `PATCH`/`DELETE`.\n\n## Self-Service API Keys & Scopes (Epic E7 stage 1, #54)\n\nAuthenticated users (session/CSRF only - see below) can self-service manage their own API keys under `/keys`. `POST /keys` creates a key (caller-chosen `name` + an optional `scopes` array from the allowlist below) subject to the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap) and returns the FULL raw key EXACTLY ONCE in the response body (`data.api_key`) - it is never retrievable again, only its HMAC-SHA256 hash is stored. `GET /keys` lists ONLY the caller's own keys (prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at` - NEVER the secret or its hash). `POST /keys/{id}/rotate` issues a NEW secret for a key the caller OWNS (returned once, exactly like create) and immediately invalidates the old one; `DELETE /keys/{id}` soft-revokes (`isActive = 0`) a key the caller OWNS. Every `{id}` operation re-derives the caller's identity server-side and re-checks ownership in the same query as any mutation - a key that is not owned by the caller (or does not exist) is reported as `404` (never `403`, avoiding existence disclosure).\n\n**Owner/design decision:** an X-API-Key-authenticated request to ANY `/keys*` endpoint is refused with `403 API_KEY_MANAGEMENT_FORBIDDEN`, regardless of that key's own scopes - only a CSRF/session-authenticated caller (the account dashboard) may create/list/rotate/revoke keys. This closes a self-escalation path: without it, a compromised low-scope key (e.g. only `generate`) could mint itself a brand-new key with EVERY scope.\n\n**Scope allowlist:** `generate`, `preview`, `download`, `bulk`, `qrcodes:read`, `qrcodes:write`, `save`. A key with no scopes granted can authenticate but cannot access any scoped endpoint. Every scoped endpoint below documents its `requiredScope` in its own description. Scope enforcement applies ONLY to `X-API-Key` authentication - a session/CSRF-authenticated web UI request is NEVER scope-limited (full user rights). A key missing a route's required scope gets `403 INSUFFICIENT_SCOPE`, with the missing scope named in both the `message` and a `required_scope` field alongside the standard error shape.\n\n## Rate Limiting\n\nAll endpoints are rate limited (the `/health` endpoint is exempt in practice). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above.",
         "version": "1.0.0",
         "contact": {
             "name": "CueRCode Support",
@@ -47,6 +47,10 @@
         {
             "name": "Account",
             "description": "Own-account profile/avatar, active-session management, and password change - all own-scoped (Epic E3 stage 2b, #52/#12/#14/#23/#24)."
+        },
+        {
+            "name": "API Keys",
+            "description": "Self-service API key create/list/rotate/revoke - own-scoped, CSRF/session-only (Epic E7 stage 1, #54). See the top-level description's \"Self-Service API Keys & Scopes\" section for the full model."
         }
     ],
     "paths": {
@@ -56,7 +60,7 @@
                     "Generation"
                 ],
                 "summary": "Generate a QR code",
-                "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.\n\nRequires authentication (API key OR CSRF token).",
+                "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.\n\nRequires authentication (API key OR CSRF token). requiredScope: `generate` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "generateQRCode",
                 "security": [
                     {
@@ -302,6 +306,9 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
                     "413": {
                         "$ref": "#/components/responses/PayloadTooLarge"
                     },
@@ -326,7 +333,7 @@
                     "Generation"
                 ],
                 "summary": "Generate a QR code preview",
-                "description": "Generate a smaller (300px) PNG preview of a QR code. The preview is not saved to the database or filesystem. Use this for real-time previews in the UI before generating the final QR code. The `format` and `size` of any supplied customisation are overridden (always PNG, 300px); all other customisation is honoured.\n\nRequires authentication (API key OR CSRF token).",
+                "description": "Generate a smaller (300px) PNG preview of a QR code. The preview is not saved to the database or filesystem. Use this for real-time previews in the UI before generating the final QR code. The `format` and `size` of any supplied customisation are overridden (always PNG, 300px); all other customisation is honoured.\n\nRequires authentication (API key OR CSRF token). requiredScope: `preview` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "previewQRCode",
                 "security": [
                     {
@@ -414,6 +421,9 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
                     "413": {
                         "$ref": "#/components/responses/PayloadTooLarge"
                     },
@@ -438,7 +448,7 @@
                     "Generation"
                 ],
                 "summary": "Bulk generate QR codes (ZIP, or an Avery label-sheet PDF)",
-                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request depends on the caller's subscription plan (`bulk_batch_size` limit, Epic E4) \u2014 anonymous callers get the `anonymous` plan's allowance (25 by default), while an authenticated user or API key resolves their own plan's allowance instead; exceeding it returns `413` with an `upgrade_url` hint. Per-item failures do NOT abort the batch \u2014 each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely \u2014 a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout \u2014 a mixed-layout sheet is not a coherent single PDF); per-item failures leave that label slot blank rather than aborting the sheet. See the Customization `pdf_layout` field for the full enum.",
+                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request depends on the caller's subscription plan (`bulk_batch_size` limit, Epic E4) \u2014 anonymous callers get the `anonymous` plan's allowance (25 by default), while an authenticated user or API key resolves their own plan's allowance instead; exceeding it returns `413` with an `upgrade_url` hint. Per-item failures do NOT abort the batch \u2014 each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely \u2014 a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout \u2014 a mixed-layout sheet is not a coherent single PDF); per-item failures leave that label slot blank rather than aborting the sheet. See the Customization `pdf_layout` field for the full enum.\n\nrequiredScope: `bulk` — only enforced if the caller VOLUNTARILY supplies an `X-API-Key` on this anonymous-capable endpoint; a genuinely anonymous request never reaches the scope check at all.",
                 "operationId": "bulkGenerateQRCodes",
                 "security": [
                     {},
@@ -555,6 +565,9 @@
                             }
                         }
                     },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
                     "413": {
                         "description": "Too many items (exceeds the caller's plan bulk_batch_size limit) or request body too large",
                         "content": {
@@ -615,7 +628,7 @@
                     "Download"
                 ],
                 "summary": "Download a generated QR code",
-                "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.\n\nRequires authentication (API key OR CSRF token).",
+                "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.\n\nRequires authentication (API key OR CSRF token). requiredScope: `download` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "downloadQRCode",
                 "security": [
                     {
@@ -701,6 +714,9 @@
                     },
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
                     },
                     "404": {
                         "description": "QR code not found",
@@ -1566,7 +1582,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Save a generated QR code to your account",
-                "description": "Claim a previously-generated QR code (by the `uuid` returned from POST /generate) into the authenticated caller's account, or - if the caller already owns it - update its label/visibility. Enforces the caller's plan `saved_codes` limit (`-1` = unlimited) ONLY for a genuinely NEW claim; re-saving an already-owned code never consumes a fresh slot. A code already claimed by a DIFFERENT user is reported as `404` (never `403`/`409` at this stage) to avoid disclosing that the UUID belongs to somebody else. Requires a valid CSRF token (web UI) or API key belonging to an authenticated account.",
+                "description": "Claim a previously-generated QR code (by the `uuid` returned from POST /generate) into the authenticated caller's account, or - if the caller already owns it - update its label/visibility. Enforces the caller's plan `saved_codes` limit (`-1` = unlimited) ONLY for a genuinely NEW claim; re-saving an already-owned code never consumes a fresh slot. A code already claimed by a DIFFERENT user is reported as `404` (never `403`/`409` at this stage) to avoid disclosing that the UUID belongs to somebody else. Requires a valid CSRF token (web UI) or API key belonging to an authenticated account. requiredScope: `save` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "saveQRCode",
                 "security": [
                     {
@@ -1741,7 +1757,7 @@
                     "Saved Codes"
                 ],
                 "summary": "List your saved QR codes",
-                "description": "Lists ONLY the authenticated caller's own saved QR codes - never another user's rows, public or otherwise. Supports pagination (`page`, `per_page`, capped at 100) and an optional `type` filter matching the QR code type name.",
+                "description": "Lists ONLY the authenticated caller's own saved QR codes - never another user's rows, public or otherwise. Supports pagination (`page`, `per_page`, capped at 100) and an optional `type` filter matching the QR code type name. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "listQRCodes",
                 "security": [
                     {
@@ -1812,6 +1828,9 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
                     "429": {
                         "$ref": "#/components/responses/RateLimited"
                     },
@@ -1827,7 +1846,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Fetch one saved QR code",
-                "description": "Allowed only if the caller owns the code OR it is marked `is_public: true` - otherwise `404` (never `403`, to avoid disclosing that a private UUID belonging to someone else exists).",
+                "description": "Allowed only if the caller owns the code OR it is marked `is_public: true` - otherwise `404` (never `403`, to avoid disclosing that a private UUID belonging to someone else exists). requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "getQRCodeItem",
                 "security": [
                     {
@@ -1867,6 +1886,9 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
                     "404": {
                         "description": "Not found, deleted, or not owned-and-not-public (identical response for all three - see description above)",
                         "content": {
@@ -1899,7 +1921,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Update a saved QR code you own",
-                "description": "Update the `label`, `is_public` visibility, and/or visual `customization` of a saved code the caller OWNS. Ownership is checked BEFORE any other field is read - a non-owned code (including a PUBLIC one; `is_public` never grants write access) is reported as `404`. When `customization` is supplied, the QR image is regenerated in place from the code's existing payload (its `download_url`/`uuid` do not change) and `qrFilePath`/`qrOptions`/`qrOutputFormat` are updated. Content/destination changes are out of scope for this stage.",
+                "description": "Update the `label`, `is_public` visibility, and/or visual `customization` of a saved code the caller OWNS. Ownership is checked BEFORE any other field is read - a non-owned code (including a PUBLIC one; `is_public` never grants write access) is reported as `404`. When `customization` is supplied, the QR image is regenerated in place from the code's existing payload (its `download_url`/`uuid` do not change) and `qrFilePath`/`qrOptions`/`qrOutputFormat` are updated. Content/destination changes are out of scope for this stage. requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "patchQRCodeItem",
                 "security": [
                     {
@@ -1949,6 +1971,9 @@
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
                     },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
                     "404": {
                         "description": "Not owned by the caller (or does not exist / was deleted) - identical response either way",
                         "content": {
@@ -1972,7 +1997,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Delete a saved QR code you own",
-                "description": "Soft-deletes (sets `deletedAt`; the row is retained for audit purposes) a saved code the caller OWNS, freeing one `saved_codes` plan slot. Ownership is checked before any mutation; a non-owned code is reported as `404`.",
+                "description": "Soft-deletes (sets `deletedAt`; the row is retained for audit purposes) a saved code the caller OWNS, freeing one `saved_codes` plan slot. Ownership is checked before any mutation; a non-owned code is reported as `404`. requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "deleteQRCodeItem",
                 "security": [
                     {
@@ -2022,6 +2047,9 @@
                     },
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
                     },
                     "404": {
                         "description": "Not owned by the caller (or does not exist / already deleted) - identical response either way",
@@ -2273,6 +2301,317 @@
                     },
                     "422": {
                         "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/keys": {
+            "post": {
+                "tags": [
+                    "API Keys"
+                ],
+                "summary": "Create a self-service API key",
+                "description": "Create a new API key for the caller's OWN account (caller-chosen `name` + an optional `scopes` array from the allowlist - see the top-level description's \"Self-Service API Keys & Scopes\" section). Enforces the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap). The FULL raw key is returned in `data.api_key` EXACTLY ONCE - it is never retrievable again (only its HMAC-SHA256 hash is stored). **Owner/design decision:** this endpoint requires CSRF/session authentication - an X-API-Key-authenticated request gets `403 API_KEY_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (closes a self-escalation path where a compromised low-scope key could mint itself a broader-scoped key).",
+                "operationId": "createApiKey",
+                "security": [
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiKeyCreateRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "API key created - the raw key is shown here ONLY ONCE",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeySecretResponse"
+                                },
+                                "examples": {
+                                    "created": {
+                                        "summary": "Created (one-time secret)",
+                                        "value": {
+                                            "success": true,
+                                            "message": "API key created. Copy it now - it will not be shown again.",
+                                            "data": {
+                                                "id": 1,
+                                                "api_key": "cuercode_9c5e6ef3f4f38fe4ecc1b414e27052ab390b1a5d",
+                                                "prefix": "cuercode_9c5",
+                                                "name": "My CMS integration",
+                                                "scopes": ["generate", "download"],
+                                                "rate_limits": {"per_min": 30, "per_day": 2000},
+                                                "is_active": true,
+                                                "last_used_at": null,
+                                                "created_at": "2026-07-10 19:12:58",
+                                                "expires_at": null
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "402": {
+                        "$ref": "#/components/responses/PaymentRequired"
+                    },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - key management is CSRF/session-only",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "api_key_management_forbidden": {
+                                        "summary": "API-key auth cannot manage keys",
+                                        "value": {
+                                            "success": false,
+                                            "message": "API keys cannot be used to manage other API keys. Please sign in and use the account dashboard.",
+                                            "data": {},
+                                            "error_code": "API_KEY_MANAGEMENT_FORBIDDEN",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            },
+            "get": {
+                "tags": [
+                    "API Keys"
+                ],
+                "summary": "List your own API keys",
+                "description": "Lists ONLY the caller's own API keys - prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at`, `expires_at`. NEVER includes the full key or its hash. Includes revoked keys (`is_active: false`) alongside active ones. **Owner/design decision:** CSRF/session authentication only - see POST /keys.",
+                "operationId": "listApiKeys",
+                "security": [
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The caller's own API keys",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysListResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - key management is CSRF/session-only",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/keys/{id}/rotate": {
+            "post": {
+                "tags": [
+                    "API Keys"
+                ],
+                "summary": "Rotate an API key you own",
+                "description": "Issues a NEW secret for a key the caller OWNS (returned once, exactly like create) and immediately invalidates the OLD one (the old raw key stops authenticating the instant this succeeds). The key's identity (id, name, scopes, rate limits) is preserved - only the secret changes. Ownership is re-checked in the SAME UPDATE statement as the mutation; a key not owned by the caller (or that does not exist, or is already revoked) is reported as `404` (never `403` - no existence disclosure). **Owner/design decision:** CSRF/session authentication only - see POST /keys.",
+                "operationId": "rotateApiKey",
+                "security": [
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "description": "The tblAPIKeys.apiKeyID to rotate (positive integer)",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "example": 1
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "API key rotated - the NEW raw key is shown here ONLY ONCE",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeySecretResponse"
+                                },
+                                "examples": {
+                                    "rotated": {
+                                        "summary": "Rotated (new one-time secret)",
+                                        "value": {
+                                            "success": true,
+                                            "message": "API key rotated. Copy the new key now - it will not be shown again.",
+                                            "data": {
+                                                "id": 1,
+                                                "api_key": "cuercode_7e55260a57bbfb4abaac2b8203dc0e6d6c16f354",
+                                                "prefix": "cuercode_7e5",
+                                                "name": "My CMS integration"
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - key management is CSRF/session-only",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not owned by the caller, does not exist, or already revoked - identical response for all three (no existence disclosure)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "not_found": {
+                                        "summary": "Unknown, not-yours, or revoked",
+                                        "value": {
+                                            "success": false,
+                                            "message": "API key not found.",
+                                            "data": {},
+                                            "error_code": "NOT_FOUND",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/keys/{id}": {
+            "delete": {
+                "tags": [
+                    "API Keys"
+                ],
+                "summary": "Revoke an API key you own",
+                "description": "Soft-revokes (`isActive = 0`; the row is retained for audit purposes) a key the caller OWNS - a revoked key stops authenticating immediately. Ownership + `isActive = 1` are re-checked in the SAME UPDATE statement as the mutation; a key not owned by the caller (or that does not exist, or is already revoked) is reported as `404` (never `403` - no existence disclosure, and idempotent: revoking an already-revoked key also returns 404 rather than a special-cased response). **Owner/design decision:** CSRF/session authentication only - see POST /keys.",
+                "operationId": "deleteApiKey",
+                "security": [
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "description": "The tblAPIKeys.apiKeyID to revoke (positive integer)",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "example": 1
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "API key revoked successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Revoked",
+                                        "value": {
+                                            "success": true,
+                                            "message": "API key revoked successfully.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - key management is CSRF/session-only",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not owned by the caller, does not exist, or already revoked - identical response for all three (no existence disclosure)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
                     },
                     "429": {
                         "$ref": "#/components/responses/RateLimited"
@@ -2649,6 +2988,55 @@
                                     "error_code": "SAVED_CODES_LIMIT_REACHED",
                                     "upgrade_url": "/pricing",
                                     "plan_limit": 25,
+                                    "timestamp": "2026-02-27T12:00:00+00:00"
+                                }
+                            },
+                            "api_key_limit": {
+                                "summary": "API key plan limit reached (Epic E7 stage 1, #54)",
+                                "value": {
+                                    "success": false,
+                                    "message": "You have reached your plan's API key limit (1). Upgrade your plan to create more keys.",
+                                    "data": {},
+                                    "error_code": "API_KEY_LIMIT_REACHED",
+                                    "upgrade_url": "/pricing",
+                                    "plan_limit": 1,
+                                    "timestamp": "2026-02-27T12:00:00+00:00"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "InsufficientScope": {
+                "description": "The API key authenticating this request does not carry the scope this endpoint requires (Epic E7 stage 1, #54). Only ever returned for X-API-Key authentication - a CSRF/session request is never scope-limited. The response includes `required_scope` alongside the standard error shape.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "required_scope": {
+                                            "type": "string",
+                                            "description": "The scope this route requires that the authenticating key does not have.",
+                                            "example": "qrcodes:read"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "examples": {
+                            "insufficient_scope": {
+                                "summary": "Key missing the required scope",
+                                "value": {
+                                    "success": false,
+                                    "message": "This API key does not have the required scope: \"qrcodes:read\". Create or update a key with this scope in your account dashboard to access this endpoint.",
+                                    "data": {},
+                                    "error_code": "INSUFFICIENT_SCOPE",
+                                    "required_scope": "qrcodes:read",
                                     "timestamp": "2026-02-27T12:00:00+00:00"
                                 }
                             }
@@ -3343,7 +3731,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, LOOKUP_FAILED.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -3833,6 +4221,188 @@
                                 "type": "array",
                                 "items": {
                                     "$ref": "#/components/schemas/SessionInfo"
+                                }
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "ApiKeyCreateRequest": {
+                "type": "object",
+                "required": [
+                    "name"
+                ],
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "maxLength": 100,
+                        "description": "A caller-chosen label to tell your keys apart (matches tblAPIKeys.apiKeyName VARCHAR(100)).",
+                        "example": "My CMS integration"
+                    },
+                    "scopes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["generate", "preview", "download", "bulk", "qrcodes:read", "qrcodes:write", "save"]
+                        },
+                        "description": "Scopes to grant this key, from the allowlist. Omitted/empty means the key is granted NO scopes (it can authenticate but cannot access any scoped endpoint).",
+                        "example": ["generate", "download"]
+                    }
+                }
+            },
+            "ApiKeySecretResponse": {
+                "type": "object",
+                "description": "The ONE-TIME response shape returned by POST /keys (create) and POST /keys/{id}/rotate - `data.api_key` is the ONLY time the full raw key is ever returned; it cannot be retrieved again afterward (only its hash is stored).",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "API key created. Copy it now - it will not be shown again."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "integer",
+                                "description": "The tblAPIKeys.apiKeyID - pass this to POST /keys/{id}/rotate or DELETE /keys/{id}.",
+                                "example": 1
+                            },
+                            "api_key": {
+                                "type": "string",
+                                "description": "The FULL raw API key. Shown ONLY here, ONLY ONCE - copy it now.",
+                                "example": "cuercode_9c5e6ef3f4f38fe4ecc1b414e27052ab390b1a5d"
+                            },
+                            "prefix": {
+                                "type": "string",
+                                "description": "The same key's first 12 characters, for identification in the dashboard list (this alone is NOT a usable credential).",
+                                "example": "cuercode_9c5"
+                            },
+                            "name": {
+                                "type": "string",
+                                "nullable": true,
+                                "example": "My CMS integration"
+                            },
+                            "scopes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "Present on CREATE only (rotate preserves the existing scopes without re-stating them in the response).",
+                                "example": ["generate", "download"]
+                            },
+                            "rate_limits": {
+                                "type": "object",
+                                "description": "Present on CREATE only. Derived from the owning user's CURRENT plan at creation time.",
+                                "properties": {
+                                    "per_min": {"type": "integer", "example": 30},
+                                    "per_day": {"type": "integer", "example": 2000}
+                                }
+                            },
+                            "is_active": {
+                                "type": "boolean",
+                                "description": "Present on CREATE only.",
+                                "example": true
+                            },
+                            "last_used_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "nullable": true,
+                                "description": "Present on CREATE only - always null for a brand-new key."
+                            },
+                            "created_at": {
+                                "type": "string",
+                                "description": "Present on CREATE only."
+                            },
+                            "expires_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "nullable": true,
+                                "description": "Present on CREATE only. Self-service creation does not currently expose an expiry input (always null); the column IS enforced server-side if ever set another way."
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "ApiKeyInfo": {
+                "type": "object",
+                "description": "One item in GET /keys' list - NEVER includes the full key or its hash.",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "example": 1
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "example": "cuercode_9c5"
+                    },
+                    "name": {
+                        "type": "string",
+                        "nullable": true,
+                        "example": "My CMS integration"
+                    },
+                    "scopes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "example": ["generate", "download"]
+                    },
+                    "rate_limits": {
+                        "type": "object",
+                        "properties": {
+                            "per_min": {"type": "integer", "example": 30},
+                            "per_day": {"type": "integer", "example": 2000}
+                        }
+                    },
+                    "is_active": {
+                        "type": "boolean",
+                        "description": "false = revoked (soft-deleted). Revoked keys remain in this list for audit purposes.",
+                        "example": true
+                    },
+                    "last_used_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                }
+            },
+            "ApiKeysListResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "API keys retrieved successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "keys": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/ApiKeyInfo"
                                 }
                             }
                         }

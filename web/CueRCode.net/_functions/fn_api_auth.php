@@ -13,6 +13,14 @@
  *      - For external consumers (third-party integrations, mobile apps)
  *      - Keys are hashed with HMAC-SHA256 and stored in tblAPIKeys
  *      - Per-key rate limits defined in tblAPIKeys columns
+ *      - Per-key SCOPE enforcement (Epic E7 stage 1, #54): a key's
+ *        tblAPIKeys.permissions JSON is decoded by validateAPIKey() into
+ *        $result['scopes'] and surfaced on authenticateAPIRequest()'s
+ *        returned array; the router (public_html/api/v1/index.php) checks a
+ *        route's 'requiredScope' against it via apiKeyRequestHasScope()
+ *        below, replying 403 INSUFFICIENT_SCOPE when absent. Session/CSRF
+ *        authentication is NEVER scope-limited (full user rights) - scope
+ *        enforcement applies ONLY to the 'api_key' auth method.
  *
  *   2. Session-Based CSRF Authentication (X-CSRF-Token header)
  *      - For the web UI making AJAX requests
@@ -138,6 +146,13 @@ function authenticateAPIRequest(): array
             'perMin' => $anonPerMin,
             'perDay' => $anonPerDay,
         ],
+        // 🔒 Epic E7 stage 1 (#54): the AUTHENTICATED key's granted scopes
+        // (decoded tblAPIKeys.permissions). Always an array (never null) so
+        // apiKeyRequestHasScope() below never has to null-check. Irrelevant
+        // for 'csrf'/'anonymous' methods - scope enforcement only reads this
+        // when $result['method'] === 'api_key' (see the router's Scope
+        // Enforcement section).
+        'scopes'        => [],
     ];
 
     // ==================================================================
@@ -162,6 +177,9 @@ function authenticateAPIRequest(): array
                 'perMin' => $keyValidation['rateLimitPerMin'],
                 'perDay' => $keyValidation['rateLimitPerDay'],
             ];
+            // 🔒 Epic E7 stage 1 (#54): carry the key's decoded scopes
+            // through to the router's scope-enforcement check.
+            $result['scopes']        = $keyValidation['scopes'];
 
             return $result;
         }
@@ -232,6 +250,47 @@ function authenticateAPIRequest(): array
 }
 
 // ==============================================================================
+// 🔒 apiKeyRequestHasScope() - Scope enforcement check (Epic E7 stage 1, #54)
+// ==============================================================================
+
+/**
+ * 🔒 Does an authenticated request's API key carry a required scope?
+ *
+ * Called by the router (public_html/api/v1/index.php) ONLY when
+ * `$auth['method'] === 'api_key'` AND the matched route defines a
+ * non-null 'requiredScope' - a session/CSRF-authenticated request is NEVER
+ * scope-limited (full user rights) and never reaches this check at all.
+ *
+ * Fail-closed by construction: an $auth array missing/malformed 'scopes'
+ * (should never happen via authenticateAPIRequest(), but defensive
+ * regardless) is treated as "no scopes granted", not "everything allowed".
+ *
+ * @param array  $auth           The router's authentication context
+ *                                (authenticateAPIRequest()'s return value).
+ * @param string $requiredScope  The scope string the matched route requires
+ *                                (e.g. 'generate', 'qrcodes:write').
+ *
+ * @return bool True if the key's granted scopes include $requiredScope.
+ *
+ * @see fn_api_keys.php - CUERCODE_API_KEY_SCOPE_ALLOWLIST (the scope taxonomy)
+ * @see public_html/api/v1/index.php - the router's Scope Enforcement section
+ *
+ * @example
+ *   $auth = authenticateAPIRequest();
+ *   if ($auth['method'] === 'api_key' && !apiKeyRequestHasScope($auth, 'generate')) {
+ *       errorResponse('Missing required scope: generate.', 403, 'INSUFFICIENT_SCOPE');
+ *   }
+ */
+function apiKeyRequestHasScope(array $auth, string $requiredScope): bool
+{
+    if (!isset($auth['scopes']) || !is_array($auth['scopes'])) {
+        return false;
+    }
+
+    return in_array($requiredScope, $auth['scopes'], true);
+}
+
+// ==============================================================================
 // 🔐 validateAPIKey() - Validate an API key against the database
 // ==============================================================================
 
@@ -248,10 +307,13 @@ function authenticateAPIRequest(): array
  * @param string $apiKey The raw API key from the X-API-Key header
  *
  * @return array Validation result:
- *   - 'valid'           (bool) Whether the key is valid and active
- *   - 'apiKeyId'        (int)  The tblAPIKeys.apiKeyID (0 if invalid)
- *   - 'rateLimitPerMin' (int)  Per-minute rate limit for this key
- *   - 'rateLimitPerDay' (int)  Per-day rate limit for this key
+ *   - 'valid'           (bool)  Whether the key is valid, active, and unexpired
+ *   - 'apiKeyId'        (int)   The tblAPIKeys.apiKeyID (0 if invalid)
+ *   - 'rateLimitPerMin' (int)   Per-minute rate limit for this key
+ *   - 'rateLimitPerDay' (int)   Per-day rate limit for this key
+ *   - 'scopes'          (array) The key's decoded tblAPIKeys.permissions scope
+ *                                list (Epic E7 stage 1, #54) - always an array,
+ *                                empty when invalid/malformed/absent
  *
  * @see fn_encryption.php - hashAPIKey()
  * @see https://www.php.net/manual/en/function.preg-match.php
@@ -271,6 +333,7 @@ function validateAPIKey(string $apiKey): array
         'apiKeyId'        => 0,
         'rateLimitPerMin' => CUERCODE_API_ANON_RATE_PER_MIN,
         'rateLimitPerDay' => CUERCODE_API_ANON_RATE_PER_DAY,
+        'scopes'          => [],
     ];
 
     // ==================================================================
@@ -315,7 +378,8 @@ function validateAPIKey(string $apiKey): array
 
     try {
         $stmt = dbQuery(
-            "SELECT `apiKeyID`, `apiKeyHash`, `rateLimitPerMin`, `rateLimitPerDay`, `isActive` "
+            "SELECT `apiKeyID`, `apiKeyHash`, `rateLimitPerMin`, `rateLimitPerDay`, `isActive`, "
+            . "`permissions`, `expiresAt` "
             . "FROM `tblAPIKeys` "
             . "WHERE `apiKeyHash` = ? "
             . "LIMIT 1",
@@ -357,6 +421,28 @@ function validateAPIKey(string $apiKey): array
     }
 
     // ==================================================================
+    // 📌 Step 4b: Check that the key has not expired (tblAPIKeys.expiresAt,
+    // NULL = never expires). Epic E7 stage 1 (#54) - previously UNENFORCED;
+    // self-service creation does not yet expose an expiry input to callers,
+    // but this closes the latent gap for any key an admin or future feature
+    // sets expiresAt on (defence in depth - see SECURITY.md).
+    // ==================================================================
+    if ($row['expiresAt'] !== null) {
+        $expiresAtTimestamp = strtotime((string) $row['expiresAt']);
+
+        if ($expiresAtTimestamp !== false && $expiresAtTimestamp < time()) {
+            if (function_exists('logError')) {
+                logError(
+                    'warning',
+                    'Expired API key used',
+                    'API Key ID: ' . $row['apiKeyID'] . ' expired at ' . $row['expiresAt'] . '.'
+                );
+            }
+            return $result;
+        }
+    }
+
+    // ==================================================================
     // 📌 Step 5: Timing-safe hash comparison
     // Even though we looked up by hash, we perform a timing-safe
     // comparison as an additional security measure.
@@ -367,12 +453,31 @@ function validateAPIKey(string $apiKey): array
     }
 
     // ==================================================================
+    // 🔒 Step 5b: Decode the key's granted scopes (Epic E7 stage 1, #54).
+    // A malformed/missing permissions value decodes to an empty scope list
+    // (fail-closed - a key with no readable scopes can access nothing
+    // scoped) rather than throwing or granting anything.
+    // @see fn_api_keys.php - CUERCODE_API_KEY_SCOPE_ALLOWLIST, apiKeyRequestHasScope()
+    // ==================================================================
+    $decodedScopes = json_decode((string) $row['permissions'], true);
+    if (!is_array($decodedScopes)) {
+        $decodedScopes = [];
+    }
+    $normalizedScopes = [];
+    foreach ($decodedScopes as $scopeValue) {
+        if (is_string($scopeValue)) {
+            $normalizedScopes[] = $scopeValue;
+        }
+    }
+
+    // ==================================================================
     // ✅ Key is valid - populate result and update lastUsedAt
     // ==================================================================
     $result['valid']           = true;
     $result['apiKeyId']        = (int) $row['apiKeyID'];
     $result['rateLimitPerMin'] = (int) $row['rateLimitPerMin'];
     $result['rateLimitPerDay'] = (int) $row['rateLimitPerDay'];
+    $result['scopes']          = $normalizedScopes;
 
     // 📌 Update the lastUsedAt timestamp
     // @see https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php
