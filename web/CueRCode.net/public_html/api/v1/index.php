@@ -37,6 +37,8 @@
  *   GET    /api/v1/account/sessions          List ONLY the caller's OWN active sessions [SESSION-ONLY, F-026]
  *   DELETE /api/v1/account/sessions/{id}     Revoke ONE of the caller's OWN sessions [SESSION-ONLY, F-026]
  *   POST   /api/v1/account/change-password   Change the caller's OWN password [SESSION-ONLY, F-026]
+ *   GET    /api/v1/account/export            Download a complete JSON export of the caller's OWN data (#37/#52) [SESSION-ONLY, F-026]
+ *   POST   /api/v1/account/erase             Erase the caller's OWN account by anonymization (#37/#52) [SESSION-ONLY, F-026]
  *   POST   /api/v1/keys                      Create a self-service API key (Epic E7 stage 1, #54) [SESSION-ONLY]
  *   GET    /api/v1/keys                      List ONLY the caller's OWN API keys (never the secret) [SESSION-ONLY]
  *   POST   /api/v1/keys/{id}/rotate          Rotate an API key the caller OWNS [SESSION-ONLY]
@@ -57,7 +59,7 @@
  *     taxonomy and fn_api_auth.php (apiKeyRequestHasScope()) for the check.
  *
  * Session-only management routes (F-026, fn_api_auth.php - isInteractiveSessionAuth()):
- *   - The eight routes marked [SESSION-ONLY] above stay 'auth' => true /
+ *   - The ten routes marked [SESSION-ONLY] above stay 'auth' => true /
  *     'requiredScope' => null in THIS route table (any authenticated caller
  *     reaches the handler), but every one of their handlers additionally
  *     REFUSES an X-API-Key-authenticated request with 403
@@ -513,6 +515,38 @@ $routes = [
         'pattern'   => 'account/change-password',
         'methods'   => ['POST'],
         'handler'   => 'handleAccountChangePassword',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // ==========================================================================
+    // 📦 GDPR/CCPA data-subject rights (#37, epic #52) - export + erasure
+    // ==========================================================================
+    // Session-only exactly like the four routes above (F-026 pattern) -
+    // handleAccountDataExport()/handleAccountErase() (fn_api_account.php)
+    // both call accountManagementAllowedFor() as their FIRST statement, so an
+    // X-API-Key-authenticated caller gets 403 ACCOUNT_MANAGEMENT_FORBIDDEN
+    // regardless of scope, same as every other account/* route.
+    // ==========================================================================
+
+    // 📌 GET /api/v1/account/export - Download a complete JSON export of the caller's OWN data
+    [
+        'pattern'   => 'account/export',
+        'methods'   => ['GET'],
+        'handler'   => 'handleAccountDataExport',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/account/erase - Erase the caller's OWN account by anonymization
+    [
+        'pattern'   => 'account/erase',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAccountErase',
         'auth'      => true,
         'rateLimit' => true,
         'requiredFeature' => null,
@@ -1097,6 +1131,14 @@ switch ($handlerFunction) {
 
     case 'handleAccountChangePassword':
         handleAccountChangePassword($requestBody, $auth);
+        break;
+
+    case 'handleAccountDataExport':
+        handleAccountDataExport($auth);
+        break;
+
+    case 'handleAccountErase':
+        handleAccountErase($requestBody, $auth);
         break;
 
     case 'handleApiKeysCollection':

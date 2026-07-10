@@ -1,6 +1,6 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-07-10 (Epic E2 - SSO/OIDC client: Microsoft 365 + Google, SIGNula behind a flag, #55/#19/#20/#28)
+**📅 Last Updated:** 2026-07-10 (GDPR/CCPA data-subject rights - account export + erasure by anonymization, #37/#52)
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 
@@ -136,7 +136,7 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | --- | --- | --- |
 | [#35](https://github.com/MWBMPartners/CueRCode/issues/35) | GitHub Actions: automated version numbering and CHANGELOG | 📋 |
 | [#36](https://github.com/MWBMPartners/CueRCode/issues/36) | GitHub Actions: auto-deploy via SFTP to Dreamhost | 📋 |
-| [#37](https://github.com/MWBMPartners/CueRCode/issues/37) | Comprehensive data protection and privacy compliance | 🔄 Partially addressed — cookie-consent banner now present in code (cycle 7, 2026-06-29, FG-026); data export/erasure tooling deferred to auth (Bucket-3, Phase 2); needs live-server verification (#22) |
+| [#37](https://github.com/MWBMPartners/CueRCode/issues/37) | Comprehensive data protection and privacy compliance | 🔄 Addressed in code (cookie-consent banner, cycle 7, 2026-06-29, FG-026; data export/erasure, epic #52, 2026-07-10) — `GET /api/v1/account/export` (session-only, complete own-scoped JSON export incl. saved codes/sessions/subscriptions+payments/linked SSO/API keys, never secrets) + a plain-navigable `account/export/` download link; `POST /api/v1/account/erase` (session-only, password-confirmed, `confirm:true`-gated, one DB transaction) anonymizes email/name/avatar/password + revokes sessions/keys/SSO links + soft-deletes saved codes while retaining subscription/payment rows for financial/audit obligations; account-dashboard "Your data" section; `privacy.php` documents the mechanism + retention model; owner-run hard-purge runbook documented (DEV_NOTES.md) rather than automated; `tests/test_account_data.php` (116 assertions) + live scratch-DB/HTTP two-account evidence (own-only export, API-key→403, wrong-password→401, missing-confirm→400, successful anonymization, unaffected second account); 1322/1322 suite green; needs live-server verification (#22) |
 | [#38](https://github.com/MWBMPartners/CueRCode/issues/38) | Enhanced Terms of Use, Privacy Policy, and Copyright pages | 🔄 Addressed in code (cycle 6, 2026-06-29) — privacy.php + terms.php rewritten as multi-jurisdiction TEMPLATE pages; needs legal-counsel review and live-server verification (#17) before close |
 
 **Note:** #35 and #36 (CI/CD) can be implemented at any time and would benefit all phases.

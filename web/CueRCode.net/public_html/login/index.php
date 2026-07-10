@@ -97,6 +97,13 @@ if (function_exists('currentUser') && currentUser() !== null) {
 $loginError  = null;
 $postedEmail = '';
 
+// 📌 GDPR/CCPA erasure landing flag (#37/#52) - public_html/account/index.php's
+// no-JS "Delete my account" flow redirects here with `?erased=1` after a
+// SUCCESSFUL erasure (logoutCurrentUser() has already run by that point, so
+// this is a plain query flag, not session state - no PII, nothing to
+// validate beyond "is this flag present").
+$accountErasedNotice = isset($_GET['erased']) && $_GET['erased'] === '1';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
     if (isset($_POST['csrf_token'])) {
         $csrfTokenValue = $_POST['csrf_token'];
@@ -188,6 +195,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <i class="fa-solid fa-right-to-bracket me-2" aria-hidden="true"></i>
                                 Sign in
                             </h1>
+
+                            <?php if ($accountErasedNotice) { ?>
+                            <div class="alert alert-success" role="status" id="account-erased-notice">
+                                <i class="fa-solid fa-circle-check me-1" aria-hidden="true"></i>
+                                Your account has been deleted. You have been signed out of every device.
+                            </div>
+                            <?php } ?>
 
                             <?php if ($loginError !== null) { ?>
                             <div class="alert alert-danger" role="alert" id="login-form-errors">

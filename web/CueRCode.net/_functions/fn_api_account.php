@@ -18,6 +18,33 @@
  *   - GET    /api/v1/account/sessions         -> handleAccountSessionsList()
  *   - DELETE /api/v1/account/sessions/{id}    -> handleAccountSessionDelete()
  *   - POST   /api/v1/account/change-password  -> handleAccountChangePassword()
+ *   - GET    /api/v1/account/export           -> handleAccountDataExport()   (#37/#52, GDPR/CCPA export)
+ *   - POST   /api/v1/account/erase            -> handleAccountErase()       (#37/#52, GDPR/CCPA erasure)
+ *
+ * GDPR/CCPA DATA-SUBJECT RIGHTS (#37, epic #52 - see DEV_NOTES.md/SECURITY.md
+ * for the full write-up and privacy.php Section 11 for the public-facing
+ * rights disclosure):
+ *   - **collectAccountExportData()/handleAccountDataExport()**: a complete,
+ *     machine-readable JSON export of ONLY the caller's own data - profile,
+ *     saved QR codes (metadata + payload, never the rendered image blob),
+ *     sessions (masked identifier + ip/ua/times, never a replayable raw
+ *     session token), subscriptions + payment ledger (own rows only), linked
+ *     SSO providers (provider name + masked subject + linkedAt, never
+ *     tokensEncrypted), and API keys (prefix/name/scopes only, reusing
+ *     listApiKeysForUser() - never the secret or its hash). Session-only
+ *     (accountManagementAllowedFor()) and unconditionally scoped to the
+ *     caller's own resolved userID - there is no field anywhere in this
+ *     request that can target another account.
+ *   - **eraseUserAccount()/handleAccountErase()**: erases the caller's OWN
+ *     account by ANONYMIZATION, never a hard DELETE of the tblUsers row -
+ *     see eraseUserAccount()'s own docblock for the exact anonymize-vs-
+ *     retain scope. Requires the caller's CURRENT password (verified
+ *     timing-safely via verifyPassword() - wrong password -> 401
+ *     INVALID_PASSWORD) and an explicit `confirm: true` in the request body
+ *     (missing/false -> 400 CONFIRMATION_REQUIRED) on top of the same
+ *     session-only guard. A single MySQL transaction wraps every mutating
+ *     statement so the anonymization is atomic - either all of it lands, or
+ *     none of it does.
  *
  * Split, like fn_auth.php / fn_api_accounts.php, into:
  *   1. "Engine" functions (updateUserDisplayName(), storeUserAvatarFile(),
@@ -119,6 +146,19 @@ if (!defined('CUERCODE_ACCOUNT_SESSION_ID_REGEX')) {
 /** @var int Minimum new-password length fallback (matches fn_password.php's own default). */
 if (!defined('CUERCODE_ACCOUNT_PASSWORD_MIN_LENGTH_FALLBACK')) {
     define('CUERCODE_ACCOUNT_PASSWORD_MIN_LENGTH_FALLBACK', 8);
+}
+
+/**
+ * @var string Domain used for the non-reversible placeholder email address an
+ * erased account's tblUsers.email is replaced with (#37/#52 - see
+ * buildErasedAccountEmail()). '.invalid' is the IANA-reserved TLD for exactly
+ * this purpose (RFC 2606) - it can never resolve or be re-registered, so a
+ * placeholder address built from it can never accidentally collide with, or
+ * later be reassigned to, a genuine mailbox.
+ * @see https://www.rfc-editor.org/rfc/rfc2606
+ */
+if (!defined('CUERCODE_ACCOUNT_ERASED_EMAIL_DOMAIN')) {
+    define('CUERCODE_ACCOUNT_ERASED_EMAIL_DOMAIN', 'deleted.invalid');
 }
 
 // ==============================================================================
@@ -1123,6 +1163,716 @@ function handleAccountChangePassword(array $requestBody, array $auth): void
     if (!$result['success']) {
         errorResponse($result['message'], $result['httpCode'], (string) $result['errorCode']);
         return;
+    }
+
+    successResponse($result['data'], $result['message'], $result['httpCode']);
+}
+
+// ==============================================================================
+// 📦 GDPR/CCPA data-subject rights (#37, epic #52) - export + erasure
+// ==============================================================================
+
+// ------------------------------------------------------------------------
+// 📤 collectAccountExportData() - gather the caller's OWN data, own-scoped
+// ------------------------------------------------------------------------
+
+/**
+ * 📤 Collect a complete, machine-readable snapshot of ONE user's own data.
+ *
+ * Every query below is unconditionally scoped to `WHERE userID = ?` (or, for
+ * saved-code payments, to a subscriptionID that itself was just fetched
+ * scoped to that same userID) - there is no parameter here that could ever
+ * widen the result to another account. Deliberately excludes anything the
+ * account-management own-scope security posture treats as a secret:
+ *   - Sessions: only maskTokenForDisplay()'d identifiers (via
+ *     listUserSessions()) - never the raw, replayable session token.
+ *   - Linked SSO providers: only the provider name + masked subject +
+ *     linkedAt (via listLinkedOAuthProvidersForUser()) - NEVER
+ *     tblUserOAuth.tokensEncrypted.
+ *   - API keys: only prefix/name/scopes/rate-limits/timestamps (via
+ *     listApiKeysForUser(), which never SELECTs apiKeyHash in the first
+ *     place - see that function's own docblock).
+ *   - Saved QR codes: the payload/customisation/metadata are included, but
+ *     NOT qrFilePath (an internal server filesystem path) and not the
+ *     rendered image bytes themselves - the payload is enough to
+ *     regenerate an identical image on request.
+ *
+ * @param int $userID The caller's own tblUsers.userID (already resolved
+ *                     server-side by the handler - never a client-supplied value).
+ *
+ * @return array{
+ *   exported_at: string,
+ *   profile: array|null,
+ *   saved_qr_codes: array,
+ *   sessions: array,
+ *   subscriptions: array,
+ *   linked_sso_providers: array,
+ *   api_keys: array
+ * }
+ *
+ * @see handleAccountDataExport() - the HTTP handler that calls this
+ * @see fn_oauth.php   - listLinkedOAuthProvidersForUser()
+ * @see fn_api_keys.php - listApiKeysForUser()
+ */
+function collectAccountExportData(int $userID): array
+{
+    $export = [
+        // 📌 gmdate('c')-equivalent (ISO 8601, UTC) - matches the rest of this
+        // codebase's response 'timestamp' convention (fn_response.php).
+        'exported_at'          => gmdate('Y-m-d\TH:i:s+00:00'),
+        'profile'              => null,
+        'saved_qr_codes'       => [],
+        'sessions'             => [],
+        'subscriptions'        => [],
+        'linked_sso_providers' => [],
+        'api_keys'             => [],
+    ];
+
+    if (!function_exists('dbQuery')) {
+        return $export;
+    }
+
+    // ------------------------------------------------------------------
+    // 👤 Profile
+    // ------------------------------------------------------------------
+    try {
+        $stmt = dbQuery(
+            'SELECT `userID`, `email`, `emailVerifiedAt`, `displayName`, `firstName`, `lastName`, '
+            . '`avatarPath`, `status`, `lastLoginAt`, `createdAt`, `updatedAt` '
+            . 'FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
+            'i',
+            [$userID]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if ($row !== null) {
+            $hasAvatar = ($row['avatarPath'] !== null && trim((string) $row['avatarPath']) !== '');
+
+            $export['profile'] = [
+                'email'             => (string) $row['email'],
+                'email_verified_at' => $row['emailVerifiedAt'],
+                'display_name'      => $row['displayName'],
+                'first_name'        => $row['firstName'],
+                'last_name'         => $row['lastName'],
+                // 📌 A boolean flag, never the raw file path/bytes - the
+                // avatar image itself is fetched separately via the
+                // session-gated /account/avatar/ endpoint if wanted.
+                'has_custom_avatar' => $hasAvatar,
+                'status'            => (string) $row['status'],
+                'last_login_at'     => $row['lastLoginAt'],
+                'created_at'        => (string) $row['createdAt'],
+                'updated_at'        => (string) $row['updatedAt'],
+            ];
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Account export: profile lookup failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 📚 Saved QR codes (metadata + payload, NEVER the rendered image blob)
+    // ------------------------------------------------------------------
+    try {
+        $stmt = dbQuery(
+            'SELECT q.`qrUUID`, t.`typeName`, q.`qrLabel`, q.`qrPayload`, q.`qrInputData`, '
+            . 'q.`qrOptions`, q.`qrOutputFormat`, q.`isPublic`, q.`downloadCount`, '
+            . 'q.`createdAt`, q.`updatedAt` '
+            . 'FROM `tblQRCodes` q '
+            . 'LEFT JOIN `tblQRCodeTypes` t ON q.`qrTypeID` = t.`typeID` '
+            . 'WHERE q.`userID` = ? AND q.`deletedAt` IS NULL '
+            . 'ORDER BY q.`createdAt` ASC',
+            'i',
+            [$userID]
+        );
+        $result = $stmt->get_result();
+
+        while ($row = $result->fetch_assoc()) {
+            $inputData = null;
+            if ($row['qrInputData'] !== null) {
+                $decodedInput = json_decode((string) $row['qrInputData'], true);
+                if (is_array($decodedInput)) {
+                    $inputData = $decodedInput;
+                }
+            }
+
+            $customization = null;
+            if ($row['qrOptions'] !== null) {
+                $decodedOptions = json_decode((string) $row['qrOptions'], true);
+                if (is_array($decodedOptions)) {
+                    $customization = $decodedOptions;
+                }
+            }
+
+            $export['saved_qr_codes'][] = [
+                'uuid'           => (string) $row['qrUUID'],
+                'type'           => $row['typeName'] !== null ? (string) $row['typeName'] : null,
+                'label'          => $row['qrLabel'],
+                'payload'        => (string) $row['qrPayload'],
+                'input_data'     => $inputData,
+                'customization'  => $customization,
+                'format'         => (string) $row['qrOutputFormat'],
+                'is_public'      => (bool) $row['isPublic'],
+                'download_count' => (int) $row['downloadCount'],
+                'created_at'     => (string) $row['createdAt'],
+                'updated_at'     => (string) $row['updatedAt'],
+            ];
+        }
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Account export: saved QR codes lookup failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 🎫 Sessions - masked identifier + ip/ua/times ONLY, never a raw,
+    // replayable session token (reuses listUserSessions(), then strips its
+    // 'id'/'is_current' fields - this export is a data snapshot, not a
+    // session-management surface).
+    // ------------------------------------------------------------------
+    if (function_exists('listUserSessions')) {
+        foreach (listUserSessions($userID, null) as $sessionRow) {
+            $export['sessions'][] = [
+                'masked_id'    => $sessionRow['masked_id'],
+                'ip'           => $sessionRow['ip'],
+                'user_agent'   => $sessionRow['user_agent'],
+                'created_at'   => $sessionRow['created_at'],
+                'last_seen_at' => $sessionRow['last_seen_at'],
+            ];
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 💳 Subscriptions + their payment ledger (Epic E4) - own rows only.
+    // ------------------------------------------------------------------
+    try {
+        $stmt = dbQuery(
+            'SELECT s.`subscriptionID`, p.`planKey`, p.`planName`, s.`status`, '
+            . 's.`currentPeriodStart`, s.`currentPeriodEnd`, s.`provider`, '
+            . 's.`providerSubscriptionRef`, s.`createdAt`, s.`updatedAt` '
+            . 'FROM `tblSubscriptions` s '
+            . 'LEFT JOIN `tblSubscriptionPlans` p ON s.`planID` = p.`planID` '
+            . 'WHERE s.`userID` = ? '
+            . 'ORDER BY s.`createdAt` ASC',
+            'i',
+            [$userID]
+        );
+        $result = $stmt->get_result();
+        $subscriptionRows = [];
+        while ($row = $result->fetch_assoc()) {
+            $subscriptionRows[] = $row;
+        }
+        $stmt->close();
+
+        foreach ($subscriptionRows as $subRow) {
+            $subscriptionId = (int) $subRow['subscriptionID'];
+            $payments       = [];
+
+            try {
+                $payStmt = dbQuery(
+                    'SELECT `provider`, `providerTxnRef`, `amount`, `currency`, `status`, `createdAt` '
+                    . 'FROM `tblPayments` WHERE `subscriptionID` = ? ORDER BY `createdAt` ASC',
+                    'i',
+                    [$subscriptionId]
+                );
+                $payResult = $payStmt->get_result();
+                while ($payRow = $payResult->fetch_assoc()) {
+                    $payments[] = [
+                        'provider'         => (string) $payRow['provider'],
+                        'provider_txn_ref' => (string) $payRow['providerTxnRef'],
+                        'amount'           => (string) $payRow['amount'],
+                        'currency'         => (string) $payRow['currency'],
+                        'status'           => (string) $payRow['status'],
+                        'created_at'       => (string) $payRow['createdAt'],
+                    ];
+                }
+                $payStmt->close();
+            } catch (\Throwable $e) {
+                if (function_exists('logError')) {
+                    logError('error', 'Account export: payments lookup failed', 'subscriptionID: ' . $subscriptionId . ' | ' . $e->getMessage());
+                }
+            }
+
+            $export['subscriptions'][] = [
+                'plan_key'                  => $subRow['planKey'],
+                'plan_name'                 => $subRow['planName'],
+                'status'                    => (string) $subRow['status'],
+                'current_period_start'      => $subRow['currentPeriodStart'],
+                'current_period_end'        => $subRow['currentPeriodEnd'],
+                'provider'                  => $subRow['provider'],
+                'provider_subscription_ref' => $subRow['providerSubscriptionRef'],
+                'created_at'                => (string) $subRow['createdAt'],
+                'updated_at'                => (string) $subRow['updatedAt'],
+                'payments'                  => $payments,
+            ];
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Account export: subscriptions lookup failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 🔗 Linked SSO providers - reuses listLinkedOAuthProvidersForUser()
+    // (fn_oauth.php), which already masks the subject identifier and never
+    // returns tokensEncrypted.
+    // ------------------------------------------------------------------
+    if (function_exists('listLinkedOAuthProvidersForUser')) {
+        foreach (listLinkedOAuthProvidersForUser($userID) as $linkedProvider) {
+            $export['linked_sso_providers'][] = [
+                'provider'       => $linkedProvider['provider'],
+                'display_name'   => $linkedProvider['display_name'],
+                'masked_subject' => $linkedProvider['masked_subject'],
+                'linked_at'      => $linkedProvider['linked_at'],
+            ];
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 🔑 API keys - reuses listApiKeysForUser() (fn_api_keys.php), which
+    // never SELECTs apiKeyHash and never returns the raw secret.
+    // ------------------------------------------------------------------
+    if (function_exists('listApiKeysForUser')) {
+        $export['api_keys'] = listApiKeysForUser($userID);
+    }
+
+    return $export;
+}
+
+// ------------------------------------------------------------------------
+// 🌐 handleAccountDataExport() - GET /api/v1/account/export
+// ------------------------------------------------------------------------
+
+/**
+ * 🌐 Handle GET /api/v1/account/export
+ *
+ * Session-only (F-026 pattern) - see accountManagementAllowedFor(). Streams
+ * the JSON body with a Content-Disposition: attachment header so a browser
+ * (or a JS `fetch()` reading the response) downloads it as a file rather than
+ * rendering it inline. Rate-limited via the router's normal per-route
+ * 'rateLimit' => true (the same tblAPIRateLog mechanism as every other
+ * account/* route - no bespoke limiter needed here).
+ *
+ * @param array $auth The router's authentication context.
+ *
+ * @return void (terminates via errorResponse()/successResponse())
+ */
+function handleAccountDataExport(array $auth): void
+{
+    // 🔐 F-026 pattern: account data export is session-only - refuse an
+    // API-key-authenticated caller BEFORE touching anything else.
+    if (!accountManagementAllowedFor($auth)) {
+        errorResponse(
+            'Account management requires an interactive session; API keys cannot manage the account.',
+            403,
+            'ACCOUNT_MANAGEMENT_FORBIDDEN'
+        );
+        return;
+    }
+
+    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+
+    if ($currentUserId === null) {
+        errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
+        return;
+    }
+
+    if (!function_exists('dbQuery')) {
+        errorResponse('The data-export service is temporarily unavailable.', 503, 'SERVICE_UNAVAILABLE');
+        return;
+    }
+
+    $exportData = collectAccountExportData($currentUserId);
+
+    if (function_exists('logActivity')) {
+        // 📌 PII-free by design: only the userID (entityID) is logged, never
+        // the email/display name/payloads that were just exported.
+        logActivity('account_data_exported', 'User exported their own account data', 'user', $currentUserId, []);
+    }
+
+    // 📥 Content-Disposition: attachment - mirrors fn_api_download.php's
+    // established convention for a caller-triggered file download.
+    if (!headers_sent()) {
+        header('Content-Disposition: attachment; filename="cuercode-data-export.json"');
+    }
+
+    successResponse($exportData, 'Your account data export is ready.');
+}
+
+// ------------------------------------------------------------------------
+// 🗑️ eraseUserAccount() - own-account erasure by ANONYMIZATION
+// ------------------------------------------------------------------------
+
+/**
+ * 🔤 Build the non-reversible placeholder email address an erased account's
+ * tblUsers.email is replaced with.
+ *
+ * Deterministic per userID (not random) so a hard-purge job (see
+ * DEV_NOTES.md) can still find/verify the right row by pattern if ever
+ * needed, while remaining completely non-reversible - there is no way to
+ * recover the original email address from this placeholder.
+ *
+ * @param int $userID The tblUsers.userID being erased.
+ *
+ * @return string e.g. 'deleted-42@deleted.invalid'
+ */
+function buildErasedAccountEmail(int $userID): string
+{
+    return 'deleted-' . $userID . '@' . CUERCODE_ACCOUNT_ERASED_EMAIL_DOMAIN;
+}
+
+/**
+ * 🗑️ Erase the caller's OWN account by ANONYMIZATION (#37, epic #52).
+ *
+ * **ANONYMIZE, NOT HARD-DELETE** (owner/design decision - see DEV_NOTES.md
+ * "Account erasure: anonymize now, hard-purge later" for the full model and
+ * the separate owner-run hard-purge runbook):
+ *   - tblUsers PII is cleared/replaced in place: `email` -> a non-reversible
+ *     `deleted-<userID>@deleted.invalid` placeholder (buildErasedAccountEmail()),
+ *     `displayName` -> 'Deleted user', `firstName`/`lastName` -> NULL,
+ *     `avatarPath` -> NULL (and the avatar FILE is deleted from disk),
+ *     `passwordHash` -> NULL (login is no longer possible for this row under
+ *     ANY credential), `status` -> 'deleted', `erasedAt` -> NOW().
+ *   - ALL sessions are revoked (tblUserSessions.revokedAt = NOW()).
+ *   - ALL API keys are deactivated (tblAPIKeys.isActive = 0) - never deleted,
+ *     so a future admin audit can still see how many keys the account had.
+ *   - ALL linked SSO identities are removed (`DELETE FROM tblUserOAuth`) -
+ *     these rows carry no independent audit value once the local account
+ *     they point at is anonymized.
+ *   - ALL saved QR codes are soft-deleted (tblQRCodes.deletedAt = NOW()) -
+ *     the SAME reversible mechanism DELETE /api/v1/qrcodes/{uuid} already
+ *     uses elsewhere in this codebase, not a hard delete.
+ *   - tblSubscriptions/tblPayments rows are DELIBERATELY left untouched:
+ *     they carry no PII of their own beyond the (now-anonymized) userID
+ *     foreign key, and this codebase's existing FK posture already treats
+ *     financial/audit records as retain-don't-cascade (tblPayments'
+ *     `fk_payment_subscription` is `ON DELETE RESTRICT`, not `CASCADE` -
+ *     see install.sql's own comment on that table). Anonymizing the parent
+ *     tblUsers row in place - rather than deleting it - is what keeps this
+ *     referential integrity intact automatically, with zero extra code.
+ *
+ * ATOMICITY: every mutating statement above runs inside ONE MySQL
+ * transaction (`getDB()->begin_transaction()`/`commit()`/`rollback()`) - the
+ * anonymization either lands completely, or (on any failure) not at all.
+ *
+ * SECURITY GATES (own-account-only, password-confirmed, confirmation-gated -
+ * see this file's header docblock and SECURITY.md):
+ *   - `$confirm` must be explicitly `true` - the caller (handleAccountErase())
+ *     already required a literal `"confirm": true` in the request body
+ *     before calling this; a missing/false value here still fails closed.
+ *   - The CALLER'S current password is re-verified via `verifyPassword()`
+ *     (timing-safe, same primitive `changeUserPassword()` uses) - a wrong
+ *     password returns 401 INVALID_PASSWORD and NOTHING is mutated.
+ *   - `$userID` is always resolved server-side from the caller's own session
+ *     identity by `handleAccountErase()` - there is no "target user"
+ *     parameter anywhere in this function or its caller that could ever
+ *     erase a DIFFERENT account.
+ *
+ * @param int    $userID          The caller's own tblUsers.userID (already
+ *                                resolved server-side - never client-supplied).
+ * @param string $currentPassword The candidate CURRENT plaintext password.
+ * @param bool   $confirm         Must be true (the caller already enforces
+ *                                this at the request-shape level too).
+ *
+ * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
+ *
+ * @see handleAccountErase()   - the HTTP handler that calls this
+ * @see buildErasedAccountEmail()
+ * @see deleteUserAvatarFiles() - the avatar-file removal helper (this file, above)
+ * @see https://www.php.net/manual/en/mysqli.begin-transaction.php
+ */
+function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): array
+{
+    if (!$confirm) {
+        return [
+            'success'   => false,
+            'httpCode'  => 400,
+            'errorCode' => 'CONFIRMATION_REQUIRED',
+            'message'   => 'You must explicitly confirm this irreversible action.',
+            'data'      => [],
+        ];
+    }
+
+    if (!function_exists('dbQuery') || !function_exists('getDB')) {
+        return [
+            'success'   => false,
+            'httpCode'  => 503,
+            'errorCode' => 'SERVICE_UNAVAILABLE',
+            'message'   => 'Account erasure is temporarily unavailable. Please try again later.',
+            'data'      => [],
+        ];
+    }
+
+    // ------------------------------------------------------------------
+    // 🔑 Step 1: verify the CALLER'S current password (timing-safe;
+    // password_verify() is inherently constant-time relative to the hash).
+    // A password-less (SSO-only) account has passwordHash === NULL/'' -
+    // verifyPassword() treats an empty stored hash as "never matches", so
+    // such an account cannot self-erase via THIS endpoint at all (an
+    // acceptable, documented limitation - see DEV_NOTES.md).
+    // ------------------------------------------------------------------
+    try {
+        $lookupStmt = dbQuery(
+            "SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ? AND `status` != 'deleted' LIMIT 1",
+            'i',
+            [$userID]
+        );
+        $row = $lookupStmt->get_result()->fetch_assoc();
+        $lookupStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Account erasure: password lookup failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+        return [
+            'success'   => false,
+            'httpCode'  => 500,
+            'errorCode' => 'LOOKUP_FAILED',
+            'message'   => 'Your account could not be erased. Please try again later.',
+            'data'      => [],
+        ];
+    }
+
+    if ($row === null) {
+        // 📌 Already anonymized (or never existed) - since currentUser()
+        // requires status = 'active' to authenticate at all, a genuinely
+        // authenticated caller reaching this point should never hit this
+        // branch in normal operation; kept as a defensive, non-mutating
+        // fail-safe against an unexpected race.
+        return [
+            'success'   => false,
+            'httpCode'  => 409,
+            'errorCode' => 'ALREADY_ERASED',
+            'message'   => 'This account has already been erased.',
+            'data'      => [],
+        ];
+    }
+
+    $storedHash = (string) $row['passwordHash'];
+
+    if (!verifyPassword($currentPassword, $storedHash)) {
+        return [
+            'success'   => false,
+            'httpCode'  => 401,
+            'errorCode' => 'INVALID_PASSWORD',
+            'message'   => 'Your current password is incorrect.',
+            'data'      => [],
+        ];
+    }
+
+    $anonymizedEmail = buildErasedAccountEmail($userID);
+
+    // ------------------------------------------------------------------
+    // 🔒 Step 2: anonymize + revoke + deactivate + unlink + soft-delete, all
+    // inside ONE transaction. dbQuery() always reuses the SAME cached mysqli
+    // connection for the lifetime of this request (see fn_api_qrcodes.php's
+    // acquireSaveLimitLock() docblock for the detailed rationale this
+    // mirrors), so every statement below genuinely participates in the same
+    // transaction as $db->begin_transaction()/commit()/rollback().
+    // ------------------------------------------------------------------
+    $db                  = getDB();
+    $transactionStarted  = false;
+    $conflictDuringErase = false;
+
+    try {
+        $db->begin_transaction();
+        $transactionStarted = true;
+
+        // 👤 Anonymize tblUsers PII in place (re-checks status != 'deleted'
+        // in the SAME statement - a concurrent double-erase affects 0 rows).
+        $anonymizeStmt = dbQuery(
+            "UPDATE `tblUsers` SET "
+            . "`email` = ?, "
+            . "`displayName` = 'Deleted user', "
+            . "`firstName` = NULL, "
+            . "`lastName` = NULL, "
+            . "`avatarPath` = NULL, "
+            . "`passwordHash` = NULL, "
+            . "`status` = 'deleted', "
+            . "`erasedAt` = NOW(), "
+            . "`failedLoginCount` = 0, "
+            . "`lockedUntil` = NULL "
+            . "WHERE `userID` = ? AND `status` != 'deleted'",
+            'si',
+            [$anonymizedEmail, $userID]
+        );
+        $anonymized = ($anonymizeStmt->affected_rows === 1);
+        $anonymizeStmt->close();
+
+        if (!$anonymized) {
+            $conflictDuringErase = true;
+            throw new \RuntimeException('cuercode_erase_conflict');
+        }
+
+        // 🎫 Revoke ALL sessions (not merely the current one).
+        $sessionsStmt = dbQuery(
+            'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
+            'i',
+            [$userID]
+        );
+        $sessionsStmt->close();
+
+        // 🔑 Deactivate ALL API keys (soft-revoke, matching
+        // revokeApiKeyForUser()'s own convention - never a hard delete).
+        $keysStmt = dbQuery(
+            'UPDATE `tblAPIKeys` SET `isActive` = 0 WHERE `userID` = ? AND `isActive` = 1',
+            'i',
+            [$userID]
+        );
+        $keysStmt->close();
+
+        // 🔗 Unlink ALL SSO providers.
+        $oauthStmt = dbQuery('DELETE FROM `tblUserOAuth` WHERE `userID` = ?', 'i', [$userID]);
+        $oauthStmt->close();
+
+        // 📚 Soft-delete ALL saved QR codes (same mechanism as
+        // DELETE /api/v1/qrcodes/{uuid} - tblQRCodes.deletedAt).
+        $qrCodesStmt = dbQuery(
+            'UPDATE `tblQRCodes` SET `deletedAt` = NOW() WHERE `userID` = ? AND `deletedAt` IS NULL',
+            'i',
+            [$userID]
+        );
+        $qrCodesStmt->close();
+
+        $db->commit();
+    } catch (\Throwable $e) {
+        if ($transactionStarted) {
+            try {
+                $db->rollback();
+            } catch (\Throwable $rollbackError) {
+                // 🛡️ Best-effort - a failed rollback cannot make the
+                // already-caught failure any worse; logged below either way.
+            }
+        }
+
+        if ($conflictDuringErase) {
+            return [
+                'success'   => false,
+                'httpCode'  => 409,
+                'errorCode' => 'ALREADY_ERASED',
+                'message'   => 'This account has already been erased.',
+                'data'      => [],
+            ];
+        }
+
+        if (function_exists('logError')) {
+            logError('error', 'Account erasure transaction failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+
+        return [
+            'success'   => false,
+            'httpCode'  => 500,
+            'errorCode' => 'ERASE_FAILED',
+            'message'   => 'Your account could not be erased. No changes were made - please try again or contact support.',
+            'data'      => [],
+        ];
+    }
+
+    // ------------------------------------------------------------------
+    // 🖼️ Step 3: delete the avatar FILE from disk (file I/O only - never
+    // part of the DB transaction above, best-effort/non-fatal exactly like
+    // every other avatar-removal call site in this file).
+    // ------------------------------------------------------------------
+    deleteUserAvatarFiles($userID);
+
+    // ------------------------------------------------------------------
+    // 📝 Step 4: PII-free audit log entry - userID (entityID) ONLY, never
+    // the email/name that was just anonymized.
+    // ------------------------------------------------------------------
+    if (function_exists('logActivity')) {
+        logActivity('account_erased', 'User erased their own account (anonymization)', 'user', $userID, []);
+    }
+
+    return [
+        'success'   => true,
+        'httpCode'  => 200,
+        'errorCode' => null,
+        'message'   => 'Your account has been erased. You have been signed out.',
+        'data'      => [
+            'erased_at' => gmdate('Y-m-d H:i:s'),
+        ],
+    ];
+}
+
+// ------------------------------------------------------------------------
+// 🌐 handleAccountErase() - POST /api/v1/account/erase
+// ------------------------------------------------------------------------
+
+/**
+ * 🌐 Handle POST /api/v1/account/erase
+ *
+ * Session-only (F-026 pattern), own-account-only (userID resolved server-
+ * side, never from the request body), password-confirmed, and
+ * confirmation-gated (`"confirm": true` required in the body on top of the
+ * password). Ends the session on success via logoutCurrentUser().
+ *
+ * Request body: {"current_password": "...", "confirm": true}
+ *
+ * @param array $requestBody The parsed JSON request body.
+ * @param array $auth        The router's authentication context.
+ *
+ * @return void (terminates via errorResponse()/successResponse())
+ */
+function handleAccountErase(array $requestBody, array $auth): void
+{
+    // 🔐 F-026 pattern: account erasure is session-only - refuse an
+    // API-key-authenticated caller BEFORE touching anything else.
+    if (!accountManagementAllowedFor($auth)) {
+        errorResponse(
+            'Account management requires an interactive session; API keys cannot manage the account.',
+            403,
+            'ACCOUNT_MANAGEMENT_FORBIDDEN'
+        );
+        return;
+    }
+
+    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+
+    if ($currentUserId === null) {
+        errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
+        return;
+    }
+
+    if (!isset($requestBody['current_password']) || !is_string($requestBody['current_password']) || trim($requestBody['current_password']) === '') {
+        errorResponse('Field "current_password" is required.', 400, 'INVALID_REQUEST');
+        return;
+    }
+
+    $currentPassword = $requestBody['current_password'];
+
+    if (mb_strlen($currentPassword) > CUERCODE_PASSWORD_MAX_LENGTH) {
+        errorResponse('Password field exceeds the maximum allowed length.', 400, 'INVALID_REQUEST');
+        return;
+    }
+
+    // 🔐 Confirmation gate: an explicit boolean `true` is required - anything
+    // else (absent, "true" string, 1, etc.) fails closed.
+    $confirm = isset($requestBody['confirm']) && $requestBody['confirm'] === true;
+
+    if (!$confirm) {
+        errorResponse(
+            'You must explicitly confirm this irreversible action by sending "confirm": true.',
+            400,
+            'CONFIRMATION_REQUIRED'
+        );
+        return;
+    }
+
+    $result = eraseUserAccount($currentUserId, $currentPassword, $confirm);
+
+    if (!$result['success']) {
+        errorResponse($result['message'], $result['httpCode'], (string) $result['errorCode']);
+        return;
+    }
+
+    // 🚪 End the session now that the account has been anonymized - every
+    // session row was already revoked inside eraseUserAccount()'s
+    // transaction, so this call's own UPDATE affects 0 rows; its real job
+    // here is clearing THIS request's $_SESSION token and regenerating the
+    // PHP session id so the browser is left in a genuinely logged-out state.
+    if (function_exists('logoutCurrentUser')) {
+        logoutCurrentUser();
     }
 
     successResponse($result['data'], $result['message'], $result['httpCode']);

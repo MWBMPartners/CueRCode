@@ -13,14 +13,16 @@
  * `api/v1/openapi.json` at request time rather than duplicating its content
  * by hand, so these tests both (a) prove the helpers themselves are correct,
  * and (b) prove the actual shipped openapi.json still has the shape the
- * reference page depends on (25 paths - the original 7 QR-generation paths,
+ * reference page depends on (27 paths - the original 7 QR-generation paths,
  * the 6 Epic E3 stage 1 account/auth paths, the 3 Epic E3 stage 2a
  * saved-codes paths added 2026-07-10, the 4 Epic E3 stage 2b own-account
  * dashboard paths (profile/sessions/change-password) added 2026-07-10, the
  * 3 Epic E7 stage 1 self-service API-key paths (keys, keys/{id}/rotate,
- * keys/{id}) added 2026-07-10, and the 2 Epic E2 SSO browser-redirect paths
- * (auth/{provider}, auth/callback/{provider}) added 2026-07-10 - the
- * Customization schema's accessibility params, the shared error responses).
+ * keys/{id}) added 2026-07-10, the 2 Epic E2 SSO browser-redirect paths
+ * (auth/{provider}, auth/callback/{provider}) added 2026-07-10, and the 2
+ * GDPR/CCPA data-subject-rights paths (account/export, account/erase, #37/
+ * epic #52) added 2026-07-10 - the Customization schema's accessibility
+ * params, the shared error responses).
  *
  * ⚠️ Lives under repo-root tests/ - never deployed.
  *
@@ -60,13 +62,14 @@ assertTrue(
     'the real openapi.json has a paths object'
 );
 
-// 📌 The developer portal's reference page assumes exactly these 25 paths
+// 📌 The developer portal's reference page assumes exactly these 27 paths
 // exist (7 original QR-generation paths + 6 Epic E3 stage 1 account/auth
 // paths + 3 Epic E3 stage 2a saved-codes paths + 4 Epic E3 stage 2b
 // own-account dashboard paths + 3 Epic E7 stage 1 self-service API-key
-// paths + 2 Epic E2 SSO browser-redirect paths, all added 2026-07-10). If
-// this ever fails, it means the API surface changed - update this list, not
-// the reference page (which follows automatically).
+// paths + 2 Epic E2 SSO browser-redirect paths + 2 GDPR/CCPA data-subject-
+// rights paths (#37/epic #52), all added 2026-07-10). If this ever fails, it
+// means the API surface changed - update this list, not the reference page
+// (which follows automatically).
 $expectedPaths = [
     '/generate',
     '/preview',
@@ -88,6 +91,8 @@ $expectedPaths = [
     '/account/sessions',
     '/account/sessions/{id}',
     '/account/change-password',
+    '/account/export',
+    '/account/erase',
     '/keys',
     '/keys/{id}/rotate',
     '/keys/{id}',
@@ -105,7 +110,7 @@ foreach ($expectedPaths as $expectedPath) {
 assertEquals(
     count($expectedPaths),
     count($realSpec['paths']),
-    'real openapi.json has exactly the 25 expected paths (no silent additions/removals since this test was written)'
+    'real openapi.json has exactly the 27 expected paths (no silent additions/removals since this test was written)'
 );
 
 // 📌 loadOpenApiSpecFromFile() fails closed (returns null) for a missing file -

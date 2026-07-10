@@ -375,11 +375,13 @@ CREATE TABLE IF NOT EXISTS `tblUsers` (
     `status`            ENUM(
                             'active',
                             'suspended',
-                            'pending'
-                        )                 NOT NULL DEFAULT 'pending' COMMENT '📊 Account lifecycle status - pending until email verified, active thereafter, suspended by an administrator (replaces the old isActive/isVerified boolean pair)',
+                            'pending',
+                            'deleted'
+                        )                 NOT NULL DEFAULT 'pending' COMMENT '📊 Account lifecycle status - pending until email verified, active thereafter, suspended by an administrator, or deleted via GDPR/CCPA self-service erasure (#37/#52 - see erasedAt below; a "deleted" account is ANONYMIZED in place, never a removed row, so referential integrity with tblSubscriptions/tblPayments/tblActivityLog survives)',
     `failedLoginCount`  SMALLINT UNSIGNED NOT NULL DEFAULT 0       COMMENT '🔢 Consecutive failed login attempts since the last success - drives the lockedUntil lockout below',
     `lockedUntil`       DATETIME          NULL                     COMMENT '🔒 Account locked until this timestamp (NULL = not locked) - set once failedLoginCount reaches the security.max_login_attempts setting',
     `lastLoginAt`       DATETIME          NULL                     COMMENT '📅 Last successful login timestamp',
+    `erasedAt`          DATETIME          NULL                     COMMENT '🗑️ GDPR/CCPA self-service erasure timestamp (#37/#52 - POST /api/v1/account/erase) - NULL unless status=''deleted''. Set the moment PII (email/displayName/firstName/lastName/avatarPath/passwordHash) was anonymized; the row itself is kept (not hard-deleted) so tblSubscriptions/tblPayments/tblActivityLog retain a valid, referentially-intact FK for legal/financial audit retention. See DEV_NOTES.md "Account erasure: anonymize now, hard-purge later" for the owner-run hard-purge runbook that permanently removes rows past the retention window.',
     `createdAt`         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Account creation timestamp',
     `updatedAt`         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
 

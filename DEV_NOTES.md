@@ -201,7 +201,55 @@ The browser UI over stage 1 (accounts) and stage 2a (saved codes) - `public_html
 
 **Bug found by this stage's OWN scratch-DB verification, not by review:** `bootstrap.php` did not load `fn_email.php` globally before this stage - only the API router's `$apiFunctionFiles` list did. `register/index.php`'s and `forgot-password/index.php`'s no-JS handlers call `registerUser()`/`requestPasswordReset()` directly, and both fail OPEN (by design) when `queueEmail()` is undefined - so the no-JS registration path silently created the account but never queued the verification email. Fixed by adding `fn_email.php` to `bootstrap.php`'s global list (see the "Authentication Model" update note above). A live curl-driven no-JS registration, BEFORE and AFTER the fix, is the evidence trail in CHANGELOG.md.
 
-**Not built this stage:** organisations UI (stage 6), WebAuthn/passkeys UI (stage 7), admin dashboard (stage 8, #31), GDPR export/erasure (#37), self-service API-key management (needs E6). The generator's "Save to my account" button always calls a FRESH `POST /generate` before `POST /save` (preview generation never persists a row - `save_file: false` in `handlePreview()`) rather than reusing a cached uuid from the live preview; this mirrors `#btn-download`'s own existing behaviour (every download click already creates a new `tblQRCodes` row today) rather than introducing a new "reuse the last generated uuid" state-tracking concept this stage did not need.
+**Not built this stage:** organisations UI (stage 6), WebAuthn/passkeys UI (stage 7), admin dashboard (stage 8, #31), GDPR export/erasure (#37 - see the next section, now built), self-service API-key management (needs E6). The generator's "Save to my account" button always calls a FRESH `POST /generate` before `POST /save` (preview generation never persists a row - `save_file: false` in `handlePreview()`) rather than reusing a cached uuid from the live preview; this mirrors `#btn-download`'s own existing behaviour (every download click already creates a new `tblQRCodes` row today) rather than introducing a new "reuse the last generated uuid" state-tracking concept this stage did not need.
+
+### Account Erasure: Anonymize Now, Hard-Purge Later (#37, epic #52, 2026-07-10)
+
+`POST /api/v1/account/erase` (`eraseUserAccount()`, `_functions/fn_api_account.php`) implements GDPR "right to erasure" / CCPA "right to delete" by **anonymizing the `tblUsers` row in place, never by a hard `DELETE`**. This is a deliberate, two-phase model - read this note before "simplifying" it to a real delete.
+
+**Why anonymize instead of delete outright.** `tblSubscriptions`/`tblPayments` (Epic E4) carry financial/audit obligations that outlive the account relationship - tax records, dispute evidence, fraud-prevention history. `tblPayments.fk_payment_subscription` is deliberately `ON DELETE RESTRICT` (see install.sql's own comment on that table) specifically so a payment record can never silently vanish as a side effect of deleting its parent. If `eraseUserAccount()` hard-deleted the `tblUsers` row, `tblSubscriptions.userID`'s `ON DELETE CASCADE` FK would cascade-delete the subscription too - and that CASCADE would then be BLOCKED by `tblPayments`'s `RESTRICT`, so the whole erasure would fail with a foreign-key constraint violation the moment the account had ever paid for anything. Anonymizing the `tblUsers` row instead of deleting it sidesteps this entirely: the FK stays satisfied (the row still exists), the subscription/payment history stays queryable for legal/audit purposes, and the person's PII is genuinely gone (email/name/avatar/password all cleared or replaced with a non-reversible placeholder) - the row that remains no longer identifies anyone.
+
+**What is anonymized vs. retained, and why each choice:**
+
+| Table | Action | Rationale |
+| --- | --- | --- |
+| `tblUsers` | ANONYMIZE in place: `email`→`deleted-<userID>@deleted.invalid` (RFC 2606 `.invalid` TLD - never resolvable, never re-registrable, deterministic per userID for a future purge job to find), `displayName`→`'Deleted user'`, `firstName`/`lastName`/`avatarPath`→`NULL` (avatar FILE also deleted from disk), `passwordHash`→`NULL` (login becomes permanently impossible), `status`→`'deleted'`, `erasedAt`→`NOW()` | The row must survive (see FK rationale above) but must no longer identify or authenticate anyone |
+| `tblUserSessions` | Revoke ALL (`revokedAt = NOW()`) | Same reversible mechanism `logoutCurrentUser()`/`revokeUserSession()` already use elsewhere - no new state model introduced |
+| `tblAPIKeys` | Deactivate ALL (`isActive = 0`) | Matches `revokeApiKeyForUser()`'s own soft-revoke convention exactly - a future admin audit can still see how many keys the account had |
+| `tblUserOAuth` | `DELETE` all rows | These rows carry no independent audit value once the local account they point at is anonymized - nothing legitimate references them afterwards |
+| `tblQRCodes` | Soft-delete ALL (`deletedAt = NOW()`) | The SAME mechanism `DELETE /api/v1/qrcodes/{uuid}` already uses - no new state model |
+| `tblSubscriptions` / `tblPayments` | **UNTOUCHED** | Financial/audit retention requirement (see above) - these rows carry no PII of their own beyond the (now-anonymized) `userID` FK, so nothing further needs to change on them |
+| `tblActivityLog` | New `account_erased`/`account_data_exported` rows, PII-FREE | `logActivity()` is called with `entityID = userID` only - never the email/display name that was just cleared, so the audit trail itself never leaks the erased PII |
+
+Every mutating statement above runs inside ONE MySQL transaction (`getDB()->begin_transaction()`/`commit()`/`rollback()`) - a partial failure rolls back everything, never leaving a half-anonymized account. The anonymizing `UPDATE`'s `WHERE` clause re-checks `status != 'deleted'` in the SAME statement (a concurrent double-erase attempt affects 0 rows and is reported `409 ALREADY_ERASED`, not silently re-run or thrown).
+
+**Owner-run hard-purge runbook (NOT automated - a deliberate, separate, manual step).** This codebase does not schedule or auto-run a job that permanently deletes anonymized rows - per the Dreamhost shared-hosting "no CLI/cron guarantee" constraint already documented under "Email Subsystem (Microsoft Graph)" above, and because an irreversible bulk-delete of financial-adjacent rows deserves a conscious, logged, owner-initiated action rather than a silent background timer. Once a confirmed retention window has elapsed (**owner/counsel to set the exact number of days - see privacy.php Section 7.1's `[TEMPLATE]` marker**), the owner runs the following via the Dreamhost panel's phpMyAdmin (or an equivalent authenticated MySQL client - never exposed as a public endpoint):
+
+```sql
+-- 1. Preview which rows a purge would affect (READ ONLY - run this first)
+SELECT userID, email, erasedAt
+FROM tblUsers
+WHERE status = 'deleted'
+  AND erasedAt < DATE_SUB(NOW(), INTERVAL 90 DAY); -- adjust the retention window to the confirmed policy
+
+-- 2. Only after reviewing the preview above, and only for rows with NO
+--    remaining subscription/payment history that still needs the userID FK
+--    (LEFT JOIN confirms this), permanently remove the anonymized row.
+--    tblSubscriptions.userID is ON DELETE CASCADE, so if a purged account DID
+--    have subscriptions, review those independently first - most anonymized
+--    accounts erased under this endpoint will have none.
+DELETE u FROM tblUsers u
+LEFT JOIN tblSubscriptions s ON s.userID = u.userID
+WHERE u.status = 'deleted'
+  AND u.erasedAt < DATE_SUB(NOW(), INTERVAL 90 DAY)
+  AND s.subscriptionID IS NULL;
+```
+
+This is intentionally a runbook, not code, for this stage - if a future stage automates it (e.g. a panel-cron-triggered maintenance endpoint, mirroring the `fn_email.php` queue-processor's own "opportunistic on request-shutdown + documented panel-cron alternative" pattern), it must reuse this exact eligibility predicate (`status = 'deleted' AND erasedAt < <retention window> AND no remaining tblSubscriptions/tblPayments dependency`) and must itself be logged to `tblActivityLog` before any row is removed.
+
+**Why the UI requires a TYPED confirmation phrase on top of the password.** `eraseUserAccount()`'s own contract only requires `confirm: true` (a single boolean) - the account dashboard's no-JS `<form>` additionally requires ticking an "I understand this is irreversible" checkbox AND typing the literal word `DELETE` (case-sensitive, enforced BOTH client-side via the `pattern="DELETE"` HTML5 attribute on a `required` input, which blocks submission even with JavaScript disabled, AND server-side in `public_html/account/index.php`'s own POST handler before `eraseUserAccount()` is ever called) - the SAME "UI adds its own extra friction on top of the engine's minimal contract" pattern the account page already uses for "new passwords match" before calling `changeUserPassword()`. The JSON API's documented contract deliberately stays password + `confirm: true` only - the typed-phrase friction is a UI/UX safety net for a human clicking through a web page, not a security control the API needs to additionally enforce for a programmatic caller who already had to supply the correct password.
+
+**Why `GET /account/export/` exists as a second, cookie-only route alongside the CSRF-gated `GET /api/v1/account/export`.** Exactly the same rationale as `account/avatar/`/`account/qr-preview/` (see the note above): a plain `<a href>` "Download my data" link cannot attach the `X-CSRF-Token` header the JSON API's session-only auth model requires, and a data EXPORT (a pure read, no state change) does not need CSRF protection for the same reason those two endpoints don't - the worst a forged cross-site request could achieve is causing the victim's own already-authenticated browser to download something it could already see. Both routes call the identical `collectAccountExportData()` engine function - there is exactly one place that decides what an export contains.
 
 ### Per-Record Encryption Salt (F-006/G-010/DS-7, Epic E3 stage 1, 2026-07-10)
 

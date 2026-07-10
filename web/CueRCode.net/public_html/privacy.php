@@ -377,6 +377,36 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <em>[TEMPLATE: insert specific retention periods per data category, confirmed by counsel.]</em>
                         </p>
 
+                        <h3 id="retention-erasure" class="h6 mt-3 mb-2">7.1 Retention After Account Erasure &mdash; Anonymization, Not Deletion</h3>
+                        <p>
+                            When you erase your account (Section&nbsp;11.1 below), we remove your personal
+                            identifiers immediately &mdash; your email address and display name are replaced
+                            with a non-reversible placeholder, your password is cleared so the account can
+                            never be signed back into, and your saved QR codes, active sessions, API keys and
+                            linked sign-in providers are all revoked or removed. We do <strong>not</strong>,
+                            however, delete the underlying account record outright at that moment. Instead it
+                            is <strong>anonymized in place</strong>, so that:
+                        </p>
+                        <ul>
+                            <li>
+                                subscription and payment records that must be kept for financial, tax, fraud-
+                                prevention or accounting reasons remain intact and correctly linked, satisfying
+                                our own legal retention obligations, while carrying no personal identifier of
+                                yours beyond an anonymous internal reference; and
+                            </li>
+                            <li>
+                                other records that reference your account (for example shared or exported
+                                content, or audit/activity logs) do not become broken or orphaned.
+                            </li>
+                        </ul>
+                        <p>
+                            The anonymized record itself is permanently and irreversibly removed once the
+                            applicable financial/audit retention window has elapsed, via a manual, owner-run
+                            purge process &mdash; it is never re-identified, re-activated or restored in the
+                            meantime. <em>[TEMPLATE: insert the confirmed retention window in days/years,
+                            per counsel and applicable financial-record-keeping law.]</em>
+                        </p>
+
                         <!-- ============================================================
                              8. Security
                              ============================================================ -->
@@ -455,6 +485,42 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             CCPA/CPRA, extendable by a further 45&nbsp;days). These rights are free to
                             exercise in most cases, subject to limited exceptions for manifestly unfounded or
                             excessive requests.
+                        </p>
+
+                        <h3 id="rights-selfservice" class="h6 mt-3 mb-2">11.1 Self-Service Access, Export &amp; Erasure</h3>
+                        <p>
+                            If you have a CueRCode account, you do not need to email us to access, export or
+                            erase your own account data &mdash; two self-service tools are built directly into
+                            your account dashboard (<a href="/account/#data-section">Account&nbsp;&rarr;
+                            Your&nbsp;data</a>):
+                        </p>
+                        <ul>
+                            <li>
+                                <strong>Download my data</strong> (access &amp; portability) &mdash; produces
+                                an immediate, complete, machine-readable (JSON) copy of your profile, saved QR
+                                codes (including their content), active sessions, subscription and payment
+                                history, linked sign-in providers, and API keys. Secrets such as your password
+                                hash, session tokens, SSO access/refresh tokens, and API key secrets are never
+                                included. Available to API/developer callers as
+                                <code>GET /api/v1/account/export</code> (see our
+                                <a href="/api/docs/">API documentation</a>).
+                            </li>
+                            <li>
+                                <strong>Delete my account</strong> (erasure) &mdash; requires re-entering your
+                                current password and typing a literal confirmation phrase, because it is
+                                irreversible. On confirmation we immediately anonymize your email address and
+                                display name, permanently clear your password, sign you out of every device,
+                                deactivate every API key, unlink every SSO sign-in provider, and remove every
+                                saved QR code from your library &mdash; see Section&nbsp;7.1 above for what is
+                                retained (anonymized) afterwards and why. Available to API/developer callers
+                                as <code>POST /api/v1/account/erase</code> (requires your current password and
+                                an explicit confirmation flag in the request).
+                            </li>
+                        </ul>
+                        <p>
+                            If you do not have an account, or you would prefer we action a request on your
+                            behalf (for example correction, restriction, or objection), contact us using the
+                            details in Section&nbsp;14 instead.
                         </p>
 
                         <!-- ============================================================

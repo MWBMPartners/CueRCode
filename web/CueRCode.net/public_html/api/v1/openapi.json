@@ -2388,6 +2388,210 @@
                 }
             }
         },
+        "/account/export": {
+            "get": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Download a complete JSON export of your OWN data (GDPR/CCPA, #37)",
+                "description": "Returns a complete, machine-readable JSON export of ONLY the caller's own data: profile, saved QR codes (metadata + payload, never the rendered image blob), sessions (masked identifier + ip/user agent/times, never a replayable raw session token), subscriptions + payment ledger, linked SSO providers (provider name + masked subject + linkedAt, NEVER tokensEncrypted), and API keys (prefix/name/scopes/rate-limits only, NEVER the secret or its hash). The response is sent with `Content-Disposition: attachment; filename=\"cuercode-data-export.json\"`. **F-026 pattern: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
+                "operationId": "exportAccountData",
+                "security": [
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Data export generated successfully",
+                        "headers": {
+                            "Content-Disposition": {
+                                "description": "attachment; filename=\"cuercode-data-export.json\"",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccountDataExportResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "account_management_forbidden": {
+                                        "summary": "API-key auth cannot manage the account",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Account management requires an interactive session; API keys cannot manage the account.",
+                                            "data": {},
+                                            "error_code": "ACCOUNT_MANAGEMENT_FORBIDDEN",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/account/erase": {
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Permanently erase your OWN account by anonymization (GDPR/CCPA, #37)",
+                "description": "Erases the caller's OWN account by ANONYMIZATION, never a hard delete of the row: `email` is replaced with a non-reversible `deleted-<userID>@deleted.invalid` placeholder, `displayName` becomes 'Deleted user', `firstName`/`lastName`/`avatarPath` are cleared (the avatar FILE is also deleted), `passwordHash` is cleared (login becomes impossible), and `status` becomes 'deleted' with `erasedAt` set. ALL sessions are revoked, ALL API keys deactivated, ALL linked SSO providers unlinked, and ALL saved QR codes soft-deleted - all inside ONE database transaction. Subscription/payment rows are RETAINED (for financial/audit obligations) but carry no PII beyond the now-anonymized account reference. Requires the caller's CURRENT password (wrong password -> `401 INVALID_PASSWORD`, nothing is mutated) and an explicit `\"confirm\": true` in the request body (`400 CONFIRMATION_REQUIRED` otherwise). Ends the session on success. **F-026 pattern: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
+                "operationId": "eraseAccount",
+                "security": [
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AccountEraseRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Account erased (anonymized) successfully - the session has ended",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccountEraseResponse"
+                                },
+                                "examples": {
+                                    "erased": {
+                                        "summary": "Erased",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Your account has been erased. You have been signed out.",
+                                            "data": {
+                                                "erased_at": "2026-07-10 19:12:58"
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing/invalid current_password, or confirm was not explicitly true (CONFIRMATION_REQUIRED)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "confirmation_required": {
+                                        "summary": "Missing explicit confirmation",
+                                        "value": {
+                                            "success": false,
+                                            "message": "You must explicitly confirm this irreversible action by sending \"confirm\": true.",
+                                            "data": {},
+                                            "error_code": "CONFIRMATION_REQUIRED",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated, OR the supplied current_password is incorrect (INVALID_PASSWORD) - nothing is mutated either way",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "invalid_password": {
+                                        "summary": "Wrong current password",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Your current password is incorrect.",
+                                            "data": {},
+                                            "error_code": "INVALID_PASSWORD",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "account_management_forbidden": {
+                                        "summary": "API-key auth cannot manage the account",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Account management requires an interactive session; API keys cannot manage the account.",
+                                            "data": {},
+                                            "error_code": "ACCOUNT_MANAGEMENT_FORBIDDEN",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "This account has already been erased (a defensive, non-mutating fail-safe - should not normally be reachable, since an already-erased account cannot authenticate at all)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "already_erased": {
+                                        "summary": "Already erased",
+                                        "value": {
+                                            "success": false,
+                                            "message": "This account has already been erased.",
+                                            "data": {},
+                                            "error_code": "ALREADY_ERASED",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
         "/keys": {
             "post": {
                 "tags": [
@@ -4485,6 +4689,324 @@
                                 "type": "array",
                                 "items": {
                                     "$ref": "#/components/schemas/SessionInfo"
+                                }
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountEraseRequest": {
+                "type": "object",
+                "required": [
+                    "current_password",
+                    "confirm"
+                ],
+                "properties": {
+                    "current_password": {
+                        "type": "string",
+                        "format": "password",
+                        "description": "The caller's CURRENT password - re-verified server-side (wrong -> 401 INVALID_PASSWORD, nothing is mutated).",
+                        "example": "correct horse battery staple"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be the literal boolean true - anything else (absent, \"true\" string, 1, false) fails closed with 400 CONFIRMATION_REQUIRED.",
+                        "example": true
+                    }
+                }
+            },
+            "AccountEraseResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Your account has been erased. You have been signed out."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "erased_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "The UTC timestamp the anonymization transaction committed."
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountExportProfile": {
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email"
+                    },
+                    "email_verified_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "display_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "first_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "last_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "has_custom_avatar": {
+                        "type": "boolean",
+                        "description": "True if a custom avatar file is set - the file itself is fetched separately via the session-gated /account/avatar/ endpoint, never embedded here."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "suspended", "pending", "deleted"]
+                    },
+                    "last_login_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountExportSavedQrCode": {
+                "type": "object",
+                "properties": {
+                    "uuid": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "type": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "label": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "payload": {
+                        "type": "string",
+                        "description": "The raw, already-encoded QR payload string - never the rendered image blob."
+                    },
+                    "input_data": {
+                        "type": "object",
+                        "nullable": true,
+                        "description": "The original form field values behind the payload, when captured."
+                    },
+                    "customization": {
+                        "type": "object",
+                        "nullable": true,
+                        "description": "The visual customisation snapshot (colours, size, ECC, frame, etc.) used at generation time."
+                    },
+                    "format": {
+                        "type": "string"
+                    },
+                    "is_public": {
+                        "type": "boolean"
+                    },
+                    "download_count": {
+                        "type": "integer"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountExportSession": {
+                "type": "object",
+                "properties": {
+                    "masked_id": {
+                        "type": "string",
+                        "description": "The session identifier, masked for display - the raw, replayable token is never included in an export."
+                    },
+                    "ip": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "user_agent": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "last_seen_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountExportPayment": {
+                "type": "object",
+                "properties": {
+                    "provider": {
+                        "type": "string"
+                    },
+                    "provider_txn_ref": {
+                        "type": "string"
+                    },
+                    "amount": {
+                        "type": "string"
+                    },
+                    "currency": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountExportSubscription": {
+                "type": "object",
+                "properties": {
+                    "plan_key": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "plan_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "current_period_start": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "current_period_end": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "provider": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "provider_subscription_ref": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "payments": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/AccountExportPayment"
+                        }
+                    }
+                }
+            },
+            "AccountExportLinkedSsoProvider": {
+                "type": "object",
+                "properties": {
+                    "provider": {
+                        "type": "string",
+                        "enum": ["signula", "microsoft", "google", "apple", "facebook"]
+                    },
+                    "display_name": {
+                        "type": "string"
+                    },
+                    "masked_subject": {
+                        "type": "string",
+                        "description": "The provider subject identifier, masked - never the tokensEncrypted bundle."
+                    },
+                    "linked_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountDataExportResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Your account data export is ready."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "exported_at": {
+                                "type": "string",
+                                "format": "date-time"
+                            },
+                            "profile": {
+                                "$ref": "#/components/schemas/AccountExportProfile"
+                            },
+                            "saved_qr_codes": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/AccountExportSavedQrCode"
+                                }
+                            },
+                            "sessions": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/AccountExportSession"
+                                }
+                            },
+                            "subscriptions": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/AccountExportSubscription"
+                                }
+                            },
+                            "linked_sso_providers": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/AccountExportLinkedSsoProvider"
+                                }
+                            },
+                            "api_keys": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/ApiKeyInfo"
                                 }
                             }
                         }

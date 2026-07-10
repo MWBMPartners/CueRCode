@@ -11,6 +11,16 @@
  * delete + plan usage indicator), active-session management (list/revoke/
  * sign-out-everywhere), a change-password form, and sign-out.
  *
+ * Also hosts a **"Your data"** section (GDPR/CCPA data-subject rights, #37,
+ * epic #52): a plain "Download my data" link (a browser-navigable download,
+ * not an AJAX call - see public_html/account/export/index.php) and a
+ * "Delete my account" erasure flow requiring the current password, an
+ * "I understand this is irreversible" checkbox, AND typing the literal word
+ * DELETE - see eraseUserAccount() (fn_api_account.php) for exactly what is
+ * anonymized vs. retained. A successful erasure redirects to /login/?erased=1
+ * (there is no "stay on this page" outcome - the account no longer has
+ * anything left here to show).
+ *
  * Also hosts the self-service **API keys** section (Epic E7 stage 1, #54):
  * create (name + scope checkboxes, full key shown ONCE with a copy affordance
  * and a role="alert" one-time-secret warning), list (prefix/name/scopes/
@@ -108,6 +118,7 @@ $sessionMessage  = null;
 $qrMessage       = null;
 $apiKeyMessage   = null;
 $ssoMessage      = null; // Epic E2, #55/#19/#20/#28 - linked-provider unlink feedback
+$eraseMessage    = null; // #37/#52 - GDPR/CCPA account-erasure feedback (only ever populated on FAILURE - success redirects away)
 $logoutRequested = false;
 
 // 📌 Epic E7 stage 1 (#54): holds the FULL raw key from a just-created or
@@ -401,6 +412,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // ------------------------------------------------------------------
+    // 🗑️ Delete my account (GDPR/CCPA self-service erasure, #37/#52)
+    // ------------------------------------------------------------------
+    // Requires ALL THREE, independently of eraseUserAccount()'s own
+    // password check: (1) the "I understand this is irreversible"
+    // checkbox, (2) typing the literal word DELETE (a UI-only safety net -
+    // NOT part of eraseUserAccount()'s own parameters, mirrors how this
+    // page independently checks "new passwords match" before calling
+    // changeUserPassword()), and (3) the current password (checked by
+    // eraseUserAccount() itself). On success the browser is redirected to
+    // a signed-out landing page - there is no "stay on this page" outcome
+    // for a successful erasure, since the account no longer has anything
+    // left here to show.
+    // ------------------------------------------------------------------
+    if (isset($_POST['erase_account_submit'])) {
+        if (!accountPagePostCsrfValid()) {
+            $eraseMessage = ['success' => false, 'text' => 'Your session has expired. Please reload the page and try again.'];
+        } else {
+            $eraseAcknowledged = isset($_POST['erase_acknowledge']) && $_POST['erase_acknowledge'] === '1';
+            $eraseTypedPhrase  = isset($_POST['erase_confirm_phrase']) ? trim((string) $_POST['erase_confirm_phrase']) : '';
+            $erasePassword     = isset($_POST['erase_current_password']) ? (string) $_POST['erase_current_password'] : '';
+
+            if (!$eraseAcknowledged || $eraseTypedPhrase !== 'DELETE') {
+                $eraseMessage = [
+                    'success' => false,
+                    'text'    => 'You must tick the acknowledgement box and type DELETE exactly (in capital letters) to confirm.',
+                ];
+            } elseif ($erasePassword === '') {
+                $eraseMessage = ['success' => false, 'text' => 'Your current password is required to erase your account.'];
+            } else {
+                $eraseResult = eraseUserAccount($currentUserId, $erasePassword, true);
+
+                if ($eraseResult['success']) {
+                    if (function_exists('logoutCurrentUser')) {
+                        logoutCurrentUser();
+                    }
+                    header('Location: /login/?erased=1');
+                    exit;
+                }
+
+                $eraseMessage = ['success' => false, 'text' => $eraseResult['message']];
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 🚪 Logout
     // ------------------------------------------------------------------
     if (isset($_POST['logout_submit']) && accountPagePostCsrfValid()) {
@@ -565,6 +621,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <li class="nav-item"><a class="nav-link" href="#security-section">Security</a></li>
                     <li class="nav-item"><a class="nav-link" href="#sso-section">Linked accounts</a></li>
                     <li class="nav-item"><a class="nav-link" href="#api-keys-section">API keys</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#data-section">Your data</a></li>
                 </ul>
             </nav>
 
@@ -1085,6 +1142,100 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <?php } ?>
                     </div>
                     <?php } ?>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 📦 Your Data Section (GDPR/CCPA data-subject rights, #37/#52)
+                 ================================================================ -->
+            <div class="card shadow-sm mb-4" id="data-section">
+                <div class="card-header bg-transparent">
+                    <h2 class="h5 mb-0"><i class="fa-solid fa-database me-2" aria-hidden="true"></i>Your data</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-body-secondary">
+                        Under GDPR, CCPA, and similar privacy laws you have the right to access a copy of your
+                        data and to have your account erased. See our
+                        <a href="/privacy.php#rights">Privacy Policy</a> for the full details, including the
+                        limited retention exceptions for financial/audit records described below.
+                    </p>
+
+                    <!-- ============================================================
+                         📤 Download my data (access / export / portability)
+                         ============================================================ -->
+                    <h3 class="h6 fw-bold">Download my data</h3>
+                    <p class="text-body-secondary">
+                        Get a complete, machine-readable (JSON) copy of your profile, saved QR codes,
+                        active sessions, subscriptions and payment history, linked sign-in providers, and
+                        API keys. Secrets, password hashes, session tokens, and SSO access/refresh tokens are
+                        never included.
+                    </p>
+                    <a href="/account/export/" class="btn btn-outline-primary mb-4" id="download-data-btn">
+                        <i class="fa-solid fa-download me-1" aria-hidden="true"></i> Download my data
+                    </a>
+
+                    <!-- ============================================================
+                         🗑️ Delete my account (erasure)
+                         ============================================================ -->
+                    <h3 class="h6 fw-bold text-danger">Delete my account</h3>
+
+                    <?php if ($eraseMessage !== null) { ?>
+                    <div class="alert alert-danger" role="alert" id="erase-message">
+                        <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                        <?php echo htmlspecialchars($eraseMessage['text'], ENT_QUOTES, 'UTF-8'); ?>
+                    </div>
+                    <?php } ?>
+
+                    <div class="alert alert-warning" role="alert">
+                        <p class="fw-bold mb-1">
+                            <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                            This action is permanent and cannot be undone.
+                        </p>
+                        <p class="mb-0">
+                            Deleting your account immediately: replaces your email address and display name
+                            with an anonymous placeholder and permanently clears your password (you will
+                            never be able to sign back in); signs you out of every device; deactivates every
+                            API key; unlinks every SSO provider (Microsoft&nbsp;365, Google); and removes every
+                            saved QR code from your library. Subscription and payment records are kept
+                            (detached from your identity) for the legally-required financial/audit retention
+                            period - see <a href="/privacy.php#retention">Section&nbsp;7 of our Privacy Policy</a>.
+                        </p>
+                    </div>
+
+                    <form method="POST" action="/account/#data-section" id="erase-account-form">
+                        <?php echo csrfField(); ?>
+                        <input type="hidden" name="erase_account_submit" value="1">
+
+                        <div class="mb-3">
+                            <label for="erase-current-password" class="form-label">Current password</label>
+                            <input type="password" class="form-control" id="erase-current-password"
+                                   name="erase_current_password" autocomplete="current-password" required maxlength="256">
+                        </div>
+
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="erase-acknowledge"
+                                   name="erase_acknowledge" value="1" required>
+                            <label class="form-check-label" for="erase-acknowledge">
+                                I understand this action is irreversible and permanently anonymizes my account.
+                            </label>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="erase-confirm-phrase" class="form-label">
+                                Type <strong>DELETE</strong> to confirm
+                            </label>
+                            <input type="text" class="form-control" id="erase-confirm-phrase"
+                                   name="erase_confirm_phrase" required pattern="DELETE"
+                                   autocomplete="off" aria-describedby="erase-confirm-phrase-help">
+                            <div class="form-text" id="erase-confirm-phrase-help">
+                                Type the word DELETE in capital letters exactly as shown.
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-danger" id="erase-account-btn">
+                            <i class="fa-solid fa-user-slash me-1" aria-hidden="true"></i> Permanently delete my account
+                        </button>
+                    </form>
                 </div>
             </div>
 
