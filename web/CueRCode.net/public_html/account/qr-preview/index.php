@@ -155,6 +155,27 @@ if (!headers_sent()) {
     } else {
         header('Content-Disposition: inline');
         header('Cache-Control: private, max-age=300');
+
+        // 🛡️ Defence-in-depth (Epic E3, #52, SECURITY.md F-024): image/svg+xml
+        // served INLINE is rendered by the browser (unlike an attachment
+        // download), so a malicious SVG that ever slipped past the upload-
+        // time logo screening (fn_validation.php validateImageUpload()'s
+        // dangerous-pattern checks) could execute script when this endpoint
+        // is used as an <img src>. NOTE (see SECURITY.md F-024's companion
+        // finding for the full write-up): those checks cover the multipart
+        // file-upload logo intake path only - the base64 logo_data intake
+        // path (fn_qr_logo.php saveBase64LogoToTemp()) does NOT run the same
+        // screening, so this CSP is not purely theoretical belt-and-braces.
+        // The `sandbox` directive with no allow-tokens blocks script
+        // execution, forms, popups, top-navigation, and plugins for the
+        // rendered document, while the image itself still displays
+        // normally. PNG/JPG/GIF/WEBP/PDF are inert raster/binary formats and
+        // are NOT given this header - only image/svg+xml is scriptable when
+        // inlined.
+        // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/sandbox
+        if ($mimeType === 'image/svg+xml') {
+            header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
+        }
     }
     header('X-Content-Type-Options: nosniff');
 }

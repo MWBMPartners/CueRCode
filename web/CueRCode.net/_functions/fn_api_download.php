@@ -361,6 +361,14 @@ function handleDownload(string $uuid, array $auth = []): void
         header('Content-Type: ' . $mimeType);
 
         // 📌 Content-Disposition: attachment triggers browser download dialog
+        // 🛡️ SECURITY REVIEW (Epic E3, #52): this handler ALWAYS serves
+        // attachment, never inline - unlike public_html/account/qr-preview/
+        // index.php, there is no code path here that renders SVG inline in
+        // the browser, so an image/svg+xml response from this endpoint is
+        // downloaded (inert) rather than executed and does NOT need the
+        // inline-SVG Content-Security-Policy sandbox hardening added there.
+        // Confirmed during the #52 audit; keep this header as attachment if
+        // this handler is ever extended to support an inline preview mode.
         // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
         header(
             'Content-Disposition: attachment; filename="'

@@ -126,6 +126,13 @@ if (!is_file($candidateReal)) {
 
 $extension = strtolower((string) pathinfo($candidateReal, PATHINFO_EXTENSION));
 
+// 🛡️ DELIBERATE DIFFERENCE (Epic E3, #52 security review): 'svg' is NOT in
+// this map on purpose - an SVG avatar file falls through to the
+// 'application/octet-stream' default below, which browsers download rather
+// than render inline, so it needs no CSP hardening (unlike qr-preview/
+// index.php's inline image/svg+xml, which DOES get an inline-SVG CSP
+// sandbox). Do not add an 'svg' => 'image/svg+xml' entry here without also
+// adding that same CSP hardening.
 $mimeMap = [
     'png'  => 'image/png',
     'jpg'  => 'image/jpeg',
