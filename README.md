@@ -108,16 +108,25 @@ CueRCode/
 
 ## 📖 API Documentation
 
-Full API documentation is available via Swagger UI at `/api/docs/` once the service is deployed.
+- 📚 **Developer Portal**: `/developers/` - quickstart, authentication guide, a live endpoint reference
+  rendered directly from `openapi.json` (no hand-copied duplicate), an errors/rate-limit reference, code
+  samples (curl/PHP/JavaScript/Python), and integration recipes.
+- 🧪 **Interactive Swagger UI**: `/api/docs/` - explore and try out every endpoint against the live spec.
 
 ### 💡 Quick Example
+
+`/generate` always requires authentication (an `X-API-Key` header, or a session `X-CSRF-Token` for the web
+UI's own AJAX calls) - see the [Authentication guide](https://cuercode.net/developers/authentication/) for
+how to obtain a key, or the [Quickstart](https://cuercode.net/developers/quickstart/) for a genuinely
+anonymous zero-setup path via `/bulk-generate`:
 
 ```bash
 curl -X POST https://cuercode.net/api/v1/generate \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: cuercode_your_api_key_here" \
   -d '{
     "type": "url",
-    "data": {"url": "https://example.com"},
+    "input": {"url": "https://example.com"},
     "customization": {"size": 800, "ecc": "H", "format": "png"}
   }'
 ```

@@ -110,6 +110,7 @@ if (function_exists('isDebugMode')) {
                         <a href="/terms" class="text-body-secondary text-decoration-none me-3">Terms of Use</a>
                         <a href="/privacy" class="text-body-secondary text-decoration-none me-3">Privacy Policy</a>
                         <a href="/accessibility" class="text-body-secondary text-decoration-none me-3">Accessibility</a>
+                        <a href="/developers/" class="text-body-secondary text-decoration-none me-3">Developers</a>
                         <a href="/api/docs" class="text-body-secondary text-decoration-none">API</a>
                     </small>
                 </div>

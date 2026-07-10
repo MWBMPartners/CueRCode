@@ -330,6 +330,11 @@ if (function_exists('isDebugMode')) {
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link" href="/developers/">
+                            <i class="fa-solid fa-code me-1" aria-hidden="true"></i> Developers
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link" href="/api/docs">
                             <i class="fa-solid fa-book me-1" aria-hidden="true"></i> API Docs
                         </a>
