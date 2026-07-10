@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ==============================================================================
+  CueRCode - Default User Avatar Placeholder
+  ==============================================================================
+  Path: public_html/assets/img/branding/avatar-default.svg
+  The last tier of the ProjectBrief §11.4 avatar priority chain (local custom
+  upload > MS365/Google [future] > Gravatar > this placeholder). Shown when a
+  user has no custom avatar AND their email has no Gravatar image registered
+  (the Gravatar <img> `onerror` handler swaps to this file - see
+  cuercode-account.js wireAvatarFallback()).
+  Copyright 2025-2026 MWBM Partners Ltd
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="avatarDefaultTitle">
+  <title id="avatarDefaultTitle">Default user avatar</title>
+  <circle cx="64" cy="64" r="64" fill="#2c7a7b"/>
+  <circle cx="64" cy="50" r="24" fill="#e6fffa"/>
+  <path fill="#e6fffa" d="M64 82c-24.3 0-44 14.3-44 32v6c0 4.4 3.6 8 8 8h72c4.4 0 8-3.6 8-8v-6c0-17.7-19.7-32-44-32z"/>
+</svg>

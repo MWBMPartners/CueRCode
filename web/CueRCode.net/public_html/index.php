@@ -1084,11 +1084,36 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <?php } ?>
                         </div>
                         <div class="card-footer bg-transparent">
-                            <!-- Download Controls -->
+                            <!-- Download + Save Controls -->
                             <div class="d-grid gap-2">
                                 <button type="button" class="btn btn-primary btn-lg" id="btn-download" disabled>
                                     <i class="fa-solid fa-download me-1" aria-hidden="true"></i> Download QR Code
                                 </button>
+                                <!-- ============================================================
+                                     💾 "Save to my account" (Epic E3 stage 2b, #52/#24)
+                                     Claims the next-generated code into the visitor's account via
+                                     POST /api/v1/save. Anonymous visitors are prompted to sign in
+                                     first (never a silent no-op); a plan-limit 402 response shows
+                                     the aria-disabled upgrade prompt below rather than failing
+                                     silently. Disabled (not hidden) until a preview exists, mirroring
+                                     #btn-download's own gating so both controls behave consistently.
+                                     ============================================================ -->
+                                <button type="button" class="btn btn-outline-primary btn-lg" id="btn-save-account" disabled
+                                        aria-describedby="save-account-status">
+                                    <i class="fa-solid fa-bookmark me-1" aria-hidden="true"></i>
+                                    <span id="btn-save-account-label">
+                                        <?php echo (function_exists('currentUser') && currentUser() !== null) ? 'Save to my account' : 'Sign in to save'; ?>
+                                    </span>
+                                </button>
+                                <div id="save-account-status" class="form-text text-center d-none" role="status" aria-live="polite"></div>
+                                <!-- ♿ Upgrade prompt: rendered disabled-looking but NEVER hidden
+                                     when the caller's saved_codes plan limit is reached (a 402
+                                     response from POST /save) - see cuercode-generator.js
+                                     handleSaveToAccount(). -->
+                                <div id="save-account-upgrade" class="alert alert-warning d-none d-flex justify-content-between align-items-center flex-wrap gap-2 mb-0 mt-2" role="alert">
+                                    <span>You've reached your plan's saved-codes limit.</span>
+                                    <a href="/pricing" id="save-account-upgrade-link" class="btn btn-sm btn-warning">Upgrade plan</a>
+                                </div>
                             </div>
                             <div class="text-center mt-2">
                                 <small class="text-body-secondary">
@@ -1246,7 +1271,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
             } else {
                 echo json_encode('');
             }
-            ?>
+            ?>,
+            /* 👤 Epic E3 stage 2b (#52/#24): whether the visitor already has an
+               authenticated account session - drives the "Save to my account"
+               button's behaviour (save directly vs. prompt to sign in). */
+            isLoggedIn: <?php echo json_encode(function_exists('currentUser') && currentUser() !== null); ?>
         };
     </script>
 

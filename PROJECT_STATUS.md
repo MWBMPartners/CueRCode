@@ -1,6 +1,6 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-07-10 (Epic E3 stage 2a - saved-codes API + ownership/IDOR enforcement, #52/#24)
+**📅 Last Updated:** 2026-07-10 (Epic E3 stage 2b - account UI + own-account dashboard, #52/#12/#14/#23/#24)
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | Core QR Engine | [#1](https://github.com/MWBMPartners/CueRCode/milestone/1) | #1-#9, #39-#43 | 🔄 Audit gaps open |
 | 1.5 | Live Server Testing | [#2](https://github.com/MWBMPartners/CueRCode/milestone/2) | #13, #17, #18, #22 | ⬜ Pending |
-| 2 | User Accounts & Organisations | [#3](https://github.com/MWBMPartners/CueRCode/milestone/3) | #11, #12, #14-#16, #19-#21, #23-#24 | 🔄 Stage 1 (2026-07-10) — schema/Argon2id/auth engine/auth API for #11/#12/#14/#15; Stage 2a (2026-07-10) — saved-codes API (`/save`, `/qrcodes` CRUD) with ownership/IDOR enforcement for #24 (B-001/B-002); all needs live-server verification |
+| 2 | User Accounts & Organisations | [#3](https://github.com/MWBMPartners/CueRCode/milestone/3) | #11, #12, #14-#16, #19-#21, #23-#24 | 🔄 Stage 1 (2026-07-10) — schema/Argon2id/auth engine/auth API for #11/#12/#14/#15; Stage 2a (2026-07-10) — saved-codes API (`/save`, `/qrcodes` CRUD) with ownership/IDOR enforcement for #24 (B-001/B-002); Stage 2b (2026-07-10) — account UI (register/login/verify/reset pages, account dashboard, navbar indicator) + 3 own-scoped endpoints for #12/#14/#23/#24; all needs live-server verification |
 | 3 | Premium Features & Payments | [#4](https://github.com/MWBMPartners/CueRCode/milestone/4) | #25, #26 | 📋 Planned |
 | 4 | Integrations | [#5](https://github.com/MWBMPartners/CueRCode/milestone/5) | #27-#30 | 📋 Planned |
 | 5 | Advanced Features & Polish | [#6](https://github.com/MWBMPartners/CueRCode/milestone/6) | #31-#34 | 📋 Planned |
@@ -75,15 +75,15 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | Issue | Task | Status |
 | --- | --- | --- |
 | [#11](https://github.com/MWBMPartners/CueRCode/issues/11) | Database schema: User accounts, organisations, and roles tables | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `tblUsers` rebuilt + 7 new tables added to `install.sql`; needs live-server verification |
-| [#12](https://github.com/MWBMPartners/CueRCode/issues/12) | User registration with email verification | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `registerUser()`/`verifyEmailToken()` (`fn_auth.php`) + `POST /api/v1/auth/register`+`/verify-email`; needs live-server verification |
-| [#14](https://github.com/MWBMPartners/CueRCode/issues/14) | User login, logout, and session management | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `loginUser()`/`logoutCurrentUser()`/`currentUser()` (`fn_auth.php`, Argon2id + lockout + database-backed sessions) + `POST /api/v1/auth/login`+`/logout`; needs live-server verification |
-| [#15](https://github.com/MWBMPartners/CueRCode/issues/15) | Password reset flow | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `requestPasswordReset()`/`resetPasswordWithToken()` (`fn_auth.php`) + `POST /api/v1/auth/request-password-reset`+`/reset-password`; needs live-server verification |
+| [#12](https://github.com/MWBMPartners/CueRCode/issues/12) | User registration with email verification | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `registerUser()`/`verifyEmailToken()` (`fn_auth.php`) + `POST /api/v1/auth/register`+`/verify-email`; UI added (Epic E3 stage 2b, 2026-07-10) — `public_html/register/` + `public_html/verify-email/` (AJAX + no-JS fallback, confirm-click to survive mail-scanner token prefetch); needs live-server verification |
+| [#14](https://github.com/MWBMPartners/CueRCode/issues/14) | User login, logout, and session management | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `loginUser()`/`logoutCurrentUser()`/`currentUser()` (`fn_auth.php`, Argon2id + lockout + database-backed sessions) + `POST /api/v1/auth/login`+`/logout`; UI added (Epic E3 stage 2b, 2026-07-10) — `public_html/login/` (allowlisted `?next=` redirect), navbar user indicator, account dashboard session list/revoke + `GET/DELETE /api/v1/account/sessions[/{id}]`; needs live-server verification |
+| [#15](https://github.com/MWBMPartners/CueRCode/issues/15) | Password reset flow | 🔄 Addressed in code (Epic E3 stage 1, 2026-07-10) — `requestPasswordReset()`/`resetPasswordWithToken()` (`fn_auth.php`) + `POST /api/v1/auth/request-password-reset`+`/reset-password`; UI added (Epic E3 stage 2b, 2026-07-10) — `public_html/forgot-password/` + `public_html/reset-password/`; needs live-server verification |
 | [#16](https://github.com/MWBMPartners/CueRCode/issues/16) | WebAuthn/Passkey support (Windows Hello, Touch ID, Face ID) | 📋 (schema stub `tblWebAuthnCredentials` added, Epic E3 stage 1; implementation deferred to E3 stage 7, G-006) |
 | [#19](https://github.com/MWBMPartners/CueRCode/issues/19) | OAuth SSO: Microsoft 365 login | 📋 |
 | [#20](https://github.com/MWBMPartners/CueRCode/issues/20) | OAuth SSO: Google Workspace login | 📋 |
 | [#21](https://github.com/MWBMPartners/CueRCode/issues/21) | Organisation creation and management | 📋 |
-| [#23](https://github.com/MWBMPartners/CueRCode/issues/23) | User profile management and avatar support | 📋 |
-| [#24](https://github.com/MWBMPartners/CueRCode/issues/24) | Saved QR codes and user QR code library | 🔄 API addressed in code (Epic E3 stage 2a, 2026-07-10) — `POST /api/v1/save` + `GET/PATCH/DELETE /api/v1/qrcodes/{uuid}` + `GET /api/v1/qrcodes` (`fn_api_qrcodes.php`), ownership/IDOR-enforced (404, never 403), `saved_codes` plan-limit 402, soft-delete; account/library UI pages still needed (E3 stage 5); needs live-server verification |
+| [#23](https://github.com/MWBMPartners/CueRCode/issues/23) | User profile management and avatar support | 🔄 Addressed in code (Epic E3 stage 2b, 2026-07-10) — account dashboard profile section (display name + avatar upload/remove), `resolveAvatarUrl()` §11.4 priority chain (custom upload > Gravatar > default placeholder; MS365/Google tier unreachable pending E2), `PATCH /api/v1/account/profile`, session-gated `account/avatar/` streaming endpoint; needs live-server verification |
+| [#24](https://github.com/MWBMPartners/CueRCode/issues/24) | Saved QR codes and user QR code library | 🔄 API addressed in code (Epic E3 stage 2a, 2026-07-10) — `POST /api/v1/save` + `GET/PATCH/DELETE /api/v1/qrcodes/{uuid}` + `GET /api/v1/qrcodes` (`fn_api_qrcodes.php`), ownership/IDOR-enforced (404, never 403), `saved_codes` plan-limit 402, soft-delete; UI added (Epic E3 stage 2b, 2026-07-10) — account dashboard saved-codes library (paginated grid, preview/download/delete, plan-usage badge + upgrade prompt), generator "Save to my account" button; needs live-server verification |
 
 **Recommended build order:** #11 -> #12 -> #14 -> #15 -> #23 -> #16 -> #19 -> #20 -> #21 -> #24
 

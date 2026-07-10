@@ -33,6 +33,10 @@
  *   GET    /api/v1/qrcodes/{uuid}    Fetch one saved QR code (owner or public only)
  *   PATCH  /api/v1/qrcodes/{uuid}    Update a saved QR code the caller OWNS
  *   DELETE /api/v1/qrcodes/{uuid}    Soft-delete a saved QR code the caller OWNS
+ *   PATCH  /api/v1/account/profile           Update the caller's OWN display name/avatar (Epic E3 stage 2b)
+ *   GET    /api/v1/account/sessions          List ONLY the caller's OWN active sessions
+ *   DELETE /api/v1/account/sessions/{id}     Revoke ONE of the caller's OWN sessions
+ *   POST   /api/v1/account/change-password   Change the caller's OWN password
  *
  * Authentication:
  *   - X-API-Key header: API key authentication for external consumers
@@ -78,6 +82,7 @@ $apiFunctionFiles = [
     'fn_api_accounts.php',   // 🌐 Account HTTP handlers (Epic E3 stage 1)
     'fn_features.php',       // 💳 Premium tier / feature gating engine (Epic E4/#53) - planForUser(), featureEnabled(), limitFor()
     'fn_api_qrcodes.php',    // 📚 Saved-codes API: /save, /qrcodes CRUD, ownership predicates (Epic E3 stage 2a, #52/#24)
+    'fn_api_account.php',    // 👤 Own-account dashboard API: profile/avatar, sessions, change-password (Epic E3 stage 2b, #52/#12/#14/#23/#24)
 ];
 
 foreach ($apiFunctionFiles as $apiFile) {
@@ -384,6 +389,58 @@ $routes = [
         'pattern'   => 'qrcodes/{uuid}',
         'methods'   => ['GET', 'PATCH', 'DELETE'],
         'handler'   => 'handleQrCodeItem',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+    ],
+
+    // ==========================================================================
+    // 👤 Own-account dashboard routes (Epic E3 stage 2b, #52/#12/#14/#23/#24)
+    // ==========================================================================
+    // All three routes require 'auth' => true (the router's normal 401-on-
+    // failure gate, same as /save and /qrcodes) - every one of these acts on
+    // an ALREADY-authenticated identity, resolved server-side only, never
+    // from a request field. Ownership itself is enforced inside each handler
+    // (fn_api_account.php) - see that file's header docblock for the full
+    // IDOR/own-scope posture (sessions/profile/password are ALL own-account
+    // only, never cross-user).
+    // ==========================================================================
+
+    // 📌 PATCH /api/v1/account/profile - Update display name / avatar
+    [
+        'pattern'   => 'account/profile',
+        'methods'   => ['PATCH'],
+        'handler'   => 'handleAccountProfilePatch',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+    ],
+
+    // 📌 GET /api/v1/account/sessions - List ONLY the caller's own active sessions
+    [
+        'pattern'   => 'account/sessions',
+        'methods'   => ['GET'],
+        'handler'   => 'handleAccountSessionsList',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+    ],
+
+    // 📌 DELETE /api/v1/account/sessions/{id} - Revoke ONE of the caller's own sessions
+    [
+        'pattern'   => 'account/sessions/{id}',
+        'methods'   => ['DELETE'],
+        'handler'   => 'handleAccountSessionDelete',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+    ],
+
+    // 📌 POST /api/v1/account/change-password - Own-account password change
+    [
+        'pattern'   => 'account/change-password',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAccountChangePassword',
         'auth'      => true,
         'rateLimit' => true,
         'requiredFeature' => null,
@@ -832,6 +889,27 @@ switch ($handlerFunction) {
             $uuid = '';
         }
         handleQrCodeItem($uuid, $requestBody, $auth);
+        break;
+
+    case 'handleAccountProfilePatch':
+        handleAccountProfilePatch($requestBody, $auth);
+        break;
+
+    case 'handleAccountSessionsList':
+        handleAccountSessionsList($auth);
+        break;
+
+    case 'handleAccountSessionDelete':
+        if (isset($routeParams['id'])) {
+            $sessionId = $routeParams['id'];
+        } else {
+            $sessionId = '';
+        }
+        handleAccountSessionDelete($sessionId, $auth);
+        break;
+
+    case 'handleAccountChangePassword':
+        handleAccountChangePassword($requestBody, $auth);
         break;
 
     default:

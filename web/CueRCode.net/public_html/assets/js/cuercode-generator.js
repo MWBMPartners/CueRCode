@@ -631,12 +631,19 @@
                 currentPreviewXHR = null;
 
                 if (response.success && response.data) {
-                    /* 📌 Show the generated preview image */
-                    showPreviewImage(response.data);
+                    /* 📌 Show the generated preview image.
+                       🐛 Fixed alongside the E3 stage 2b "Save" wiring: the
+                       API's `data` is an OBJECT ({image, metadata, ...}), not
+                       a bare base64 string - passing the whole object here
+                       previously rendered a broken "[object Object]" <img
+                       src>. See handleGenerate()'s identical `data.image`
+                       shape in fn_api_generate.php. */
+                    showPreviewImage(response.data.image);
                     previewReady = true;
 
-                    /* 📌 Enable the download button */
+                    /* 📌 Enable the download + save-to-account buttons */
                     $('#btn-download').prop('disabled', false);
+                    $('#btn-save-account').prop('disabled', false).attr('aria-disabled', 'false');
 
                     /* 📌 Update status badge to success */
                     $('#preview-status').removeClass('bg-secondary bg-danger')
@@ -658,6 +665,7 @@
                     showPreviewError(errorMsg);
                     previewReady = false;
                     $('#btn-download').prop('disabled', true);
+                    $('#btn-save-account').prop('disabled', true).attr('aria-disabled', 'true');
                 }
             },
             error: function (xhr, status) {
@@ -676,6 +684,7 @@
                 showPreviewError(errorMsg);
                 previewReady = false;
                 $('#btn-download').prop('disabled', true);
+                $('#btn-save-account').prop('disabled', true).attr('aria-disabled', 'true');
 
                 /* 📌 Update status badge to error */
                 $('#preview-status').removeClass('d-none bg-secondary bg-success')
@@ -716,6 +725,7 @@
         $('#qr-preview-error').addClass('d-none');
         $('#preview-status').addClass('d-none');
         $('#btn-download').prop('disabled', true);
+        $('#btn-save-account').prop('disabled', true).attr('aria-disabled', 'true');
         previewReady = false;
     }
 
@@ -1307,8 +1317,13 @@
                     var filename = 'cuercode-' + selectedType + '-' + Date.now() + getFileExtension(format);
                     var mimeType = getMimeType(format);
 
-                    /* 📌 Trigger the file download */
-                    downloadFile(response.data, filename, mimeType);
+                    /* 📌 Trigger the file download.
+                       🐛 Fixed alongside the E3 stage 2b "Save" wiring: see
+                       the identical fix + explanation on the /preview
+                       success handler above - `response.data` is
+                       {uuid, image, download_url, mime_type, format, ...},
+                       not a bare base64 string. */
+                    downloadFile(response.data.image, filename, mimeType);
 
                     CueRCode.notify('QR code downloaded successfully!', 'success');
                 } else {
@@ -1337,6 +1352,110 @@
             complete: function () {
                 /* 📌 Restore the download button state */
                 $btn.prop('disabled', false).html(originalHtml);
+            }
+        });
+    }
+
+    // ==========================================================================
+    // 💾 Save-to-Account Functionality (Epic E3 stage 2b, #52/#24)
+    // ==========================================================================
+
+    /**
+     * 💾 Handle "Save to my account" button click
+     *
+     * Anonymous visitors are sent to /login/ (never a silent no-op) with a
+     * `?next=` back to this page. Logged-in visitors get a FRESH
+     * POST /api/v1/generate call (the same one #btn-download makes - preview
+     * generation never persists a row, see fn_api_generate.php
+     * handlePreview()'s `save_file = false`) to obtain a claimable `uuid`,
+     * then POST /api/v1/save with that uuid. A 402 plan-limit response shows
+     * the aria-disabled-style upgrade prompt panel (never silently hidden);
+     * every other failure is surfaced via CueRCode.notify().
+     *
+     * @see CueRCodeConfig.isLoggedIn - set server-side in index.php
+     */
+    function handleSaveToAccount() {
+        if (!previewReady) {
+            CueRCode.notify('Please generate a preview first.', 'warning');
+            return;
+        }
+
+        if (!CueRCodeConfig.isLoggedIn) {
+            var nextUrl = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = '/login/?next=' + nextUrl;
+            return;
+        }
+
+        var $btn         = $('#btn-save-account');
+        var $status      = $('#save-account-status');
+        var $upgradePanel = $('#save-account-upgrade');
+        var originalHtml = $btn.html();
+
+        $upgradePanel.addClass('d-none');
+        $status.addClass('d-none').text('');
+
+        $btn.prop('disabled', true).attr('aria-disabled', 'true').html(
+            '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Saving...'
+        );
+
+        var payload = {
+            type:          selectedType,
+            input:         collectFormData(),
+            customization: collectCustomization()
+        };
+
+        CueRCode.ajax({
+            url: CueRCodeConfig.apiBase + '/generate',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+            success: function (generateResponse) {
+                if (!generateResponse.success || !generateResponse.data || !generateResponse.data.uuid) {
+                    CueRCode.notify('Failed to prepare the QR code for saving.', 'danger');
+                    return;
+                }
+
+                CueRCode.ajax({
+                    url: CueRCodeConfig.apiBase + '/save',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ uuid: generateResponse.data.uuid }),
+                    success: function (saveResponse) {
+                        $status.removeClass('d-none').text(saveResponse.message || 'Saved to your account.');
+                        CueRCode.notify(saveResponse.message || 'QR code saved to your account!', 'success');
+                    },
+                    error: function (xhr, status) {
+                        if (status === 'abort') {
+                            return;
+                        }
+
+                        /* ♿ 402 = plan saved_codes limit reached - show the
+                           persistent, visible upgrade panel (never silently
+                           hidden) rather than only a transient toast. */
+                        if (xhr.status === 402) {
+                            if (xhr.responseJSON && xhr.responseJSON.upgrade_url) {
+                                $('#save-account-upgrade-link').attr('href', xhr.responseJSON.upgrade_url);
+                            }
+                            $upgradePanel.removeClass('d-none');
+                            return;
+                        }
+
+                        var errorMsg = 'Failed to save this QR code to your account.';
+                        if (xhr.responseJSON && xhr.responseJSON.message) {
+                            errorMsg = xhr.responseJSON.message;
+                        }
+                        CueRCode.notify(errorMsg, 'danger');
+                    }
+                });
+            },
+            error: function (xhr, status) {
+                if (status === 'abort') {
+                    return;
+                }
+                CueRCode.notify('Failed to prepare the QR code for saving. Please try again.', 'danger');
+            },
+            complete: function () {
+                $btn.prop('disabled', false).attr('aria-disabled', 'false').html(originalHtml);
             }
         });
     }
@@ -1853,6 +1972,7 @@
 
         /* 📌 Download button click handler */
         $('#btn-download').on('click', handleDownload);
+        $('#btn-save-account').on('click', handleSaveToAccount);
 
         // ======================================================================
         // 🔄 Initialise Default State

@@ -913,8 +913,11 @@ function logoutCurrentUser(): array
  * opportunistically bumps tblUserSessions.lastSeenAt (best-effort, failure
  * is non-fatal).
  *
- * @return array{userID: int, email: string, displayName: string|null}|null
+ * @return array{userID: int, email: string, displayName: string|null, avatarPath: string|null}|null
  *         The current user, or null if there is no valid authenticated session
+ *
+ * @see resolveAvatarUrl() - turns 'avatarPath' (added Epic E3 stage 2b, #23)
+ *      into a displayable <img src> per the ProjectBrief §11.4 priority chain
  */
 function currentUser(): ?array
 {
@@ -934,7 +937,7 @@ function currentUser(): ?array
 
     try {
         $stmt = dbQuery(
-            'SELECT s.`userID`, s.`expiresAt`, s.`revokedAt`, u.`email`, u.`displayName`, u.`status` '
+            'SELECT s.`userID`, s.`expiresAt`, s.`revokedAt`, u.`email`, u.`displayName`, u.`avatarPath`, u.`status` '
             . 'FROM `tblUserSessions` s '
             . 'INNER JOIN `tblUsers` u ON u.`userID` = s.`userID` '
             . 'WHERE s.`sessionID` = ? LIMIT 1',
@@ -978,7 +981,86 @@ function currentUser(): ?array
         'userID'      => (int) $row['userID'],
         'email'       => (string) $row['email'],
         'displayName' => $row['displayName'],
+        'avatarPath'  => $row['avatarPath'],
     ];
+}
+
+// ==============================================================================
+// 🖼️ resolveAvatarUrl() - ProjectBrief §11.4 avatar priority chain
+// ==============================================================================
+
+/**
+ * 🖼️ Resolve a displayable avatar <img src> URL for a user.
+ *
+ * Implements the ProjectBrief §11.4 priority chain:
+ *   1. Local custom upload (tblUsers.avatarPath is set) - served through the
+ *      session-gated streaming endpoint public_html/account/avatar/index.php
+ *      (never a direct link into the non-web `_uploads/` directory).
+ *   2. MS365/Google SSO-provided avatar - Epic E2 (OAuth/SSO), NOT built yet;
+ *      no linked-identity table is populated today, so this tier is
+ *      deliberately unreachable until that epic ships (documented owner
+ *      decision - see DEV_NOTES.md).
+ *   3. Gravatar (https://gravatar.com) - computed from an MD5 hash of the
+ *      lower-cased, trimmed email address per Gravatar's documented request
+ *      format. This is a CLIENT-side <img> fetch (the browser talks to
+ *      Gravatar directly) - the server never makes an outbound network call
+ *      to Gravatar, consistent with this codebase's "no outbound call on a
+ *      hot request path" posture. `d=404` asks Gravatar to return a 404
+ *      instead of its own generic default image when no Gravatar is set for
+ *      that email, so the caller's `onerror` handler can fall through to
+ *      tier 4 - see cuercode-account.js `wireAvatarFallback()`.
+ *   4. A local static default placeholder icon.
+ *
+ * Pure/deterministic - no I/O - safe to unit test directly.
+ *
+ * @param string|null $avatarPath The tblUsers.avatarPath column value (relative
+ *                                 to CUERCODE_UPLOADS_DIR, e.g. 'avatars/42.png'),
+ *                                 or null/empty when no custom avatar is set.
+ * @param string      $email      The user's email address (for the Gravatar hash).
+ *
+ * @return string An absolute-path URL suitable for an <img src>.
+ *
+ * @see https://en.gravatar.com/site/implement/images/
+ * @see https://www.php.net/manual/en/function.md5.php
+ *
+ * @example
+ *   resolveAvatarUrl('avatars/42.png', 'user@example.com');
+ *   // '/account/avatar/?u=42' (via a stable per-session lookup, no PII in the URL)
+ *
+ *   resolveAvatarUrl(null, 'user@example.com');
+ *   // 'https://www.gravatar.com/avatar/b58996c504c5638798eb6b511e6f49af?s=128&d=404'
+ */
+function resolveAvatarUrl(?string $avatarPath, string $email, int $size = 128): string
+{
+    // 🎯 Tier 1: local custom upload. The actual file streaming endpoint
+    // resolves the CURRENT SESSION's own avatarPath server-side (never trusts
+    // a client-supplied path/userID) - see public_html/account/avatar/index.php.
+    // A cache-busting-free, stable URL is fine here: the endpoint always
+    // serves the CALLER's own current avatar, so there is no cross-user
+    // parameter to manipulate.
+    if ($avatarPath !== null && trim($avatarPath) !== '') {
+        return '/account/avatar/';
+    }
+
+    // 🎯 Tier 2 (MS365/Google SSO avatar) - Epic E2, not built. No linked
+    // identity/avatar-URL column exists yet, so this tier is unreachable
+    // until that epic ships; falls through to Gravatar below by design.
+
+    // 🎯 Tier 3: Gravatar, computed from the email's MD5 hash.
+    $normalizedEmail = mb_strtolower(trim($email));
+
+    if ($normalizedEmail !== '') {
+        // @see https://en.gravatar.com/site/implement/images/ - "the email
+        // address hash: trim leading/trailing whitespace, lower-case, MD5".
+        $emailHash = md5($normalizedEmail);
+
+        return 'https://www.gravatar.com/avatar/' . $emailHash
+            . '?s=' . max(16, min(2048, $size))
+            . '&d=404';
+    }
+
+    // 🎯 Tier 4: local default placeholder (no usable email at all).
+    return '/assets/img/branding/avatar-default.svg';
 }
 
 // ==============================================================================

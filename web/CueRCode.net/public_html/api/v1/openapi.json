@@ -43,6 +43,10 @@
         {
             "name": "Saved Codes",
             "description": "Claim, list, fetch, update, and delete saved QR codes - ownership-scoped (Epic E3 stage 2a, #52/#24)"
+        },
+        {
+            "name": "Account",
+            "description": "Own-account profile/avatar, active-session management, and password change - all own-scoped (Epic E3 stage 2b, #52/#12/#14/#23/#24)."
         }
     ],
     "paths": {
@@ -434,7 +438,7 @@
                     "Generation"
                 ],
                 "summary": "Bulk generate QR codes (ZIP, or an Avery label-sheet PDF)",
-                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request depends on the caller's subscription plan (`bulk_batch_size` limit, Epic E4) — anonymous callers get the `anonymous` plan's allowance (25 by default), while an authenticated user or API key resolves their own plan's allowance instead; exceeding it returns `413` with an `upgrade_url` hint. Per-item failures do NOT abort the batch \u2014 each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely \u2014 a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout \u2014 a mixed-layout sheet is not a coherent single PDF); per-item failures leave that label slot blank rather than aborting the sheet. See the Customization `pdf_layout` field for the full enum.",
+                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request depends on the caller's subscription plan (`bulk_batch_size` limit, Epic E4) \u2014 anonymous callers get the `anonymous` plan's allowance (25 by default), while an authenticated user or API key resolves their own plan's allowance instead; exceeding it returns `413` with an `upgrade_url` hint. Per-item failures do NOT abort the batch \u2014 each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely \u2014 a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout \u2014 a mixed-layout sheet is not a coherent single PDF); per-item failures leave that label slot blank rather than aborting the sheet. See the Customization `pdf_layout` field for the full enum.",
                 "operationId": "bulkGenerateQRCodes",
                 "security": [
                     {},
@@ -2034,6 +2038,247 @@
                     }
                 }
             }
+        },
+        "/account/profile": {
+            "patch": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Update your own display name and/or avatar",
+                "description": "Own-account only - the caller's identity is resolved server-side from the CSRF/API-key session context, never from a request field. Accepts any combination of display_name, avatar_base64, and remove_avatar (see AccountProfileUpdateRequest).",
+                "operationId": "updateAccountProfile",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AccountProfileUpdateRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Profile updated successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Updated",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Profile updated successfully.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/account/sessions": {
+            "get": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "List ONLY your own active sessions",
+                "description": "Returns every non-revoked, non-expired tblUserSessions row owned by the caller - the WHERE clause is unconditionally scoped to the caller's own userID; there is no parameter that widens this to another user's sessions.",
+                "operationId": "listAccountSessions",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sessions retrieved successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccountSessionsListResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/account/sessions/{id}": {
+            "delete": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Revoke one of your own sessions",
+                "description": "Own-account only. The UPDATE that revokes the session re-checks userID = caller in the SAME statement - a session ID that exists but belongs to a DIFFERENT user (or does not exist / is already revoked) affects zero rows and is reported as 404, never 403 (the same non-disclosure convention as DELETE /qrcodes/{uuid}).",
+                "operationId": "deleteAccountSession",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "description": "The tblUserSessions.sessionID to revoke (64 lowercase hex characters)",
+                        "schema": {
+                            "type": "string",
+                            "example": "a1b2c3d4e5f6..."
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Session revoked successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Revoked",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Session revoked successfully.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "404": {
+                        "description": "Not owned by the caller (or does not exist / already revoked) - identical response either way",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
+        },
+        "/account/change-password": {
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Change your own password",
+                "description": "Own-account only. Re-verifies current_password server-side before accepting new_password (never trusts an existing session alone for this action), then revokes every OTHER active session for the account (the CURRENT session, i.e. the one making this request, is preserved so the caller is not immediately logged out).",
+                "operationId": "changeAccountPassword",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AccountChangePasswordRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Password changed successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthGenericResponse"
+                                },
+                                "examples": {
+                                    "default": {
+                                        "summary": "Changed",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Your password has been changed. You have been signed out of all other devices.",
+                                            "data": {},
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "description": "Not authenticated, OR the supplied current_password is incorrect (INVALID_CURRENT_PASSWORD)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    }
+                }
+            }
         }
     },
     "components": {
@@ -3098,7 +3343,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, RATE_LIMIT_EXCEEDED, FETCH_ERROR, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, LOOKUP_FAILED.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -3481,6 +3726,114 @@
                             "updated_at": {
                                 "type": "string",
                                 "format": "date-time"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AccountProfileUpdateRequest": {
+                "type": "object",
+                "description": "At least one of display_name, avatar_base64, or remove_avatar must be supplied. avatar_base64 and remove_avatar are mutually exclusive in effect (an upload takes precedence if both are somehow sent).",
+                "properties": {
+                    "display_name": {
+                        "type": "string",
+                        "nullable": true,
+                        "maxLength": 100,
+                        "example": "Ada Lovelace"
+                    },
+                    "avatar_base64": {
+                        "type": "string",
+                        "description": "A 'data:image/{png,jpeg,gif,webp};base64,...' data URI. SVG is explicitly rejected for avatars (self-stored-XSS mitigation - see fn_api_account.php).",
+                        "example": "data:image/png;base64,iVBORw0KGgo..."
+                    },
+                    "remove_avatar": {
+                        "type": "boolean",
+                        "description": "Set true to clear the current custom avatar.",
+                        "example": false
+                    }
+                }
+            },
+            "AccountChangePasswordRequest": {
+                "type": "object",
+                "required": [
+                    "current_password",
+                    "new_password"
+                ],
+                "properties": {
+                    "current_password": {
+                        "type": "string",
+                        "format": "password",
+                        "example": "correct horse battery staple"
+                    },
+                    "new_password": {
+                        "type": "string",
+                        "format": "password",
+                        "minLength": 8,
+                        "maxLength": 256,
+                        "example": "a new, even stronger passphrase"
+                    }
+                }
+            },
+            "SessionInfo": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The full session identifier - pass this to DELETE /account/sessions/{id} to revoke it.",
+                        "example": "a1b2c3d4e5f6..."
+                    },
+                    "masked_id": {
+                        "type": "string",
+                        "description": "The SAME identifier, masked for display (all but the trailing 8 characters).",
+                        "example": "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022a1b2c3d4"
+                    },
+                    "ip": {
+                        "type": "string",
+                        "nullable": true,
+                        "example": "203.0.113.42"
+                    },
+                    "user_agent": {
+                        "type": "string",
+                        "nullable": true,
+                        "example": "Mozilla/5.0 ..."
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "last_seen_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "is_current": {
+                        "type": "boolean",
+                        "description": "True if this row is the session making THIS request."
+                    }
+                }
+            },
+            "AccountSessionsListResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Sessions retrieved successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "sessions": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/SessionInfo"
+                                }
                             }
                         }
                     },

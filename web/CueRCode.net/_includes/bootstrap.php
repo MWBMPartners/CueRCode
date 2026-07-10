@@ -170,6 +170,26 @@ $functionFiles = [
     'fn_validation.php',     // ✅ Input validation
     'fn_response.php',       // 📤 Response formatting
     'fn_csrf.php',           // 🛡️ CSRF protection
+    // 🔐 Epic E3 stage 2b (#52/#12/#14/#23/#24): the auth engine is promoted
+    //    from "API-router-only" to a GLOBAL bootstrap include so that EVERY
+    //    page - not just the JSON API - can call currentUser()/requireAuth()
+    //    for the site-wide navbar user indicator (header.php, §11.4) without
+    //    each page having to remember its own require_once boilerplate. The
+    //    API router's own $apiFunctionFiles list still requires these three
+    //    explicitly too; require_once de-duplicates by resolved path, so that
+    //    is a harmless no-op, not a double-include.
+    'fn_password.php',      // 🔑 Argon2id hashing (fn_auth.php depends on this)
+    // 📧 queueEmail() - fn_auth.php's registerUser()/requestPasswordReset()
+    // both call queueEmail() (function_exists()-guarded, fails open if
+    // absent). This MUST be loaded globally (not just by the API router)
+    // because register/index.php and forgot-password/index.php's own no-JS
+    // <form> POST handling calls those SAME engine functions directly - a
+    // bug caught during this stage's scratch-DB verification: without this,
+    // the no-JS registration path silently created the account but never
+    // queued a verification email (queueEmail() was undefined on that page).
+    'fn_email.php',
+    'fn_auth.php',           // 🔐 currentUser()/requireAuth()/session engine (Epic E3)
+    'fn_features.php',       // 💳 planForUser()/limitFor()/featureEnabled() (Epic E4 framework, used by the account dashboard + generator "Save" gating)
 ];
 
 foreach ($functionFiles as $functionFile) {
