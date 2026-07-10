@@ -119,6 +119,19 @@ $oneTimeApiKeySecret = null; // ['id','api_key','prefix','name']
 /**
  * 🛡️ Validate the CSRF token from the current $_POST body.
  *
+ * FAILS CLOSED (SECURITY.md F-028 hardening): if validateCSRFToken() is
+ * somehow undefined (e.g. fn_csrf.php did not load), every POST action on
+ * this page is refused rather than silently permitted - matches
+ * public_html/auth/index.php's equivalent gate
+ * (`!function_exists('validateCSRFToken') || !validateCSRFToken(...)`),
+ * which already fails closed. Previously this returned `true` in that
+ * branch, which would have waved through EVERY state-changing action on the
+ * account dashboard (profile update, password change, session revoke,
+ * SSO unlink, API key create/rotate/revoke, ...) with no CSRF check at all -
+ * low-likelihood (fn_csrf.php is always loaded by bootstrap.php in every
+ * real deployment) but a fail-OPEN default is the wrong posture for a
+ * security control.
+ *
  * @return bool
  */
 function accountPagePostCsrfValid(): bool
@@ -129,11 +142,11 @@ function accountPagePostCsrfValid(): bool
         $token = '';
     }
 
-    if (function_exists('validateCSRFToken')) {
-        return validateCSRFToken($token);
+    if (!function_exists('validateCSRFToken')) {
+        return false;
     }
 
-    return true;
+    return validateCSRFToken($token);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

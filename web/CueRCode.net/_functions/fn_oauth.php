@@ -181,6 +181,39 @@ if (!defined('CUERCODE_OAUTH_DEFAULT_SCOPES')) {
     define('CUERCODE_OAUTH_DEFAULT_SCOPES', 'openid email profile');
 }
 
+/**
+ * @var string Prefix for the per-user MySQL advisory lock name used to
+ * serialise unlinkOAuthProviderForUser()'s "don't remove the last sign-in
+ * method" guard-check + DELETE (SECURITY.md F-027 - closes a TOCTOU race).
+ * Mirrors fn_api_qrcodes.php's F-023 fix
+ * (CUERCODE_SAVE_LOCK_NAME_PREFIX/acquireSaveLimitLock()/
+ * releaseSaveLimitLock()) exactly in mechanism, but lives under its OWN,
+ * DISTINCT lock namespace - the full lock name is this prefix concatenated
+ * with the caller's userID (e.g. "cuercode_oauth_unlink:42"). Deliberately
+ * NOT the same name as the save-limit lock: an in-flight `POST /save` and an
+ * in-flight OAuth unlink for the SAME user guard two entirely unrelated
+ * invariants (a plan-limit count vs. "don't delete the last credential") and
+ * have no reason to serialise against each other - sharing a lock name would
+ * make one feature's traffic needlessly stall the other's.
+ *
+ * @see acquireOAuthUnlinkLock()/releaseOAuthUnlinkLock() below.
+ * @see fn_api_qrcodes.php's acquireSaveLimitLock()/releaseSaveLimitLock() -
+ *      the F-023 precedent this fix reuses the pattern from.
+ */
+if (!defined('CUERCODE_OAUTH_UNLINK_LOCK_NAME_PREFIX')) {
+    define('CUERCODE_OAUTH_UNLINK_LOCK_NAME_PREFIX', 'cuercode_oauth_unlink:');
+}
+
+/**
+ * @var int Seconds GET_LOCK() will wait for the per-user OAuth-unlink lock
+ * before giving up (returning 0). Mirrors
+ * CUERCODE_SAVE_LOCK_TIMEOUT_SECONDS - the guarded critical section here is
+ * likewise a handful of fast, indexed queries, never anything slow.
+ */
+if (!defined('CUERCODE_OAUTH_UNLINK_LOCK_TIMEOUT_SECONDS')) {
+    define('CUERCODE_OAUTH_UNLINK_LOCK_TIMEOUT_SECONDS', 5);
+}
+
 // ==============================================================================
 // 🌐 base64url helpers (RFC 4648 §5) - used by PKCE and JWT (de)coding
 // ==============================================================================
@@ -297,10 +330,12 @@ function generateOAuthNonce(): string
  *
  * Only a root-relative path (starts with exactly one '/', never '//' or
  * '/\' - both browser-interpretable as protocol-relative to a DIFFERENT
- * host - and never containing a ':' which would allow a scheme such as
- * 'javascript:' or 'https:') is accepted. Anything else - including a bare
- * scheme-relative host, an absolute URL, or a data/javascript URI - falls
- * back to the provided default. Mirrors public_html/login/index.php's own
+ * host - never containing a ':' which would allow a scheme such as
+ * 'javascript:' or 'https:', and never containing a CR/LF/other ASCII
+ * control character, rejected up front as header-injection hardening) is
+ * accepted. Anything else - including a bare scheme-relative host, an
+ * absolute URL, or a data/javascript URI - falls back to the provided
+ * default. Mirrors public_html/login/index.php's own
  * resolveSafeNextUrl() (kept as a separate, intentionally duplicated
  * function there to avoid disturbing already-shipped Epic E3 code); this
  * copy is the one used by the SSO initiation/callback routes and is the one
@@ -314,6 +349,26 @@ function generateOAuthNonce(): string
 function resolveSafeSameSiteRedirect(mixed $rawNext, string $default): string
 {
     if (!is_string($rawNext) || $rawNext === '') {
+        return $default;
+    }
+
+    // 🛡️ Hardening: explicitly reject any value containing a raw CR
+    // (`\r`), LF (`\n`), or ANY OTHER ASCII control character (0x00-0x1F,
+    // 0x7F) - defence in depth against HTTP response header injection
+    // ("header splitting"). This is currently NON-EXPLOITABLE on its own
+    // via this codebase's only two callers (both pass this return value
+    // straight into `header('Location: ' . ...)`), because PHP's own
+    // `header()` implementation already silently drops any value
+    // containing an embedded newline (see the manual note below) - but
+    // that protection lives in a DIFFERENT layer (the SAPI/PHP core), not
+    // in this function, and is not guaranteed to hold for every future
+    // caller of this same-site-redirect resolver (e.g. a caller that logs,
+    // echoes into an HTML attribute, or otherwise re-serializes the value
+    // before it ever reaches `header()`). Checked independently of (and
+    // BEFORE) the ':' scheme-separator check below, so a CR/LF/control-char
+    // -bearing value is rejected even when no ':' co-occurs.
+    // @see https://www.php.net/manual/en/function.header.php
+    if (preg_match('/[\x00-\x1F\x7F]/', $rawNext) === 1) {
         return $default;
     }
 
@@ -1093,7 +1148,35 @@ function oauthVerifyJwtSignatureRS256(string $jwt, array $jwks): array
     $keyId = $decoded['header']['kid'] ?? null;
     $jwk   = oauthFindJwkByKid($jwks, is_string($keyId) ? $keyId : null);
 
-    if ($jwk === null || !isset($jwk['n'], $jwk['e'])) {
+    if ($jwk === null) {
+        return [
+            'valid'     => false,
+            'claims'    => null,
+            'errorCode' => 'ID_TOKEN_KEY_NOT_FOUND',
+            'message'   => 'No matching signing key was found for this ID token.',
+        ];
+    }
+
+    // 🛡️ Defense-in-depth (hardening): a JWK's `kty` (Key Type, RFC 7517
+    // §4.1) MUST be exactly "RSA" before its `n`/`e` members are trusted as
+    // an RSA modulus/exponent pair. Without this check, a mixed or
+    // compromised JWKS (e.g. an admin-configured discovery URL that has
+    // been tampered with, or a provider that mixes EC ("kty":"EC") / oct
+    // ("kty":"oct" - a raw HMAC secret, which must NEVER be treated as
+    // public key material) entries into the same key set) could smuggle a
+    // non-RSA key through if it happened to also carry `n`/`e`-named
+    // members. RS256 verification below is ONLY ever valid against a
+    // genuine RSA key, so this is checked BEFORE `n`/`e` are read at all.
+    if (!isset($jwk['kty']) || !is_string($jwk['kty']) || $jwk['kty'] !== 'RSA') {
+        return [
+            'valid'     => false,
+            'claims'    => null,
+            'errorCode' => 'ID_TOKEN_KEY_NOT_FOUND',
+            'message'   => 'No matching signing key was found for this ID token.',
+        ];
+    }
+
+    if (!isset($jwk['n'], $jwk['e'])) {
         return [
             'valid'     => false,
             'claims'    => null,
@@ -1192,6 +1275,25 @@ function oauthValidateIdTokenClaims(
             if (is_string($singleAudience) && hash_equals($expectedAudience, $singleAudience)) {
                 $audienceMatches = true;
                 break;
+            }
+        }
+
+        // 🛡️ Hardening (OpenID Connect Core §3.1.3.7, points 4-5): when
+        // `aud` is an ARRAY containing MORE THAN ONE value, the ID Token
+        // MUST also contain an `azp` (Authorized Party) claim, and its
+        // value MUST equal this app's client_id. Without this check, a
+        // multi-audience token issued primarily for some OTHER client that
+        // merely happens to list us as a secondary audience would still be
+        // accepted - `azp` is the spec's mechanism for identifying which
+        // party the IdP actually authorized to present the token, and we
+        // must be that party, not merely a bystander in a shared `aud`
+        // list. (A single-string `aud` has no `azp` requirement - the
+        // simple equality check above already suffices per the spec.)
+        if ($audienceMatches && count($audienceClaim) > 1) {
+            $authorizedPartyClaim = $claims['azp'] ?? null;
+
+            if (!is_string($authorizedPartyClaim) || !hash_equals($expectedAudience, $authorizedPartyClaim)) {
+                $audienceMatches = false;
             }
         }
     }
@@ -2227,6 +2329,117 @@ function countLinkedOAuthProvidersForUser(int $userID): int
 }
 
 /**
+ * 🔒 Acquire a per-user MySQL SESSION advisory lock guarding
+ * unlinkOAuthProviderForUser()'s "don't remove the last sign-in method"
+ * guard-check + DELETE critical section (SECURITY.md F-027).
+ *
+ * WHY this is needed (the TOCTOU race, F-027, Medium): before this fix, the
+ * guard (userHasPasswordSet() + countLinkedOAuthProvidersForUser() <= 1) and
+ * the DELETE that follows were two independent statements with NO
+ * serialisation between them. Two genuinely concurrent
+ * unlinkOAuthProviderForUser() calls for a password-less account with
+ * EXACTLY 2 linked providers (unlinking two DIFFERENT oauthIDs) could each
+ * read countLinkedOAuthProvidersForUser() == 2 (passes the "> 1" guard)
+ * BEFORE either DELETE landed - both DELETEs then succeed independently,
+ * leaving the account with ZERO sign-in credentials: a permanent
+ * self-lockout. Reproduced live against a scratch database: 2 genuinely
+ * concurrent OS-process unlinks against the SAME password-less,
+ * 2-provider account both returned success (see SECURITY.md F-027 for the
+ * full before/after evidence).
+ *
+ * Mirrors fn_api_qrcodes.php's acquireSaveLimitLock()/releaseSaveLimitLock()
+ * (F-023) exactly in mechanism - see that function's docblock for the full
+ * "why a MySQL advisory lock, not a transaction + `SELECT ... FOR UPDATE`"
+ * reasoning. The same shape of argument applies here: the guard reads TWO
+ * separate things (tblUsers.passwordHash and a COUNT over tblUserOAuth),
+ * neither of which is a single row that row-level locking could hold to
+ * serialise both reads together with the eventual DELETE - a per-user
+ * advisory lock instead serialises the WHOLE guard+delete critical section
+ * for one user, which is the property actually needed. Runs under its OWN
+ * lock namespace (CUERCODE_OAUTH_UNLINK_LOCK_NAME_PREFIX), distinct from
+ * CUERCODE_SAVE_LOCK_NAME_PREFIX, so this fix never contends with (or is
+ * blocked by) an unrelated in-flight `/save` request for the same user.
+ *
+ * `GET_LOCK()`/`RELEASE_LOCK()` are SESSION- (connection-)scoped in MySQL;
+ * `dbQuery()` -> `getDB()` (`_includes/db_connect.php`) returns the SAME
+ * cached `mysqli` connection for the lifetime of one PHP request, so the
+ * lock acquired here, the guard-check, the DELETE, and
+ * releaseOAuthUnlinkLock() below all run on that ONE connection - never
+ * split across two different sessions, which would make the lock
+ * meaningless.
+ *
+ * @param int $userID The tblUsers.userID to lock (one advisory lock per user).
+ *
+ * @return bool True if the lock was acquired within
+ *              CUERCODE_OAUTH_UNLINK_LOCK_TIMEOUT_SECONDS; false on timeout
+ *              (another unlink for this SAME user is already mid-flight) or
+ *              on any DB error - FAIL SAFE: the caller must NOT proceed
+ *              unserialised when this returns false.
+ *
+ * @see https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_get-lock
+ */
+function acquireOAuthUnlinkLock(int $userID): bool
+{
+    if (!function_exists('dbQuery')) {
+        return false;
+    }
+
+    $lockName = CUERCODE_OAUTH_UNLINK_LOCK_NAME_PREFIX . $userID;
+
+    try {
+        $lockStmt = dbQuery(
+            'SELECT GET_LOCK(?, ?) AS `lockResult`',
+            'si',
+            [$lockName, CUERCODE_OAUTH_UNLINK_LOCK_TIMEOUT_SECONDS]
+        );
+        $lockRow = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'OAuth-unlink advisory lock acquisition failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+        return false;
+    }
+
+    // 📌 GET_LOCK() returns 1 (acquired), 0 (timeout), or NULL (error) -
+    // ANYTHING other than a genuine 1 is treated as "not acquired."
+    return $lockRow !== null && isset($lockRow['lockResult']) && (int) $lockRow['lockResult'] === 1;
+}
+
+/**
+ * 🔓 Release the per-user advisory lock acquired by acquireOAuthUnlinkLock().
+ *
+ * Best-effort by design, identical rationale to fn_api_qrcodes.php's
+ * releaseSaveLimitLock(): a failure to release is logged but never thrown,
+ * and never leaves the lock stuck - the lock is connection-scoped, and
+ * MySQL automatically releases ALL of a session's advisory locks the moment
+ * that connection closes (i.e. at the end of this PHP request), so a
+ * release failure here cannot leave the lock held indefinitely for future
+ * requests.
+ *
+ * @param int $userID The SAME tblUsers.userID passed to acquireOAuthUnlinkLock().
+ *
+ * @return void
+ */
+function releaseOAuthUnlinkLock(int $userID): void
+{
+    if (!function_exists('dbQuery')) {
+        return;
+    }
+
+    $lockName = CUERCODE_OAUTH_UNLINK_LOCK_NAME_PREFIX . $userID;
+
+    try {
+        $releaseStmt = dbQuery('SELECT RELEASE_LOCK(?) AS `releaseResult`', 's', [$lockName]);
+        $releaseStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('warning', 'OAuth-unlink advisory lock release failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+    }
+}
+
+/**
  * 📋 Unlink ONE provider from the caller's OWN account.
  *
  * IDOR-safe: the DELETE's WHERE clause checks `userID = ?` in the SAME
@@ -2237,6 +2450,19 @@ function countLinkedOAuthProvidersForUser(int $userID): int
  * no password set AND this is its only linked provider, the request is
  * refused - the owner must set a password (or link another provider) first,
  * or they would be permanently locked out of their own account.
+ *
+ * 🔒 F-027 FIX (TOCTOU race, Medium): the guard-check
+ * (userHasPasswordSet() + countLinkedOAuthProvidersForUser()) and the
+ * DELETE below are now serialised, per user, by a MySQL SESSION advisory
+ * lock (acquireOAuthUnlinkLock()/releaseOAuthUnlinkLock() above) - see that
+ * function's docblock for the full race this closes and why an advisory
+ * lock (not a transaction + `SELECT ... FOR UPDATE`) is the right tool.
+ * A `GET_LOCK()` timeout/error fails SAFE: the unlink is refused rather
+ * than proceeding unserialised, which would silently reopen the exact race
+ * this fix exists to close. The lock is released in a `finally` block
+ * covering every exit path out of the guarded section (every `return`
+ * below runs `finally` - unlike `exit()`, nothing in this function ever
+ * calls `exit()`/`header()`, so a plain `return` is always safe here).
  *
  * @param int $userID  The caller's own tblUsers.userID.
  * @param int $oauthID The tblUserOAuth.oauthID to unlink.
@@ -2249,30 +2475,53 @@ function unlinkOAuthProviderForUser(int $userID, int $oauthID): array
         return ['success' => false, 'message' => 'Unlinking is temporarily unavailable. Please try again later.'];
     }
 
-    if (!userHasPasswordSet($userID) && countLinkedOAuthProvidersForUser($userID) <= 1) {
+    $lockAcquired = acquireOAuthUnlinkLock($userID);
+
+    if (!$lockAcquired) {
+        // ⏱️ GET_LOCK() timed out (another unlink for this SAME user is
+        // already mid-flight) or errored. FAIL SAFE - do NOT proceed
+        // unserialised; that would silently reopen the exact race this fix
+        // exists to close.
         return [
             'success' => false,
-            'message' => 'You cannot remove your only sign-in method. Please set a password (or link another provider) first.',
+            'message' => 'This account is busy processing another change. Please try again shortly.',
         ];
     }
 
     try {
-        $deleteStmt = dbQuery(
-            'DELETE FROM `tblUserOAuth` WHERE `oauthID` = ? AND `userID` = ?',
-            'ii',
-            [$oauthID, $userID]
-        );
-        $deleted = ($deleteStmt->affected_rows === 1);
-        $deleteStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('error', 'OAuth unlink failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        if (!userHasPasswordSet($userID) && countLinkedOAuthProvidersForUser($userID) <= 1) {
+            return [
+                'success' => false,
+                'message' => 'You cannot remove your only sign-in method. Please set a password (or link another provider) first.',
+            ];
         }
-        return ['success' => false, 'message' => 'That linked account could not be found.'];
-    }
 
-    if (!$deleted) {
-        return ['success' => false, 'message' => 'That linked account could not be found.'];
+        try {
+            $deleteStmt = dbQuery(
+                'DELETE FROM `tblUserOAuth` WHERE `oauthID` = ? AND `userID` = ?',
+                'ii',
+                [$oauthID, $userID]
+            );
+            $deleted = ($deleteStmt->affected_rows === 1);
+            $deleteStmt->close();
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'OAuth unlink failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+            }
+            return ['success' => false, 'message' => 'That linked account could not be found.'];
+        }
+
+        if (!$deleted) {
+            return ['success' => false, 'message' => 'That linked account could not be found.'];
+        }
+    } finally {
+        // 🔓 Guaranteed to run for every path above (normal completion or
+        // any of the early returns) - a plain `return` triggers `finally`
+        // in PHP, unlike `exit()`. Never leaves the lock held past this
+        // request for a SUCCESSFUL release, and even a failed release
+        // self-heals at connection close (see releaseOAuthUnlinkLock()'s
+        // docblock).
+        releaseOAuthUnlinkLock($userID);
     }
 
     if (function_exists('logActivity')) {

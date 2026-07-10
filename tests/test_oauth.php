@@ -184,6 +184,51 @@ assertEquals(
     'resolveSafeSameSiteRedirect() REJECTS an over-length path (defensive cap)'
 );
 
+// --- FINDING 5 hardening (Low): explicit CR/LF/control-char rejection ------
+// Independent OIDC/SSO security review (E2) FINDING 5: reject any value
+// containing `\r`, `\n`, or another ASCII control character BEFORE the
+// existing checks - header-injection defence in depth, independent of
+// whether a ':' scheme separator co-occurs (currently non-exploitable via
+// this codebase's two callers only because PHP's own header() silently
+// drops newline-bearing values - a DIFFERENT layer's protection, not this
+// function's).
+
+assertEquals(
+    '/account/',
+    resolveSafeSameSiteRedirect("/account/\r\nSet-Cookie: evil=1", '/account/'),
+    'FINDING 5 regression: resolveSafeSameSiteRedirect() REJECTS a value containing an embedded CRLF (header-injection attempt)'
+);
+
+assertEquals(
+    '/account/',
+    resolveSafeSameSiteRedirect("/account/\nLocation: https://evil.example.com", '/account/'),
+    'FINDING 5 regression: resolveSafeSameSiteRedirect() REJECTS a value containing a bare LF'
+);
+
+assertEquals(
+    '/account/',
+    resolveSafeSameSiteRedirect("/account/\rX-Injected: 1", '/account/'),
+    'FINDING 5 regression: resolveSafeSameSiteRedirect() REJECTS a value containing a bare CR (no co-occurring \':\')'
+);
+
+assertEquals(
+    '/account/',
+    resolveSafeSameSiteRedirect("/account/\x00hidden", '/account/'),
+    'FINDING 5 regression: resolveSafeSameSiteRedirect() REJECTS a value containing an embedded NUL byte'
+);
+
+assertEquals(
+    '/account/',
+    resolveSafeSameSiteRedirect("/account/\x07\x1B", '/account/'),
+    'FINDING 5 regression: resolveSafeSameSiteRedirect() REJECTS a value containing other ASCII control characters (bell/escape)'
+);
+
+assertEquals(
+    '/account/settings',
+    resolveSafeSameSiteRedirect('/account/settings', '/account/'),
+    'sanity check: an ordinary CR/LF-free root-relative path is still accepted after the FINDING 5 hardening (no regression on legitimate input)'
+);
+
 // ==============================================================================
 // ✅ Section 5: decideOAuthAccountLinkAction() - the FULL decision table (PURE)
 // ==============================================================================
@@ -343,13 +388,46 @@ $badAudienceResult = oauthValidateAndDecodeIdToken($badAudienceJwt, $testJwks, $
 assertFalse($badAudienceResult['valid'], 'oauthValidateAndDecodeIdToken() REJECTS a token with the WRONG audience');
 assertEquals('ID_TOKEN_INVALID_AUDIENCE', $badAudienceResult['errorCode'], 'wrong audience -> ID_TOKEN_INVALID_AUDIENCE');
 
-// 📌 aud as an ARRAY containing the expected value is still accepted (some
-// IdPs emit a multi-value aud claim).
+// 📌 aud as an ARRAY containing the expected value, WITH a matching `azp`,
+// is still accepted (some IdPs emit a multi-value aud claim - FINDING 4
+// requires `azp` alongside a multi-value `aud`, see 6c-azp below for the
+// cases this hardening REJECTS).
 $arrayAudienceClaims = $validClaims;
 $arrayAudienceClaims['aud'] = ['some-other-app', $expectedAudience];
+$arrayAudienceClaims['azp'] = $expectedAudience;
 $arrayAudienceJwt = testOAuthSignJwt($validHeader, $arrayAudienceClaims, $testPrivateKeyPem);
 $arrayAudienceResult = oauthValidateAndDecodeIdToken($arrayAudienceJwt, $testJwks, $expectedIssuer, $expectedAudience, $expectedNonce, $fixedNow);
-assertTrue($arrayAudienceResult['valid'], 'oauthValidateAndDecodeIdToken() ACCEPTS an array `aud` claim that CONTAINS the expected audience');
+assertTrue($arrayAudienceResult['valid'], 'oauthValidateAndDecodeIdToken() ACCEPTS an array `aud` claim that CONTAINS the expected audience AND carries a matching `azp`');
+
+// --- 6c-azp. FINDING 4 hardening (Low, OIDC Core §3.1.3.7 pts 4-5): a
+// multi-value `aud` WITHOUT a matching `azp` must be REJECTED, even though
+// the expected audience is present in the array - `azp` identifies which
+// party the IdP actually authorized, and we must be that party, not merely
+// a bystander in a shared `aud` list.
+
+// 6c-azp-i: multi-value aud, NO azp claim at all -> rejected.
+$multiAudNoAzpClaims = $validClaims;
+$multiAudNoAzpClaims['aud'] = ['some-other-app', $expectedAudience];
+$multiAudNoAzpJwt = testOAuthSignJwt($validHeader, $multiAudNoAzpClaims, $testPrivateKeyPem);
+$multiAudNoAzpResult = oauthValidateAndDecodeIdToken($multiAudNoAzpJwt, $testJwks, $expectedIssuer, $expectedAudience, $expectedNonce, $fixedNow);
+assertFalse($multiAudNoAzpResult['valid'], 'FINDING 4 regression: oauthValidateAndDecodeIdToken() REJECTS a multi-value `aud` with NO `azp` claim');
+assertEquals('ID_TOKEN_INVALID_AUDIENCE', $multiAudNoAzpResult['errorCode'], 'multi-value aud, missing azp -> ID_TOKEN_INVALID_AUDIENCE');
+
+// 6c-azp-ii: multi-value aud, `azp` present but points at a DIFFERENT party -> rejected.
+$multiAudWrongAzpClaims = $validClaims;
+$multiAudWrongAzpClaims['aud'] = ['some-other-app', $expectedAudience];
+$multiAudWrongAzpClaims['azp'] = 'some-other-app';
+$multiAudWrongAzpJwt = testOAuthSignJwt($validHeader, $multiAudWrongAzpClaims, $testPrivateKeyPem);
+$multiAudWrongAzpResult = oauthValidateAndDecodeIdToken($multiAudWrongAzpJwt, $testJwks, $expectedIssuer, $expectedAudience, $expectedNonce, $fixedNow);
+assertFalse($multiAudWrongAzpResult['valid'], 'FINDING 4 regression: oauthValidateAndDecodeIdToken() REJECTS a multi-value `aud` whose `azp` does NOT match this app\'s client_id');
+assertEquals('ID_TOKEN_INVALID_AUDIENCE', $multiAudWrongAzpResult['errorCode'], 'multi-value aud, wrong azp -> ID_TOKEN_INVALID_AUDIENCE');
+
+// 6c-azp-iii: single-string aud has NO azp requirement (unaffected by FINDING 4).
+$singleAudNoAzpClaims = $validClaims;
+unset($singleAudNoAzpClaims['azp']);
+$singleAudNoAzpJwt = testOAuthSignJwt($validHeader, $singleAudNoAzpClaims, $testPrivateKeyPem);
+$singleAudNoAzpResult = oauthValidateAndDecodeIdToken($singleAudNoAzpJwt, $testJwks, $expectedIssuer, $expectedAudience, $expectedNonce, $fixedNow);
+assertTrue($singleAudNoAzpResult['valid'], 'sanity check: a single-string `aud` claim (the common case) needs NO `azp` claim - FINDING 4 only applies to a multi-value `aud`');
 
 // --- 6d. Expired token ---------------------------------------------------------
 $expiredClaims = $validClaims;
@@ -413,6 +491,65 @@ $unknownKidJwt    = testOAuthSignJwt($unknownKidHeader, $validClaims, $testPriva
 $unknownKidResult = oauthVerifyJwtSignatureRS256($unknownKidJwt, $testJwks);
 assertFalse($unknownKidResult['valid'], 'oauthVerifyJwtSignatureRS256() REJECTS a token whose kid matches NO key in the JWKS');
 assertEquals('ID_TOKEN_KEY_NOT_FOUND', $unknownKidResult['errorCode'], 'unknown kid -> ID_TOKEN_KEY_NOT_FOUND');
+
+// --- 6i-kty. FINDING 3 hardening (Low): a JWK's `kty` MUST be "RSA" ------------
+// A mixed/compromised JWKS could contain a non-RSA entry (e.g. an EC or oct
+// key) that STILL happens to carry `n`/`e`-named members - this must be
+// rejected purely on `kty`, before `n`/`e` are ever read as an RSA
+// modulus/exponent pair.
+
+// 6i-kty-i: kty="EC" (a plausible real-world JWKS entry shape) with n/e
+// present anyway -> rejected.
+$ecKtyJwks = [
+    'keys' => [
+        [
+            'kty' => 'EC',
+            'kid' => 'test-key-1',
+            'use' => 'sig',
+            'crv' => 'P-256',
+            'n'   => oauthBase64UrlEncode($testKeyDetails['rsa']['n']),
+            'e'   => oauthBase64UrlEncode($testKeyDetails['rsa']['e']),
+        ],
+    ],
+];
+$ecKtyResult = oauthVerifyJwtSignatureRS256($validJwt, $ecKtyJwks);
+assertFalse($ecKtyResult['valid'], 'FINDING 3 regression: oauthVerifyJwtSignatureRS256() REJECTS a JWK with kty="EC" even when n/e are present');
+assertEquals('ID_TOKEN_KEY_NOT_FOUND', $ecKtyResult['errorCode'], 'kty="EC" -> ID_TOKEN_KEY_NOT_FOUND (treated as no matching signing key)');
+
+// 6i-kty-ii: kty="oct" (a raw HMAC secret - must NEVER be treated as RSA
+// public key material) -> rejected.
+$octKtyJwks = [
+    'keys' => [
+        [
+            'kty' => 'oct',
+            'kid' => 'test-key-1',
+            'n'   => oauthBase64UrlEncode($testKeyDetails['rsa']['n']),
+            'e'   => oauthBase64UrlEncode($testKeyDetails['rsa']['e']),
+        ],
+    ],
+];
+$octKtyResult = oauthVerifyJwtSignatureRS256($validJwt, $octKtyJwks);
+assertFalse($octKtyResult['valid'], 'FINDING 3 regression: oauthVerifyJwtSignatureRS256() REJECTS a JWK with kty="oct" (a raw HMAC secret, never valid RSA key material)');
+assertEquals('ID_TOKEN_KEY_NOT_FOUND', $octKtyResult['errorCode'], 'kty="oct" -> ID_TOKEN_KEY_NOT_FOUND');
+
+// 6i-kty-iii: kty missing entirely -> rejected (fail closed on absence, not just wrong value).
+$missingKtyJwks = [
+    'keys' => [
+        [
+            'kid' => 'test-key-1',
+            'n'   => oauthBase64UrlEncode($testKeyDetails['rsa']['n']),
+            'e'   => oauthBase64UrlEncode($testKeyDetails['rsa']['e']),
+        ],
+    ],
+];
+$missingKtyResult = oauthVerifyJwtSignatureRS256($validJwt, $missingKtyJwks);
+assertFalse($missingKtyResult['valid'], 'FINDING 3 regression: oauthVerifyJwtSignatureRS256() REJECTS a JWK with NO kty member at all');
+assertEquals('ID_TOKEN_KEY_NOT_FOUND', $missingKtyResult['errorCode'], 'missing kty -> ID_TOKEN_KEY_NOT_FOUND');
+
+// 6i-kty-iv: sanity check - kty="RSA" (the genuine shape) still verifies
+// correctly after the hardening (no regression on the legitimate path).
+$rsaKtyResult = oauthVerifyJwtSignatureRS256($validJwt, $testJwks);
+assertTrue($rsaKtyResult['valid'], 'sanity check: a genuine kty="RSA" JWK still verifies successfully after the FINDING 3 hardening');
 
 // --- 6j. Missing sub/exp claims -----------------------------------------------
 $noSubClaims = $validClaims;
@@ -632,6 +769,138 @@ assertFalse($unlinkNoDb['success'], 'unlinkOAuthProviderForUser() fails safely w
 $applyLinkNoDb = applyOAuthAccountLink('microsoft', 'subject-1', 'user@example.com', true, 'User', null, null);
 assertFalse($applyLinkNoDb['success'], 'applyOAuthAccountLink() fails safely when dbQuery() is unavailable');
 assertEquals('SERVICE_UNAVAILABLE', $applyLinkNoDb['errorCode'], 'applyOAuthAccountLink() without dbQuery() returns SERVICE_UNAVAILABLE');
+
+$acquireUnlinkLockNoDb = acquireOAuthUnlinkLock(1);
+assertFalse($acquireUnlinkLockNoDb, 'FINDING 1 (F-027) regression: acquireOAuthUnlinkLock() fails safe (false) when dbQuery() is unavailable - the caller must NOT proceed unserialised');
+
+// releaseOAuthUnlinkLock() is a void best-effort no-op without dbQuery() -
+// this call must not throw/fatal even though nothing was ever locked.
+releaseOAuthUnlinkLock(1);
+assertTrue(true, 'FINDING 1 (F-027) regression: releaseOAuthUnlinkLock() does not throw when dbQuery() is unavailable (best-effort no-op)');
+
+// ==============================================================================
+// 🔒 Section 8b: FINDING 1 (F-027) static regression guards - the OAuth
+//    unlink TOCTOU-race fix (source-text only, no execution)
+// ==============================================================================
+// SECURITY-CRITICAL invariant that a single-process, no-DB harness cannot
+// exercise as a genuine concurrent race (that requires a real MySQLi
+// connection + multiple OS processes - see SECURITY.md F-027 for the full
+// live before/after scratch-DB proof). Mirrors test_qrcodes.php's own F-023
+// static-regression-guard convention exactly: pins the lock's shape, that it
+// is genuinely per-USER, and that unlinkOAuthProviderForUser() actually
+// wires acquire/release around the guard-check + DELETE, so a future
+// "helpful" refactor cannot silently reopen this race.
+// ==============================================================================
+
+$oauthSourceForLockGuard = file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_oauth.php');
+assertTrue(
+    is_string($oauthSourceForLockGuard) && $oauthSourceForLockGuard !== '',
+    'sanity check: fn_oauth.php source was readable for the F-027 static regression guards below'
+);
+
+assertTrue(function_exists('acquireOAuthUnlinkLock'), 'F-027 regression guard: acquireOAuthUnlinkLock() is defined');
+assertTrue(function_exists('releaseOAuthUnlinkLock'), 'F-027 regression guard: releaseOAuthUnlinkLock() is defined');
+
+$acquireUnlinkLockFn = new \ReflectionFunction('acquireOAuthUnlinkLock');
+assertEquals(1, $acquireUnlinkLockFn->getNumberOfParameters(), 'F-027 regression guard: acquireOAuthUnlinkLock() takes exactly 1 parameter (int $userID)');
+assertTrue(
+    $acquireUnlinkLockFn->hasReturnType() && (string) $acquireUnlinkLockFn->getReturnType() === 'bool',
+    'F-027 regression guard: acquireOAuthUnlinkLock() returns bool (true = lock held, false = caller must NOT proceed unserialised)'
+);
+
+$releaseUnlinkLockFn = new \ReflectionFunction('releaseOAuthUnlinkLock');
+assertEquals(1, $releaseUnlinkLockFn->getNumberOfParameters(), 'F-027 regression guard: releaseOAuthUnlinkLock() takes exactly 1 parameter (int $userID)');
+
+// ------------------------------------------------------------------------
+// 🔒 The lock is a real MySQL SESSION advisory lock (GET_LOCK()/
+// RELEASE_LOCK()), scoped per-USER, and under its OWN lock namespace -
+// distinct from fn_api_qrcodes.php's CUERCODE_SAVE_LOCK_NAME_PREFIX (an
+// in-flight /save and an in-flight unlink for the SAME user must not
+// contend with each other - they guard unrelated invariants).
+// ------------------------------------------------------------------------
+$acquireUnlinkStart = strpos($oauthSourceForLockGuard, 'function acquireOAuthUnlinkLock(');
+$releaseUnlinkStart = strpos($oauthSourceForLockGuard, 'function releaseOAuthUnlinkLock(');
+assertTrue(
+    $acquireUnlinkStart !== false && $releaseUnlinkStart !== false && $acquireUnlinkStart < $releaseUnlinkStart,
+    'sanity check: acquireOAuthUnlinkLock() and releaseOAuthUnlinkLock() are both found in fn_oauth.php, in the expected order'
+);
+$acquireUnlinkLockBody = substr($oauthSourceForLockGuard, $acquireUnlinkStart, $releaseUnlinkStart - $acquireUnlinkStart);
+
+assertContains(
+    'GET_LOCK(',
+    $acquireUnlinkLockBody,
+    'F-027 regression guard: acquireOAuthUnlinkLock() actually calls MySQL GET_LOCK() (not a no-op/stub)'
+);
+assertContains(
+    'CUERCODE_OAUTH_UNLINK_LOCK_NAME_PREFIX . $userID',
+    $acquireUnlinkLockBody,
+    'F-027 regression guard: the advisory lock name is scoped PER-USER (userID) under its OWN namespace'
+);
+assertFalse(
+    str_contains($acquireUnlinkLockBody, 'CUERCODE_SAVE_LOCK_NAME_PREFIX'),
+    'F-027 regression guard: the OAuth-unlink lock does NOT reuse the F-023 save-limit lock name (they must not contend with each other)'
+);
+
+$releaseUnlinkEnd = strpos($oauthSourceForLockGuard, 'function unlinkOAuthProviderForUser(');
+assertTrue(
+    $releaseUnlinkEnd !== false && $releaseUnlinkEnd > $releaseUnlinkStart,
+    'sanity check: unlinkOAuthProviderForUser() found after releaseOAuthUnlinkLock() in fn_oauth.php'
+);
+$releaseUnlinkLockBody = substr($oauthSourceForLockGuard, $releaseUnlinkStart, $releaseUnlinkEnd - $releaseUnlinkStart);
+
+assertContains(
+    'RELEASE_LOCK(',
+    $releaseUnlinkLockBody,
+    'F-027 regression guard: releaseOAuthUnlinkLock() actually calls MySQL RELEASE_LOCK() (not a no-op/stub)'
+);
+
+// ------------------------------------------------------------------------
+// 🔒 unlinkOAuthProviderForUser() wires the lock around the guard-check +
+// DELETE, and releases it inside a `finally` block covering every exit path.
+// ------------------------------------------------------------------------
+$unlinkFnBody = substr($oauthSourceForLockGuard, $releaseUnlinkEnd);
+
+assertContains(
+    'acquireOAuthUnlinkLock($userID)',
+    $unlinkFnBody,
+    'F-027 regression guard: unlinkOAuthProviderForUser() acquires the per-user OAuth-unlink lock'
+);
+assertContains(
+    'releaseOAuthUnlinkLock($userID)',
+    $unlinkFnBody,
+    'F-027 regression guard: unlinkOAuthProviderForUser() releases the per-user OAuth-unlink lock'
+);
+
+$unlinkFinallyPos = strpos($unlinkFnBody, '} finally {');
+assertTrue($unlinkFinallyPos !== false, 'sanity check: unlinkOAuthProviderForUser() has a "} finally {" block');
+assertContains(
+    'releaseOAuthUnlinkLock($userID)',
+    substr($unlinkFnBody, $unlinkFinallyPos),
+    'F-027 regression guard: the lock IS released inside the "finally" block itself (guaranteed on every exit path)'
+);
+
+// 📌 The guard-check (userHasPasswordSet()/countLinkedOAuthProvidersForUser())
+// and the DELETE must BOTH sit strictly between the acquire and the
+// "} finally {" that releases the lock - i.e. genuinely INSIDE the locked
+// section, not merely present somewhere in the function.
+$unlinkAcquirePos = strpos($unlinkFnBody, 'acquireOAuthUnlinkLock($userID)');
+$unlinkLockedSection = substr($unlinkFnBody, $unlinkAcquirePos, $unlinkFinallyPos - $unlinkAcquirePos);
+
+assertContains(
+    'userHasPasswordSet($userID)',
+    $unlinkLockedSection,
+    'F-027 regression guard: the "last sign-in method" guard-check runs INSIDE the locked section (between acquire and finally)'
+);
+assertContains(
+    'countLinkedOAuthProvidersForUser($userID)',
+    $unlinkLockedSection,
+    'F-027 regression guard: the linked-provider count check runs INSIDE the locked section (between acquire and finally)'
+);
+assertContains(
+    'DELETE FROM `tblUserOAuth`',
+    $unlinkLockedSection,
+    'F-027 regression guard: the DELETE runs INSIDE the locked section (between acquire and finally) - this is what closes the TOCTOU race'
+);
 
 // ==============================================================================
 // ✅ Section 9: provider registry / display metadata

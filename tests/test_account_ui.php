@@ -436,3 +436,86 @@ foreach ($f026Paths as $f026Path => $f026Method) {
         'F-026 regression guard: ' . strtoupper($f026Method) . ' ' . $f026Path . ' documents a 403 response'
     );
 }
+
+// ==============================================================================
+// 🔒 Section 7: F-028 hardening - accountPagePostCsrfValid() fails CLOSED
+// ==============================================================================
+// Independent OIDC/SSO security review (E2) FINDING 2 (Low): before this fix,
+// account/index.php's own no-JS-form CSRF gate returned `true` (i.e.
+// "CSRF check passed") whenever validateCSRFToken() was undefined - a fail-
+// OPEN default that would have waved through EVERY state-changing no-JS
+// action on the account dashboard (profile update, password change, session
+// revoke, SSO provider unlink, API key create/rotate/revoke, ...) with no
+// CSRF check at all, had fn_csrf.php somehow failed to load. Fixed to fail
+// CLOSED (return false), matching public_html/auth/index.php's own
+// equivalent gate (`!function_exists('validateCSRFToken') ||
+// !validateCSRFToken(...)`).
+//
+// accountPagePostCsrfValid() is defined INSIDE public_html/account/index.php
+// (a page file that requires bootstrap.php and redirects an anonymous
+// visitor before any of its own code runs) rather than in a fn_ file, so it
+// cannot be require()'d and called directly inside this dependency-free,
+// no-DB, no-$_SESSION harness (same constraint test_account_ui.php's own
+// Section "SKIPPED" list already documents for the four handleAccount*()
+// HTTP handlers). A static, source-text regression guard - identical
+// convention to Section 6's F-026 guards above - pins the fail-CLOSED
+// invariant instead.
+// ==============================================================================
+
+$accountIndexPagePath   = CUERCODE_SITE_ROOT . 'public_html' . DIRECTORY_SEPARATOR . 'account' . DIRECTORY_SEPARATOR . 'index.php';
+$accountIndexPageSource = file_get_contents($accountIndexPagePath);
+
+assertTrue(
+    is_string($accountIndexPageSource) && $accountIndexPageSource !== '',
+    'sanity check: public_html/account/index.php source was readable for the F-028 CSRF fail-closed regression guard'
+);
+
+$csrfGateStart = strpos($accountIndexPageSource, 'function accountPagePostCsrfValid()');
+assertTrue(
+    $csrfGateStart !== false,
+    'F-028 regression guard: accountPagePostCsrfValid() is defined in public_html/account/index.php'
+);
+
+// 📌 Isolate just this function's body (up to the next top-level closing
+// brace + blank line, mirroring the file's own formatting) so the
+// assertions below cannot accidentally match unrelated code elsewhere on
+// the page.
+$csrfGateEnd = strpos($accountIndexPageSource, "\n}\n", $csrfGateStart);
+assertTrue(
+    $csrfGateEnd !== false && $csrfGateEnd > $csrfGateStart,
+    'sanity check: accountPagePostCsrfValid()\'s closing brace was found after its opening'
+);
+$csrfGateBody = substr($accountIndexPageSource, $csrfGateStart, $csrfGateEnd - $csrfGateStart);
+
+assertContains(
+    '!function_exists(\'validateCSRFToken\')',
+    $csrfGateBody,
+    'F-028 regression guard: accountPagePostCsrfValid() checks !function_exists(\'validateCSRFToken\') (the fail-closed branch condition)'
+);
+
+assertContains(
+    'return false;',
+    $csrfGateBody,
+    'F-028 regression guard: accountPagePostCsrfValid() returns false when validateCSRFToken() is unavailable (fails CLOSED)'
+);
+
+assertFalse(
+    str_contains($csrfGateBody, 'return true;'),
+    'F-028 regression guard: accountPagePostCsrfValid() NEVER unconditionally returns true - the pre-fix fail-OPEN sentinel is gone'
+);
+
+// 🔗 Parity check: public_html/auth/index.php's OWN CSRF gate for the
+// "link an additional provider" flow already failed closed BEFORE this fix -
+// used here as the sibling convention this fix now matches (see FINDING 2's
+// remediation note).
+$authIndexPagePath   = CUERCODE_SITE_ROOT . 'public_html' . DIRECTORY_SEPARATOR . 'auth' . DIRECTORY_SEPARATOR . 'index.php';
+$authIndexPageSource = file_get_contents($authIndexPagePath);
+assertTrue(
+    is_string($authIndexPageSource) && $authIndexPageSource !== '',
+    'sanity check: public_html/auth/index.php source was readable for the F-028 CSRF-parity regression guard'
+);
+assertContains(
+    '!function_exists(\'validateCSRFToken\')',
+    $authIndexPageSource,
+    'F-028 parity check: public_html/auth/index.php\'s own CSRF gate ALSO fails closed when validateCSRFToken() is unavailable (the convention account/index.php now matches)'
+);
