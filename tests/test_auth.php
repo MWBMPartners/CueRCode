@@ -47,6 +47,17 @@
  *     context - covered by manual/curl verification against the scratch DB,
  *     not unit-tested here.
  *
+ * Section 7 adds STATIC (source-text, no execution) regression guards for
+ * the E3 stage 1 auth security review findings that fixed registerUser()'s
+ * timing side-channel (F-021), a duplicate-registration-race PII leak into
+ * tblErrorLog, session-id-at-rest masking in fn_error_handler.php, and a
+ * dead-code cleanup - each guard pins the specific source-code shape the
+ * fix requires so a future edit cannot silently reopen any of them. The
+ * live scratch-DB timing measurement and race-condition proof for these
+ * fixes are NOT in this harness (they need a real MySQL connection and, for
+ * the race, real concurrent processes) - see SECURITY.md/CHANGELOG.md for
+ * that evidence.
+ *
  * @package     CueRCode
  * @subpackage  Tests
  * @copyright   2025–2026 MWBM Partners Ltd
@@ -402,4 +413,139 @@ assertContains(
     'RUNTIME_EXCEPTION_THROWN',
     $requireAuthOutput,
     'requireAuth() throws a RuntimeException when unauthenticated and errorResponse() is unavailable (never returns null silently)'
+);
+
+// ==============================================================================
+// ✅ Section 7: Static regression guards - E3 stage 1 auth security review
+//    (register() timing side-channel / duplicate-race PII / session-id
+//    masking / dead-code cleanup)
+// ==============================================================================
+// registerUser()/loginUser()/etc. are DB-dependent (see the file-level
+// docblock above) and are exercised end-to-end against a scratch database
+// as part of the security-review evidence, NOT in this DB-independent
+// harness. What CAN be verified here, cheaply and on every run, is that the
+// SOURCE CODE still has the specific shape the fix requires - a static
+// regression guard against someone innocently reordering registerUser()
+// back to its pre-fix shape (or reintroducing the removed dead $_POST
+// fallback) without realising the security implication.
+//
+// This reads the production files as plain text (no execution), so it adds
+// zero DB dependency and zero runtime risk to the harness.
+// ==============================================================================
+
+$fnAuthSource = file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_auth.php');
+assertTrue(is_string($fnAuthSource) && $fnAuthSource !== '', 'sanity check: fn_auth.php source was readable for the static regression guards below');
+
+// 📌 Isolate registerUser()'s body (from its own `function` keyword up to the
+// next function's `function` keyword) so the position checks below are
+// scoped to THIS function only, not accidentally matching text elsewhere
+// in the file.
+$registerUserStart = strpos($fnAuthSource, 'function registerUser(');
+$registerUserEnd    = strpos($fnAuthSource, 'function verifyEmailToken(');
+assertTrue(
+    $registerUserStart !== false && $registerUserEnd !== false && $registerUserStart < $registerUserEnd,
+    'sanity check: registerUser() and verifyEmailToken() are both found in fn_auth.php, in the expected order'
+);
+$registerUserBody = substr($fnAuthSource, $registerUserStart, $registerUserEnd - $registerUserStart);
+
+// --------------------------------------------------------------------------
+// F-021 - register() timing side-channel regression guard
+// --------------------------------------------------------------------------
+// The fix's entire premise is ORDERING: hashPassword() must run BEFORE the
+// tblUsers existence-check SELECT, so both the "already registered" and
+// "brand new email" branches pay the identical Argon2id cost before either
+// one can return. Assert that ordering directly against the source.
+// --------------------------------------------------------------------------
+$hashCallPos   = strpos($registerUserBody, 'hashPassword($plainPassword)');
+$existingSqlPos = strpos($registerUserBody, 'SELECT `userID` FROM `tblUsers` WHERE `email` = ?');
+
+assertTrue(
+    $hashCallPos !== false,
+    'F-021 regression guard: registerUser() still calls hashPassword($plainPassword) somewhere'
+);
+assertTrue(
+    $existingSqlPos !== false,
+    'F-021 regression guard: registerUser() still runs the tblUsers existence-check SELECT somewhere'
+);
+assertTrue(
+    $hashCallPos !== false && $existingSqlPos !== false && $hashCallPos < $existingSqlPos,
+    'F-021 regression guard: hashPassword() is called BEFORE the existence-check SELECT (both response '
+    . 'branches now pay the identical Argon2id cost - see the live scratch-DB timing measurement in '
+    . 'SECURITY.md/CHANGELOG.md for the ~81-89ms-gap-closed-to-~0-3ms proof)'
+);
+
+// --------------------------------------------------------------------------
+// Finding 2 - duplicate-registration-race PII regression guard
+// --------------------------------------------------------------------------
+// The pre-fix code logged $e->getMessage() UNCONDITIONALLY in the INSERT
+// catch block, which for a duplicate-key race embeds MySQL's own
+// "Duplicate entry '<email>' for key ..." wording (verbatim plaintext
+// email). Assert that exact vulnerable call is gone AND that a
+// duplicate-key classification + generic log title now exists instead.
+// --------------------------------------------------------------------------
+assertFalse(
+    str_contains(
+        $registerUserBody,
+        "logError('warning', 'Registration insert failed (possible duplicate race)', \$e->getMessage())"
+    ),
+    'Finding 2 regression guard: the pre-fix unconditional-raw-message logError() call for the duplicate-insert '
+    . 'catch block (which could embed the plaintext email via MySQL\'s "Duplicate entry" wording) is gone'
+);
+assertContains(
+    'mysqli_sql_exception',
+    $registerUserBody,
+    'Finding 2 regression guard: registerUser() classifies the duplicate-key case via \\mysqli_sql_exception (errno 1062) detection'
+);
+assertContains(
+    "'Registration insert conflict (duplicate email)'",
+    $registerUserBody,
+    'Finding 2 regression guard: the duplicate-key branch logs the new GENERIC title (no PII) instead of the raw driver message'
+);
+
+// --------------------------------------------------------------------------
+// Finding 3 - session-id-at-rest masking regression guard (fn_error_handler.php)
+// --------------------------------------------------------------------------
+// The pre-fix code stored `$sessionID = session_id();` verbatim into
+// tblErrorLog. Assert that exact vulnerable assignment is gone and that the
+// masked (SHA-256-prefix) form is computed instead.
+// --------------------------------------------------------------------------
+$fnErrorHandlerSource = file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_error_handler.php');
+assertTrue(is_string($fnErrorHandlerSource) && $fnErrorHandlerSource !== '', 'sanity check: fn_error_handler.php source was readable for the Finding 3 regression guard');
+
+assertFalse(
+    str_contains($fnErrorHandlerSource, '$sessionID = session_id();'),
+    'Finding 3 regression guard: logError() no longer assigns the raw session_id() return value directly to $sessionID (the value that gets persisted to tblErrorLog)'
+);
+assertContains(
+    "substr(hash('sha256', \$rawSessionID), 0, 16)",
+    $fnErrorHandlerSource,
+    'Finding 3 regression guard: logError() masks the session id to a truncated SHA-256 hash before it is persisted to tblErrorLog'
+);
+
+// --------------------------------------------------------------------------
+// Cleanup - dead $_POST['csrf_token'] fallback regression guard
+// --------------------------------------------------------------------------
+// Both requireCsrfOrApiKey() (fn_api_accounts.php) and authenticateAPIRequest()
+// (fn_api_auth.php) previously fell back to $_POST['csrf_token'], which is
+// unreachable in production (the router requires Content-Type:
+// application/json and rejects everything else with 415 before either
+// function runs, and PHP never populates $_POST for a JSON body). Assert
+// the dead branch was actually removed from both files, not merely
+// commented out.
+// --------------------------------------------------------------------------
+$fnApiAccountsSource = file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_accounts.php');
+$fnApiAuthSource     = file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_auth.php');
+
+// 📌 Check for the actual EXECUTABLE read (isset($_POST['csrf_token'])),
+// not a bare mention - the surviving comments in both files intentionally
+// still name $_POST['csrf_token'] in prose (documenting why it was removed),
+// so a plain substring match on the bare superglobal expression would
+// false-positive against those comments.
+assertFalse(
+    str_contains($fnApiAccountsSource, "isset(\$_POST['csrf_token'])"),
+    'Dead-code cleanup regression guard: fn_api_accounts.php requireCsrfOrApiKey() no longer reads $_POST[\'csrf_token\'] (unreachable - router mandates JSON Content-Type, 415s form POSTs first)'
+);
+assertFalse(
+    str_contains($fnApiAuthSource, "isset(\$_POST['csrf_token'])"),
+    'Dead-code cleanup regression guard: fn_api_auth.php authenticateAPIRequest() no longer reads $_POST[\'csrf_token\'] (same reason)'
 );

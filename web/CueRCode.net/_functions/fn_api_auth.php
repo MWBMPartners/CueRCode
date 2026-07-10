@@ -177,23 +177,21 @@ function authenticateAPIRequest(): array
 
     // ==================================================================
     // 📌 Priority 2: Check for CSRF token (session-based web UI auth)
-    // The CSRF token can come from the X-CSRF-Token header or the
-    // csrf_token POST parameter.
+    // The CSRF token comes from the X-CSRF-Token header ONLY. A
+    // $_POST['csrf_token'] fallback (for classic form submissions) was
+    // deliberately removed here (dead-code cleanup, E3 stage 1 security
+    // review): the router (public_html/api/v1/index.php) mandates
+    // Content-Type: application/json on every non-empty POST body and
+    // rejects anything else with 415 BEFORE this function ever runs
+    // (F-009) - PHP only auto-populates $_POST for
+    // 'application/x-www-form-urlencoded'/'multipart/form-data' bodies, so
+    // a real form POST can never reach here with a populated $_POST.
     // @see fn_csrf.php - validateCSRFToken()
     // ==================================================================
     if (isset($_SERVER['HTTP_X_CSRF_TOKEN'])) {
         $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'];
     } else {
         $csrfToken = '';
-    }
-
-    if ($csrfToken === '') {
-        // 📌 Fall back to POST parameter (for form submissions)
-        if (isset($_POST['csrf_token'])) {
-            $csrfToken = $_POST['csrf_token'];
-        } else {
-            $csrfToken = '';
-        }
     }
 
     if ($csrfToken !== '' && function_exists('validateCSRFToken')) {

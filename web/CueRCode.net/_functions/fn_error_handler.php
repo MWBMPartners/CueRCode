@@ -367,10 +367,28 @@ function logError(
         $userAgent = 'unknown';
     }
 
-    // 🎫 Session ID (if session is active)
+    // 🎫 Session ID (if session is active) - MASKED before storage (F-022,
+    // defence-in-depth). tblErrorLog is a lower-privilege, longer-retention
+    // audit table than the session store itself; storing the raw PHP
+    // session id here would let anyone with read access to tblErrorLog
+    // (which is broader than "can hijack live sessions") directly replay a
+    // still-live session. We store only a truncated SHA-256 hash of the raw
+    // id (first 16 hex chars) - enough to correlate multiple error rows
+    // from the SAME session/request for debugging, without ever persisting
+    // (or being derivable back into) the actual bearer value. This mirrors
+    // the intent of the footer's own session-id masking (SECURITY.md
+    // F-019), which is a same-session DISPLAY concern (masks all but the
+    // last 8 raw characters); this is AT-REST storage, so we go further and
+    // never store any raw characters at all.
     // @see https://www.php.net/manual/en/function.session-id.php
+    // @see https://www.php.net/manual/en/function.hash.php
     if (session_status() === PHP_SESSION_ACTIVE) {
-        $sessionID = session_id();
+        $rawSessionID = session_id();
+        if (is_string($rawSessionID) && $rawSessionID !== '') {
+            $sessionID = substr(hash('sha256', $rawSessionID), 0, 16);
+        } else {
+            $sessionID = null;
+        }
     } else {
         $sessionID = null;
     }

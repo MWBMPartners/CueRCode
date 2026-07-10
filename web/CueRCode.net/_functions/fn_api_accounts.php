@@ -117,10 +117,16 @@ function requireCsrfOrApiKey(): void
         $csrfToken = '';
     }
 
-    if ($csrfToken === '' && isset($_POST['csrf_token'])) {
-        $csrfToken = $_POST['csrf_token'];
-    }
-
+    // 📌 No $_POST['csrf_token'] fallback here (deliberately removed - dead
+    // code cleanup, E3 stage 1 security review): every route on this file is
+    // reached exclusively through public_html/api/v1/index.php, which
+    // rejects ANY non-empty POST body whose Content-Type is not
+    // 'application/json' (or 'application/json; ...') with a 415 BEFORE the
+    // request body is ever parsed (F-009). PHP only auto-populates $_POST
+    // for 'application/x-www-form-urlencoded'/'multipart/form-data' bodies,
+    // so a genuine form POST can never reach this function with a populated
+    // $_POST - the header is the only reachable source for these JSON-only
+    // routes.
     if ($csrfToken !== '' && function_exists('validateCSRFToken') && validateCSRFToken($csrfToken)) {
         return;
     }

@@ -253,7 +253,12 @@ function buildAccountActionUrl(string $action, string $rawToken): string
  * already has an account" from these two cases. No verification email is
  * sent for an already-registered email (we cannot confirm the requester
  * currently controls it, and re-sending would be a mild self-inflicted spam
- * vector), which is likewise unobservable from the response.
+ * vector), which is likewise unobservable from the response. TIMING is also
+ * now equalised (F-021): the Argon2id hash is computed UNCONDITIONALLY
+ * before the existence check runs, so the "already registered" branch pays
+ * the identical ~80-90ms cost as the "new email" branch instead of
+ * returning immediately after a sub-millisecond SELECT - closing a
+ * previously measurable response-time side-channel.
  *
  * @param string      $email         Candidate email address (validated by the caller/handler
  *                                     via validateEmail() before this is called)
@@ -297,6 +302,34 @@ function registerUser(string $email, string $plainPassword, ?string $displayName
         $normalizedDisplayName = null;
     }
 
+    // 🔐 F-021 (register timing side-channel fix): hash the candidate
+    // password (Argon2id, ~80-90ms at the configured cost parameters)
+    // UNCONDITIONALLY here, BEFORE the existence check below - NOT only on
+    // the "brand new email" branch as before. Previously the "email already
+    // exists" branch returned immediately after a sub-millisecond indexed
+    // SELECT while ONLY the "new email" branch paid the Argon2id cost,
+    // producing an ~80-90ms measurable response-time gap over real HTTP
+    // even though the two branches' RESPONSE BODIES were already identical
+    // - an attacker could enumerate registered emails from timing alone.
+    // Computing the hash first means BOTH branches now pay the identical
+    // cost before either one returns, closing the side-channel while
+    // preserving every other anti-enumeration property already in place.
+    // See SECURITY.md F-021.
+    try {
+        $passwordHash = hashPassword($plainPassword);
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Password hashing failed during registration', $e->getMessage());
+        }
+        return [
+            'success'   => false,
+            'httpCode'  => 500,
+            'errorCode' => 'HASH_FAILED',
+            'message'   => 'Registration could not be completed. Please try again later.',
+            'data'      => [],
+        ];
+    }
+
     // 🔍 Look up an existing account by email WITHOUT revealing the result
     // to the caller - only used internally to decide whether to insert.
     try {
@@ -318,26 +351,15 @@ function registerUser(string $email, string $plainPassword, ?string $displayName
     }
 
     if ($existingRow !== null) {
-        // ✅ Anti-enumeration: identical response, no new email sent.
+        // ✅ Anti-enumeration: identical response AND (per the F-021 fix
+        // above) identical timing - the Argon2id hash was already computed
+        // before this check ran, so this branch's cost now matches the
+        // "new email" branch below. No new email is sent.
         return $genericSuccess;
     }
 
-    // 🔐 New account - hash the password (Argon2id) before it ever touches the database.
-    try {
-        $passwordHash = hashPassword($plainPassword);
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('error', 'Password hashing failed during registration', $e->getMessage());
-        }
-        return [
-            'success'   => false,
-            'httpCode'  => 500,
-            'errorCode' => 'HASH_FAILED',
-            'message'   => 'Registration could not be completed. Please try again later.',
-            'data'      => [],
-        ];
-    }
-
+    // 📌 New account - $passwordHash was already computed above (see the
+    // F-021 comment), so it is reused here rather than re-hashed.
     try {
         $insertStmt = dbQuery(
             'INSERT INTO `tblUsers` (`email`, `passwordHash`, `displayName`, `status`) VALUES (?, ?, ?, ?)',
@@ -350,9 +372,36 @@ function registerUser(string $email, string $plainPassword, ?string $displayName
         // 📌 A duplicate-key race (two concurrent registrations for the same
         // email landing here simultaneously) is caught and treated
         // identically to the "already exists" branch above.
+        //
+        // 🔒 PII fix: MySQL's own duplicate-key error text is of the form
+        // "Duplicate entry '<email>' for key ..." - logging $e->getMessage()
+        // verbatim (as this branch previously did) would put the plaintext
+        // email address into tblErrorLog. Detect the duplicate-key/
+        // constraint-violation case specifically (mysqli's default PHP 8.1+
+        // exception-reporting mode throws \mysqli_sql_exception with MySQL
+        // errno 1062 for ER_DUP_ENTRY; a wrapped RuntimeException from
+        // dbQuery()'s own execute-failure path would instead embed the same
+        // "Duplicate entry" wording in its message) and log a GENERIC
+        // message instead - never the raw driver error text for this
+        // specific failure mode. Any OTHER unexpected insert failure still
+        // logs its real message for operator follow-up (it is not expected
+        // to carry the email in its wording).
+        $isDuplicateKeyError = ($e instanceof \mysqli_sql_exception && $e->getCode() === 1062)
+            || stripos($e->getMessage(), 'duplicate entry') !== false;
+
         if (function_exists('logError')) {
-            logError('warning', 'Registration insert failed (possible duplicate race)', $e->getMessage());
+            if ($isDuplicateKeyError) {
+                logError(
+                    'warning',
+                    'Registration insert conflict (duplicate email)',
+                    'A concurrent registration attempt raced this one for the same email address '
+                    . '(unique-key constraint violation) - no PII logged for this expected race condition.'
+                );
+            } else {
+                logError('warning', 'Registration insert failed (unexpected error)', $e->getMessage());
+            }
         }
+
         return $genericSuccess;
     }
 
