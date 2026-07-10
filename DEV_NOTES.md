@@ -1,6 +1,6 @@
 # 🛠️ CueRCode - Developer Notes
 
-**📅 Last Updated:** 2026-07-10
+**📅 Last Updated:** 2026-07-10 (Epic E8 - Microsoft Graph email subsystem, #29)
 
 ---
 
@@ -114,6 +114,35 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
 
 `public_html_dev_alpha/.htaccess` and `public_html_dev_beta/.htaccess` previously shipped with `Require valid-user` commented out and no active deny rule, leaving both dev environments unprotected as committed. Both now default to `Require all denied` (Apache 2.4+, with an Apache 2.2 `Order deny,allow`/`Deny from all` fallback) as the active rule. The Basic-Auth block is retained, fully commented, with numbered steps for the owner to create a `.htpasswd` file on the server and switch over. **Before either dev channel goes live, the owner must deliberately opt in** — it is denied-by-default, not open-by-default.
 
+### Email Subsystem (Microsoft Graph) - Epic E8, #29
+
+`_functions/fn_email.php` implements transactional email via a Microsoft 365 shared mailbox over the Microsoft Graph API, using the OAuth2 **client-credentials** grant (application permission, no signed-in user). Per ProjectBrief §13 this deliberately does **NOT** use PHP's `mail()` function.
+
+**Inert by default.** `email_enabled` (tblSettings, group `email`) seeds to `0`. Every public function in `fn_email.php` fails OPEN the moment the kill-switch is off, the config subsystem isn't loaded, or any Graph credential is unset (the exact state of a fresh install) - `getGraphAccessToken()` returns `null` and `sendEmailNow()` returns `[false, "skipped: ..."]` with **zero network calls attempted**. Nothing sends until an owner completes the setup below.
+
+**Owner setup to activate:**
+
+1. **Register an M365 app** (Microsoft Entra ID / Azure AD → App registrations → New registration).
+2. **Grant the `Mail.Send` APPLICATION permission** (not delegated) and have a Global Admin **grant admin consent**.
+3. **Create/designate a shared mailbox** the app will send *as* (Send-As), e.g. `notifications@yourdomain.com`. The signed-in app has no user of its own - Graph's `sendMail` targets `/v1.0/users/{mailbox}/sendMail` where `{mailbox}` is this shared mailbox's address.
+4. **Configure DKIM and DMARC** on the sending domain (M365 admin center → Exchange → mail flow, or your DNS provider) so mail sent via Graph passes authentication checks at the recipient (Gmail/Outlook increasingly reject/spam-fold unauthenticated bulk mail).
+5. **Fill the settings via the admin UI** (never commit real values - all seed EMPTY):
+   - `graph_tenant_id` - the Entra ID tenant ID (Directory (tenant) ID on the app registration's Overview page).
+   - `graph_client_id` - the app registration's Application (client) ID.
+   - `graph_client_secret` - a client secret VALUE (not the secret ID) created under the app registration's "Certificates & secrets".
+   - `graph_sender_mailbox` - the shared mailbox address from step 3.
+   - `email_from_name` - the display name recipients see (e.g. "CueRCode Notifications").
+6. **Flip `email_enabled` to `1`** once the above is verified working (e.g. via a manual `sendEmailNow()` smoke test).
+7. **Choose a queue-processing strategy** - `email_queue_autoprocess` (0 = OFF by default):
+   - **Recommended: Dreamhost panel cron** (no SSH needed) - Dreamhost's panel → Cron Jobs → add a job that runs a small PHP script (e.g. `_includes/cron/process_email_queue.php`, to be added when the queue starts carrying real traffic) calling `processEmailQueue()` on a schedule (e.g. every 5 minutes).
+   - **Alternative: opportunistic shutdown-hook** - set `email_queue_autoprocess=1` and call `maybeProcessEmailQueueOnShutdown()` from an entry point AFTER `fn_email.php` is loaded (NOT wired into `bootstrap.php` by default, so the core request path is untouched unless this is deliberately opted into). Processes ≤2 emails per request, after the response has already been sent - fail-open, never surfaces an error to the client.
+
+**Queue + retry:** `queueEmail()` inserts a `tblEmailQueue` row (status `queued`, `nextAttemptAt = NOW()`); `processEmailQueue($max=2)` claims due rows (`status IN ('queued','failed')`, `nextAttemptAt <= NOW()`, `attempts < maxAttempts`), re-renders the template fresh (never trusts a stored, possibly-stale rendered body), and calls `sendEmailNow()`. On success the row becomes `sent`; on failure, `attempts` increments and the row is rescheduled with **exponential backoff** (`nextAttemptAt = NOW() + 2^attempts MINUTES`, computed by the pure, unit-tested `computeEmailBackoffMinutes()`) until `maxAttempts` (default 5) is reached, at which point the row is marked permanently `failed`. **Caveat:** a row queued while `email_enabled=0` (or otherwise unconfigured) will burn through its retry budget (~62 cumulative minutes at the default schedule/maxAttempts) and land on `failed` even though the "failure" was really just "not configured yet" - don't queue anything meaningful before `email_enabled=1` is set.
+
+**Templates:** `_includes/email_templates/{key}.php` (currently `verification`, `password_reset`, `invitation`, `receipt` - the allowlist enforced by `isValidEmailTemplateKey()`) each `return [$subject, $htmlBody];` and use the shared `emailRenderShell()` wrapper for consistent branding. Every interpolated parameter is escaped via `emailEscape()` (`htmlspecialchars(..., ENT_QUOTES, 'UTF-8')`) - proven by an XSS-injection test per template. **These templates use nested `<table>` layout - a deliberate, EMAIL-ONLY exception** to the project's no-`<table>`-for-layout house rule: email clients (Outlook desktop's Word rendering engine especially) have extremely limited CSS support and effectively require table layout for reliable cross-client rendering. This does not relax the rule anywhere else in the codebase.
+
+**Driver-shaped for #30:** the `email_provider` setting (currently only `'graph'`) is the seam a future Google Workspace driver will plug into without any caller (`queueEmail()`/`sendEmailNow()`) needing to change.
+
 ### Braille Dot-Geometry Approach & Grade-1 Scope (#49, 2026-07-10)
 
 `fn_qr_accessible_pdf.php` draws Braille as **geometric dot patterns**, not a Unicode Braille font. Two reasons this is not optional:
@@ -159,6 +188,7 @@ Exits 0 if all assertions pass (or if there are no tests), 1 if any fail. Colour
 | `tests/lib/assert.php` | Assertion helpers: `assertEquals`, `assertTrue`, `assertFalse`, `assertContains`, `assertMatches`, `assertThrows` |
 | `tests/test_payloads.php` | Characterization tests for all 21 QR payload builders and escaping helpers |
 | `tests/test_core.php` | Characterization tests for encryption, CSRF, validation, QR options, and response formatting |
+| `tests/test_email.php` | Microsoft Graph email subsystem (#29) - template rendering/escaping, backoff schedule maths, and the fail-open contract when unconfigured/no DB |
 
 **Deployment boundary:** `tests/` is repo-root only and is excluded from all SFTP deploy workflows. It never reaches the Dreamhost server.
 

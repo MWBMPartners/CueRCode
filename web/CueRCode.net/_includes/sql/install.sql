@@ -392,9 +392,64 @@ CREATE TABLE IF NOT EXISTS `tblOrganisations` (
   COMMENT='🏢 Organisation accounts (Phase 2 stub - schema only in Phase 1)';
 
 -- ==============================================================================
+-- 📋 Table 11: tblEmailQueue (Epic E8, #29)
+-- ==============================================================================
+-- Outbound transactional email queue with retry/backoff support. Emails are
+-- NEVER sent synchronously inline with a user-facing request beyond the
+-- opportunistic ≤2-per-request shutdown hook (see fn_email.php
+-- maybeProcessEmailQueueOnShutdown() - gated OFF by default via the
+-- email_queue_autoprocess setting; a Dreamhost panel cron job hitting a
+-- small processor script is the recommended production path).
+--
+-- Rows are inserted by queueEmail() (fn_email.php) and consumed by
+-- processEmailQueue(), which claims due rows (status queued/failed AND
+-- nextAttemptAt <= NOW() AND attempts < maxAttempts), attempts a Microsoft
+-- Graph sendMail call, then transitions status:
+--   queued  -> sending -> sent              (success)
+--   queued  -> sending -> queued (backoff)   (failure, attempts < maxAttempts)
+--   queued  -> sending -> failed             (failure, attempts reaches maxAttempts)
+--
+-- Backoff schedule: nextAttemptAt = NOW() + (2 ^ attempts) MINUTES, computed by
+-- the pure/unit-tested computeEmailBackoffMinutes() helper in fn_email.php.
+--
+-- @see fn_email.php - queueEmail(), processEmailQueue(), computeEmailBackoffMinutes()
+-- @see https://dev.mysql.com/doc/refman/8.0/en/enum.html ENUM type
+-- @see https://dev.mysql.com/doc/refman/8.0/en/json.html JSON column type
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblEmailQueue` (
+    `emailID`         BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing email queue identifier',
+    `toAddress`       VARCHAR(320)      NOT NULL                 COMMENT '📧 Recipient email address (RFC 5321 max length 320)',
+    `toName`          VARCHAR(255)      NULL                     COMMENT '📝 Recipient display name (optional)',
+    `templateKey`     VARCHAR(64)       NOT NULL                 COMMENT '🏷️ Template identifier (e.g., verification, password_reset, invitation, receipt) - must match an allowlisted _includes/email_templates/{key}.php file',
+    `paramsJSON`      JSON              NULL                     COMMENT '📦 Template parameters as JSON (rendered fresh at send time; NEVER stores rendered HTML or secrets)',
+    `subject`         VARCHAR(255)      NOT NULL                 COMMENT '📝 Email subject line (rendered at queue time for admin visibility)',
+    `status`          ENUM(
+                          'queued',
+                          'sending',
+                          'sent',
+                          'failed',
+                          'skipped'
+                      )                 NOT NULL DEFAULT 'queued' COMMENT '📊 Current lifecycle status of this queued email',
+    `attempts`        INT UNSIGNED      NOT NULL DEFAULT 0       COMMENT '🔁 Number of send attempts made so far',
+    `maxAttempts`     INT UNSIGNED      NOT NULL DEFAULT 5       COMMENT '🔁 Maximum send attempts before permanently marking failed',
+    `lastError`       TEXT              NULL                     COMMENT '⚠️ Last error message (HTTP status/Graph error code only - never logs credentials or full response bodies)',
+    `nextAttemptAt`   DATETIME          NULL                     COMMENT '⏰ Earliest time this row is eligible to be picked up again (exponential backoff after a failure)',
+    `createdAt`       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Row creation (queue) timestamp',
+    `updatedAt`       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+    `sentAt`          DATETIME          NULL                     COMMENT '📅 Timestamp the email was successfully accepted by Microsoft Graph (HTTP 202)',
+
+    PRIMARY KEY (`emailID`),
+    INDEX `idx_email_status_next` (`status`, `nextAttemptAt`),
+    INDEX `idx_email_template` (`templateKey`),
+    INDEX `idx_email_created` (`createdAt`)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='📧 Outbound transactional email queue with retry/backoff (Microsoft Graph sendMail, Epic E8)';
+
+-- ==============================================================================
 -- ✅ Installation Complete
 -- ==============================================================================
--- All 10 tables have been created:
+-- All 11 tables have been created:
 --   1. tblSettings          - Application configuration
 --   2. tblErrorLog          - Error/exception logging
 --   3. tblActivityLog       - Activity tracking
@@ -405,6 +460,7 @@ CREATE TABLE IF NOT EXISTS `tblOrganisations` (
 --   8. tblAPIRateLog        - API rate limiting
 --   9. tblUsers             - User accounts (Phase 2 stub)
 --  10. tblOrganisations     - Organisation accounts (Phase 2 stub)
+--  11. tblEmailQueue        - Outbound email queue with retry/backoff (Epic E8)
 --
 -- 📌 Next step: Run seed_data.sql to populate initial data.
 -- ==============================================================================

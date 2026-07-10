@@ -108,10 +108,10 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | --- | --- | --- |
 | [#27](https://github.com/MWBMPartners/CueRCode/issues/27) | Go2My.Link URL shortener integration (dynamic QR codes) | 📋 |
 | [#28](https://github.com/MWBMPartners/CueRCode/issues/28) | SIGNula account linking and SSO integration | 📋 |
-| [#29](https://github.com/MWBMPartners/CueRCode/issues/29) | Microsoft Graph API email integration | 📋 |
-| [#30](https://github.com/MWBMPartners/CueRCode/issues/30) | Google Workspace email integration (future-ready) | 📋 |
+| [#29](https://github.com/MWBMPartners/CueRCode/issues/29) | Microsoft Graph API email integration | 🔄 Addressed in code (Epic E8, 2026-07-10) - `fn_email.php` (client-credentials sendMail, cached token, queue+retry with exponential backoff), `tblEmailQueue`, 4 branded templates, kill-switch settings (seeded inert: `email_enabled=0`); needs owner M365 app registration + credentials before it can go live |
+| [#30](https://github.com/MWBMPartners/CueRCode/issues/30) | Google Workspace email integration (future-ready) | 📋 `fn_email.php` is written driver-shaped (`email_provider` setting) so this can slot in without a schema change |
 
-**Note:** #29 (email) should be prioritised early as it's needed by Phase 2 (registration, password reset, invitations).
+**Note:** #29 (email) is prioritised early as it's needed by Phase 2 (registration, password reset, invitations) - code-complete and inert pending owner M365 setup; not yet live-server verified (needs #13/#18 style verification once deployed).
 
 ---
 

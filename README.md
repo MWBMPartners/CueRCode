@@ -131,6 +131,10 @@ curl -X POST https://cuercode.net/api/v1/generate \
   }'
 ```
 
+## 📧 Transactional Email (Epic E8)
+
+Registration verification, password resets, and organisation invitations are sent via the **Microsoft Graph API** (client-credentials grant, M365 shared mailbox Send-As) - never PHP's `mail()`. The whole subsystem (`_functions/fn_email.php`) is **inert by default**: the `email_enabled` kill-switch seeds to `0` and every Graph credential seeds empty, so no email can be sent (and no network call is attempted) until an owner completes the M365 app registration and fills the settings via the admin UI. See [DEV_NOTES.md](DEV_NOTES.md#email-subsystem-microsoft-graph---epic-e8-29) for the full setup runbook. Google Workspace (#30) is a future driver slot behind the same `email_provider` setting.
+
 ## 🔮 Future Integration
 
 - 🔗 **Go2My.Link**: URL shortener integration for dynamic QR code links

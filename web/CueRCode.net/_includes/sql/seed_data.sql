@@ -83,14 +83,38 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('branding', 'logo_path', '/assets/img/branding/logo.svg', 'path', 0, 1, 'Path to the site logo file'),
 ('branding', 'favicon_path', '/assets/img/branding/favicon.svg', 'path', 0, 1, 'Path to the favicon file'),
 
--- 📧 Email Settings (Phase 2)
-('email', 'smtp_host', '', 'string', 0, 1, 'SMTP server hostname'),
-('email', 'smtp_port', '587', 'integer', 0, 1, 'SMTP server port'),
-('email', 'smtp_username', '', 'string', 1, 1, 'SMTP authentication username'),
-('email', 'smtp_password', '', 'string', 1, 1, 'SMTP authentication password'),
-('email', 'smtp_encryption', 'tls', 'string', 0, 1, 'SMTP encryption type (tls, ssl, none)'),
-('email', 'email_from_address', 'noreply@cuercode.net', 'email', 0, 1, 'Default from email address'),
-('email', 'email_from_name', 'CueRCode', 'string', 0, 1, 'Default from name');
+-- 📧 Email Settings (Epic E8, #29) - Microsoft Graph client-credentials sendMail
+-- ------------------------------------------------------------------------------
+-- ⚠️  INERT BY DEFAULT: email_enabled seeds to 0 (kill-switch OFF). Nothing in
+--     this subsystem sends a single email until an owner:
+--       1. Registers an M365 app (Azure AD / Entra ID) with the Mail.Send
+--          APPLICATION permission (admin-consented), a dedicated shared mailbox
+--          for Send-As, and DKIM/DMARC configured on the sending domain.
+--       2. Fills graph_tenant_id / graph_client_id / graph_client_secret and
+--          graph_sender_mailbox via the admin settings UI (never commit these -
+--          they are seeded EMPTY here on purpose).
+--       3. Flips email_enabled to 1 once ready to go live.
+--     @see DEV_NOTES.md "Email Subsystem (Microsoft Graph)" for the full runbook.
+--
+-- 🔐 The four graph_* credential/cache settings are isSensitive=1, meaning
+--     fn_config.php transparently AES-256-GCM encrypts them at rest (via
+--     fn_encryption.php) and decrypts on read. graph_token_cache is NOT an
+--     owner-entered credential - it is a runtime cache fn_email.php's
+--     getGraphAccessToken() writes to via setConfig() once a real token is
+--     obtained; it starts empty and is safe to leave alone.
+--
+-- 🐘 Google Workspace (#30) is intentionally NOT seeded here yet - fn_email.php
+--     is written driver-shaped (email_provider selects the active driver) so a
+--     future Workspace driver can slot in without a schema change.
+('email', 'email_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for the email subsystem - 0 = fully inert, no sends attempted regardless of other settings'),
+('email', 'email_provider', 'graph', 'string', 0, 1, 'Active email driver (graph = Microsoft Graph client-credentials sendMail; workspace = future Google Workspace driver, #30)'),
+('email', 'email_from_name', '', 'string', 0, 1, 'Display name used as the From name on outgoing email (e.g. "CueRCode Notifications") - owner-set, seeded empty'),
+('email', 'graph_sender_mailbox', '', 'string', 0, 1, 'M365 shared mailbox address used as the Graph sendMail sender (Send-As permission required) - owner-set, seeded empty'),
+('email', 'graph_tenant_id', '', 'string', 1, 1, 'Microsoft Entra ID (Azure AD) tenant ID for the Graph app registration - ENCRYPTED, owner-set via admin only, never commit'),
+('email', 'graph_client_id', '', 'string', 1, 1, 'Microsoft Entra ID app registration (client) ID - ENCRYPTED, owner-set via admin only, never commit'),
+('email', 'graph_client_secret', '', 'string', 1, 1, 'Microsoft Entra ID app registration client secret value - ENCRYPTED, owner-set via admin only, never commit'),
+('email', 'graph_token_cache', '', 'json', 1, 0, 'Runtime OAuth2 access-token cache (access_token + expires_at), auto-managed by getGraphAccessToken() - ENCRYPTED, not owner-editable, do not populate manually'),
+('email', 'email_queue_autoprocess', '0', 'boolean', 0, 1, 'Opportunistic shutdown-hook queue processing (≤2 sends/request) - 0 = OFF (recommended: use a Dreamhost panel cron job hitting the queue processor instead); 1 = ON');
 
 -- ==============================================================================
 -- 📱 QR Code Type Definitions (tblQRCodeTypes)
@@ -327,7 +351,8 @@ INSERT INTO `tblPredefinedLogos` (`logoName`, `logoLabel`, `logoFileName`, `logo
 -- ✅ Seed Data Complete
 -- ==============================================================================
 -- Inserted:
---   - 52 default settings across 6 groups
+--   - 54 default settings across 6 groups (email group now Microsoft Graph -
+--     based settings, Epic E8/#29, replacing the earlier unused SMTP stubs)
 --   - 26 QR code type definitions with form field schemas
 --   - 25 predefined logo entries
 --
