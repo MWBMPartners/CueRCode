@@ -338,7 +338,27 @@ Both columns are flat JSON objects - no nesting, no per-tier PHP branches read t
 - **Idempotency:** every processed webhook event INSERTs one `tblPayments` row keyed by `providerTxnRef` (UNIQUE) - a re-delivered event (PayPal retries until it gets a 2xx) hits the unique constraint and is treated as a no-op, never double-processed.
 - **State transitions:** successful payment events flip the matching `tblSubscriptions.status` (`active` on a successful renewal, `past_due` on a failed one, `cancelled` on a cancellation event, with `currentPeriodEnd` advanced on each successful cycle) and call `onSubscriptionPlanChanged()` (already implemented THIS stage in `fn_features.php`, just not called by anything yet) to re-sync the user's `tblAPIKeys` rate limits.
 - **Owner gate:** needs a PayPal BUSINESS account + API credentials (client ID/secret, webhook ID) before any of this can go live - `#25`/`#26`, gates G-002/G-003 in `.claude/HANDOFF.md`. All credentials would be stored via `tblSettings` with `isSensitive = 1` (AES-256-GCM, `fn_encryption.php`), never committed.
-- **Also deferred (needs E3's admin stage):** the plan-management UI (a pricing/upgrade page) and the admin plan editor (a UI over `tblSubscriptionPlans` - SQL/phpMyAdmin is the interim editing path).
+- **Also deferred (needs E3's admin stage):** the admin plan editor (a UI over `tblSubscriptionPlans` - SQL/phpMyAdmin is the interim editing path). The public plan-COMPARISON page shipped separately - see "Pricing page" below - but the in-account UPGRADE/checkout flow still needs this webhook.
+
+#### Pricing page (#56, 2026-07-17)
+
+`public_html/pricing/index.php` + `_functions/fn_pricing.php` - the public plan-comparison page `resolveUpgradeUrl()`'s default `billing_upgrade_url` setting already pointed at (`/pricing`) before this page existed. Deliberately a separate, page-scoped helper file (`fn_pricing.php` is `require_once`'d by the page only, NOT added to `bootstrap.php`'s always-loaded set) mirroring how `fn_openapi_render.php` is scoped to the developer reference page.
+
+**Data-driven contract (same discipline as `fn_features.php`):** `fn_pricing.php` contains NO hardcoded plan-key literals anywhere - not even the two fallback keys `fn_features.php` itself is documented to reference by name - enforced by a static regression guard in `tests/test_pricing.php` that scans the file's own source for every seeded plan-key string and asserts none appear quoted, including inside comments. Every card, every feature/limit row, and every label is discovered generically from the decoded `featuresJSON`/`limitsJSON` of whatever rows `listPublicPlansForDisplay()` returns.
+
+**Which plans appear on the grid:** a plan qualifies when `isActive = 1` AND `sortOrder > 0`. The seeded no-account gating tier (`sortOrder = 0`) is intentionally excluded - it exists purely as `fn_features.php`'s anonymous-visitor bookkeeping, not a tier a visitor "chooses" from a comparison grid. This is a **design decision made without an explicit owner sign-off** (flag for an owner opinion if that tier should ever be surfaced as its own "no account needed" card): the convention is `sortOrder` 0 = resolvable for gating but hidden from the pricing page, `sortOrder >= 1` = shown on the grid in that order - an owner who wants it surfaced later need only give it a positive `sortOrder`, no code change.
+
+**Owner price-edit runbook:** changing a price, renaming a plan, or moving a feature between tiers is the SAME one-row `UPDATE`/`INSERT` documented in "How to add or modify a premium tier" above - the pricing page re-reads `tblSubscriptionPlans` on every request, so there is no cache to bust and no deploy needed. Example - change the Pro plan's monthly price:
+
+```sql
+UPDATE `tblSubscriptionPlans`
+   SET `priceMonthly` = 6.99
+ WHERE `planKey` = 'pro';
+```
+
+**Fail-safe branch:** `listPublicPlansForDisplay()` returns `[]` (not a warning/exception) when `dbQuery()` is unavailable or the query throws, mirroring `fn_features.php::planByKey()`'s own availability check. The page detects an empty plan list and renders an accessible "Pricing is temporarily unavailable" panel instead of the card grid - still a valid `200` response, zero PHP warnings. Verified live via `php -S` against a deliberately-unreachable database host (a temporary, gitignored `_auth_keys/auth_creds.php` pointing at `127.0.0.1:1` so `getDB()` throws its documented `RuntimeException` rather than bootstrap.php's separate "credentials file entirely missing" 503 hard-fail): `HTTP 200`, the fail-safe panel rendered, zero PHP warnings/notices/fatals in the output, no `<table>` tag.
+
+**No checkout flow.** CTA logic is purely price-driven (zero-price plans link to `/register/`; any paid plan shows a disabled "Coming soon" control) - checkout is owner-gated behind the deferred PayPal webhook above, so this page never invents one.
 
 ### Self-Service API Keys & Scope Enforcement (Epic E7 stage 1, #54, 2026-07-10)
 

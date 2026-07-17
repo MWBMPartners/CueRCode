@@ -19,6 +19,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 - 🖌️ **Full customisation**: colours, patterns, marker shapes, centre logos, frames with labels, gradients, transparency
 - 🔌 **RESTful API**: JSON and XML responses, API key authentication (self-service key create/rotate/revoke + per-key scope enforcement), rate limiting, Swagger/OpenAPI documentation
 - 📱 **Responsive Web UI**: Bootstrap 5, dark/light mode, AJAX live preview, WCAG accessibility
+- 💷 **Public pricing page** (`/pricing/`): a data-driven plan-comparison grid sourced entirely from `tblSubscriptionPlans` - no account needed to generate, free-tier registration, Pro/Business tiers shown ahead of checkout (#56)
 
 ## ⚙️ Tech Stack
 

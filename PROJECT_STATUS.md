@@ -95,7 +95,7 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 
 | Issue | Task | Status |
 | --- | --- | --- |
-| [#25](https://github.com/MWBMPartners/CueRCode/issues/25) | Subscription tiers and premium feature gating | 📋 |
+| [#25](https://github.com/MWBMPartners/CueRCode/issues/25) | Subscription tiers and premium feature gating | 🔄 Framework addressed in code (Epic E4 framework stage, 2026-07-10, #53) — `tblSubscriptionPlans`/`tblSubscriptions` schema + 4 seeded tiers, data-driven `fn_features.php` gating engine, one real gate wired (`bulk_batch_size`); public plan-comparison page added (2026-07-17, #56) — `/pricing/` (`fn_pricing.php` + `public_html/pricing/index.php`), data-driven card grid sourced entirely from `tblSubscriptionPlans`, fail-safe when the DB is unavailable; in-account upgrade/checkout still pending PayPal integration (#26); needs live-server verification |
 | [#26](https://github.com/MWBMPartners/CueRCode/issues/26) | PayPal payment integration | 📋 |
 
 ---

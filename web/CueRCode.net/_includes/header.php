@@ -371,6 +371,11 @@ if ($headerCurrentUser !== null) {
                             <i class="fa-solid fa-book me-1" aria-hidden="true"></i> API Docs
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/pricing/">
+                            <i class="fa-solid fa-tags me-1" aria-hidden="true"></i> Pricing
+                        </a>
+                    </li>
                 </ul>
 
                 <!-- 🔧 Right-side items -->
