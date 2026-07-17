@@ -1,6 +1,6 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-07-10 (GDPR/CCPA data-subject rights - account export + erasure by anonymization, #37/#52)
+**📅 Last Updated:** 2026-07-18 (public /pricing page (#56); bulk accessibility parity (#57))
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 
@@ -49,7 +49,7 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | [#43](https://github.com/MWBMPartners/CueRCode/issues/43) | Export branding PNGs from SVGs | Low | 🔄 Addressed in code (cycle 7, 2026-06-29) — og-image.png created at /assets/img/branding/og-image.png; needs live-server verification (#22) |
 | [#45](https://github.com/MWBMPartners/CueRCode/issues/45) | API parity: expose all UI customisation params via REST | High | 🔄 Addressed in code (cycle 9, 2026-06-29) — all 21 customisation params confirmed in buildCustomizationFromRequest(); full OpenAPI 3.0.3 spec completed; uniform endpoint security confirmed; pending live-server verification (#18) |
 
-**Deliverables so far:** 29 PHP files, 3 JS files, 1 CSS file (1,301 lines), 25 SVG logo assets, 10 database tables, 26 QR code types (cycle 8), OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
+**Deliverables so far:** 154 PHP files, 3 JS files, 1 CSS file (1,301 lines), 25 SVG logo assets, 21 database tables, 26 QR code types (cycle 8), OpenAPI 3.0 spec, Swagger UI, PWA service worker, offline fallback page.
 
 ---
 
