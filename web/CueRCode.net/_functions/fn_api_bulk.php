@@ -35,8 +35,12 @@
  *      contain a "type" column and at least one input column. Any column
  *      whose name starts with "input." (e.g. "input.url") or that is not a
  *      reserved customization column is treated as an input field; reserved
- *      customization columns (format, size, ecc, fg_color, ...) are folded
- *      into that row's customization:
+ *      customization columns - the full 20-name list lives in
+ *      CUERCODE_API_BULK_CSV_RESERVED below (format, size, ecc, fg_color,
+ *      bg_color, marker_color, pattern, marker_border, marker_center, logo,
+ *      logo_size_pct, frame_style, frame_label, frame_color, transparent,
+ *      quiet_zone, version, preset, scan_distance_cm, pdf_layout) - are
+ *      folded into that row's customization:
  *      {
  *          "csv": "type,input.url,format\nurl,https://a.com,png\nurl,https://b.com,svg",
  *          "customization": { "ecc": "H" }        // optional shared defaults
@@ -106,16 +110,24 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 /**
  * @var array Reserved customization column names for CSV parsing. A CSV column
  * whose (lower-cased) header matches one of these is folded into the row's
- * customization rather than treated as a QR input field. Mirrors the keys
+ * customization rather than treated as a QR input field. Mirrors EVERY key
  * recognised by buildCustomizationFromRequest() in fn_api_generate.php.
+ *
+ * 🔧 FG-033 / #57: this list previously omitted marker_border, marker_center,
+ * quiet_zone, version, preset, scan_distance_cm, and pdf_layout - a CSV caller
+ * had no way to reach the accessible preset (or any PDF layout, or the marker
+ * shape overrides) at all, silently forcing a fallback to the JSON 'items'
+ * shape. All seven are now folded like every other reserved column, closing
+ * that CSV/items parity gap.
  */
 if (!defined('CUERCODE_API_BULK_CSV_RESERVED')) {
     // 📌 Stored as a comma-separated string because PHP < 8.x cannot define()
     //    an array as easily across versions; we explode() it where needed.
     define(
         'CUERCODE_API_BULK_CSV_RESERVED',
-        'format,size,ecc,fg_color,bg_color,marker_color,pattern,logo,'
-        . 'logo_size_pct,frame_style,frame_label,frame_color,transparent'
+        'format,size,ecc,fg_color,bg_color,marker_color,pattern,marker_border,'
+        . 'marker_center,logo,logo_size_pct,frame_style,frame_label,frame_color,'
+        . 'transparent,quiet_zone,version,preset,scan_distance_cm,pdf_layout'
     );
 }
 
@@ -259,6 +271,40 @@ function parseBulkItemsArray(mixed $items, array $sharedCustomization): array
 }
 
 // ==============================================================================
+// 🔘 bulkCsvCoerceBoolean() - Coerce a CSV boolean-column cell to bool (PURE)
+// ==============================================================================
+
+/**
+ * 🔘 Coerce a reserved boolean CSV column's cell value into a real PHP bool.
+ *
+ * 'transparent' and 'quiet_zone' are boolean-typed once folded into a row's
+ * customization - buildCustomizationFromRequest() applies a bare `(bool)`
+ * cast to whatever ends up in that key. A bare cast of the raw CSV STRING is
+ * unsafe for this purpose: PHP only treats '' and '0' as falsy strings, so a
+ * cell literally containing the text "false" (or "no"/"off") would cast to
+ * `true` - the exact trap this function closes (FG-033 / #57).
+ *
+ * Recognised falsy spellings (case-insensitive, whitespace-trimmed): 'false',
+ * '0', 'no', 'off'. Every other non-empty value (including 'true', '1',
+ * 'yes', 'on', or anything unrecognised) coerces to `true`. The caller
+ * (parseBulkCsv()) never invokes this on an empty cell - empty reserved cells
+ * are skipped upstream before this function would see them.
+ *
+ * @param string $value The raw (already-trimmed) CSV cell value.
+ *
+ * @return bool The coerced boolean.
+ */
+function bulkCsvCoerceBoolean(string $value): bool
+{
+    // 📌 Normalise case/whitespace once, then check against the falsy set.
+    $normalised = strtolower(trim($value));
+
+    $falsyValues = ['false', '0', 'no', 'off'];
+
+    return !in_array($normalised, $falsyValues, true);
+}
+
+// ==============================================================================
 // 📄 parseBulkCsv() - Normalise a CSV string into the canonical item list (PURE)
 // ==============================================================================
 
@@ -269,10 +315,19 @@ function parseBulkItemsArray(mixed $items, array $sharedCustomization): array
  * and at least one input column. Columns are classified as:
  *   - "type"                         -> the item type
  *   - a reserved customization name  -> folded into the row's customization
- *     (format, size, ecc, fg_color, bg_color, marker_color, pattern, logo,
- *      logo_size_pct, frame_style, frame_label, frame_color, transparent)
+ *     (format, size, ecc, fg_color, bg_color, marker_color, pattern,
+ *      marker_border, marker_center, logo, logo_size_pct, frame_style,
+ *      frame_label, frame_color, transparent, quiet_zone, version, preset,
+ *      scan_distance_cm, pdf_layout - the full CUERCODE_API_BULK_CSV_RESERVED
+ *      list; FG-033 / #57 completed it)
  *   - "input.<field>"                -> input field <field> (explicit prefix)
  *   - anything else                  -> input field (bare name)
+ *
+ * The two boolean reserved columns ("transparent", "quiet_zone") are coerced
+ * through bulkCsvCoerceBoolean() rather than a bare (bool) cast of the CSV
+ * cell string, so a cell literally containing "false" (or "0"/"no"/"off",
+ * case-insensitively) folds to boolean false instead of PHP's usual
+ * non-empty-string truthiness.
  *
  * Empty cells are skipped (so an item only carries the input fields it
  * actually populates). Blank lines are ignored.
@@ -283,6 +338,7 @@ function parseBulkItemsArray(mixed $items, array $sharedCustomization): array
  * @return array On success: [ 'items' => array ]. On failure: structured error.
  *
  * @see https://www.php.net/manual/en/function.str-getcsv.php
+ * @see bulkCsvCoerceBoolean() - the boolean-column coercion helper
  */
 function parseBulkCsv(mixed $csv, array $sharedCustomization): array
 {
@@ -415,8 +471,17 @@ function parseBulkCsv(mixed $csv, array $sharedCustomization): array
             }
 
             if (in_array($colName, $reserved, true)) {
-                // 📌 Reserved customization column.
-                $rowCustomization[$colName] = $value;
+                // 📌 Reserved customization column. 'transparent' and
+                //    'quiet_zone' are boolean-typed downstream
+                //    (buildCustomizationFromRequest() applies a bare (bool)
+                //    cast) - a raw CSV string like "false" would otherwise
+                //    cast to `true` (PHP only treats '' and '0' as falsy
+                //    strings), so coerce those two columns explicitly here.
+                if ($colName === 'transparent' || $colName === 'quiet_zone') {
+                    $rowCustomization[$colName] = bulkCsvCoerceBoolean($value);
+                } else {
+                    $rowCustomization[$colName] = $value;
+                }
                 continue;
             }
 
@@ -632,22 +697,40 @@ function bulkRequestWantsAveryLayout(array $requestData): ?string
  *      manifest rather than aborting the batch.
  *   8. Stream the ZIP with application/zip + attachment Content-Disposition.
  *
- * @param array $auth The authentication context from the router. Used (Epic
- *                    E4/#53) to resolve the caller's plan-based bulk_batch_size
- *                    limit via resolveUserIdFromAuth($auth) + limitFor()
- *                    (fn_features.php) - an anonymous caller (or when
- *                    fn_features.php is unavailable) falls back to the
- *                    'anonymous' plan's seeded limit (25).
+ * @param array      $auth        The authentication context from the router. Used
+ *                                (Epic E4/#53) to resolve the caller's plan-based
+ *                                bulk_batch_size limit via resolveUserIdFromAuth($auth)
+ *                                + limitFor() (fn_features.php) - an anonymous caller
+ *                                (or when fn_features.php is unavailable) falls back
+ *                                to the 'anonymous' plan's seeded limit (25).
+ * @param array|null $requestData FG-033/#57 TESTABLE BODY INJECTION: an optional
+ *                                pre-decoded request body. When null (the router's
+ *                                normal `handleBulkGenerate($auth)` call - unchanged,
+ *                                backward-compatible), Step 2 below reads + decodes
+ *                                php://input itself exactly as before. When a caller
+ *                                supplies an array here, Step 2 is skipped entirely and
+ *                                parsing proceeds straight from this array. WHY: unlike
+ *                                a superglobal, php://input is a read-once stream tied
+ *                                to the real SAPI request - it cannot be seeded or
+ *                                re-read from CLI PHP 8.5 test code, so there was
+ *                                previously no way to unit-test this function's full
+ *                                ZIP-assembly pipeline (accessible-preset enforcement,
+ *                                manifest formatting, actual ZipArchive contents)
+ *                                without a live HTTP server. This mirrors
+ *                                fn_api_generate.php's handleGenerate(array $requestData),
+ *                                which already receives its body pre-decoded from the
+ *                                router rather than reading php://input itself.
  *
  * @return void (streams the ZIP or Avery-sheet PDF and exits, or sends an error response)
  *
  * @see fn_qr_generate.php  - generateQRCode()
- * @see fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization()
+ * @see fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization(), handleGenerate()
  * @see fn_features.php     - limitFor(), resolveUserIdFromAuth()
  * @see handleBulkAverySheet() - the Avery-sheet fork (E5 / #49)
  * @see https://www.php.net/manual/en/class.ziparchive.php
+ * @see tests/test_bulk.php - the end-to-end ZIP/Avery subprocess coverage this enables
  */
-function handleBulkGenerate(array $auth): void
+function handleBulkGenerate(array $auth, ?array $requestData = null): void
 {
     // ==================================================================
     // 📌 Step 1: Require the zip extension (else 501 Not Implemented).
@@ -663,42 +746,50 @@ function handleBulkGenerate(array $auth): void
     }
 
     // ==================================================================
-    // 📌 Step 2: Read + decode the JSON request body.
+    // 📌 Step 2: Read + decode the JSON request body - SKIPPED when
+    // $requestData was already injected by the caller (see the "Testable
+    // body injection" @param note on this function's docblock above; FG-033
+    // / #57). The router's normal call site (public_html/api/v1/index.php)
+    // still invokes `handleBulkGenerate($auth)` with no second argument, so
+    // $requestData is null there and this block runs exactly as before -
+    // fully backward-compatible.
     // The router already enforces the body-size cap (413) and JSON
     // Content-Type (415) for POST bodies; we re-read here so the handler
     // is self-contained and testable, and decode defensively.
     // @see https://www.php.net/manual/en/function.json-decode.php
     // ==================================================================
-    $rawInput = file_get_contents('php://input');
-    if ($rawInput === false) {
-        $rawInput = '';
-    }
+    if ($requestData === null) {
+        $rawInput = file_get_contents('php://input');
+        if ($rawInput === false) {
+            $rawInput = '';
+        }
 
-    if (trim($rawInput) === '') {
-        errorResponse(
-            'Bulk request body is empty. Provide an "items" array or a "csv" string.',
-            400,
-            'BULK_NO_INPUT'
-        );
-        return;
-    }
+        if (trim($rawInput) === '') {
+            errorResponse(
+                'Bulk request body is empty. Provide an "items" array or a "csv" string.',
+                400,
+                'BULK_NO_INPUT'
+            );
+            return;
+        }
 
-    $requestData = json_decode($rawInput, true);
-    if ($requestData === null && json_last_error() !== JSON_ERROR_NONE) {
-        errorResponse(
-            'Invalid JSON in request body: ' . json_last_error_msg(),
-            400,
-            'INVALID_JSON'
-        );
-        return;
-    }
-    if (!is_array($requestData)) {
-        errorResponse(
-            'Bulk request body must be a JSON object.',
-            400,
-            'BULK_INVALID_BODY'
-        );
-        return;
+        $requestData = json_decode($rawInput, true);
+        if ($requestData === null && json_last_error() !== JSON_ERROR_NONE) {
+            errorResponse(
+                'Invalid JSON in request body: ' . json_last_error_msg(),
+                400,
+                'INVALID_JSON'
+            );
+            return;
+        }
+        if (!is_array($requestData)) {
+            errorResponse(
+                'Bulk request body must be a JSON object.',
+                400,
+                'BULK_INVALID_BODY'
+            );
+            return;
+        }
     }
 
     // ==================================================================
@@ -881,6 +972,54 @@ function handleBulkGenerate(array $auth): void
         }
         $customization['save_file'] = false;
 
+        // ==================================================================
+        // ♿ Accessible-preset enforcement (FG-033 / #57 bulk-pipeline parity)
+        // Mirrors fn_api_generate.php's handleGenerate() Step 3a: this is a
+        // complete no-op unless THIS item's customization['preset'] ===
+        // 'accessible' (guaranteed by applyAccessiblePreset()'s own documented
+        // no-op contract for every other preset value - see its docblock in
+        // fn_qr_options.php). When active it forces ecc=H + quiet_zone=true,
+        // drops any pinned version, and evaluates the WCAG contrast ratio of
+        // this item's fg_color/bg_color.
+        //
+        // DESIGN DECISION: unlike handleGenerate()'s single-item HTTP 422
+        // rejection on a sub-3:1 ratio, a bulk item with a failing ratio is
+        // recorded as a per-item manifest FAILURE (and the loop simply
+        // continues to the next item) rather than aborting the whole batch -
+        // bulk generation's documented invariant that "individual failures
+        // NEVER abort the batch" (see this file's own header docblock) wins
+        // here, and no new HTTP error code is introduced for this endpoint.
+        // @see fn_qr_options.php  - applyAccessiblePreset()
+        // @see fn_api_generate.php - handleGenerate() Step 3a (the single-item
+        //      422 counterpart this deliberately does NOT replicate)
+        // ==================================================================
+        $accessibleMeta = null;
+        if (function_exists('applyAccessiblePreset')) {
+            $customization = applyAccessiblePreset($customization);
+
+            if (isset($customization['_accessible_meta']) && is_array($customization['_accessible_meta'])) {
+                $accessibleMeta = $customization['_accessible_meta'];
+                // 🧹 Never let the internal bookkeeping key reach buildQROptions()/
+                //    generateQRCode() - it is meaningless to the QR engine.
+                unset($customization['_accessible_meta']);
+            }
+        }
+
+        if ($accessibleMeta !== null
+            && isset($accessibleMeta['contrast_level'])
+            && $accessibleMeta['contrast_level'] === 'fail'
+        ) {
+            $failureCount++;
+            $manifestLines[] = sprintf(
+                '[%03d] FAILED  type=%s  reason=%s',
+                $oneBased,
+                $type,
+                'Accessible preset rejected: contrast ratio ' . $accessibleMeta['contrast_ratio']
+                    . ':1 is below the WCAG minimum of 3:1.'
+            );
+            continue;
+        }
+
         // 📌 Validate this item's customization (colours, size range).
         if (function_exists('validateCustomization')) {
             $customizationError = validateCustomization($customization);
@@ -983,6 +1122,26 @@ function handleBulkGenerate(array $auth): void
             $type,
             $entryName
         );
+
+        // ♿ FG-033/#57: when this item went through the accessible preset,
+        //    append an ADDITIONAL indented detail line reporting the contrast
+        //    ratio/level (and the recommended physical print size, when the
+        //    item also supplied scan_distance_cm) - a sub-3:1 ratio never
+        //    reaches here (it `continue`s above as a FAILED line instead), so
+        //    only 'warning'/'pass' levels are ever reported on this line.
+        if ($accessibleMeta !== null) {
+            $detailLine = sprintf(
+                '      accessible: contrast=%s:1 (%s)',
+                $accessibleMeta['contrast_ratio'],
+                $accessibleMeta['contrast_level']
+            );
+            if (isset($accessibleMeta['recommended_print_size_mm'])
+                && $accessibleMeta['recommended_print_size_mm'] !== null
+            ) {
+                $detailLine .= '  recommended_print_size_mm=' . $accessibleMeta['recommended_print_size_mm'];
+            }
+            $manifestLines[] = $detailLine;
+        }
     }
 
     // 📌 Append the summary + manifest to the ZIP.
@@ -1119,6 +1278,37 @@ function handleBulkAverySheet(array $items, string $averyLayout, array $auth): v
             $customization = buildCustomizationFromRequest($rawCustomization);
         } else {
             $customization = $rawCustomization;
+        }
+
+        // ==================================================================
+        // ♿ Accessible-preset enforcement (FG-033 / #57 bulk-pipeline parity)
+        // Same no-op-unless-'accessible' contract as the ZIP pipeline's loop
+        // in handleBulkGenerate() above, and the same per-item (not
+        // whole-request) failure handling: a sub-3:1 contrast ratio leaves
+        // THIS item's label slot BLANK (skip + continue) rather than aborting
+        // the sheet. The pre-existing "every item failed" 422
+        // (BULK_AVERY_ALL_FAILED, below) already covers the all-failed case,
+        // so no new HTTP error code is introduced here either.
+        // @see fn_qr_options.php - applyAccessiblePreset()
+        // @see handleBulkGenerate() - the ZIP pipeline's sibling enforcement
+        // ==================================================================
+        $accessibleMeta = null;
+        if (function_exists('applyAccessiblePreset')) {
+            $customization = applyAccessiblePreset($customization);
+
+            if (isset($customization['_accessible_meta']) && is_array($customization['_accessible_meta'])) {
+                $accessibleMeta = $customization['_accessible_meta'];
+                // 🧹 Never let the internal bookkeeping key reach buildQROptions().
+                unset($customization['_accessible_meta']);
+            }
+        }
+
+        if ($accessibleMeta !== null
+            && isset($accessibleMeta['contrast_level'])
+            && $accessibleMeta['contrast_level'] === 'fail'
+        ) {
+            $failureCount++;
+            continue;
         }
 
         // 🔒 Force the SAME sheet layout regardless of what the item itself

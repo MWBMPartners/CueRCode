@@ -122,7 +122,7 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | Issue | Task | Status |
 | --- | --- | --- |
 | [#31](https://github.com/MWBMPartners/CueRCode/issues/31) | Admin dashboard: Global Admin control panel | 📋 |
-| [#32](https://github.com/MWBMPartners/CueRCode/issues/32) | Bulk QR code generation | 🔄 Addressed in code (cycle 8, 2026-06-29) — POST /api/v1/bulk-generate + accessible UI panel + ZIP streaming; needs live-server verification (#18) |
+| [#32](https://github.com/MWBMPartners/CueRCode/issues/32) | Bulk QR code generation | 🔄 Addressed in code (cycle 8, 2026-06-29) — POST /api/v1/bulk-generate + accessible UI panel + ZIP streaming; accessibility-preset parity closed (#57, FG-033 close-out, 2026-07-18) — `preset`/`scan_distance_cm` now enforced per item in both the ZIP loop and the Avery-sheet fork (manifest failure / blank slot, not a batch 422), CSV reserved-column list completed to 20/20 keys; `tests/test_bulk.php` +33 assertions; 1442/1442 suite green; needs live-server verification (#18) |
 | [#33](https://github.com/MWBMPartners/CueRCode/issues/33) | QR code analytics and scan tracking | 📋 |
 | [#34](https://github.com/MWBMPartners/CueRCode/issues/34) | Internationalisation (i18n) and translation framework | 📋 |
 

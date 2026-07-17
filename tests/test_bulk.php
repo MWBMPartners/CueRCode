@@ -9,15 +9,28 @@
  * Exercises the DB-INDEPENDENT, PURE helper functions of the bulk generation
  * endpoint in web/CueRCode.net/_functions/fn_api_bulk.php:
  *
- *   - parseBulkInput()      (items-array shape + CSV shape + error shapes)
- *   - parseBulkCsv()        (header detection, column classification)
- *   - validateBulkRequest() (cap enforcement, per-item shape validation)
- *   - bulkBuildFilename()   (safe ZIP entry naming)
+ *   - parseBulkInput()        (items-array shape + CSV shape + error shapes)
+ *   - parseBulkCsv()          (header detection, column classification,
+ *                              boolean-column coercion)
+ *   - bulkCsvCoerceBoolean()  (the 'transparent'/'quiet_zone' CSV boolean fold)
+ *   - validateBulkRequest()   (cap enforcement, per-item shape validation)
+ *   - bulkBuildFilename()     (safe ZIP entry naming)
  *
  * These helpers perform NO database, filesystem, or QR-library work, so they
- * run fully self-contained under the CLI harness via requireFn(). The handler
- * handleBulkGenerate() itself (which streams a real ZIP over HTTP) is NOT
- * unit-tested here — that full HTTP + ZipArchive path needs live verification.
+ * run fully self-contained under the CLI harness via requireFn().
+ *
+ * 🔧 FG-033 / #57 (bulk-pipeline accessibility parity close-out) added
+ * end-to-end SUBPROCESS coverage of handleBulkGenerate() itself (both the ZIP
+ * pipeline and the handleBulkAverySheet() fork) - see the section near the
+ * bottom of this file. This is possible without a live HTTP server because
+ * handleBulkGenerate() now accepts an optional pre-decoded $requestData
+ * parameter (php://input cannot be seeded from CLI PHP), mirroring how
+ * fn_api_generate.php's handleGenerate(array $requestData) already receives
+ * its body. The real ZIP bytes are captured from a child process's stdout,
+ * written to a temp file, and inspected in-process with ZipArchive - the
+ * "subprocess capture-then-assert" + "ZipArchive-in-process inspection"
+ * conventions this file borrows from tests/test_accessibility.php and
+ * tests/test_braille.php respectively.
  *
  * ⚠️ Epic E4/#53 note: the item-count cap used to be a fixed global default
  * (`getBulkMaxItems()`/`api_bulk_max_items`, removed this stage) - it is now
@@ -36,12 +49,16 @@
  * @package     CueRCode
  * @subpackage  Tests
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
- * @since       Phase 2 (FG-003 bulk generation; Epic E4/#53 cap note above)
+ * @version     1.1.0
+ * @since       Phase 2 (FG-003 bulk generation; Epic E4/#53 cap note above;
+ *              FG-033/#57 bulk-pipeline accessibility parity close-out)
  * @see         web/CueRCode.net/_functions/fn_api_bulk.php
+ * @see         web/CueRCode.net/_functions/fn_qr_options.php - applyAccessiblePreset()
  * @see         web/CueRCode.net/_functions/fn_features.php
  * @see         tests/test_features.php - the plan-based bulk_batch_size gate coverage
+ * @see         tests/test_accessibility.php - runAccessibilitySnippet() (reused here)
  * @see         https://www.php.net/manual/en/function.str-getcsv.php
+ * @see         https://www.php.net/manual/en/class.ziparchive.php
  */
 
 // ==============================================================================
@@ -462,4 +479,346 @@ assertEquals(
     '009-url.png',
     bulkBuildFilename(9, 'url', ''),
     'bulkBuildFilename: empty extension falls back to "png"'
+);
+
+// ==============================================================================
+// ♿ FG-033 / #57 - Bulk-pipeline accessibility parity (close-out)
+// ==============================================================================
+// The bulk endpoint previously left the "Accessible QR" preset (E5 / #48)
+// completely unenforced: buildCustomizationFromRequest() accepted
+// preset=accessible per item, but neither handleBulkGenerate()'s ZIP loop nor
+// handleBulkAverySheet()'s per-item loop ever called applyAccessiblePreset(),
+// so a bulk caller could silently ship a WCAG-failing (sub-3:1 contrast) QR
+// code that /generate would have rejected with 422. This section closes that
+// gap AND completes a related documentation-vs-implementation drift: the CSV
+// reserved-column list was missing 7 of buildCustomizationFromRequest()'s
+// recognised keys (marker_border, marker_center, quiet_zone, version, preset,
+// scan_distance_cm, pdf_layout), so a CSV-only caller had NO way to reach the
+// accessible preset (or any PDF layout) at all.
+//
+// Coverage below:
+//   (a) pure parseBulkCsv() reserved-column fold - the 7 newly-reserved names.
+//   (b) bulkCsvCoerceBoolean() - both directly and via the CSV fold, closing
+//       the pre-existing string-"false"->true trap for transparent/quiet_zone.
+//   (c) handleBulkGenerate() END-TO-END (SUBPROCESS): a real ZIP is streamed,
+//       captured, and inspected in-process with ZipArchive - the manifest's
+//       accessible detail line, the per-item FAILED line, and the ZIP entry
+//       set are all asserted against REAL captured output (this repo's
+//       "capture real output, then assert" convention), not a guess.
+//   (d) handleBulkAverySheet() fork - same enforcement, blank-slot-not-422.
+//
+// Both (c) and (d) rely on Change 1's testable body injection
+// (handleBulkGenerate(array $auth, ?array $requestData = null)) - php://input
+// cannot be seeded from CLI PHP, so the request body is passed directly.
+// ==============================================================================
+
+// ------------------------------------------------------------------------------
+// (a) parseBulkCsv() - the 7 newly-completed reserved columns fold correctly
+// ------------------------------------------------------------------------------
+
+$csvFullReserved = parseBulkInput([
+    'csv' => "type,input.url,marker_border,marker_center,quiet_zone,version,preset,scan_distance_cm,pdf_layout\n"
+        . "url,https://a.com,round,diamond,false,7,accessible,100,avery_5160",
+]);
+
+assertEquals(
+    'round',
+    $csvFullReserved['items'][0]['customization']['marker_border'],
+    'parseBulkInput(csv): reserved column "marker_border" folds into customization'
+);
+
+assertEquals(
+    'diamond',
+    $csvFullReserved['items'][0]['customization']['marker_center'],
+    'parseBulkInput(csv): reserved column "marker_center" folds into customization'
+);
+
+assertEquals(
+    false,
+    $csvFullReserved['items'][0]['customization']['quiet_zone'],
+    'parseBulkInput(csv): reserved column "quiet_zone" folds into customization AND is boolean-coerced'
+);
+
+assertEquals(
+    '7',
+    $csvFullReserved['items'][0]['customization']['version'],
+    'parseBulkInput(csv): reserved column "version" folds into customization'
+);
+
+assertEquals(
+    'accessible',
+    $csvFullReserved['items'][0]['customization']['preset'],
+    'parseBulkInput(csv): reserved column "preset" folds into customization'
+);
+
+assertEquals(
+    '100',
+    $csvFullReserved['items'][0]['customization']['scan_distance_cm'],
+    'parseBulkInput(csv): reserved column "scan_distance_cm" folds into customization'
+);
+
+assertEquals(
+    'avery_5160',
+    $csvFullReserved['items'][0]['customization']['pdf_layout'],
+    'parseBulkInput(csv): reserved column "pdf_layout" folds into customization'
+);
+
+assertFalse(
+    isset($csvFullReserved['items'][0]['input']['marker_border']),
+    'parseBulkInput(csv): the newly-reserved columns never leak into the input object'
+);
+
+// 📌 A header made up ENTIRELY of the newly-reserved columns (plus "type")
+//    still has no input column, so it must still be rejected exactly like the
+//    original reserved-only case above.
+$csvReservedOnlyExpanded = parseBulkInput([
+    'csv' => "type,preset,scan_distance_cm,quiet_zone,pdf_layout,marker_border,version\n"
+        . "url,accessible,100,false,avery_5160,round,7",
+]);
+
+assertEquals(
+    'BULK_CSV_NO_INPUT',
+    $csvReservedOnlyExpanded['code'],
+    'parseBulkInput(csv): header of ONLY the newly-reserved columns (no input column) -> BULK_CSV_NO_INPUT'
+);
+
+// ------------------------------------------------------------------------------
+// (b) bulkCsvCoerceBoolean() - closes the string-"false"->true trap
+// ------------------------------------------------------------------------------
+
+// 📌 Via the full CSV fold (transparent + quiet_zone together, mixed casing).
+$csvBoolCoercion = parseBulkInput([
+    'csv' => "type,input.url,transparent,quiet_zone\n"
+        . "url,https://a.com,false,TRUE\n"
+        . "url,https://b.com,0,yes",
+]);
+
+assertEquals(
+    false,
+    $csvBoolCoercion['items'][0]['customization']['transparent'],
+    'parseBulkInput(csv): transparent="false" coerces to boolean false (closes the bare-(bool)-cast trap)'
+);
+
+assertEquals(
+    true,
+    $csvBoolCoercion['items'][0]['customization']['quiet_zone'],
+    'parseBulkInput(csv): quiet_zone="TRUE" (mixed case) coerces to boolean true'
+);
+
+assertEquals(
+    false,
+    $csvBoolCoercion['items'][1]['customization']['transparent'],
+    'parseBulkInput(csv): transparent="0" coerces to boolean false'
+);
+
+assertEquals(
+    true,
+    $csvBoolCoercion['items'][1]['customization']['quiet_zone'],
+    'parseBulkInput(csv): quiet_zone="yes" coerces to boolean true'
+);
+
+// 📌 Direct unit coverage of bulkCsvCoerceBoolean() itself (all recognised
+//    falsy spellings, case-insensitively, plus the truthy default).
+assertEquals(false, bulkCsvCoerceBoolean('false'), 'bulkCsvCoerceBoolean("false") -> false');
+assertEquals(false, bulkCsvCoerceBoolean('0'), 'bulkCsvCoerceBoolean("0") -> false');
+assertEquals(false, bulkCsvCoerceBoolean('No'), 'bulkCsvCoerceBoolean("No") (case-insensitive) -> false');
+assertEquals(false, bulkCsvCoerceBoolean('OFF'), 'bulkCsvCoerceBoolean("OFF") (case-insensitive) -> false');
+assertEquals(true, bulkCsvCoerceBoolean('true'), 'bulkCsvCoerceBoolean("true") -> true');
+assertEquals(true, bulkCsvCoerceBoolean('1'), 'bulkCsvCoerceBoolean("1") -> true');
+assertEquals(true, bulkCsvCoerceBoolean('yes'), 'bulkCsvCoerceBoolean("yes") -> true');
+assertEquals(
+    true,
+    bulkCsvCoerceBoolean('anything-else'),
+    'bulkCsvCoerceBoolean(unrecognised value) -> true (matches every other boolean field\'s truthy default)'
+);
+
+// ------------------------------------------------------------------------------
+// (c) handleBulkGenerate() END-TO-END (SUBPROCESS) - real ZIP + manifest
+// ------------------------------------------------------------------------------
+// jsonResponse()/errorResponse() call exit(), and handleBulkGenerate() itself
+// echoes raw ZIP bytes then exit()s on success - both would terminate the main
+// test runner if invoked in-process, so this runs in a fresh child process via
+// runAccessibilitySnippet() (defined in tests/test_accessibility.php, loaded
+// first by alphabetical order - same reuse convention tests/test_braille.php
+// already relies on). Three items: [1] plain/preset=none (regression guard),
+// [2] accessible + scan_distance_cm=100 with the default black/white contrast
+// (21:1 - a 'pass'), [3] accessible with a real sub-3:1 pair (#777777 on
+// #888888, captured as 1.26:1 - see tests/test_accessibility.php's own
+// captured-value note for the source of this exact pair).
+// ==============================================================================
+
+$bulkZipOutput = runAccessibilitySnippet(<<<'PHP'
+requireLibraryAutoloader();
+requireFn('fn_response.php');
+requireFn('fn_api_generate.php');
+requireFn('fn_api_bulk.php');
+
+$requestData = [
+    'items' => [
+        ['type' => 'url', 'input' => ['url' => 'https://cuercode.net/one']],
+        ['type' => 'url', 'input' => ['url' => 'https://cuercode.net/two'],
+         'customization' => ['preset' => 'accessible', 'scan_distance_cm' => 100]],
+        ['type' => 'url', 'input' => ['url' => 'https://cuercode.net/three'],
+         'customization' => ['preset' => 'accessible', 'fg_color' => '#777777', 'bg_color' => '#888888']],
+    ],
+];
+
+handleBulkGenerate(['method' => 'anonymous'], $requestData);
+PHP
+);
+
+// ✅ The captured stdout is the raw ZIP archive - it must start with the ZIP
+//    local-file-header magic bytes.
+assertTrue(
+    str_starts_with($bulkZipOutput, "PK\x03\x04"),
+    'handleBulkGenerate() end-to-end (subprocess): captured stdout starts with the ZIP magic bytes (PK\\x03\\x04)'
+);
+
+// 📦 Write the captured bytes to a real file so ZipArchive (which needs a
+//    path, not a string) can open and inspect it in-process.
+$bulkZipTmpFile = tempnam(sys_get_temp_dir(), 'cuercode_test_bulk_zip_') . '.zip';
+file_put_contents($bulkZipTmpFile, $bulkZipOutput);
+
+$bulkZip       = new \ZipArchive();
+$bulkZipOpened = ($bulkZip->open($bulkZipTmpFile) === true);
+
+assertTrue(
+    $bulkZipOpened,
+    'handleBulkGenerate() end-to-end (subprocess): the captured ZIP bytes open successfully with ZipArchive'
+);
+
+if ($bulkZipOpened) {
+    $bulkManifest = (string) $bulkZip->getFromName('manifest.txt');
+
+    // 📌 Exactly 3 entries: item 1's + item 2's images, plus manifest.txt.
+    //    Item 3 (the contrast failure) contributes NO ZIP entry.
+    assertEquals(
+        3,
+        $bulkZip->numFiles,
+        'handleBulkGenerate() end-to-end: ZIP has exactly 3 entries (2 succeeded images + manifest.txt)'
+    );
+
+    assertContains(
+        'Succeeded: 2  Failed: 1',
+        $bulkManifest,
+        'handleBulkGenerate() end-to-end: manifest summary line reflects 2 succeeded, 1 failed'
+    );
+
+    // 📌 Real captured value (see this file's docblock note on the "capture
+    //    real output, then assert" convention): round(qrContrastRatio(
+    //    '#000000', '#ffffff'), 2) === 21.0, which (string) casts to "21" (no
+    //    trailing ".0" - PHP does not retain it for a whole-number float).
+    assertContains(
+        '      accessible: contrast=21:1 (pass)  recommended_print_size_mm=100',
+        $bulkManifest,
+        'handleBulkGenerate() end-to-end: item 2\'s OK line is followed by the accessible detail line '
+            . '(contrast + recommended_print_size_mm from scan_distance_cm=100)'
+    );
+
+    // 📌 Real captured value: qrContrastRatio('#777777', '#888888') ≈
+    //    1.2632533688247014, rounded to 1.26.
+    assertContains(
+        '[003] FAILED  type=url  reason=Accessible preset rejected: contrast ratio 1.26:1 is below the WCAG minimum of 3:1.',
+        $bulkManifest,
+        'handleBulkGenerate() end-to-end: item 3 (low-contrast accessible) is a manifest FAILED line naming the real 1.26:1 ratio'
+    );
+
+    assertTrue(
+        $bulkZip->locateName('001-url.png') !== false,
+        'handleBulkGenerate() end-to-end: item 1\'s image entry (001-url.png) exists in the ZIP'
+    );
+
+    assertTrue(
+        $bulkZip->locateName('002-url.png') !== false,
+        'handleBulkGenerate() end-to-end: item 2\'s image entry (002-url.png) exists in the ZIP'
+    );
+
+    assertFalse(
+        $bulkZip->locateName('003-url.png') !== false,
+        'handleBulkGenerate() end-to-end: item 3\'s image entry (003-url.png) does NOT exist (contrast failure)'
+    );
+
+    // 🛡️ Regression guard: item 1 (preset=none, a complete no-op per
+    //    applyAccessiblePreset()'s documented contract) must NOT gain an
+    //    "accessible:" detail line - confirm none appears between item 1's
+    //    and item 2's OK lines.
+    $item1LinePos = strpos($bulkManifest, '[001] OK');
+    $item2LinePos = strpos($bulkManifest, '[002] OK');
+    if ($item1LinePos !== false && $item2LinePos !== false) {
+        $betweenItem1And2 = substr($bulkManifest, $item1LinePos, $item2LinePos - $item1LinePos);
+    } else {
+        $betweenItem1And2 = '';
+    }
+
+    assertFalse(
+        str_contains($betweenItem1And2, 'accessible:'),
+        'handleBulkGenerate() end-to-end: item 1 (preset=none) OK line has NO "accessible:" detail line (default-path regression guard)'
+    );
+
+    $bulkZip->close();
+}
+
+// 🧹 Clean up the temp ZIP file.
+if (is_file($bulkZipTmpFile)) {
+    unlink($bulkZipTmpFile);
+}
+
+// ------------------------------------------------------------------------------
+// (d) handleBulkAverySheet() fork - same enforcement, blank-slot-not-422
+// ------------------------------------------------------------------------------
+// Shared request-level customization forces the Avery fork (format=pdf +
+// pdf_layout=avery_5160). One low-contrast accessible item alongside a plain
+// item must still produce a PDF (per-item skip, not a batch abort); a request
+// where EVERY item is a low-contrast accessible item must trip the
+// pre-existing "nothing to render" 422 (BULK_AVERY_ALL_FAILED).
+// ==============================================================================
+
+$bulkAveryOkOutput = runAccessibilitySnippet(<<<'PHP'
+requireLibraryAutoloader();
+requireFn('fn_response.php');
+requireFn('fn_api_generate.php');
+requireFn('fn_api_bulk.php');
+
+$requestData = [
+    'customization' => ['format' => 'pdf', 'pdf_layout' => 'avery_5160'],
+    'items' => [
+        ['type' => 'url', 'input' => ['url' => 'https://cuercode.net/avery-ok'],
+         'customization' => ['preset' => 'accessible', 'fg_color' => '#777777', 'bg_color' => '#888888']],
+        ['type' => 'url', 'input' => ['url' => 'https://cuercode.net/avery-ok-2']],
+    ],
+];
+
+handleBulkGenerate(['method' => 'anonymous'], $requestData);
+PHP
+);
+
+assertTrue(
+    str_starts_with($bulkAveryOkOutput, '%PDF'),
+    'handleBulkAverySheet() (subprocess): one low-contrast accessible item alongside a plain item still yields a %PDF-prefixed sheet (blank slot, not batch abort)'
+);
+
+$bulkAveryAllFailedOutput = runAccessibilitySnippet(<<<'PHP'
+requireLibraryAutoloader();
+requireFn('fn_response.php');
+requireFn('fn_api_generate.php');
+requireFn('fn_api_bulk.php');
+
+$requestData = [
+    'customization' => ['format' => 'pdf', 'pdf_layout' => 'avery_5160'],
+    'items' => [
+        ['type' => 'url', 'input' => ['url' => 'https://cuercode.net/avery-fail-1'],
+         'customization' => ['preset' => 'accessible', 'fg_color' => '#777777', 'bg_color' => '#888888']],
+        ['type' => 'url', 'input' => ['url' => 'https://cuercode.net/avery-fail-2'],
+         'customization' => ['preset' => 'accessible', 'fg_color' => '#777777', 'bg_color' => '#888888']],
+    ],
+];
+
+handleBulkGenerate(['method' => 'anonymous'], $requestData);
+PHP
+);
+
+assertContains(
+    'BULK_AVERY_ALL_FAILED',
+    $bulkAveryAllFailedOutput,
+    'handleBulkAverySheet() (subprocess): every item failing the accessible preset -> 422 BULK_AVERY_ALL_FAILED (unchanged pre-existing gate)'
 );
