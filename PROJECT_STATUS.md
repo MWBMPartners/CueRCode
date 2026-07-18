@@ -1,6 +1,6 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-07-18 (public /pricing page (#56); bulk accessibility parity (#57))
+**📅 Last Updated:** 2026-07-18 (public /pricing page (#56); bulk accessibility parity (#57); API error-code catalogue completeness + drift guard (#58))
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 
@@ -33,7 +33,7 @@ Bulk development completed 2026-02-27 in commit `73fc61e`. Thorough audit agains
 | 3 | Core PHP Framework | [#3](https://github.com/MWBMPartners/CueRCode/issues/3) | ⬜ Needs live server verification |
 | 4 | QR Code Generation Engine | [#4](https://github.com/MWBMPartners/CueRCode/issues/4) | ⚠️ 26/26 QR types now in code (cycle 8); JPEG XL missing (host-dependent); needs live-server verification |
 | 5 | Responsive Web UI | [#5](https://github.com/MWBMPartners/CueRCode/issues/5) | ⚠️ Colourblind mode + cookie-consent banner added in code (cycle 7); no i18n; needs live-server verification (#22) |
-| 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | 🔄 Addressed in code (cycle 9, 2026-06-29) — full API/UI feature parity confirmed; complete OpenAPI 3.0.3 spec; uniform endpoint security; needs live-server verification (#18) before close |
+| 6 | REST API | [#6](https://github.com/MWBMPartners/CueRCode/issues/6) | 🔄 Addressed in code (cycle 9, 2026-06-29) — full API/UI feature parity confirmed; complete OpenAPI 3.0.3 spec; uniform endpoint security; error-code catalogue completeness + CI drift guard added (2026-07-18, #58, Epic E7 stage-2 catalogue item — `x-error-codes` machine-readable array on openapi.json's ErrorResponse schema, 83 codes, 7 newly-documented; `tests/test_error_catalogue.php` +119 assertions; 1561/1561 suite green); needs live-server verification (#18) before close |
 | 7 | Testing, Documentation & Polish | [#7](https://github.com/MWBMPartners/CueRCode/issues/7) | ⚠️ Branding PNGs; closing PHP tags; no screen reader testing |
 | - | Project Rebrand (QRmy.Link -> CueRCode) | [#8](https://github.com/MWBMPartners/CueRCode/issues/8) | ✅ Complete (closed) |
 | - | WCAG 2.1 AA Accessibility | [#9](https://github.com/MWBMPartners/CueRCode/issues/9) | ⚠️ Good ARIA foundation but no colourblind toggle or screen reader testing |
