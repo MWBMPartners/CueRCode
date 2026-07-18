@@ -496,8 +496,23 @@ assertEquals(
 // scan_distance_cm, pdf_layout), so a CSV-only caller had NO way to reach the
 // accessible preset (or any PDF layout) at all.
 //
+// 🩹 Post-#57 review fix: "version" was then REVERTED back out of
+// CUERCODE_API_BULK_CSV_RESERVED (see that constant's docblock in
+// fn_api_bulk.php) - reserving it collided with buildPayload_vcard()'s OWN
+// "version" INPUT field (the vCard spec version, '3.0'/'4.0'), silently
+// turning every vCard CSV row with a "version" column into a manifest FAILED
+// item (the string "4.0" was folded into customization and rejected by
+// validateCustomization() as an invalid QR-symbol-version). Only SIX of the
+// original seven newly-reserved names remain reserved; "version" now folds
+// into the row's INPUT object like any other bare/non-reserved column, and
+// is covered separately below by the vCard-collision regression test.
+//
 // Coverage below:
-//   (a) pure parseBulkCsv() reserved-column fold - the 7 newly-reserved names.
+//   (a) pure parseBulkCsv() reserved-column fold - the 6 still-reserved names
+//       (post-revert), plus a dedicated regression pair proving "version"
+//       folds into INPUT (not customization) for a vCard row, while other
+//       reserved columns (e.g. "preset") still fold into customization for a
+//       non-vcard row on the SAME CSV.
 //   (b) bulkCsvCoerceBoolean() - both directly and via the CSV fold, closing
 //       the pre-existing string-"false"->true trap for transparent/quiet_zone.
 //   (c) handleBulkGenerate() END-TO-END (SUBPROCESS): a real ZIP is streamed,
@@ -513,12 +528,13 @@ assertEquals(
 // ==============================================================================
 
 // ------------------------------------------------------------------------------
-// (a) parseBulkCsv() - the 7 newly-completed reserved columns fold correctly
+// (a) parseBulkCsv() - the 6 still-reserved columns fold correctly (post
+//     "version" revert - see the section header comment above)
 // ------------------------------------------------------------------------------
 
 $csvFullReserved = parseBulkInput([
-    'csv' => "type,input.url,marker_border,marker_center,quiet_zone,version,preset,scan_distance_cm,pdf_layout\n"
-        . "url,https://a.com,round,diamond,false,7,accessible,100,avery_5160",
+    'csv' => "type,input.url,marker_border,marker_center,quiet_zone,preset,scan_distance_cm,pdf_layout\n"
+        . "url,https://a.com,round,diamond,false,accessible,100,avery_5160",
 ]);
 
 assertEquals(
@@ -537,12 +553,6 @@ assertEquals(
     false,
     $csvFullReserved['items'][0]['customization']['quiet_zone'],
     'parseBulkInput(csv): reserved column "quiet_zone" folds into customization AND is boolean-coerced'
-);
-
-assertEquals(
-    '7',
-    $csvFullReserved['items'][0]['customization']['version'],
-    'parseBulkInput(csv): reserved column "version" folds into customization'
 );
 
 assertEquals(
@@ -568,18 +578,70 @@ assertFalse(
     'parseBulkInput(csv): the newly-reserved columns never leak into the input object'
 );
 
-// 📌 A header made up ENTIRELY of the newly-reserved columns (plus "type")
+// 📌 A header made up ENTIRELY of the still-reserved columns (plus "type")
 //    still has no input column, so it must still be rejected exactly like the
-//    original reserved-only case above.
+//    original reserved-only case. "version" is deliberately EXCLUDED from
+//    this header (it is no longer reserved - see the vCard regression pair
+//    below), since including it here would supply an input column and
+//    invalidate the very case this assertion is checking.
 $csvReservedOnlyExpanded = parseBulkInput([
-    'csv' => "type,preset,scan_distance_cm,quiet_zone,pdf_layout,marker_border,version\n"
-        . "url,accessible,100,false,avery_5160,round,7",
+    'csv' => "type,preset,scan_distance_cm,quiet_zone,pdf_layout,marker_border\n"
+        . "url,accessible,100,false,avery_5160,round",
 ]);
 
 assertEquals(
     'BULK_CSV_NO_INPUT',
     $csvReservedOnlyExpanded['code'],
-    'parseBulkInput(csv): header of ONLY the newly-reserved columns (no input column) -> BULK_CSV_NO_INPUT'
+    'parseBulkInput(csv): header of ONLY the still-reserved columns (no input column) -> BULK_CSV_NO_INPUT'
+);
+
+// ------------------------------------------------------------------------------
+// (a2) Post-#57 review fix regression: "version" un-reserved - vCard/input
+//      collision. Real output captured via `php -r` before writing these
+//      assertions (this repo's testing convention), per the fix task.
+// ------------------------------------------------------------------------------
+
+// 📌 A vCard row supplying a "version" column (the vCard spec version consumed
+//    by buildPayload_vcard()'s $inputData['version'], '3.0'/'4.0') must have
+//    that value land in the item's INPUT object, NOT customization - the
+//    exact regression the pre-fix behaviour introduced (folding "4.0" into
+//    customization made validateCustomization() reject it as an invalid
+//    QR-symbol-version, turning a working vCard CSV row into a manifest
+//    FAILED item).
+$csvVcardVersion = parseBulkInput([
+    'csv' => "type,first_name,last_name,version\nvcard,Ada,Lovelace,4.0",
+]);
+
+assertEquals(
+    '4.0',
+    $csvVcardVersion['items'][0]['input']['version'],
+    'parseBulkInput(csv): vCard row\'s "version" column folds into INPUT, not customization (post-#57 review fix)'
+);
+
+assertFalse(
+    isset($csvVcardVersion['items'][0]['customization']['version']),
+    'parseBulkInput(csv): vCard row\'s "version" column never leaks into customization'
+);
+
+// 📌 A NON-vcard row's "version" column ALSO folds into input (it is simply a
+//    bare/non-reserved column now for every type, not special-cased by type),
+//    while another still-reserved column ("preset") on the SAME row continues
+//    to fold into customization exactly as before - proving the revert of
+//    "version" did not disturb the other reserved columns' routing.
+$csvNonVcardVersion = parseBulkInput([
+    'csv' => "type,input.url,preset,version\nurl,https://a.com,accessible,7",
+]);
+
+assertEquals(
+    '7',
+    $csvNonVcardVersion['items'][0]['input']['version'],
+    'parseBulkInput(csv): a non-vcard row\'s "version" column also folds into input (no longer reserved for any type)'
+);
+
+assertEquals(
+    'accessible',
+    $csvNonVcardVersion['items'][0]['customization']['preset'],
+    'parseBulkInput(csv): a non-vcard row\'s "preset" column still folds into customization (other reserved columns unaffected)'
 );
 
 // ------------------------------------------------------------------------------

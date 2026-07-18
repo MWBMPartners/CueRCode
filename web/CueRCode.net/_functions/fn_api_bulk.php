@@ -35,12 +35,14 @@
  *      contain a "type" column and at least one input column. Any column
  *      whose name starts with "input." (e.g. "input.url") or that is not a
  *      reserved customization column is treated as an input field; reserved
- *      customization columns - the full 20-name list lives in
+ *      customization columns - the full 19-name list lives in
  *      CUERCODE_API_BULK_CSV_RESERVED below (format, size, ecc, fg_color,
  *      bg_color, marker_color, pattern, marker_border, marker_center, logo,
  *      logo_size_pct, frame_style, frame_label, frame_color, transparent,
- *      quiet_zone, version, preset, scan_distance_cm, pdf_layout) - are
- *      folded into that row's customization:
+ *      quiet_zone, preset, scan_distance_cm, pdf_layout) - are
+ *      folded into that row's customization. NOTE: "version" is deliberately
+ *      NOT reserved - see the CUERCODE_API_BULK_CSV_RESERVED docblock below
+ *      for why (it collides with the vCard input field of the same name):
  *      {
  *          "csv": "type,input.url,format\nurl,https://a.com,png\nurl,https://b.com,svg",
  *          "customization": { "ecc": "H" }        // optional shared defaults
@@ -111,14 +113,33 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * @var array Reserved customization column names for CSV parsing. A CSV column
  * whose (lower-cased) header matches one of these is folded into the row's
  * customization rather than treated as a QR input field. Mirrors EVERY key
- * recognised by buildCustomizationFromRequest() in fn_api_generate.php.
+ * recognised by buildCustomizationFromRequest() in fn_api_generate.php THAT
+ * DOES NOT ALSO COLLIDE with a consumed per-type INPUT field name (see the
+ * "version" note immediately below).
  *
  * 🔧 FG-033 / #57: this list previously omitted marker_border, marker_center,
  * quiet_zone, version, preset, scan_distance_cm, and pdf_layout - a CSV caller
  * had no way to reach the accessible preset (or any PDF layout, or the marker
  * shape overrides) at all, silently forcing a fallback to the JSON 'items'
- * shape. All seven are now folded like every other reserved column, closing
- * that CSV/items parity gap.
+ * shape. Six of those seven are folded like every other reserved column,
+ * closing that CSV/items parity gap.
+ *
+ * 🩹 Post-#57 review fix: "version" was REVERTED out of this list. Reserving
+ * it broke every vCard CSV row that supplies a "version" column, because
+ * buildPayload_vcard() (fn_qr_payloads.php) ALSO reads an INPUT field named
+ * "version" (the vCard spec version, '3.0'/'4.0') - folding that column into
+ * customization instead sent the string "4.0" to validateCustomization() as
+ * a QR-symbol-version override, which rejects it (QR symbol versions are
+ * integers 1-40), turning a previously-working vCard CSV row into a manifest
+ * FAILED item. "version" now folds into the row's INPUT object again (its
+ * pre-#57, pre-regression behaviour) so vCard CSV rows work correctly; QR
+ * symbol VERSION pinning remains fully reachable via the JSON 'items' shape's
+ * per-item/shared 'customization' object (which never collides with a vCard
+ * "version" input field, since the two live in separate objects there), or
+ * via a CSV "input.version" explicit-prefix column if a non-vCard type ever
+ * needs it. The other six newly-reserved names (marker_border, marker_center,
+ * quiet_zone, preset, scan_distance_cm, pdf_layout) have no such input-field
+ * collision and are unaffected.
  */
 if (!defined('CUERCODE_API_BULK_CSV_RESERVED')) {
     // 📌 Stored as a comma-separated string because PHP < 8.x cannot define()
@@ -127,7 +148,7 @@ if (!defined('CUERCODE_API_BULK_CSV_RESERVED')) {
         'CUERCODE_API_BULK_CSV_RESERVED',
         'format,size,ecc,fg_color,bg_color,marker_color,pattern,marker_border,'
         . 'marker_center,logo,logo_size_pct,frame_style,frame_label,frame_color,'
-        . 'transparent,quiet_zone,version,preset,scan_distance_cm,pdf_layout'
+        . 'transparent,quiet_zone,preset,scan_distance_cm,pdf_layout'
     );
 }
 
@@ -317,11 +338,13 @@ function bulkCsvCoerceBoolean(string $value): bool
  *   - a reserved customization name  -> folded into the row's customization
  *     (format, size, ecc, fg_color, bg_color, marker_color, pattern,
  *      marker_border, marker_center, logo, logo_size_pct, frame_style,
- *      frame_label, frame_color, transparent, quiet_zone, version, preset,
+ *      frame_label, frame_color, transparent, quiet_zone, preset,
  *      scan_distance_cm, pdf_layout - the full CUERCODE_API_BULK_CSV_RESERVED
- *      list; FG-033 / #57 completed it)
+ *      list; FG-033 / #57 completed it, and a post-#57 review fix then
+ *      REMOVED "version" from it - see that constant's docblock above for why)
  *   - "input.<field>"                -> input field <field> (explicit prefix)
- *   - anything else                  -> input field (bare name)
+ *   - anything else                  -> input field (bare name, e.g. a bare
+ *      "version" column - the vCard spec-version input field)
  *
  * The two boolean reserved columns ("transparent", "quiet_zone") are coerced
  * through bulkCsvCoerceBoolean() rather than a bare (bool) cast of the CSV
@@ -1231,10 +1254,18 @@ function handleBulkGenerate(array $auth, ?array $requestData = null): void
  * what its own (possibly per-item-overridden) customisation requested - a
  * mixed-layout Avery sheet is not a coherent single PDF.
  *
- * Per-item failures are skipped (that label slot stays blank on the sheet)
- * rather than aborting the whole batch, mirroring handleBulkGenerate()'s ZIP
- * pipeline's per-item resilience; the failure/success counts are still
- * surfaced via the same X-Bulk-Succeeded/X-Bulk-Failed response headers.
+ * Per-item failures are OMITTED from $sheetItems entirely (not padded with a
+ * placeholder), rather than aborting the whole batch, mirroring
+ * handleBulkGenerate()'s ZIP pipeline's per-item resilience. Because
+ * renderAveryLabelSheetPdf() tiles $sheetItems SEQUENTIALLY into successive
+ * label slots, a failed item does NOT leave its own slot blank - every
+ * label AFTER it simply shifts forward one slot to fill the gap (this
+ * compaction is pre-existing sheet-tiling behaviour for every failure type,
+ * not special to the accessible-preset check below; changing it is a
+ * separate concern). The failure/success counts are still surfaced via the
+ * same X-Bulk-Succeeded/X-Bulk-Failed response headers - this Avery path has
+ * no per-item manifest (unlike the ZIP pipeline), so those headers are the
+ * ONLY place a caller can see that a failure occurred at all.
  *
  * @param array  $items       The normalised, already-validated item list from
  *                            parseBulkInput()/validateBulkRequest().
@@ -1284,11 +1315,18 @@ function handleBulkAverySheet(array $items, string $averyLayout, array $auth): v
         // ♿ Accessible-preset enforcement (FG-033 / #57 bulk-pipeline parity)
         // Same no-op-unless-'accessible' contract as the ZIP pipeline's loop
         // in handleBulkGenerate() above, and the same per-item (not
-        // whole-request) failure handling: a sub-3:1 contrast ratio leaves
-        // THIS item's label slot BLANK (skip + continue) rather than aborting
-        // the sheet. The pre-existing "every item failed" 422
-        // (BULK_AVERY_ALL_FAILED, below) already covers the all-failed case,
-        // so no new HTTP error code is introduced here either.
+        // whole-request) failure handling: a sub-3:1 contrast ratio skips
+        // (continue) THIS item entirely rather than aborting the sheet. This
+        // item is simply OMITTED from $sheetItems - it does NOT leave its own
+        // label slot blank, since renderAveryLabelSheetPdf() tiles the
+        // surviving items sequentially, so every later label shifts forward
+        // one slot to fill the gap (see the compaction note on this
+        // function's own docblock above). The pre-existing "every item
+        // failed" 422 (BULK_AVERY_ALL_FAILED, below) already covers the
+        // all-failed case, so no new HTTP error code is introduced here
+        // either; short of that 422, this failure is reported ONLY via the
+        // X-Bulk-Failed response header count - there is no per-item
+        // manifest on this Avery path.
         // @see fn_qr_options.php - applyAccessiblePreset()
         // @see handleBulkGenerate() - the ZIP pipeline's sibling enforcement
         // ==================================================================
