@@ -84,7 +84,7 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
 // 🏢 Vendor
 // ==============================================================================
 $app["Application"]["Vendor"]["Name"]        = "MWservices";
-$app["Application"]["Vendor"]["Website"]["URL"] = null;
+$app["Application"]["Vendor"]["Website"]["URL"] = "https://www.MWservices.it";
 
 // 🏛️ Parent vendor
 $app["Application"]["Vendor"]["Parent"]["Name"]        = "MWBM Partners Ltd";

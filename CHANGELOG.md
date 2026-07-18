@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Vendor Metadata: Real MWservices URL + Beta `infoAppVer.php` Stash-Pop Conflict Resolution (2026-07-18, #59)
+
+Resolves a `git stash pop` conflict on `public_html_dev_beta/infoAppVer.php` and lands the in-flight vendor-metadata edit consistently across all three channel copies.
+
+- **Conflict origin:** a `WIP on main` stash held one deliberate edit — populating the real vendor website URL (`https://www.MWservices.it`, previously `null`) on the beta copy. Popped onto `launch-prep/2026-07-10`, where that file had since been fully rewritten by the DS-2 standards pass (#47), it produced an `Updated upstream` vs `Stashed changes` conflict whose only *semantic* difference was that URL — the remainder was pure style drift (documented/lowercase `null` vs. the old undocumented `NULL` copy).
+- **Resolution:** kept the documented HEAD structure — the four `// @build-info:` deploy-injection anchors and the version-bump `]["Number"] = "` anchor are preserved intact (verified) — then populated `$app["Application"]["Vendor"]["Website"]["URL"] = "https://www.MWservices.it";` in **all three** copies (`public_html`, `public_html_dev_alpha`, `public_html_dev_beta`) so they stay in sync per the file header's own "MUST stay structurally in sync" contract. Owner decision (2026-07-18): real URL, all three copies. The resolved stash was dropped.
+- **Verified:** `php -l` clean on all three files; zero conflict markers remain; the beta copy retains all 4 `@build-info` anchors + its docblock header. `php tests/run.php` output is byte-identical with the staged edit present vs. reverted (proven by stashing the staged change, re-running, and restoring) — a string-literal metadata value cannot affect logic. Note: this machine's checkout has an empty `_libraries/` (the chillerlan php-qrcode source is not vendored here), so 12 QR-dependent assertions fail environmentally independent of this change; the rest of the suite is green (1463/1475 here).
+
 ### Docs / Added - API Error-Code Catalogue Completeness + CI Drift Guard (2026-07-18, #58)
 
 Closes the "error-catalogue" item flagged as REMAINING under Epic E7 stage-2 in FEATURES.md's FG-019 row. Enumerates every error code the API's `errorResponse()` envelope actually emits, reconciles `openapi.json`'s human-readable "Known codes include: ..." catalogue against the real code, adds a new machine-readable `x-error-codes` array so client-code generators no longer have to parse prose, and closes a stale/missing pair of dev-portal narrative rows (402/403 that predated Epic E3/E4 shipping, and a missing 409). No production `_functions/*.php` logic was touched anywhere in this change.
