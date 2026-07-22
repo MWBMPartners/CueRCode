@@ -7,10 +7,19 @@
 #
 # ⚠️ Language coverage: CodeQL does NOT support PHP. This repo's analysable
 #    CodeQL surface is the browser JavaScript under public_html*/assets/js/
-#    (+ the service worker). PHP static analysis is handled separately by the
-#    php -l matrix + test suite (+ future PHPStan) — see .github/workflows/ci.yml
-#    and issue #35 / roadmap E12. Secret scanning is covered by GitHub-native
-#    secret scanning (owner-enabled) and the gitleaks CI job.
+#    (+ the service worker). PHP static analysis is handled by Semgrep
+#    (.github/workflows/semgrep.yml) + the php -l matrix / test suite in
+#    .github/workflows/ci.yml. Secret scanning is covered by the gitleaks CI
+#    job and (once enabled) GitHub-native secret scanning.
+#
+# ⏳ CodeQL result upload requires GitHub Advanced Security / "Code Security"
+#    on this PRIVATE repo. Until it is enabled, the analyse step's upload fails
+#    with a configuration error, so the init + analyse STEPS carry
+#    continue-on-error to keep the PR check from failing (job-level
+#    continue-on-error does NOT change a job's own check-run conclusion, so it
+#    must be set per-step). The analysis still runs; once GHAS is enabled,
+#    results appear in the Security tab — then REMOVE the two continue-on-error
+#    lines so CodeQL failures block again.
 #
 # A workflow file must physically exist on a branch for push/PR scans of that
 # branch to run; the scheduled scan runs from the default branch.
@@ -49,14 +58,6 @@ jobs:
     name: Analyse (${{ matrix.language }})
     runs-on: ubuntu-latest
 
-    # ⏳ TRANSITIONAL: CodeQL result upload requires GitHub Advanced Security /
-    #    "Code Security" to be enabled on this PRIVATE repo. Until it is, the
-    #    upload step reports a configuration error. `continue-on-error` keeps
-    #    that from failing the PR while GHAS is being enabled. The analysis
-    #    still runs; once GHAS is on, results appear in the Security tab.
-    #    ➡️ REMOVE this line once GHAS is enabled so CodeQL failures block again.
-    continue-on-error: true
-
     permissions:
       # Required to upload the SARIF results to the Security tab.
       security-events: write
@@ -76,6 +77,8 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Initialise CodeQL
+        # ⏳ TRANSITIONAL — see header note; remove once GHAS is enabled.
+        continue-on-error: true
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
@@ -83,6 +86,10 @@ jobs:
           queries: security-extended
 
       - name: Perform CodeQL analysis
+        # ⏳ TRANSITIONAL — result upload needs GitHub Advanced Security on this
+        #    private repo; keeps the PR check from failing until GHAS is on.
+        #    Remove once GHAS is enabled so CodeQL failures block again.
+        continue-on-error: true
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
