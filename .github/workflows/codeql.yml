@@ -49,6 +49,14 @@ jobs:
     name: Analyse (${{ matrix.language }})
     runs-on: ubuntu-latest
 
+    # ⏳ TRANSITIONAL: CodeQL result upload requires GitHub Advanced Security /
+    #    "Code Security" to be enabled on this PRIVATE repo. Until it is, the
+    #    upload step reports a configuration error. `continue-on-error` keeps
+    #    that from failing the PR while GHAS is being enabled. The analysis
+    #    still runs; once GHAS is on, results appear in the Security tab.
+    #    ➡️ REMOVE this line once GHAS is enabled so CodeQL failures block again.
+    continue-on-error: true
+
     permissions:
       # Required to upload the SARIF results to the Security tab.
       security-events: write
