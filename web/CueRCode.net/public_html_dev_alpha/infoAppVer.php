@@ -58,7 +58,7 @@ $app["Application"]["Description"]["Keywords"] = "Free QR code generator tool. C
 // ==============================================================================
 // ⚙️ The Number line below is rewritten by version-bump.yml — preserve the
 //    exact `]["Number"] = "` spacing so the workflow's sed continues to match.
-$app["Application"]["Version"]["Number"] = "0.1.5";
+$app["Application"]["Version"]["Number"] = "0.1.6";
 $app["Application"]["Version"]["Name"]   = null;
 
 // 🌱 Environment-based development-channel override (failsafe)
