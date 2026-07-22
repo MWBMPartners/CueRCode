@@ -88,7 +88,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: gd, mbstring, zip, fileinfo
+          extensions: gd, mbstring, zip, fileinfo, bcmath
           coverage: none
 
       - name: Install vendored libraries (no Composer, mirrors the server)
@@ -98,10 +98,14 @@ jobs:
           git clone --depth 1 --branch 5.0.5 https://github.com/chillerlan/php-qrcode.git /tmp/php-qrcode
           git clone --depth 1 --branch 3.2.1 https://github.com/chillerlan/php-settings-container.git /tmp/php-settings-container
           git clone --depth 1 https://github.com/Setasign/FPDF.git /tmp/fpdf
-          mkdir -p "${LIB}/chillerlan/php-qrcode" "${LIB}/chillerlan/php-settings-container" "${LIB}/fpdf"
+          git clone --depth 1 --branch 2.12.0 https://github.com/tecnickcom/tc-lib-barcode.git /tmp/tc-lib-barcode
+          git clone --depth 1 --branch 2.13.1 https://github.com/tecnickcom/tc-lib-color.git /tmp/tc-lib-color
+          mkdir -p "${LIB}/chillerlan/php-qrcode" "${LIB}/chillerlan/php-settings-container" "${LIB}/fpdf" "${LIB}/tecnickcom/tc-lib-barcode" "${LIB}/tecnickcom/tc-lib-color"
           cp -r /tmp/php-qrcode/src "${LIB}/chillerlan/php-qrcode/src"
           cp -r /tmp/php-settings-container/src "${LIB}/chillerlan/php-settings-container/src"
           cp -r /tmp/fpdf/. "${LIB}/fpdf/"
+          cp -r /tmp/tc-lib-barcode/src "${LIB}/tecnickcom/tc-lib-barcode/src"
+          cp -r /tmp/tc-lib-color/src "${LIB}/tecnickcom/tc-lib-color/src"
           echo "Vendored libraries installed."
 
       - name: Run test suite

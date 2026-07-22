@@ -15,6 +15,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 **CueRCode** is a comprehensive QR code generation platform that supports:
 
 - 📊 **21+ QR code types**: URLs, text, email, phone, SMS, WhatsApp, Zoom, geolocation, vCard, calendar events, PayPal, Bitcoin, media files, social media, Wi-Fi, and more
+- 📏 **Non-QR barcodes** (#69): `POST /api/v1/barcode` generates 11 additional 1D/2D symbologies - Code 128, Code 39, EAN-13, EAN-8, UPC-A, UPC-E, ITF, Codabar, Data Matrix, PDF417, Aztec Code - with strict server-side check-digit/charset validation
 - 🎨 **7 output formats**: PNG, JPG, GIF, SVG, WEBP, PDF, JPEG XL
 - 🖌️ **Full customisation**: colours, patterns, marker shapes, centre logos, frames with labels, gradients, transparency
 - 🔌 **RESTful API**: JSON and XML responses, API key authentication (self-service key create/rotate/revoke + per-key scope enforcement), rate limiting, Swagger/OpenAPI documentation
@@ -28,6 +29,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 | 🖥️ Backend | PHP 8.5 (backward-compatible with 8.4) |
 | 🗄️ Database | MySQL via MySQLi (prepared statements only) |
 | 📦 QR Library | [chillerlan/php-qrcode](https://github.com/chillerlan/php-qrcode) v5.x |
+| 📊 Barcode Library | [tecnickcom/tc-lib-barcode](https://github.com/tecnickcom/tc-lib-barcode) v2.12.0 (#69) |
 | 🎨 Frontend | HTML5, CSS3, Bootstrap 5.3, FontAwesome, jQuery |
 | 📖 API Docs | Swagger/OpenAPI 3.0 |
 
