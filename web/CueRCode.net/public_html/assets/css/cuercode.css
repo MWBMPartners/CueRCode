@@ -365,6 +365,37 @@ a:hover {
 }
 
 /**
+ * 🙂 Emoji centre-icon grid (Issue #67). Reuses EVERY .logo-grid/.logo-btn
+ * style (buttons carry BOTH classes: class="logo-btn emoji-btn") and only
+ * overrides the column count (more, smaller icons per row - a 400-item
+ * curated starter set needs a denser layout than the 26-item predefined
+ * logo grid) and adds a fixed, scrollable viewport so the Logo tab does not
+ * grow to an unusable height. The compound selector (.logo-grid.emoji-grid)
+ * gives this a higher specificity than the plain .logo-grid column rules
+ * above/below, so it always wins regardless of source order.
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_overflow/Overflow
+ */
+.logo-grid.emoji-grid {
+    grid-template-columns: repeat(5, 1fr);
+    max-height: 18rem;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.25rem;
+    border: 1px solid var(--cuercode-btn-border);
+    border-radius: var(--cuercode-border-radius);
+}
+
+/**
+ * 🙂 Hide an emoji button that the search/category filter (JS) has excluded.
+ * A plain [hidden] attribute is used rather than a bespoke class so the
+ * no-JS state (every button visible, attribute simply never set) is the
+ * natural default.
+ */
+.emoji-btn[hidden] {
+    display: none;
+}
+
+/**
  * 🔘 Shared button styles for pattern, marker, and logo selectors.
  * Mirrors the type-btn approach: icon/image above a small label.
  */
@@ -1474,6 +1505,11 @@ footer a:hover {
         grid-template-columns: repeat(4, 1fr);
     }
 
+    /* 🙂 Emoji grid: 7 columns on tablet (Issue #67) */
+    .logo-grid.emoji-grid {
+        grid-template-columns: repeat(7, 1fr);
+    }
+
     /* 🖼️ Frame grid: 4 columns on tablet (unchanged but explicit) */
     .frame-grid {
         grid-template-columns: repeat(4, 1fr);
@@ -1494,6 +1530,11 @@ footer a:hover {
     /* 🖼️ Logo grid: 5 columns on desktop */
     .logo-grid {
         grid-template-columns: repeat(5, 1fr);
+    }
+
+    /* 🙂 Emoji grid: 8 columns on desktop (Issue #67) */
+    .logo-grid.emoji-grid {
+        grid-template-columns: repeat(8, 1fr);
     }
 
     /* 🖼️ Frame grid: 4 columns on desktop (unchanged but explicit) */

@@ -469,10 +469,12 @@ function overlayLogoOnSVG(string $svgContent, string $logoPath, array $config = 
 /**
  * 📂 Resolve a logo input to an absolute file path on the server
  *
- * Handles three types of logo inputs:
+ * Handles FOUR types of logo inputs:
  *   1. Numeric ID: looks up a predefined logo in tblPredefinedLogos
- *   2. Base64 data URI: decodes and saves to a temporary file
- *   3. File path string: validates that the file exists
+ *   2. `emoji:<codepoint-seq>` string: resolves a vendored Twemoji asset
+ *      (Issue #67 - native emoji centre-icon picker)
+ *   3. Base64 data URI: decodes and saves to a temporary file
+ *   4. File path string: validates that the file exists
  *
  * @param mixed $logoInput The logo identifier (int ID, string base64, or string path)
  *
@@ -481,11 +483,16 @@ function overlayLogoOnSVG(string $svgContent, string $logoPath, array $config = 
  * @see https://www.php.net/manual/en/function.is-numeric.php
  * @see https://www.php.net/manual/en/function.base64-decode.php
  * @see https://www.php.net/manual/en/function.tempnam.php
+ * @see getEmojiLogoPath() - Case 2 (Issue #67)
  *
  * @example
  *   // Predefined logo by ID
  *   $path = getLogoPath(5);
  *   // Returns: '/var/www/CueRCode/_uploads/logos/predefined/logo-5.png'
+ *
+ *   // Emoji centre-icon (Issue #67)
+ *   $path = getLogoPath('emoji:1f600');
+ *   // Returns: '/var/www/CueRCode/public_html/assets/img/emoji/1f600.svg'
  *
  *   // Base64 upload
  *   $path = getLogoPath('data:image/png;base64,iVBOR...');
@@ -516,7 +523,18 @@ function getLogoPath(mixed $logoInput): ?string
     }
 
     // ==================================================================
-    // 📦 Case 2: Base64 data URI - decode and save to temporary file
+    // 🙂 Case 2: `emoji:<codepoint-seq>` - native UTF emoji centre-icon
+    //    (Issue #67). Checked BEFORE the base64/file-path cases below since
+    //    it has its own unambiguous 'emoji:' prefix and its own dedicated,
+    //    STRICTLY-validated resolver (getEmojiLogoPath()).
+    // @see getEmojiLogoPath()
+    // ==================================================================
+    if (str_starts_with($logoInput, 'emoji:')) {
+        return getEmojiLogoPath(substr($logoInput, strlen('emoji:')));
+    }
+
+    // ==================================================================
+    // 📦 Case 3: Base64 data URI - decode and save to temporary file
     // Format: data:image/{type};base64,{encoded_data}
     // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs
     // ==================================================================
@@ -525,7 +543,7 @@ function getLogoPath(mixed $logoInput): ?string
     }
 
     // ==================================================================
-    // 📁 Case 3: File path - validate existence WITH base-directory containment
+    // 📁 Case 4: File path - validate existence WITH base-directory containment
     //
     // 🔒 SECURITY (F-017): the 'logo' value here is REQUEST-supplied
     //    (customization.logo flows straight from the API/form into this
@@ -859,11 +877,11 @@ function getLogoPathFromDatabase(int $logoId): ?string
         //    malformed value containing traversal segments ('../../config.php')
         //    or an absolute path. resolvePredefinedLogoPath() runs the SAME
         //    realpath-under-base containment guard added in cycle 5 for the
-        //    request-supplied logo path (Case 3 of getLogoPath()) against EVERY
+        //    request-supplied logo path (Case 4 of getLogoPath()) against EVERY
         //    candidate base, so a stored value can never escape either
         //    directory.
         // @see resolvePredefinedLogoPath() - the extracted, unit-tested resolver
-        // @see getLogoPath() - Case 3 containment guard (F-017)
+        // @see getLogoPath() - Case 4 containment guard (F-017)
         // @see isPathWithinAllowedBase()
         $resolvedPath = resolvePredefinedLogoPath($logoFileName);
 
@@ -894,6 +912,173 @@ function getLogoPathFromDatabase(int $logoId): ?string
         }
         return null;
     }
+}
+
+// ==============================================================================
+// 🙂 getEmojiLogoPath() / resolveEmojiLogoPath() - Native emoji centre-icons
+//    (Issue #67)
+// ==============================================================================
+
+/**
+ * 🙂 Resolve an `emoji:<codepoint-seq>` logo input to a validated codepoint
+ *    sequence and hand it to resolveEmojiLogoPath()
+ *
+ * This is the getLogoPath() Case 2 entry point. It STRICTLY validates the
+ * incoming codepoint-sequence shape BEFORE any filesystem access - the
+ * sequence is REQUEST-supplied (a client can send any string after
+ * 'emoji:'), so it must be treated exactly as untrusted as the Case 4 file
+ * path input, even though the eventual lookup only ever reads from a small,
+ * repo-controlled asset directory (there is no way to reach outside it via
+ * a string that fails this regex - see resolveEmojiLogoPath()'s own
+ * containment guard for the second, independent layer of defence).
+ *
+ * Accepted shape: 1-7 groups of 2-6 lowercase hex digits, hyphen-joined -
+ * this matches EVERY Twemoji codepoint-sequence filename actually vendored
+ * under public_html/assets/img/emoji/ (single codepoints like '1f600', and
+ * multi-codepoint sequences like flags '1f1fa-1f1f8' or ZWJ combos), while
+ * rejecting anything else outright (uppercase hex, path separators,
+ * traversal segments, empty segments, more than 7 groups, etc.) with NO
+ * filesystem lookup at all for a malformed value.
+ *
+ * @param string $codepointSeq The raw string AFTER the 'emoji:' prefix has
+ *                               been stripped by getLogoPath().
+ *
+ * @return string|null Absolute, base-contained path to the resolved SVG
+ *                       asset, or null if the sequence is malformed or does
+ *                       not resolve to a vendored emoji.
+ *
+ * @see resolveEmojiLogoPath() - the actual filesystem resolution + containment guard
+ * @see getLogoPath() - Case 2, the caller
+ *
+ * @example
+ *   $path = getEmojiLogoPath('1f600');
+ *   // Returns: '/.../public_html/assets/img/emoji/1f600.svg'
+ *
+ *   $path = getEmojiLogoPath('../../etc/passwd');
+ *   // Returns: null (regex rejects it before any filesystem access)
+ */
+function getEmojiLogoPath(string $codepointSeq): ?string
+{
+    // 🔒 STRICT format validation, no filesystem access on failure. Mirrors
+    //    the exact contract documented in the #67 design brief: 2-6 hex
+    //    digits per codepoint group, 1-7 groups, hyphen-joined, lowercase
+    //    only (Twemoji filenames are always lowercase - an uppercase or
+    //    mixed-case value can never match a real vendored file, so it is
+    //    rejected here rather than lowercased and allowed through, keeping
+    //    the accepted shape unambiguous and easy to reason about).
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    if (preg_match('/^[0-9a-f]{2,6}(-[0-9a-f]{2,6}){0,6}$/', $codepointSeq) !== 1) {
+        if (function_exists('logError')) {
+            logError(
+                'warning',
+                'Emoji logo rejected: malformed codepoint sequence (#67 guard)',
+                'Input: ' . mb_substr($codepointSeq, 0, 100)
+            );
+        }
+        return null;
+    }
+
+    return resolveEmojiLogoPath($codepointSeq);
+}
+
+/**
+ * 🙂 Resolve a VALIDATED emoji codepoint sequence to an absolute,
+ *    base-contained file path under the vendored emoji assets directory
+ *
+ * Extracted as its own small, pure(ish) function - mirroring
+ * resolvePredefinedLogoPath()'s own convention exactly - so the "which
+ * directory holds the emoji assets, and how do we safely resolve a
+ * codepoint sequence into it" logic is independently unit-testable WITHOUT
+ * a database connection (there is no database involvement anywhere in the
+ * emoji path - the whole feature is filesystem-indexed by design, see
+ * tools/emoji_index.php's doc block).
+ *
+ * ASSET LAYOUT (Issue #67 design decision): every vendored emoji ships as a
+ * SAME-BASENAME SVG + PNG pair living in the SAME flat directory
+ * (public_html/assets/img/emoji/<seq>.svg and .png) - e.g. '1f600.svg' +
+ * '1f600.png' for grinning face. This DELIBERATELY mirrors the Issue #65
+ * "PNG twin" convention loadLogoImage() already implements for predefined
+ * logos: this function only ever returns the .svg path (the canonical,
+ * highest-fidelity form), and loadLogoImage() transparently substitutes the
+ * same-directory, same-basename .png twin when a RASTER (PNG/JPG/GIF/WEBP)
+ * QR output needs it - meaning loadLogoImage() and overlayLogoOnRaster()/
+ * overlayLogoOnSVG() needed ZERO code changes to support emoji logos; only
+ * the path-resolution layer (this function + getEmojiLogoPath()) is new.
+ *
+ * 🔒 SECURITY (F-017, new allowed base): a validated codepoint sequence is
+ *    still REQUEST-supplied input, so the SAME realpath-under-base
+ *    containment guard used everywhere else in this file
+ *    (isPathWithinAllowedBase()) applies here too, against a NEW allowed
+ *    base: public_html/assets/img/emoji/. This is defence-in-depth on top
+ *    of getEmojiLogoPath()'s regex - even if the regex were ever loosened
+ *    by a future edit, a candidate path that resolves outside this base
+ *    directory is still rejected.
+ *
+ * @param string $codepointSeq An ALREADY-VALIDATED codepoint sequence (see
+ *                               getEmojiLogoPath()'s regex guard - this
+ *                               function does not re-validate the shape).
+ *
+ * @return string|null Absolute, base-contained path to the '<seq>.svg'
+ *                       asset, or null if it does not exist under the
+ *                       emoji assets base or resolves outside containment.
+ *
+ * @see getEmojiLogoPath() - the STRICT format-validating caller
+ * @see resolvePredefinedLogoPath() - the analogous Issue #65 resolver this mirrors
+ * @see isPathWithinAllowedBase() - the shared realpath-under-base primitive
+ * @see loadLogoImage() - the Issue #65 PNG-twin lookup this asset layout reuses unchanged
+ *
+ * @example
+ *   $path = resolveEmojiLogoPath('1f600');
+ *   // Returns: '/.../web/CueRCode.net/public_html/assets/img/emoji/1f600.svg'
+ */
+function resolveEmojiLogoPath(string $codepointSeq): ?string
+{
+    // ❌ Nothing to resolve.
+    if ($codepointSeq === '') {
+        return null;
+    }
+
+    // 📌 The single allowed base for emoji assets. Unlike predefined logos
+    //    there is no "legacy uploads" secondary base to check - emoji are
+    //    NEVER user-uploaded, they are exclusively repo-vendored assets.
+    if (!defined('CUERCODE_SITE_ROOT')) {
+        return null;
+    }
+
+    $emojiBaseDir = CUERCODE_SITE_ROOT
+        . 'public_html' . DIRECTORY_SEPARATOR
+        . 'assets' . DIRECTORY_SEPARATOR
+        . 'img' . DIRECTORY_SEPARATOR
+        . 'emoji';
+
+    // 📌 Resolve the allowed base once (normalises symlinks/.. in the base
+    //    itself). A missing directory (e.g. a deployment that has not yet
+    //    synced the emoji assets) is simply "not found", not fatal.
+    $allowedBase = realpath($emojiBaseDir);
+
+    if ($allowedBase === false) {
+        return null;
+    }
+
+    // 📌 Resolve the candidate SVG file (base directory + '<seq>.svg').
+    //    Only '.svg' is ever RETURNED here - loadLogoImage()'s existing
+    //    PNG-twin lookup (Issue #65) transparently substitutes the
+    //    same-basename '.png' twin for raster QR output, exactly as it
+    //    already does for predefined logos.
+    $fullPath     = $emojiBaseDir . DIRECTORY_SEPARATOR . $codepointSeq . '.svg';
+    $resolvedReal = realpath($fullPath);
+
+    if ($resolvedReal !== false
+        && file_exists($resolvedReal)
+        && is_file($resolvedReal)
+        && isPathWithinAllowedBase($resolvedReal, [$allowedBase])
+    ) {
+        return $resolvedReal;
+    }
+
+    // ❌ The requested codepoint sequence is not a vendored emoji (or
+    //    resolved outside containment) - null, never a fatal.
+    return null;
 }
 
 // ==============================================================================
@@ -1331,9 +1516,10 @@ function loadLogoImage(string $logoPath): ?\GdImage
     //     Detection is by FILE EXTENSION (not MIME sniffing): every logo
     //     path reaching this function has already been through either
     //     resolvePredefinedLogoPath() (predefined logos - filenames are
-    //     admin-curated) or getLogoPath()'s Case 3 containment guard
-    //     (uploaded logos), both of which resolve real, existing files by
-    //     their actual on-disk name, so the extension is trustworthy here.
+    //     admin-curated), resolveEmojiLogoPath() (emoji centre-icons -
+    //     Issue #67), or getLogoPath()'s Case 4 containment guard (uploaded
+    //     logos) - all of which resolve real, existing files by their
+    //     actual on-disk name, so the extension is trustworthy here.
     // ==================================================================
     $pathExtension = strtolower((string) pathinfo($logoPath, PATHINFO_EXTENSION));
 

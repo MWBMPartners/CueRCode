@@ -1,0 +1,10 @@
+{
+    "source": "jdecked/twemoji",
+    "sourceUrl": "https://github.com/jdecked/twemoji",
+    "license": "CC-BY-4.0",
+    "vendoredTag": "v17.0.3",
+    "vendoredCommit": "b6b55fef1e8636b540a6d016a4729ca8cdf2e60b",
+    "vendoredAt": "2026-07-22",
+    "assetCount": 400,
+    "note": "CueRCode vendors a CURATED STARTER SET (~400 of ~4000 upstream Twemoji emoji) under public_html/assets/img/emoji/. This file tracks the exact upstream Twemoji tag/commit the starter set was cut from, so .github/workflows/emoji-ingest.yml can detect when a newer Twemoji release exists and open a diff-report issue. Bumping 'vendoredTag'/'vendoredCommit' here is a MANUAL, deliberate act (after actually re-vendoring assets and re-curating tools/emoji_curated_map.php) - the ingest workflow only ever reads this file, it never writes to it."
+}

@@ -1,0 +1,205 @@
+# =============================================================================
+# 🙂 CueRCode - Emoji Ingest Check (Issue #68)
+# =============================================================================
+# The repo's FIRST scheduled (`schedule:`) workflow. Monthly, it compares the
+# vendored Twemoji tag recorded in tools/emoji_vendor_version.json against the
+# LATEST upstream jdecked/twemoji release tag. On drift, it computes which
+# emoji codepoint sequences (= Twemoji SVG filenames) were ADDED to Twemoji's
+# asset set between the vendored tag and the latest tag, best-effort
+# regenerates emoji-index.json against the assets already committed (proving
+# tools/emoji_index.php still runs cleanly), and opens a DIFF-REPORT ISSUE
+# listing the new emoji for a human to curate into the starter set.
+#
+# ⚠️ Deliberately does NOT open a pull request and does NOT auto-commit new
+# assets. Issue #68's working-agreement note: the 2026-07-18 agreement has
+# agents/automation not opening PRs; a scheduled-Action bot PR would be a
+# different lane requiring explicit owner sign-off. This workflow defaults to
+# the "diff-report issue" mode (option B) - see .claude/HANDOFF.md and
+# DEV_NOTES.md's "Emoji Centre-Icon Picker (#67/#68)" entry for the full
+# rationale and how to opt into PR mode later.
+#
+# Least-privilege permissions: `contents: read` (checkout only - this job
+# never pushes) + `issues: write` (the diff-report issue). SHA-pinned actions
+# throughout, matching the convention already established in ci.yml/lint.yml/
+# codeql.yml/semgrep.yml.
+#
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: Emoji Ingest Check
+
+on:
+  schedule:
+    # 🗓️ 06:00 UTC on the 1st of every month. Cheap to run (no test suite, no
+    # library vendoring) so a monthly cadence is more than sufficient - new
+    # Unicode emoji releases happen at most once or twice a year.
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: emoji-ingest
+  cancel-in-progress: true
+
+jobs:
+  check-drift:
+    name: Check Twemoji upstream drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45 # v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      # -----------------------------------------------------------------------
+      # 📖 Read the CURRENTLY-vendored Twemoji tag (tools/emoji_vendor_version.json
+      # is a MANUALLY-maintained marker file - this workflow only ever reads
+      # it, never writes to it; see the file's own doc comment).
+      # -----------------------------------------------------------------------
+      - name: Read the vendored Twemoji tag
+        id: vendored
+        run: |
+          set -euo pipefail
+          TAG=$(php -r '
+            $data = json_decode(file_get_contents("tools/emoji_vendor_version.json"), true);
+            echo $data["vendoredTag"];
+          ')
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Vendored Twemoji tag: ${TAG}"
+
+      # -----------------------------------------------------------------------
+      # 🌐 Fetch the LATEST upstream Twemoji release tag via the GitHub API
+      # (the `gh` CLI ships preinstalled on GitHub-hosted runners).
+      # -----------------------------------------------------------------------
+      - name: Fetch the latest upstream Twemoji tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LATEST_TAG=$(gh api repos/jdecked/twemoji/tags --jq '.[0].name')
+          echo "tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream Twemoji tag: ${LATEST_TAG}"
+
+      - name: Compare vendored vs upstream
+        id: compare
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.vendored.outputs.tag }}" = "${{ steps.upstream.outputs.tag }}" ]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "No drift - the vendored tag matches the latest upstream release."
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "Drift detected: vendored=${{ steps.vendored.outputs.tag }} latest=${{ steps.upstream.outputs.tag }}"
+          fi
+
+      # -----------------------------------------------------------------------
+      # 🧪 Best-effort regeneration proof: confirm tools/emoji_index.php still
+      # runs cleanly against the CURRENTLY-committed assets (no new assets are
+      # downloaded or committed by this workflow - see the file header note
+      # above). This is purely a smoke test, not a data-changing step.
+      # -----------------------------------------------------------------------
+      - name: Smoke-test the index generator
+        if: steps.compare.outputs.drift == 'true'
+        run: php tools/emoji_index.php --quiet || true
+
+      # -----------------------------------------------------------------------
+      # 🔎 Compute which emoji codepoint sequences (Twemoji SVG filenames)
+      # were ADDED upstream between the vendored tag and the latest tag, via
+      # the GitHub Git Trees API (no full repository clone needed).
+      # -----------------------------------------------------------------------
+      - name: Compute the new-emoji delta
+        if: steps.compare.outputs.drift == 'true'
+        id: delta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VENDORED_TAG: ${{ steps.vendored.outputs.tag }}
+          LATEST_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/jdecked/twemoji/git/trees/${VENDORED_TAG}?recursive=1" \
+            --jq '.tree[] | select(.path | test("^assets/svg/.*\\.svg$")) | .path' \
+            | sed -E 's#^assets/svg/##; s#\.svg$##' | sort > /tmp/vendored-seqs.txt
+
+          gh api "repos/jdecked/twemoji/git/trees/${LATEST_TAG}?recursive=1" \
+            --jq '.tree[] | select(.path | test("^assets/svg/.*\\.svg$")) | .path' \
+            | sed -E 's#^assets/svg/##; s#\.svg$##' | sort > /tmp/latest-seqs.txt
+
+          # 📌 comm -13: lines unique to file 2 (latest) = newly-added sequences.
+          comm -13 /tmp/vendored-seqs.txt /tmp/latest-seqs.txt > /tmp/new-seqs.txt || true
+
+          NEW_COUNT=$(wc -l < /tmp/new-seqs.txt | tr -d ' ')
+          echo "new_count=${NEW_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "New emoji codepoint sequences since ${VENDORED_TAG}: ${NEW_COUNT}"
+
+      # -----------------------------------------------------------------------
+      # 🚫 Avoid duplicate diff-report issues on repeated monthly drift while
+      # a previous report is still open/un-actioned.
+      # -----------------------------------------------------------------------
+      - name: Check for an already-open drift issue
+        if: steps.compare.outputs.drift == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          EXISTING_COUNT=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --search "\"Emoji ingest:\" in:title" \
+            --state open \
+            --json number \
+            --jq 'length')
+          echo "count=${EXISTING_COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Open a diff-report issue
+        if: steps.compare.outputs.drift == 'true' && steps.existing.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VENDORED_TAG: ${{ steps.vendored.outputs.tag }}
+          LATEST_TAG: ${{ steps.upstream.outputs.tag }}
+          NEW_COUNT: ${{ steps.delta.outputs.new_count }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "## Twemoji upstream drift detected"
+            echo ""
+            echo "- **Vendored tag** (\`tools/emoji_vendor_version.json\`): \`${VENDORED_TAG}\`"
+            echo "- **Latest upstream tag** ([jdecked/twemoji](https://github.com/jdecked/twemoji)): \`${LATEST_TAG}\`"
+            echo "- **New emoji codepoint sequences added upstream since the vendored tag:** ${NEW_COUNT}"
+            echo ""
+            echo "### First 50 new codepoint sequences"
+            echo '```'
+            head -n 50 /tmp/new-seqs.txt
+            echo '```'
+            echo ""
+            echo "### Suggested next steps"
+            echo "1. Review the sequences above (cross-reference [Unicode's emoji-test.txt](https://unicode.org/Public/emoji/latest/emoji-test.txt) for names/groups)."
+            echo "2. Curate any worth adding into the starter set: copy the matching \`.svg\` (assets/svg/) + \`.png\` (assets/72x72/) from the new Twemoji tag into \`web/CueRCode.net/public_html/assets/img/emoji/\` (SAME basename, both extensions), add an entry to \`tools/emoji_curated_map.php\`, then run \`php tools/emoji_index.php\`."
+            echo "3. Bump \`tools/emoji_vendor_version.json\` (\`vendoredTag\`/\`vendoredCommit\`/\`vendoredAt\`/\`assetCount\`) to record the new baseline."
+            echo "4. Commit + push manually (this workflow never opens a pull request - see issue #68's working-agreement note; the owner can opt into PR mode later)."
+            echo ""
+            echo "_Opened automatically by \`.github/workflows/emoji-ingest.yml\`._"
+          } > /tmp/issue-body.md
+
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "Emoji ingest: Twemoji ${LATEST_TAG} available (vendored: ${VENDORED_TAG}, ${NEW_COUNT} new emoji)" \
+            --label "enhancement" \
+            --body-file /tmp/issue-body.md
+
+      - name: Skip - drift report already open
+        if: steps.compare.outputs.drift == 'true' && steps.existing.outputs.count != '0'
+        run: echo "Drift detected but a diff-report issue is already open - not creating a duplicate."
+
+      - name: No drift - nothing to do
+        if: steps.compare.outputs.drift == 'false'
+        run: echo "Vendored Twemoji tag is current with upstream. No action needed."

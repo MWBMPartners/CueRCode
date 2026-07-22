@@ -4275,10 +4275,10 @@
                             },
                             {
                                 "type": "string",
-                                "description": "`upload` to use a custom logo supplied via logo_data, or a logo identifier/path."
+                                "description": "`upload` to use a custom logo supplied via logo_data, an `emoji:<codepoint-seq>` native emoji centre-icon (e.g. `emoji:1f600`, `emoji:1f1fa-1f1f8` - see the emoji field description below), or a logo identifier/path."
                             }
                         ],
-                        "description": "Logo to overlay on the QR code centre. Using a logo automatically upgrades ECC to H. Set to `upload` and provide logo_data + logo_mime for a custom image."
+                        "description": "Logo to overlay on the QR code centre. Using a logo automatically upgrades ECC to H. Set to `upload` and provide logo_data + logo_mime for a custom image. Set to `emoji:<codepoint-seq>` (#67) to use one of the ~400 curated, vendored Twemoji (CC-BY-4.0) starter-set icons - the codepoint sequence is lowercase hex, hyphen-joined (e.g. `1f4cd` for 📍 round pushpin, `1f1fa-1f1f8` for the US flag), matching each asset's filename under `/assets/img/emoji/`. Unknown/malformed emoji sequences are silently ignored (no logo overlay, QR still generates) rather than rejected - no upload or SVG screening applies since these are repo-controlled assets, not user-supplied content."
                     },
                     "logo_data": {
                         "type": "string",
