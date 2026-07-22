@@ -77,13 +77,16 @@
  *            idioms 2-4 use). Regex over ALL 13 files.
  *
  * ------------------------------------------------------------------------------
- * 📂 Scanned-file allowlist (13) and rationale for the 2 exclusions
+ * 📂 Scanned-file allowlist (14) and rationale for the 2 exclusions
  * ------------------------------------------------------------------------------
- * public_html/api/v1/index.php (the router) + the 12 fn_*.php files an API
+ * public_html/api/v1/index.php (the router) + the 13 fn_*.php files an API
  * request can actually reach: fn_api_generate.php, fn_api_bulk.php,
  * fn_api_download.php, fn_api_qrcodes.php, fn_api_accounts.php,
  * fn_api_account.php, fn_api_keys.php, fn_api_types.php, fn_api_auth.php,
- * fn_auth.php, fn_features.php, fn_response.php.
+ * fn_auth.php, fn_features.php, fn_response.php, fn_api_redirects.php (Epic
+ * E1a Stage S1, #27 - GET/PATCH qrcodes/{uuid}/destination's handlers, added
+ * 2026-07-22; the sibling fn_redirects.php is deliberately NOT scanned - it
+ * is pure/DB-independent and never calls errorResponse() itself).
  *
  * EXCLUDED, deliberately, each with its own assertFalse() exclusion-guard
  * assertion below proving neither exclusion's codes leak into the emitted
@@ -360,12 +363,13 @@ $scannedFiles = [
     'fn_auth.php'          => [CUERCODE_FUNCTIONS_DIR . 'fn_auth.php', false],
     'fn_features.php'      => [CUERCODE_FUNCTIONS_DIR . 'fn_features.php', false],
     'fn_response.php'      => [CUERCODE_FUNCTIONS_DIR . 'fn_response.php', false],
+    'fn_api_redirects.php' => [CUERCODE_FUNCTIONS_DIR . 'fn_api_redirects.php', false],
 ];
 
 assertEquals(
-    13,
+    14,
     count($scannedFiles),
-    'the scanned-file allowlist has exactly the 13 files the plan specifies'
+    'the scanned-file allowlist has exactly the 14 files the plan specifies'
 );
 
 foreach ($scannedFiles as $fileLabel => $fileInfo) {
@@ -490,16 +494,18 @@ assertEquals(
 );
 
 assertEquals(
-    91,
+    93,
     count($xErrorCodes),
-    'ErrorResponse.x-error-codes has exactly 91 entries (the 83 pre-existing codes '
-    . '(76 original + HANDLER_NOT_FOUND, UNKNOWN_HANDLER, FEATURE_NOT_AVAILABLE, '
-    . 'BULK_AVERY_ALL_FAILED, BULK_PARSE_ERROR, BULK_VALIDATION_ERROR, JSON_ENCODE_ERROR) '
-    . 'plus the 8 newly-documented #70 PAYG credit codes: CREDIT_INSUFFICIENT_BALANCE, '
+    'ErrorResponse.x-error-codes has exactly 93 entries (the 91 pre-existing codes '
+    . '(83 = 76 original + HANDLER_NOT_FOUND, UNKNOWN_HANDLER, FEATURE_NOT_AVAILABLE, '
+    . 'BULK_AVERY_ALL_FAILED, BULK_PARSE_ERROR, BULK_VALIDATION_ERROR, JSON_ENCODE_ERROR, '
+    . 'plus the 8 #70 PAYG credit codes: CREDIT_INSUFFICIENT_BALANCE, '
     . 'CREDIT_INVALID_REQUEST, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, '
     . 'CREDIT_PAYG_DISABLED, CREDIT_SERVICE_ERROR, CREDIT_SPEND_CAP_EXCEEDED, '
     . 'CREDIT_UNAVAILABLE - fn_features.php consumeCreditsOr402(), built but not yet '
-    . 'wired to a live endpoint)'
+    . 'wired to a live endpoint) plus the 2 newly-documented Epic E1a Stage S1 (#27) '
+    . 'dynamic-redirect destination codes: INVALID_DESTINATION, REDIRECT_SUSPENDED '
+    . '(fn_api_redirects.php handlePatchRedirectDestination())'
 );
 
 // ==============================================================================
@@ -567,6 +573,18 @@ assertTrue(
     isset($codesByFile['fn_api_bulk.php']['BULK_AVERY_ALL_FAILED']),
     'BULK_AVERY_ALL_FAILED is found in fn_api_bulk.php (Avery-sheet all-items-failed guard, '
     . 'FG-033/#57)'
+);
+
+assertTrue(
+    isset($codesByFile['fn_api_redirects.php']['INVALID_DESTINATION']),
+    'INVALID_DESTINATION is found in fn_api_redirects.php (PATCH destination validation '
+    . 'failure, Epic E1a Stage S1, #27)'
+);
+
+assertTrue(
+    isset($codesByFile['fn_api_redirects.php']['REDIRECT_SUSPENDED']),
+    'REDIRECT_SUSPENDED is found in fn_api_redirects.php (abuse-suspended PATCH block, '
+    . 'Epic E1a Stage S1, #27)'
 );
 
 // ==============================================================================

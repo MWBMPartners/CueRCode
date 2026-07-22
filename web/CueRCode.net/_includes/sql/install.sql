@@ -1276,9 +1276,164 @@ ALTER TABLE `tblPayments`
         ON UPDATE CASCADE;
 
 -- ==============================================================================
+-- 🔗 Dynamic-redirect schema delta (E1a, #27/#71/#33) - BUILT BUT DARK/INERT
+--    (Stage S0 of the phased build plan - see .dev-team/dynamic_dualfn_design.md)
+-- ==============================================================================
+-- Tables 27-29 below are ADDITIVE ONLY - no existing table/column in this file
+-- is touched. Nothing here is reachable by any live route yet: the `dynamic_url`
+-- QR type seeds with isActive=0 (seed_data.sql), the `dynamic_qr_enabled`
+-- kill-switch seeds '0', and there is NO public_html/r/ redirect endpoint
+-- anywhere in this codebase - see .dev-team/dynamic_dualfn_design.md Stage S2
+-- (gated on owner sign-off G-007, LAUNCH_DECISIONS.md) for when this schema
+-- goes live. Mirrors the #70 flexible-pricing delta's "BUILT BUT DISABLED,
+-- additive-only" house pattern (see that section above this one).
+-- ==============================================================================
+
+-- ==============================================================================
+-- 📋 Table 27: tblQRRedirects (E1a, #27 - dark/inert until Stage S2)
+-- ==============================================================================
+-- One row per DYNAMIC redirect resource - the thing printed in a `dynamic_url`
+-- QR code is `{dynamic_redirect_base_url}/r/{redirectUUID}` (see
+-- fn_qr_payloads.php buildPayload_dynamic_url()), NOT tblQRCodes.qrUUID (Table
+-- 5) - that UUID names a generated IMAGE (download URLs); this one names a
+-- REDIRECT RESOURCE that survives image re-generation/reprints. `ownerUserID`/
+-- `ownerOrgID` are XOR (mirrors tblSubscriptions:806-807's own-subject
+-- convention) - the application-level invariant is exactly one owner set,
+-- enforced by the `anonymous` plan's `dynamic_codes=0` limit (seed_data.sql)
+-- rather than a DB constraint, matching this codebase's other XOR-owner columns.
+-- `isDualFunction`/`appID`/`resolvePayloadJSON` are Stage S4 (#71) fields,
+-- present now so a later ALTER is never needed for them, but READ/WRITTEN by
+-- NOTHING in S0/S1 - `appID` intentionally has NO FK yet (tblSanctionedApps
+-- does not exist until Stage S4; that FK is added additively via ALTER TABLE
+-- then, exactly like the #70 delta's own ALTER-after pattern above).
+--
+-- @see _functions/fn_redirects.php     - validateRedirectDestination(), redirectIsWritableBy()
+-- @see _functions/fn_api_redirects.php - createDynamicRedirectForOwner(), the destination CRUD handlers
+-- @see _functions/fn_qr_payloads.php   - buildPayload_dynamic_url()
+-- @see .dev-team/dynamic_dualfn_design.md §1.1
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblQRRedirects` (
+    `redirectID`              BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing redirect resource identifier',
+    `redirectUUID`            CHAR(36)          NOT NULL                 COMMENT '🆔 UUID v4 - the identifier PRINTED in the QR code (`/r/{uuid}`); deliberately distinct from tblQRCodes.qrUUID (Table 5) - this UUID names the redirect RESOURCE, not a rendered image, so it survives re-styled reprints',
+    `qrID`                    BIGINT UNSIGNED   NULL                     COMMENT '🔗 FK to tblQRCodes - the currently-generated image record for this redirect (nullable so the redirect outlives a soft-deleted/pruned QR row)',
+    `ownerUserID`             INT UNSIGNED      NULL                     COMMENT '👤 Owning user (XOR with ownerOrgID - exactly one is set; dynamic codes are never anonymous, enforced by the anonymous plan''s dynamic_codes=0 seed)',
+    `ownerOrgID`              INT UNSIGNED      NULL                     COMMENT '🏢 Owning organisation (XOR with ownerUserID - see above)',
+    `destinationURL`          VARCHAR(2048)     NOT NULL                 COMMENT '🎯 The current redirect target - validated by validateRedirectDestination() before every write (fn_redirects.php)',
+    `previousDestinationURL`  VARCHAR(2048)     NULL                     COMMENT '⏮️ The destinationURL value immediately before the most recent PATCH (full audit history lives in tblActivityLog)',
+    `destinationUpdatedAt`    DATETIME          NULL                     COMMENT '📅 Timestamp of the most recent destinationURL change',
+    `updatedByUserID`         INT UNSIGNED      NULL                     COMMENT '👤 Which user last changed destinationURL (audit convenience column)',
+    `isActive`                TINYINT(1)        NOT NULL DEFAULT 1       COMMENT '✅ 0 ⇒ the (not-yet-built) `/r/` route would serve 410 Gone - Stage S2',
+    `disabledReason`          ENUM('owner', 'abuse', 'admin') NULL       COMMENT '🚫 Set when isActive=0 - ''abuse'' blocks owner PATCH re-enable (admin-only re-enable, 409 REDIRECT_SUSPENDED) and drives takedown-page copy (Stage S2)',
+    `scheduledStartAt`        DATETIME          NULL                     COMMENT '⏰ FG-005 hook - before this timestamp the (future) /r/ route would show "not yet active" (not built this stage)',
+    `expiresAt`               DATETIME          NULL                     COMMENT '⏰ FG-005 hook - after this timestamp the (future) /r/ route would serve 410 Gone (mirrors tblQRCodes.expiresAt, Table 5)',
+    `isDualFunction`          TINYINT(1)        NOT NULL DEFAULT 0       COMMENT '🔀 Stage S4 (#71) field - 1 ⇒ resolvable via the future GET /api/v1/resolve/{uuid}; unread/unwritten by anything in S0/S1',
+    `appID`                   INT UNSIGNED      NULL                     COMMENT '📱 Stage S4 (#71) field - which sanctioned app may resolve this code; NO FK yet (tblSanctionedApps ships in Stage S4 - the FK is added additively via ALTER TABLE then); unread/unwritten by anything in S0/S1',
+    `resolvePayloadJSON`      JSON              NULL                     COMMENT '📦 Stage S4 (#71) field - owner-supplied structured in-app payload template (event_id, pass_ref, ...); unread/unwritten by anything in S0/S1',
+    `hitCount`                BIGINT UNSIGNED   NOT NULL DEFAULT 0       COMMENT '📊 Cheap denormalised scan counter, incremented fire-and-forget by the future /r/ route (Stage S2) alongside a tblQRScans INSERT',
+    `createdAt`               DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Record creation timestamp',
+    `updatedAt`               DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+
+    PRIMARY KEY (`redirectID`),
+    UNIQUE KEY `idx_redirect_uuid` (`redirectUUID`),
+    INDEX `idx_redirect_owner_user` (`ownerUserID`, `isActive`),
+    INDEX `idx_redirect_owner_org` (`ownerOrgID`, `isActive`),
+    INDEX `idx_redirect_qr` (`qrID`),
+
+    CONSTRAINT `fk_redirect_qr` FOREIGN KEY (`qrID`)
+        REFERENCES `tblQRCodes` (`qrID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_redirect_owner_user` FOREIGN KEY (`ownerUserID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_redirect_owner_org` FOREIGN KEY (`ownerOrgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_redirect_updated_by` FOREIGN KEY (`updatedByUserID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🔗 Dynamic-redirect resources (E1a, #27) - dark/inert until Stage S2 ships the public /r/{uuid} route (G-007 owner sign-off)';
+
+-- ==============================================================================
+-- 📋 Table 28: tblQRScans (E11, #33 - dark/inert until Stage S2/S3)
+-- ==============================================================================
+-- Scan-analytics event log, written by the future /r/ route's fire-and-forget
+-- accounting step (Stage S2) alongside the tblQRRedirects.hitCount UPDATE. A
+-- MISS (404/invalid-shape request) is deliberately NOT a row here - misses are
+-- counted separately by the (future) per-IP miss-throttle, keeping this table
+-- exclusively "a real redirect resource was resolved" events, FK NOT NULL.
+--
+-- @see .dev-team/dynamic_dualfn_design.md §4.1
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblQRScans` (
+    `scanID`         BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing scan-event identifier',
+    `redirectID`     BIGINT UNSIGNED   NOT NULL                 COMMENT '🔗 FK to tblQRRedirects - which redirect resource this scan event belongs to',
+    `scannedAt`      DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Scan event timestamp',
+    `scanChannel`    ENUM('redirect', 'resolve') NOT NULL DEFAULT 'redirect' COMMENT '🔀 ''redirect'' = the public /r/ route (Stage S2); ''resolve'' = the Stage S4 dual-function resolve API',
+    `outcome`        ENUM('redirected', 'expired', 'disabled', 'not_yet_active') NOT NULL COMMENT '📊 The Stage S2 route''s outcome decision for this scan - 410/404-shaped hits still count (owners want to see scans of dead codes)',
+    `ipHash`         CHAR(64)          NOT NULL                 COMMENT '🔐 SHA-256(ip + server pepper) - NEVER the raw IP (GDPR posture); pepper is a tblSettings isSensitive=1 value',
+    `country`        CHAR(2)           NULL                     COMMENT '🌍 ISO 3166-1 alpha-2, NULL until GeoLite2 lands (Epic E11 full - local lookup only, no external calls)',
+    `deviceClass`    VARCHAR(20)       NULL                     COMMENT '📱 Coarse UA-parsed device class (mobile/desktop/tablet/bot/unknown) - raw UA is NOT stored',
+    `os`             VARCHAR(30)       NULL                     COMMENT '💻 Coarse UA-parsed OS family',
+    `browser`        VARCHAR(30)       NULL                     COMMENT '🌐 Coarse UA-parsed browser family',
+    `referrerHost`   VARCHAR(255)      NULL                     COMMENT '🔗 HTTP Referer HOST only, never the full referrer URL',
+
+    PRIMARY KEY (`scanID`),
+    INDEX `idx_scan_redirect_time` (`redirectID`, `scannedAt`),
+    INDEX `idx_scan_time` (`scannedAt`),
+
+    CONSTRAINT `fk_scan_redirect` FOREIGN KEY (`redirectID`)
+        REFERENCES `tblQRRedirects` (`redirectID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='📊 Scan-analytics event log (E11, #33) - dark/inert until Stage S2 ships the public /r/{uuid} route';
+
+-- ==============================================================================
+-- 📋 Table 29: tblResolveNonces (#71, dual-function QR - dark/inert until Stage S4)
+-- ==============================================================================
+-- Single-use, expiring nonces minted per resolve of a dual-function QR code
+-- (Stage S4's GET /api/v1/resolve/{uuid}), burned by the sanctioned app's own
+-- backend at check-in - mirrors this codebase's existing single-use-token
+-- convention (tblPasswordResets/tblEmailVerifications: hash-only at rest,
+-- comparison-only need, a `usedAt` burn marker). `appID` has NO FK yet for the
+-- same reason as tblQRRedirects.appID above (tblSanctionedApps ships in Stage
+-- S4). Completely unwritten/unread by anything in S0/S1.
+--
+-- @see .dev-team/dynamic_dualfn_design.md §3.2
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblResolveNonces` (
+    `nonceID`     BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing nonce identifier',
+    `nonceHash`   CHAR(64)          NOT NULL                 COMMENT '🔐 SHA-256 hash of the random nonce - hash-only at rest, comparison-only need (mirrors tblPasswordResets.tokenHash)',
+    `redirectID`  BIGINT UNSIGNED   NOT NULL                 COMMENT '🔗 FK to tblQRRedirects - which dual-function redirect this nonce was minted for',
+    `appID`       INT UNSIGNED      NULL                     COMMENT '📱 Which sanctioned app this nonce was minted for - NO FK yet (tblSanctionedApps ships in Stage S4)',
+    `issuedAt`    DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Nonce mint timestamp',
+    `expiresAt`   DATETIME          NOT NULL                 COMMENT '⏰ Nonce expiry timestamp (default TTL 120s per the design - owner-confirmable, LAUNCH_DECISIONS.md O-7)',
+    `usedAt`      DATETIME          NULL                     COMMENT '✅ Burn timestamp set by the sanctioned app''s check-in (NULL = still unused) - enforces single-use',
+
+    PRIMARY KEY (`nonceID`),
+    UNIQUE KEY `idx_nonce_hash` (`nonceHash`),
+    INDEX `idx_nonce_redirect` (`redirectID`),
+    INDEX `idx_nonce_expiry` (`expiresAt`),
+
+    CONSTRAINT `fk_nonce_redirect` FOREIGN KEY (`redirectID`)
+        REFERENCES `tblQRRedirects` (`redirectID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🎫 Single-use resolve nonces (#71) - dark/inert until Stage S4 ships GET /api/v1/resolve/{uuid}';
+
+-- ==============================================================================
 -- ✅ Installation Complete
 -- ==============================================================================
--- All 26 tables have been created:
+-- All 29 tables have been created:
 --   1. tblSettings              - Application configuration (now incl. per-record encryptionSalt, F-006/G-010)
 --   2. tblErrorLog              - Error/exception logging
 --   3. tblActivityLog           - Activity tracking
@@ -1312,11 +1467,25 @@ ALTER TABLE `tblPayments`
 --                                 (#70 - BUILT BUT DISABLED)
 --  26. tblCreditLedger          - Append-only PAYG credit ledger, balance = SUM(delta) (#70 -
 --                                 BUILT BUT DISABLED)
+--  27. tblQRRedirects           - Dynamic-redirect resources (E1a, #27 - BUILT BUT DARK,
+--                                 Stage S0/S1 - inert until Stage S2 ships the public /r/{uuid}
+--                                 route, gated on owner sign-off G-007)
+--  28. tblQRScans                - Scan-analytics event log (E11, #33 - BUILT BUT DARK,
+--                                 Stage S0 - inert until Stage S2/S3)
+--  29. tblResolveNonces         - Single-use dual-function-QR resolve nonces (#71 - BUILT BUT
+--                                 DARK, Stage S0 - inert until Stage S4)
 --
 -- ⚠️ Tables 22-26 and the two additive columns above are INERT until the
 --    matching `billing_price_points_enabled` / `billing_discounts_enabled` /
 --    `billing_payg_enabled` kill-switches (seed_data.sql, `billing` settings
 --    group) are flipped from their seeded 0 to 1 - see #70.
+--
+-- ⚠️ Tables 27-29 are INERT/DARK - no public route reaches them, the
+--    `dynamic_url` QR type seeds `isActive=0`, and the `dynamic_qr_enabled`
+--    kill-switch seeds '0' (seed_data.sql). See
+--    .dev-team/dynamic_dualfn_design.md and LAUNCH_DECISIONS.md "Dynamic +
+--    dual-function QR (gated)" for the full phased build plan and the G-007
+--    owner sign-off this schema is waiting on before Stage S2 goes live.
 --
 -- 📌 Next step: Run seed_data.sql to populate initial data.
 -- ==============================================================================

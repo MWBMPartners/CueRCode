@@ -13,7 +13,7 @@
  * `api/v1/openapi.json` at request time rather than duplicating its content
  * by hand, so these tests both (a) prove the helpers themselves are correct,
  * and (b) prove the actual shipped openapi.json still has the shape the
- * reference page depends on (29 paths - the original 7 QR-generation paths,
+ * reference page depends on (30 paths - the original 7 QR-generation paths,
  * the 6 Epic E3 stage 1 account/auth paths, the 3 Epic E3 stage 2a
  * saved-codes paths added 2026-07-10, the 4 Epic E3 stage 2b own-account
  * dashboard paths (profile/sessions/change-password) added 2026-07-10, the
@@ -21,9 +21,11 @@
  * keys/{id}) added 2026-07-10, the 2 Epic E2 SSO browser-redirect paths
  * (auth/{provider}, auth/callback/{provider}) added 2026-07-10, the 2
  * GDPR/CCPA data-subject-rights paths (account/export, account/erase, #37/
- * epic #52) added 2026-07-10, and the 2 non-QR barcode paths (barcode,
- * barcode/preview) added by #69 - the Customization schema's accessibility
- * params, the shared error responses).
+ * epic #52) added 2026-07-10, the 2 non-QR barcode paths (barcode,
+ * barcode/preview) added by #69, and the 1 Epic E1a Stage S1 dynamic-redirect
+ * destination path (qrcodes/{uuid}/destination, GET+PATCH, #27) added
+ * 2026-07-22 - the Customization schema's accessibility params, the shared
+ * error responses).
  *
  * ⚠️ Lives under repo-root tests/ - never deployed.
  *
@@ -35,6 +37,11 @@
  * @see         tests/bootstrap.php  - requireFn() / CUERCODE_SITE_ROOT
  * @see         tests/lib/assert.php - the assert* functions used below
  * @see         web/CueRCode.net/_functions/fn_openapi_render.php
+ *
+ * 📌 2026-07-22 update (Epic E1a Stage S1, #27): +1 path -
+ *    `/qrcodes/{uuid}/destination` (GET+PATCH) - the dynamic-redirect
+ *    destination-management API. 29 -> 30 paths. See the `$expectedPaths`
+ *    list below.
  */
 
 // ==============================================================================
@@ -91,6 +98,7 @@ $expectedPaths = [
     '/save',
     '/qrcodes',
     '/qrcodes/{uuid}',
+    '/qrcodes/{uuid}/destination',
     '/account/profile',
     '/account/sessions',
     '/account/sessions/{id}',
@@ -114,7 +122,7 @@ foreach ($expectedPaths as $expectedPath) {
 assertEquals(
     count($expectedPaths),
     count($realSpec['paths']),
-    'real openapi.json has exactly the 29 expected paths (no silent additions/removals since this test was written)'
+    'real openapi.json has exactly the 30 expected paths (no silent additions/removals since this test was written)'
 );
 
 // 📌 loadOpenApiSpecFromFile() fails closed (returns null) for a missing file -

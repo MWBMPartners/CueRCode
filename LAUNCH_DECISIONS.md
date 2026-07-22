@@ -64,8 +64,8 @@
 
 ## F. Architecture gates (owner go/no-go)
 
-- [ ] **G-007 — dynamic redirect layer** (`/r/{uuid}`). Foundational for dynamic QR (#27), dual-function QR (#71), scan analytics (#33), and geo/platform rules. **The app becomes a redirect host** (phishing/abuse/uptime surface) — this is the key decision that unlocks a whole cluster of features.
-- [ ] **Dual-function QR / ProjectEPass** (#71 + ProjectEPass#18) — approve the sanctioned-app credential + payload-signing scheme; agree the scan-to-check-in contract with the ProjectEPass team.
+- [ ] **G-007 — dynamic redirect layer** (`/r/{uuid}`). Foundational for dynamic QR (#27), dual-function QR (#71), scan analytics (#33), and geo/platform rules. **The app becomes a redirect host** (phishing/abuse/uptime surface) — this is the key decision that unlocks a whole cluster of features. **See Section H below for the full owner-decision list (O-1…O-11) this gate is waiting on.**
+- [ ] **Dual-function QR / ProjectEPass** (#71 + ProjectEPass#18) — approve the sanctioned-app credential + payload-signing scheme; agree the scan-to-check-in contract with the ProjectEPass team. See H, O-6/O-7/O-8/O-10.
 - [ ] **F-004 CSP/SRI** completion (needs live-UI verification).
 
 ## G. Feature scope confirmations
@@ -74,8 +74,76 @@
 - [ ] **Emoji-ingest** automation (#68): scheduled Action opens a **bot PR** vs a **diff-report issue**.
 - [ ] **Barcode library** (#69): confirm vendoring `tecnickcom/tc-lib-barcode` (LGPL-3) for 1D+2D.
 
+## H. Dynamic + dual-function QR (gated) — issues #27 / #71 / #33, gate G-007
+
+> **Build status:** Stages **S0** (schema + pure core) and **S1** (owner-facing
+> destination API) are **BUILT and DARK/INERT** — see
+> `.dev-team/dynamic_dualfn_design.md` for the full phased plan and
+> `.claude/HANDOFF.md` §0 for the implementation summary. **Nothing is live**:
+> `tblQRRedirects`/`tblQRScans`/`tblResolveNonces` exist but are unreachable by
+> any public route; the `dynamic_url` QR type seeds `isActive=0` (invisible to
+> `GET /api/v1/types`); the `dynamic_qr_enabled` kill-switch seeds `'0'`; and
+> there is **no `public_html/r/` redirect endpoint anywhere in the codebase**.
+> **Stage S2 (the live `/r/{uuid}` route) and Stage S4 (dual-function QR /
+> `GET /api/v1/resolve/{uuid}`) are BUILT-READY (fully designed, schema in
+> place) but NOT STARTED — both are explicitly gated on the G-007 owner
+> sign-off below**, per this cycle's build instructions.
+
+The following owner decisions (design doc §9, `O-1` through `O-11`) must be
+made — or explicitly deferred with a documented default — before Stage S2
+work begins:
+
+- [ ] **O-1 — G-007 go/no-go** (the master gate): approve CueRCode as a
+      public redirect host. **Split sign-off requested**: (a) alpha test
+      group at Stage S2, (b) production/main promotion only once every §2.6
+      MUST-list item in the design doc is evidenced (abuse-report page +
+      takedown runbook + SLA, auto-suspend tripwire live, rate limits
+      burst-tested, ToS covering redirect abuse, reputation-provider decision
+      made, daily anomaly monitoring, Cloudflare proxy recommended).
+- [ ] **O-2 — Destination schemes**: `https`-only at launch (**recommended
+      default — already the seeded behaviour**: `redirect_allow_http=0`) vs
+      allowing `http` behind the `redirect_allow_http` setting.
+- [ ] **O-3 — URL-reputation provider**: none / Google Safe Browsing / Web
+      Risk. Needs an owner-supplied API key + a `privacy.php` disclosure
+      (destination URLs would be shared with the provider); confirm the
+      sync-check **fail-open** stance (a third party being unreachable must
+      never block an owner's own edit).
+- [ ] **O-4 — Abuse ops**: auto-suspend threshold (default proposed: 3
+      distinct-IP reports within 24h), takedown SLA wording, an `abuse@`
+      mailbox.
+- [ ] **O-5 — Cloudflare proxy** in front of the redirect host before
+      production (recommended; org Cloudflare accounts already exist).
+- [ ] **O-6 — ProjectEPass signature contract**: HMAC-SHA256 with
+      server-side verification + a "secret never ships in the app binary"
+      clause (**recommended**); Ed25519 deferred to the offline `/e/{segments}`
+      variant. Confirm on ProjectEPass#18, including per-organiser-org vs
+      per-platform sanctioned-app registration granularity.
+- [ ] **O-7 — Nonce TTL / clock skew**: 120s TTL / ±30s skew defaults —
+      confirm with the ProjectEPass team.
+- [ ] **O-8 — `dual_function_qr` tier placement**: **seeded now** as
+      business+enterprise only (Pricing_Strategy.md §3.4/§3.5 — no enterprise
+      plan is seeded yet, so only `business` currently has it `true`) vs an
+      enterprise-only restriction; confirm the `sanctioned_apps` limit values
+      (1 / −1 proposed) when Stage S4 seeds them.
+- [ ] **O-9 — FG-006 (geo/platform variant rules) deferral**: confirmed —
+      seam-only for now (`resolveRedirectDestination()` is the single future
+      plug-in point), no owner action needed unless this changes.
+- [ ] **O-10 — Check-in authority**: ProjectEPass is authoritative for
+      check-in; CueRCode only logs resolve events (**recommended** — confirm
+      as ProjectEPass#18's final contract point).
+- [ ] **O-11 — Printed redirect domain**: `cuercode.net/r/` vs the tertiary
+      **`QRmy.Link`** (shorter URL → lower QR version/larger modules, and —
+      decisive for the abuse-reputation posture — partitions redirect-abuse
+      reputation away from the primary product domain, so a Safe-Browsing
+      blocklist event on the redirect domain never takes the main site down
+      with it). **Seeded now** as `https://QRmy.Link`
+      (`dynamic_redirect_base_url` tblSettings key,
+      `buildPayload_dynamic_url()`) — **owner-confirmable before any code is
+      printed for real; hard to change after printed material is in
+      circulation.**
+
 ---
 
 ### Cross-references
-- Strategy: `Pricing_Strategy.md` · Roadmap: `PROJECT_ROADMAP.md` · State: `.claude/HANDOFF.md` (§0) · Findings: `SECURITY.md` · Machine state: `.dev-team/autopilot.json`.
-- Open issues for the above: #64 (deps/security), #65/#66/#67/#68 (logo/emoji), #69 (barcodes), #70 (flexible pricing), #71 (dual-function QR), #27 (dynamic QR), #25/#53 (tiers/PayPal), #26 (PayPal), #29 (email), #37/#38 (privacy/legal), #55/#19/#20 (SSO), #13/#17/#18/#22 (live tests).
+- Strategy: `Pricing_Strategy.md` · Roadmap: `PROJECT_ROADMAP.md` · State: `.claude/HANDOFF.md` (§0) · Findings: `SECURITY.md` · Machine state: `.dev-team/autopilot.json` · Dynamic-redirect design: `.dev-team/dynamic_dualfn_design.md`.
+- Open issues for the above: #64 (deps/security), #65/#66/#67/#68 (logo/emoji), #69 (barcodes), #70 (flexible pricing), #71 (dual-function QR), #27 (dynamic QR), #33 (scan analytics), #25/#53 (tiers/PayPal), #26 (PayPal), #29 (email), #37/#38 (privacy/legal), #55/#19/#20 (SSO), #13/#17/#18/#22 (live tests), #82 (this cycle's S0/S1 tracking issue).

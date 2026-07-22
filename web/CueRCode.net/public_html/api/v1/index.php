@@ -35,6 +35,8 @@
  *   GET    /api/v1/qrcodes/{uuid}    Fetch one saved QR code (owner or public only)
  *   PATCH  /api/v1/qrcodes/{uuid}    Update a saved QR code the caller OWNS
  *   DELETE /api/v1/qrcodes/{uuid}    Soft-delete a saved QR code the caller OWNS
+ *   GET    /api/v1/qrcodes/{uuid}/destination    Fetch a dynamic redirect's destination the caller OWNS (Epic E1a Stage S1, #27 - "still dark", no public /r/ endpoint exists yet)
+ *   PATCH  /api/v1/qrcodes/{uuid}/destination    Update a dynamic redirect's destination the caller OWNS (Epic E1a Stage S1, #27)
  *   PATCH  /api/v1/account/profile           Update the caller's OWN display name/avatar (Epic E3 stage 2b) [SESSION-ONLY, F-026]
  *   GET    /api/v1/account/sessions          List ONLY the caller's OWN active sessions [SESSION-ONLY, F-026]
  *   DELETE /api/v1/account/sessions/{id}     Revoke ONE of the caller's OWN sessions [SESSION-ONLY, F-026]
@@ -115,6 +117,8 @@ $apiFunctionFiles = [
     'fn_api_qrcodes.php',    // 📚 Saved-codes API: /save, /qrcodes CRUD, ownership predicates (Epic E3 stage 2a, #52/#24)
     'fn_api_account.php',    // 👤 Own-account dashboard API: profile/avatar, sessions, change-password (Epic E3 stage 2b, #52/#12/#14/#23/#24)
     'fn_api_keys.php',       // 🔑 Self-service API keys: /keys CRUD, scope taxonomy, ownership predicates (Epic E7 stage 1, #54)
+    'fn_redirects.php',      // 🔗 Dynamic-redirect pure core: validateRedirectDestination(), redirectIsWritableBy() (Epic E1a Stage S0, #27/#71/#33 - dark/inert, no public /r/ endpoint exists yet)
+    'fn_api_redirects.php',  // 🔗 Dynamic-redirect owner API: GET/PATCH qrcodes/{uuid}/destination, createDynamicRedirectForOwner() (Epic E1a Stage S1, #27 - dark/inert)
 ];
 
 foreach ($apiFunctionFiles as $apiFile) {
@@ -492,6 +496,34 @@ $routes = [
             'GET'    => 'qrcodes:read',
             'PATCH'  => 'qrcodes:write',
             'DELETE' => 'qrcodes:write',
+        ],
+    ],
+
+    // ==========================================================================
+    // 🔗 Dynamic-redirect destination routes (Epic E1a Stage S1, #27) - "still
+    // dark": these two routes ARE real/reachable over HTTP (own-scoped,
+    // 404-not-403 IDOR, exactly like qrcodes/{uuid} above), but there is
+    // deliberately NO public `/r/{uuid}` redirect endpoint anywhere in this
+    // codebase yet for a managed destination to ever be resolved against -
+    // that is Stage S2, gated on owner sign-off G-007 (see
+    // .dev-team/dynamic_dualfn_design.md + LAUNCH_DECISIONS.md). {uuid} here
+    // is a tblQRRedirects.redirectUUID, NOT a tblQRCodes.qrUUID - a distinct
+    // identifier namespace (fn_redirects.php's docblock explains why). Rides
+    // the SAME qrcodes:read/qrcodes:write scopes as qrcodes/{uuid} above (no
+    // new scope needed - fn_api_keys.php's 7-scope allowlist is unchanged).
+    // ==========================================================================
+
+    // 📌 GET/PATCH /api/v1/qrcodes/{uuid}/destination - a dynamic redirect's destination
+    [
+        'pattern'   => 'qrcodes/{uuid}/destination',
+        'methods'   => ['GET', 'PATCH'],
+        'handler'   => 'handleQrDestinationItem',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => [
+            'GET'   => 'qrcodes:read',
+            'PATCH' => 'qrcodes:write',
         ],
     ],
 
@@ -1162,6 +1194,15 @@ switch ($handlerFunction) {
             $uuid = '';
         }
         handleQrCodeItem($uuid, $requestBody, $auth);
+        break;
+
+    case 'handleQrDestinationItem':
+        if (isset($routeParams['uuid'])) {
+            $uuid = $routeParams['uuid'];
+        } else {
+            $uuid = '';
+        }
+        handleQrDestinationItem($uuid, $requestBody, $auth);
         break;
 
     case 'handleAccountProfilePatch':
