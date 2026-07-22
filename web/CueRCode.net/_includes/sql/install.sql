@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS `tblQRCodeTypes` (
     `typeLabel`         VARCHAR(100)    NOT NULL                 COMMENT '📝 Human-readable display label',
     `typeIcon`          VARCHAR(100)    NULL                     COMMENT '🎨 FontAwesome icon class (e.g., fa-solid fa-link)',
     `typeDescription`   VARCHAR(500)    NULL                     COMMENT '📖 Brief description of this QR code type',
-    `typeCategory`      VARCHAR(50)     NOT NULL DEFAULT 'general' COMMENT '📂 Category grouping (general, social, payment, media, contact, utility)',
+    `typeCategory`      VARCHAR(50)     NOT NULL DEFAULT 'general' COMMENT '📂 Category grouping (general, social, payment, media, contact, utility, barcode)',
     `payloadTemplate`   TEXT            NULL                     COMMENT '📋 Payload format template with {placeholder} markers',
     `formFieldsJSON`    JSON            NOT NULL                 COMMENT '📝 JSON schema defining input form fields for this type',
     `isActive`          TINYINT(1)      NOT NULL DEFAULT 1       COMMENT '✅ 1 = type is available for use, 0 = disabled',

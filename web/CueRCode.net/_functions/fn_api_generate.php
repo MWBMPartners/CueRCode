@@ -12,10 +12,19 @@
  * structured API responses.
  *
  * Endpoints handled:
- *   - POST /api/v1/generate  -> handleGenerate()   Full QR code generation
- *   - POST /api/v1/preview   -> handlePreview()     Quick preview generation
+ *   - POST /api/v1/generate         -> handleGenerate()         Full QR code generation
+ *   - POST /api/v1/preview          -> handlePreview()          Quick preview generation
+ *   - POST /api/v1/barcode          -> handleBarcodeGenerate()  Full NON-QR barcode generation (#69)
+ *   - POST /api/v1/barcode/preview  -> handleBarcodePreview()   Quick barcode preview (#69)
  *
- * Both handlers expect a JSON request body with the following structure:
+ * The barcode handlers are the API-layer counterpart to
+ * fn_barcode_generate.php's generateBarcode()/generateBarcodePreview() - this
+ * file validates the HTTP request SHAPE (required fields, lengths, option
+ * ranges) exactly like handleGenerate()/handlePreview() do for QR codes, then
+ * delegates the actual symbology/checksum validation and rendering to that
+ * file, matching the existing fn_api_generate.php <-> fn_qr_generate.php split.
+ *
+ * Both QR handlers expect a JSON request body with the following structure:
  *   {
  *       "type": "url",
  *       "input": { "url": "https://example.com" },
@@ -83,6 +92,13 @@ if (!defined('CUERCODE_API_MAX_INPUT_FIELD_LEN')) {
  */
 if (!defined('CUERCODE_API_MAX_FRAME_LABEL_LEN')) {
     define('CUERCODE_API_MAX_FRAME_LABEL_LEN', 120);
+}
+
+/**
+ * @var int Maximum length of the barcode 'symbology' field (a short slug, e.g. "code128").
+ */
+if (!defined('CUERCODE_API_MAX_SYMBOLOGY_LEN')) {
+    define('CUERCODE_API_MAX_SYMBOLOGY_LEN', 32);
 }
 
 // ==============================================================================
@@ -680,6 +696,376 @@ function handlePreview(array $requestData): void
 }
 
 // ==============================================================================
+// 📊 handleBarcodeGenerate() - Handle NON-QR barcode generation API request (#69)
+// ==============================================================================
+
+/**
+ * 📊 Handle a POST /api/v1/barcode request - generate + persist a barcode.
+ *
+ * Expected request body (JSON):
+ *   {
+ *       "symbology": "code128",
+ *       "data": "HELLO123",
+ *       "options": {
+ *           "format": "svg",
+ *           "scale": 2,
+ *           "height": 50,
+ *           "show_text": false,
+ *           "ecc": null
+ *       }
+ *   }
+ *
+ * Mirrors handleGenerate()'s shape: validate the request SHAPE here (missing/
+ * too-long fields), then delegate to fn_barcode_generate.php's
+ * generateBarcode() for the STRICT per-symbology data validation (check
+ * digits, charset, even-length, etc.) and rendering. Any validation OR
+ * rendering failure inside generateBarcode() is reported the SAME way
+ * buildPayload_*() failures are for QR codes - a generic 422 GENERATION_FAILED
+ * carrying the specific reason in the message, not a bespoke error code per
+ * symbology (see fn_qr_generate.php's Step 2/handleGenerate()'s Step 6 for the
+ * precedent this mirrors).
+ *
+ * @param array $requestData The parsed JSON request body
+ *
+ * @return void (sends JSON/XML response and exits)
+ *
+ * @see fn_barcode_generate.php - generateBarcode()
+ * @see fn_response.php - successResponse(), errorResponse()
+ */
+function handleBarcodeGenerate(array $requestData): void
+{
+    // ==================================================================
+    // 📌 Step 1: Validate required fields
+    // ==================================================================
+    if (isset($requestData['symbology'])) {
+        $symbology = $requestData['symbology'];
+    } else {
+        $symbology = '';
+    }
+
+    if (!is_string($symbology) || trim($symbology) === '') {
+        errorResponse(
+            'Missing required field: symbology. Specify the barcode symbology '
+            . '(e.g., "code128", "ean13", "datamatrix"). See GET /api/v1/types for the full list.',
+            400,
+            'MISSING_FIELD'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    $symbology = trim($symbology);
+
+    if (mb_strlen($symbology) > CUERCODE_API_MAX_SYMBOLOGY_LEN) {
+        errorResponse(
+            'Field "symbology" is too long. Maximum ' . CUERCODE_API_MAX_SYMBOLOGY_LEN . ' characters.',
+            400,
+            'FIELD_TOO_LONG'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    if (isset($requestData['data'])) {
+        $barcodeData = $requestData['data'];
+    } else {
+        $barcodeData = null;
+    }
+
+    if (!is_string($barcodeData) || trim($barcodeData) === '') {
+        errorResponse(
+            'Missing required field: data. Provide the content to encode in the barcode.',
+            400,
+            'MISSING_FIELD'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    if (mb_strlen($barcodeData) > CUERCODE_API_MAX_INPUT_FIELD_LEN) {
+        errorResponse(
+            'Field "data" is too long. Maximum ' . CUERCODE_API_MAX_INPUT_FIELD_LEN . ' characters.',
+            400,
+            'FIELD_TOO_LONG'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    // ==================================================================
+    // 📌 Step 2: Build options
+    // ==================================================================
+    if (isset($requestData['options']) && is_array($requestData['options'])) {
+        $rawOptions = $requestData['options'];
+    } else {
+        $rawOptions = [];
+    }
+
+    $options = buildBarcodeOptionsFromRequest($rawOptions);
+
+    // ==================================================================
+    // 📌 Step 3: Load barcode generation functions (shares
+    // loadQRGenerationFunctions() with the QR pipeline - see that
+    // function's docblock for why fn_barcode_generate.php is loaded here)
+    // ==================================================================
+    loadQRGenerationFunctions();
+
+    if (!function_exists('generateBarcode')) {
+        errorResponse(
+            'Barcode generation service is unavailable. Please try again later.',
+            503,
+            'SERVICE_UNAVAILABLE'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    // ==================================================================
+    // 📌 Step 4: Generate
+    // ==================================================================
+    $result = generateBarcode($symbology, $barcodeData, $options);
+
+    if (!$result['success']) {
+        if (isset($result['error'])) {
+            $generationError = $result['error'];
+        } else {
+            $generationError = 'Unknown error.';
+        }
+        errorResponse(
+            'Barcode generation failed: ' . $generationError,
+            422,
+            'GENERATION_FAILED'
+        );
+        return;
+    }
+
+    // ==================================================================
+    // 📌 Step 5: Build and send success response
+    // ==================================================================
+    $symbologyKey = strtolower($symbology);
+
+    $responseData = [
+        'uuid'         => $result['uuid'],
+        'image'        => $result['data'],
+        'download_url' => '/api/v1/download/' . $result['uuid'],
+        'mime_type'    => $result['mimeType'],
+        'format'       => $options['format'],
+        'symbology'    => $symbologyKey,
+    ];
+
+    if (function_exists('logActivity')) {
+        logActivity(
+            'api_barcode_generate',
+            'API: Generated ' . strtoupper($options['format']) . ' barcode for symbology: ' . $symbologyKey,
+            'qr_code',
+            null,
+            [
+                'uuid'      => $result['uuid'],
+                'symbology' => $symbologyKey,
+                'format'    => $options['format'],
+                'endpoint'  => 'barcode',
+            ]
+        );
+    }
+
+    successResponse($responseData, 'Barcode generated successfully.');
+}
+
+// ==============================================================================
+// 👁️ handleBarcodePreview() - Handle barcode preview API request (#69)
+// ==============================================================================
+
+/**
+ * 👁️ Handle a POST /api/v1/barcode/preview request - a quick, unsaved barcode.
+ *
+ * Expects the SAME request body shape as handleBarcodeGenerate(). The
+ * preview is always SVG (vector - no size/quality trade-off the way a
+ * raster PNG preview would have) and is NOT saved to the database or
+ * filesystem.
+ *
+ * @param array $requestData The parsed JSON request body
+ *
+ * @return void (sends JSON/XML response and exits)
+ *
+ * @see fn_barcode_generate.php - generateBarcodePreview()
+ */
+function handleBarcodePreview(array $requestData): void
+{
+    // ==================================================================
+    // 📌 Step 1: Validate required fields (identical to handleBarcodeGenerate())
+    // ==================================================================
+    if (isset($requestData['symbology'])) {
+        $symbology = $requestData['symbology'];
+    } else {
+        $symbology = '';
+    }
+
+    if (!is_string($symbology) || trim($symbology) === '') {
+        errorResponse(
+            'Missing required field: symbology. Specify the barcode symbology '
+            . '(e.g., "code128", "ean13", "datamatrix"). See GET /api/v1/types for the full list.',
+            400,
+            'MISSING_FIELD'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    $symbology = trim($symbology);
+
+    if (mb_strlen($symbology) > CUERCODE_API_MAX_SYMBOLOGY_LEN) {
+        errorResponse(
+            'Field "symbology" is too long. Maximum ' . CUERCODE_API_MAX_SYMBOLOGY_LEN . ' characters.',
+            400,
+            'FIELD_TOO_LONG'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    if (isset($requestData['data'])) {
+        $barcodeData = $requestData['data'];
+    } else {
+        $barcodeData = null;
+    }
+
+    if (!is_string($barcodeData) || trim($barcodeData) === '') {
+        errorResponse(
+            'Missing required field: data. Provide the content to encode in the barcode.',
+            400,
+            'MISSING_FIELD'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    if (mb_strlen($barcodeData) > CUERCODE_API_MAX_INPUT_FIELD_LEN) {
+        errorResponse(
+            'Field "data" is too long. Maximum ' . CUERCODE_API_MAX_INPUT_FIELD_LEN . ' characters.',
+            400,
+            'FIELD_TOO_LONG'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    // ==================================================================
+    // 📌 Step 2: Build options + load functions
+    // ==================================================================
+    if (isset($requestData['options']) && is_array($requestData['options'])) {
+        $rawOptions = $requestData['options'];
+    } else {
+        $rawOptions = [];
+    }
+
+    $options = buildBarcodeOptionsFromRequest($rawOptions);
+
+    loadQRGenerationFunctions();
+
+    if (!function_exists('generateBarcodePreview')) {
+        errorResponse(
+            'Barcode preview service is unavailable. Please try again later.',
+            503,
+            'SERVICE_UNAVAILABLE'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    // ==================================================================
+    // 📌 Step 3: Generate the preview
+    // ==================================================================
+    $result = generateBarcodePreview($symbology, $barcodeData, $options);
+
+    if (!$result['success']) {
+        if (isset($result['error'])) {
+            $previewError = $result['error'];
+        } else {
+            $previewError = 'Unknown error.';
+        }
+        errorResponse(
+            'Barcode preview failed: ' . $previewError,
+            422,
+            'GENERATION_FAILED'
+        );
+        return;
+    }
+
+    // ==================================================================
+    // 📌 Step 4: Build and send success response
+    // ==================================================================
+    $responseData = [
+        'image'     => $result['data'],
+        'mime_type' => $result['mimeType'],
+        'symbology' => strtolower($symbology),
+    ];
+
+    successResponse($responseData, 'Barcode preview generated successfully.');
+}
+
+// ==============================================================================
+// 🔧 buildBarcodeOptionsFromRequest() - Build a sanitised barcode options array
+// ==============================================================================
+
+/**
+ * 🔧 Build a sanitised options array from a barcode API request's 'options' object.
+ *
+ * Mirrors buildCustomizationFromRequest()'s "sanitise + clamp to a sane
+ * range, never reject a purely numeric/range field" convention (the QR
+ * pipeline's 'size' field is clamped the same way, not rejected) - the
+ * REJECTING validation this feature promises is reserved for the barcode
+ * DATA itself (fn_barcode_generate.php's normalizeBarcodeData(), which
+ * throws on an invalid check digit/charset/length), not these rendering
+ * knobs.
+ *
+ * @param array $raw The raw 'options' object from the request
+ *
+ * @return array Sanitised options array ready for generateBarcode()/generateBarcodePreview()
+ *
+ * @see fn_barcode_generate.php - renderBarcodeToOutput() (consumes this shape)
+ */
+function buildBarcodeOptionsFromRequest(array $raw): array
+{
+    $options = [];
+
+    // 📌 Output format: svg (default) or png. Any other value silently
+    // falls back to 'svg', matching buildCustomizationFromRequest()'s
+    // "unknown value -> default" convention for 'format'.
+    if (isset($raw['format'])) {
+        $format = strtolower(trim((string) $raw['format']));
+    } else {
+        $format = 'svg';
+    }
+    if ($format === 'svg' || $format === 'png') {
+        $options['format'] = $format;
+    } else {
+        $options['format'] = 'svg';
+    }
+
+    // 📌 Module/bar width multiplier (int, 1-10).
+    if (isset($raw['scale'])) {
+        $scale = (int) $raw['scale'];
+    } else {
+        $scale = 2;
+    }
+    $options['scale'] = max(1, min(10, $scale));
+
+    // 📌 Height: 1D bar height in px (10-300) OR 2D row multiplier (1-10) -
+    // renderBarcodeToOutput() applies the category-specific interpretation
+    // and default; absent here means "use that function's own default".
+    if (isset($raw['height']) && $raw['height'] !== '' && $raw['height'] !== null) {
+        $height = (int) $raw['height'];
+        $options['height'] = max(1, min(300, $height));
+    }
+
+    // 📌 Render the human-readable payload text below the symbol (bool,
+    // 1D symbologies only - a documented no-op for 2D).
+    if (isset($raw['show_text'])) {
+        $options['show_text'] = (bool) $raw['show_text'];
+    } else {
+        $options['show_text'] = false;
+    }
+
+    // 📌 Error-correction hint: PDF417 level (0-8) / Aztec percentage
+    // (1-100) - a documented no-op for every other symbology.
+    if (isset($raw['ecc']) && $raw['ecc'] !== '' && $raw['ecc'] !== null) {
+        $options['ecc'] = (int) $raw['ecc'];
+    }
+
+    return $options;
+}
+
+// ==============================================================================
 // 🔧 buildCustomizationFromRequest() - Build customization array from request
 // ==============================================================================
 
@@ -1122,6 +1508,11 @@ function validateCustomization(array $customization): ?string
  *   - fn_qr_generate.php        (main generation orchestrator)
  *   - fn_qr_logo.php            (logo overlay functions)
  *   - fn_qr_frames.php          (frame rendering functions)
+ *   - fn_barcode_generate.php   (non-QR 1D/2D barcode generation - #69; reuses
+ *                                fn_qr_generate.php's saveQRCodeRecord()/
+ *                                saveQRToFile()/updateQRCodeFilePath()/
+ *                                generateUUIDv4() helpers, so it is loaded
+ *                                here alongside them rather than lazily)
  *
  * Uses require_once so multiple calls are safe.
  *
@@ -1151,6 +1542,7 @@ function loadQRGenerationFunctions(): void
         'fn_qr_generate.php',
         'fn_qr_logo.php',
         'fn_qr_frames.php',
+        'fn_barcode_generate.php',
     ];
 
     foreach ($qrFiles as $qrFile) {

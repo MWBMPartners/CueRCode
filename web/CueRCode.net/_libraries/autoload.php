@@ -15,6 +15,11 @@
  *     - chillerlan/php-qrcode v5.x → _libraries/chillerlan/php-qrcode/src/
  *     - chillerlan/php-settings-container v3.x → _libraries/chillerlan/php-settings-container/src/
  *     - setasign/fpdf v1.8.x → _libraries/fpdf/
+ *     - tecnickcom/tc-lib-barcode → _libraries/tecnickcom/tc-lib-barcode/src/
+ *     - tecnickcom/tc-lib-color   → _libraries/tecnickcom/tc-lib-color/src/
+ *       (tc-lib-barcode's own dependency, generates the 1D/2D non-QR
+ *       symbologies - Code128, Code39, EAN-13/8, UPC-A/E, ITF, Codabar,
+ *       DataMatrix, PDF417, Aztec - for the barcodes API, #69)
  *
  * @package     CueRCode
  * @subpackage  Libraries
@@ -25,6 +30,8 @@
  * @see         https://github.com/chillerlan/php-qrcode chillerlan/php-qrcode
  * @see         https://github.com/chillerlan/php-settings-container chillerlan/php-settings-container
  * @see         https://www.fpdf.org/ FPDF Library
+ * @see         https://github.com/tecnickcom/tc-lib-barcode tecnickcom/tc-lib-barcode
+ * @see         https://github.com/tecnickcom/tc-lib-color tecnickcom/tc-lib-color
  */
 
 // ==============================================================================
@@ -66,6 +73,20 @@ $psr4Prefixes = [
     'chillerlan\\Settings\\'  => $libraryBaseDir
         . 'chillerlan' . DIRECTORY_SEPARATOR
         . 'php-settings-container' . DIRECTORY_SEPARATOR
+        . 'src' . DIRECTORY_SEPARATOR,
+
+    // 📊 tecnickcom/tc-lib-barcode - Non-QR barcode generation (1D + 2D symbologies, #69)
+    // @see https://github.com/tecnickcom/tc-lib-barcode
+    'Com\\Tecnick\\Barcode\\' => $libraryBaseDir
+        . 'tecnickcom' . DIRECTORY_SEPARATOR
+        . 'tc-lib-barcode' . DIRECTORY_SEPARATOR
+        . 'src' . DIRECTORY_SEPARATOR,
+
+    // 🎨 tecnickcom/tc-lib-color - Colour model library (dependency of tc-lib-barcode)
+    // @see https://github.com/tecnickcom/tc-lib-color
+    'Com\\Tecnick\\Color\\'   => $libraryBaseDir
+        . 'tecnickcom' . DIRECTORY_SEPARATOR
+        . 'tc-lib-color' . DIRECTORY_SEPARATOR
         . 'src' . DIRECTORY_SEPARATOR,
 ];
 
@@ -144,4 +165,6 @@ if (file_exists($fpdfPath)) {
 //   - chillerlan\QRCode\*    (QR code generation)
 //   - chillerlan\Settings\*  (Settings container)
 //   - FPDF                   (PDF generation - if installed)
+//   - Com\Tecnick\Barcode\*  (non-QR barcode generation - #69)
+//   - Com\Tecnick\Color\*    (colour model library - tc-lib-barcode dependency)
 // ==============================================================================

@@ -23,6 +23,8 @@
  * Registered routes:
  *   POST   /api/v1/generate          Generate a full QR code
  *   POST   /api/v1/preview           Generate a preview QR code
+ *   POST   /api/v1/barcode           Generate a full NON-QR barcode (1D/2D, #69)
+ *   POST   /api/v1/barcode/preview   Generate a preview NON-QR barcode (#69)
  *   POST   /api/v1/bulk-generate     Generate many QR codes -> ZIP (anonymous)
  *   GET    /api/v1/download/{uuid}   Download a previously generated QR code
  *   GET    /api/v1/types             List available QR code types
@@ -215,15 +217,17 @@ if ($route !== '') {
 //   - 'rateLimit'       (bool)        Whether rate limiting applies
 //   - 'requiredFeature' (string|null) Epic E4/#53 - a tblSubscriptionPlans
 //     featuresJSON key (e.g. 'webhooks') that must be enabled on the caller's
-//     plan for this route to proceed, or null for no feature gate. UNUSED
-//     (every route below is null) as of this framework stage - no existing
-//     route needs a boolean feature gate yet (the one gate this stage wires,
-//     bulk-generate's item-count cap, is a LIMIT, not a boolean feature, so
-//     it is enforced inside handleBulkGenerate() via limitFor() instead, not
-//     here). The dispatch section below already calls requireFeatureOr402()
-//     whenever a future route sets this to a non-null key - see "🔐 Feature
-//     Gate (Epic E4/#53)" further down - so adding a gated route later is a
-//     one-line change to that route's definition, zero router-logic changes.
+//     plan for this route to proceed, or null for no feature gate. The
+//     dispatch section below already calls requireFeatureOr402() whenever a
+//     route sets this to a non-null key - see "🔐 Feature Gate (Epic E4/#53)"
+//     further down - so adding a gated route is a one-line change to that
+//     route's definition, zero router-logic changes. First real (non-null)
+//     use: 'barcode'/'barcode/preview' below gate on 'barcode_generation'
+//     (#69) - seeded TRUE on every current plan (anonymous/free/pro/business,
+//     seed_data.sql), so this is a framework-readiness gate for future
+//     tiering rather than a live restriction today (barcodes are a core,
+//     always-on offering per the owner's brief for this cycle - see the PR
+//     body / DEV_NOTES.md for the tier-placement owner-decision note).
 // ==============================================================================
 
 /**
@@ -250,6 +254,46 @@ $routes = [
         'auth'      => true,
         'rateLimit' => true,
         'requiredFeature' => null,
+        'requiredScope'   => 'preview',
+    ],
+
+    // ==========================================================================
+    // 📊 NON-QR barcode routes (1D + 2D symbologies, #69)
+    // ==========================================================================
+    // Deliberately SEPARATE endpoints rather than overloading /generate and
+    // /preview - most QR customisation (patterns, markers, logos, frames)
+    // does not apply to barcode symbologies, and the existing QR pipeline is
+    // heavily audited; a distinct pair of routes keeps that pipeline
+    // untouched. Same auth (API key + CSRF + anonymous-if-no-auth-required -
+    // both routes below require auth exactly like /generate and /preview),
+    // rate-limit, Content-Type/size guards (enforced by the router body-
+    // parsing section further down, unconditionally on every POST route),
+    // and JSON/XML response envelope as /generate and /preview. Reuses the
+    // SAME 'generate'/'preview' API-key scopes rather than minting new ones
+    // (barcode generation is the same CAPABILITY as QR generation from a
+    // scope-taxonomy point of view - a key already scoped to "generate" can
+    // generate a barcode too), keeping the 7-entry scope allowlist unchanged.
+    // ==========================================================================
+
+    // 📌 POST /api/v1/barcode - Generate a full NON-QR barcode
+    [
+        'pattern'   => 'barcode',
+        'methods'   => ['POST'],
+        'handler'   => 'handleBarcodeGenerate',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => 'barcode_generation',
+        'requiredScope'   => 'generate',
+    ],
+
+    // 📌 POST /api/v1/barcode/preview - Generate a preview NON-QR barcode
+    [
+        'pattern'   => 'barcode/preview',
+        'methods'   => ['POST'],
+        'handler'   => 'handleBarcodePreview',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => 'barcode_generation',
         'requiredScope'   => 'preview',
     ],
 
@@ -1039,6 +1083,14 @@ switch ($handlerFunction) {
 
     case 'handlePreview':
         handlePreview($requestBody);
+        break;
+
+    case 'handleBarcodeGenerate':
+        handleBarcodeGenerate($requestBody);
+        break;
+
+    case 'handleBarcodePreview':
+        handleBarcodePreview($requestBody);
         break;
 
     case 'handleBulkGenerate':

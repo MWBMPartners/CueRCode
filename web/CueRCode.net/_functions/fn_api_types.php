@@ -171,15 +171,25 @@ function handleGetTypes(): void
  * 📄 Handle the GET /api/v1/formats endpoint
  *
  * Returns a static list of supported QR code output formats with their
- * MIME types, file extensions, and human-readable descriptions.
+ * MIME types, file extensions, and human-readable descriptions, PLUS a
+ * separate `barcode_formats` list for the non-QR barcode API (#69) - the
+ * two are intentionally kept as distinct arrays rather than merged into one:
+ * `formats` documents POST /api/v1/generate's `customization.format` value
+ * space (6 formats, driven by chillerlan/php-qrcode's output classes),
+ * while `barcode_formats` documents POST /api/v1/barcode's SEPARATE
+ * `options.format` value space (2 formats, driven by tc-lib-barcode's SVG/
+ * PNG output only - no JPEG/GIF/WebP/PDF barcode renderer exists here).
+ * Merging them would incorrectly imply a barcode could be requested as PDF,
+ * or a QR code could skip logo/frame support the way a barcode does.
  *
- * This endpoint does not query the database; the format list is defined
- * statically since it is determined by the QR generation library's
- * capabilities and does not change at runtime.
+ * This endpoint does not query the database; both format lists are defined
+ * statically since they are determined by the respective generation
+ * libraries' capabilities and do not change at runtime.
  *
  * @return void (sends JSON/XML response and exits)
  *
  * @see fn_qr_options.php - mapOutputFormat()
+ * @see fn_barcode_generate.php - renderBarcodeToOutput() (#69)
  * @see fn_response.php - successResponse()
  *
  * @example
@@ -201,7 +211,18 @@ function handleGetTypes(): void
  *               ...
  *           ],
  *           "count": 6,
- *           "default": "png"
+ *           "default": "png",
+ *           "barcode_formats": [
+ *               {
+ *                   "format": "svg",
+ *                   "mime_type": "image/svg+xml",
+ *                   "extension": "svg",
+ *                   "description": "SVG vector graphic (scalable, ideal for print)"
+ *               },
+ *               ...
+ *           ],
+ *           "barcode_count": 2,
+ *           "barcode_default": "svg"
  *       }
  *   }
  */
@@ -267,12 +288,34 @@ function handleGetFormats(): void
         ],
     ];
 
+    // 📋 Static list of supported BARCODE output formats (#69) - a small,
+    // DELIBERATELY separate list from $formats above; see this function's
+    // docblock for why the two are not merged.
+    // @see fn_barcode_generate.php - renderBarcodeToOutput()
+    $barcodeFormats = [
+        [
+            'format'      => 'svg',
+            'mime_type'   => 'image/svg+xml',
+            'extension'   => 'svg',
+            'description' => 'SVG vector graphic (scalable, ideal for print) - the barcode API default',
+        ],
+        [
+            'format'      => 'png',
+            'mime_type'   => 'image/png',
+            'extension'   => 'png',
+            'description' => 'PNG raster image (fixed resolution, white background)',
+        ],
+    ];
+
     // ✅ Send success response
     successResponse(
         [
-            'formats' => $formats,
-            'count'   => count($formats),
-            'default' => 'png',
+            'formats'         => $formats,
+            'count'           => count($formats),
+            'default'         => 'png',
+            'barcode_formats' => $barcodeFormats,
+            'barcode_count'   => count($barcodeFormats),
+            'barcode_default' => 'svg',
         ],
         'Supported output formats retrieved successfully.'
     );

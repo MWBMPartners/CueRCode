@@ -385,7 +385,99 @@ INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescript
 ('gs1_product', 'GS1 Product (Digital Link)', 'fa-solid fa-barcode', 'Encode a product as a GS1 Digital Link (GTIN, batch, serial, expiry)', 'utility',
  NULL,
  '[{"name":"gtin","label":"GTIN","type":"text","required":true,"placeholder":"09521234543213","maxlength":14,"hint":"Global Trade Item Number — 8, 12, 13 or 14 digits (AI 01)"},{"name":"batch","label":"Batch / Lot","type":"text","required":false,"placeholder":"LOT42","maxlength":20,"hint":"AI 10 — batch or lot number (optional)"},{"name":"serial","label":"Serial Number","type":"text","required":false,"placeholder":"SN0001","maxlength":20,"hint":"AI 21 — serial number (optional)"},{"name":"expiry","label":"Expiry (YYMMDD)","type":"text","required":false,"placeholder":"261231","maxlength":6,"hint":"AI 17 — expiry date in YYMMDD format (optional)"},{"name":"resolver","label":"Resolver Host","type":"text","required":false,"placeholder":"id.gs1.org","maxlength":253,"hint":"GS1 Digital Link resolver host (defaults to id.gs1.org)"}]',
- 26);
+ 26),
+
+-- ==============================================================================
+-- 📊 NON-QR Barcode Symbologies (Epic — API-first barcode generation, #69)
+-- ==============================================================================
+-- These 11 rows are NOT dispatched through buildQRPayload()/payloadTemplate
+-- placeholder substitution the way the QR types above are — barcode
+-- generation is a wholly separate pipeline (_functions/fn_barcode_generate.php
+-- generateBarcode()/generateBarcodePreview(), driven by POST /api/v1/barcode
+-- and /api/v1/barcode/preview, NEVER fn_qr_payloads.php). payloadTemplate is
+-- therefore NULL for all 11 — these rows exist purely so GET /api/v1/types,
+-- the saved-codes library, /api/v1/download/{uuid}, and the ownership/IDOR
+-- machinery all recognise and display a generated barcode exactly like a QR
+-- code (qrTypeID FK + typeName resolution in saveQRCodeRecord()), and so a
+-- FUTURE UI "Barcode" generator tab (API-first is this cycle's scope — see
+-- DEV_NOTES.md) has formFieldsJSON to render from with zero extra schema
+-- work. typeCategory 'barcode' is a NEW category value (existing values:
+-- general, social, payment, media, contact, utility) — purely additive, no
+-- code anywhere switches on typeCategory today.
+--
+-- The single 'data' field in each formFieldsJSON below matches the barcode
+-- API's own request field name (POST body: {"symbology":..., "data":...}) —
+-- STRICT validation (check digits, charset, even-length, etc.) is enforced
+-- server-side by fn_barcode_generate.php's normalizeBarcodeData(), NOT by
+-- this formFieldsJSON schema (which is descriptive/UI-hinting only, same as
+-- every other type row).
+-- ==============================================================================
+
+-- 🔠 Code 128 (1D)
+('barcode_code128', 'Barcode: Code 128', 'fa-solid fa-barcode', 'Generate a Code 128 barcode (full printable-ASCII range)', 'barcode',
+ NULL,
+ '[{"name":"data","label":"Content","type":"text","required":true,"placeholder":"HELLO123","maxlength":80,"hint":"1-80 printable ASCII characters — the library auto-selects the Code 128 A/B/C subset"}]',
+ 27),
+
+-- 🔠 Code 39 (1D)
+('barcode_code39', 'Barcode: Code 39', 'fa-solid fa-barcode', 'Generate a Code 39 barcode (digits, uppercase letters, and a few symbols)', 'barcode',
+ NULL,
+ '[{"name":"data","label":"Content","type":"text","required":true,"placeholder":"CODE39","maxlength":80,"hint":"1-80 characters: digits, UPPERCASE letters, space, and - . $ / + % only"}]',
+ 28),
+
+-- 🏷️ EAN-13 (1D)
+('barcode_ean13', 'Barcode: EAN-13', 'fa-solid fa-barcode', 'Generate an EAN-13 retail product barcode', 'barcode',
+ NULL,
+ '[{"name":"data","label":"GTIN-13","type":"text","required":true,"placeholder":"5901234123457","maxlength":13,"hint":"12 digits (check digit computed for you) or 13 digits (check digit verified — an incorrect one is rejected)"}]',
+ 29),
+
+-- 🏷️ EAN-8 (1D)
+('barcode_ean8', 'Barcode: EAN-8', 'fa-solid fa-barcode', 'Generate an EAN-8 compact retail product barcode', 'barcode',
+ NULL,
+ '[{"name":"data","label":"GTIN-8","type":"text","required":true,"placeholder":"96385074","maxlength":8,"hint":"7 digits (check digit computed for you) or 8 digits (check digit verified — an incorrect one is rejected)"}]',
+ 30),
+
+-- 🏷️ UPC-A (1D)
+('barcode_upca', 'Barcode: UPC-A', 'fa-solid fa-barcode', 'Generate a UPC-A North American retail product barcode', 'barcode',
+ NULL,
+ '[{"name":"data","label":"UPC-A","type":"text","required":true,"placeholder":"036000291452","maxlength":12,"hint":"11 digits (check digit computed for you) or 12 digits (check digit verified — an incorrect one is rejected)"}]',
+ 31),
+
+-- 🏷️ UPC-E (1D)
+('barcode_upce', 'Barcode: UPC-E', 'fa-solid fa-barcode', 'Generate a UPC-E compressed (zero-suppressed) retail product barcode', 'barcode',
+ NULL,
+ '[{"name":"data","label":"UPC-E","type":"text","required":true,"placeholder":"425261","maxlength":8,"hint":"6-digit compact code, or 8 digits (number-system digit 0 + 6-digit compact code + check digit, verified via UPC-A expansion)"}]',
+ 32),
+
+-- 📶 ITF / Interleaved 2 of 5 (1D)
+('barcode_itf', 'Barcode: ITF (Interleaved 2 of 5)', 'fa-solid fa-barcode', 'Generate an Interleaved 2 of 5 barcode (cartons, logistics)', 'barcode',
+ NULL,
+ '[{"name":"data","label":"Content","type":"text","required":true,"placeholder":"12345678","maxlength":40,"hint":"Digits only, EVEN length (2-40 digits) — pad with a leading zero if needed"}]',
+ 33),
+
+-- 🔤 Codabar (1D)
+('barcode_codabar', 'Barcode: Codabar', 'fa-solid fa-barcode', 'Generate a Codabar barcode (libraries, blood banks, parcels)', 'barcode',
+ NULL,
+ '[{"name":"data","label":"Content","type":"text","required":true,"placeholder":"A12345B","maxlength":40,"hint":"1-40 characters: digits and the symbols - $ : / . + (start/stop guard characters are added automatically)"}]',
+ 34),
+
+-- 🟦 Data Matrix (2D)
+('barcode_datamatrix', 'Barcode: Data Matrix', 'fa-solid fa-table-cells', 'Generate a Data Matrix 2D barcode (ISO/IEC 16022 — compact, high-density)', 'barcode',
+ NULL,
+ '[{"name":"data","label":"Content","type":"textarea","required":true,"placeholder":"https://example.com/product/42","maxlength":2048,"rows":3,"hint":"Any UTF-8 text or URI, up to 2048 characters"}]',
+ 35),
+
+-- 🟦 PDF417 (2D)
+('barcode_pdf417', 'Barcode: PDF417', 'fa-solid fa-table-cells', 'Generate a PDF417 2D stacked barcode (ISO/IEC 15438 — IDs, boarding passes, shipping labels)', 'barcode',
+ NULL,
+ '[{"name":"data","label":"Content","type":"textarea","required":true,"placeholder":"Any structured text or ID data","maxlength":2048,"rows":3,"hint":"Any UTF-8 text, up to 2048 characters. Long runs of consecutive digits use the encoder''s numeric-compaction mode (requires the bcmath PHP extension on the server)"}]',
+ 36),
+
+-- 🟦 Aztec Code (2D)
+('barcode_aztec', 'Barcode: Aztec Code', 'fa-solid fa-table-cells', 'Generate an Aztec Code 2D barcode (ISO/IEC 24778 — travel/transit tickets)', 'barcode',
+ NULL,
+ '[{"name":"data","label":"Content","type":"textarea","required":true,"placeholder":"Any UTF-8 text or URI","maxlength":2048,"rows":3,"hint":"Any UTF-8 text or URI, up to 2048 characters"}]',
+ 37);
 
 -- ==============================================================================
 -- 🖼️ Predefined Logos (tblPredefinedLogos)
@@ -452,6 +544,10 @@ INSERT INTO `tblPredefinedLogos` (`logoName`, `logoLabel`, `logoFileName`, `logo
 --   organisations          - organisation accounts/roles (Epic E3 org stage)
 --   webhooks               - outbound event webhooks (FG-013)
 --   csv_export             - analytics CSV/JSON export (Epic E11)
+--   barcode_generation     - non-QR 1D/2D barcode API (#69) - seeded TRUE on
+--                            EVERY plan below (barcodes are a core, always-on
+--                            offering this cycle; the gate exists so a FUTURE
+--                            tier split is a pure seed edit, owner decision)
 --
 -- limitsJSON - flat object of integers, where -1 means UNLIMITED. Seeded keys
 -- (add more any time - an absent key reads as 0 via fn_features.php's
@@ -490,28 +586,28 @@ VALUES
 -- 👤 Anonymous - not logged in. Generous acquisition funnel: full static QR
 -- customisation, but no persistence/dynamism/volume/premium features.
 ('anonymous', 'Anonymous', 'Generate QR codes instantly with no account required.', 0.00, 0.00, 'GBP',
- '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false}',
+ '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false, "barcode_generation": true}',
  '{"saved_codes": 0, "bulk_batch_size": 25, "dynamic_codes": 0, "api_keys": 0, "analytics_days": 0, "api_rate_limit_per_min": 10, "api_rate_limit_per_day": 100}',
  1, 0),
 
 -- 🆓 Free - a registered, unpaid account. Adds persistence (saved codes),
 -- a small dynamic-QR allowance, and one API key, still no premium features.
 ('free', 'Free', 'Create a free account to save your codes and unlock a few extras.', 0.00, 0.00, 'GBP',
- '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false}',
+ '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false, "barcode_generation": true}',
  '{"saved_codes": 25, "bulk_batch_size": 50, "dynamic_codes": 3, "api_keys": 1, "analytics_days": 0, "api_rate_limit_per_min": 30, "api_rate_limit_per_day": 2000}',
  1, 1),
 
 -- 💎 Pro - paid individual tier. Unlocks expiry/scheduling, password
 -- protection, webhooks, and analytics export; SSO/organisations stay Business-only.
 ('pro', 'Pro', 'For individuals who need dynamic QR codes, analytics, and automation.', 4.99, 49.99, 'GBP',
- '{"expiry_scheduling": true, "password_protected_qr": true, "sso": false, "organisations": false, "webhooks": true, "csv_export": true}',
+ '{"expiry_scheduling": true, "password_protected_qr": true, "sso": false, "organisations": false, "webhooks": true, "csv_export": true, "barcode_generation": true}',
  '{"saved_codes": 500, "bulk_batch_size": 500, "dynamic_codes": 100, "api_keys": 5, "analytics_days": 90, "api_rate_limit_per_min": 120, "api_rate_limit_per_day": 20000}',
  1, 2),
 
 -- 🏢 Business - paid organisation tier. Every feature flag on, effectively
 -- unlimited saved codes (fair use), the largest bulk/API allowances.
 ('business', 'Business', 'For teams and organisations that need SSO, roles, and enterprise-scale volume.', 19.99, 199.99, 'GBP',
- '{"expiry_scheduling": true, "password_protected_qr": true, "sso": true, "organisations": true, "webhooks": true, "csv_export": true}',
+ '{"expiry_scheduling": true, "password_protected_qr": true, "sso": true, "organisations": true, "webhooks": true, "csv_export": true, "barcode_generation": true}',
  '{"saved_codes": -1, "bulk_batch_size": 2000, "dynamic_codes": 1000, "api_keys": 20, "analytics_days": 1095, "api_rate_limit_per_min": 600, "api_rate_limit_per_day": 100000}',
  1, 3);
 
@@ -527,11 +623,19 @@ VALUES
 --     seeded INERT: sso_enabled=0, all sso_<provider>_enabled=0, all
 --     client_id/client_secret empty)
 --   - 26 QR code type definitions with form field schemas
+--   - 11 non-QR barcode symbology type definitions (typeCategory 'barcode',
+--     #69) - code128/code39/ean13/ean8/upca/upce/itf/codabar (1D) +
+--     datamatrix/pdf417/aztec (2D); dispatched by fn_barcode_generate.php,
+--     NOT buildQRPayload() (payloadTemplate is NULL for all 11)
 --   - 25 predefined logo entries
 --   - 4 subscription plan tiers (anonymous/free/pro/business, Epic E4/#53) -
---     UNCHANGED by #70; the 5 new flexible-pricing tables (install.sql Tables
---     22-26) are seeded with ZERO rows here - they stay empty/no-op until an
---     admin populates them AND flips the matching kill-switch above
+--     each gained the additive `barcode_generation` featuresJSON key (#69),
+--     seeded TRUE on every plan (barcodes are a core, always-on offering this
+--     cycle - see DEV_NOTES.md for the future-tiering owner-decision note);
+--     otherwise UNCHANGED by #70; the 5 new flexible-pricing tables
+--     (install.sql Tables 22-26) are seeded with ZERO rows here - they stay
+--     empty/no-op until an admin populates them AND flips the matching
+--     kill-switch above
 --
 -- 📌 The application is now ready for use.
 --    Remove or restrict access to the /install/ directory.

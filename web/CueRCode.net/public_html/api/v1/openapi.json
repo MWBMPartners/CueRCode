@@ -2,7 +2,7 @@
     "openapi": "3.0.3",
     "info": {
         "title": "CueRCode API",
-        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`, `/save`, `/qrcodes`, `/qrcodes/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Saved-Codes Library (Epic E3 stage 2a)\n\n`POST /save` claims a previously-generated QR code (by its `uuid`) into the authenticated caller's account, subject to the caller's plan `saved_codes` limit (`402 SAVED_CODES_LIMIT_REACHED` at/over the cap). `GET /qrcodes` lists ONLY the caller's own saved codes (paginated, optionally filtered by `type`). `GET/PATCH/DELETE /qrcodes/{uuid}` operate on a single saved code: ownership is re-checked on every request from the caller's authenticated identity, never from a client-supplied field. A code that is neither owned by the caller nor marked `is_public` is reported as `404` (never `403`) to avoid disclosing that a private UUID belonging to someone else exists. `DELETE` soft-deletes (frees a `saved_codes` slot; the row is retained for audit purposes). `is_public: true` (opt-in; default `false`) grants read/download access to any authenticated caller but never write access - only the owner may `PATCH`/`DELETE`.\n\n## Self-Service API Keys & Scopes (Epic E7 stage 1, #54)\n\nAuthenticated users (session/CSRF only - see below) can self-service manage their own API keys under `/keys`. `POST /keys` creates a key (caller-chosen `name` + an optional `scopes` array from the allowlist below) subject to the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap) and returns the FULL raw key EXACTLY ONCE in the response body (`data.api_key`) - it is never retrievable again, only its HMAC-SHA256 hash is stored. `GET /keys` lists ONLY the caller's own keys (id, prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at`, `expires_at` - NEVER the secret or its hash). `POST /keys/{id}/rotate` issues a NEW secret for a key the caller OWNS (returned once, exactly like create) and immediately invalidates the old one; `DELETE /keys/{id}` soft-revokes (`isActive = 0`) a key the caller OWNS. Every `{id}` operation re-derives the caller's identity server-side and re-checks ownership in the same query as any mutation - a key that is not owned by the caller (or does not exist) is reported as `404` (never `403`, avoiding existence disclosure).\n\n**Owner/design decision:** an X-API-Key-authenticated request to ANY `/keys*` endpoint is refused with `403 API_KEY_MANAGEMENT_FORBIDDEN`, regardless of that key's own scopes - only a CSRF/session-authenticated caller (the account dashboard) may create/list/rotate/revoke keys. This closes a self-escalation path: without it, a compromised low-scope key (e.g. only `generate`) could mint itself a brand-new key with EVERY scope.\n\n**Scope allowlist:** `generate`, `preview`, `download`, `bulk`, `qrcodes:read`, `qrcodes:write`, `save`. A key with no scopes granted can authenticate but cannot access any scoped endpoint. Every scoped endpoint below documents its `requiredScope` in its own description. Scope enforcement applies ONLY to `X-API-Key` authentication - a session/CSRF-authenticated web UI request is NEVER scope-limited (full user rights). A key missing a route's required scope gets `403 INSUFFICIENT_SCOPE`, with the missing scope named in both the `message` and a `required_scope` field alongside the standard error shape.\n\n## Rate Limiting\n\nAll endpoints, including `/health`, are rate limited by the same per-key/per-IP mechanism (no route is exempt). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above. For a modern, well-compressed raster format, **WebP** is the recommended alternative — it is widely supported, typically smaller than PNG, and is an accepted `format` value.\n\n## Versioning & Deprecation Policy\n\nThe API is versioned in the URL path (`/api/v1/`). The current version is **v1** (`info.version` 1.0.0). `/api/v1/openapi.json` is the source of truth and always reflects the deployed contract.\n\n**Additive, backwards-compatible changes** are made within v1 without a version bump: new endpoints, new optional request fields, new response fields, and new enum/catalogue values (e.g. new QR types and new error codes in the `x-error-codes` catalogue). Clients MUST tolerate unknown response fields and previously-unseen enum/error-code values.\n\n**Breaking changes are never made to v1** (removing or renaming a field/endpoint, changing a field's type or meaning, or tightening validation). Any such change would ship under a new path version (`/api/v2/`) running alongside v1.\n\n**Deprecation:** a field or endpoint slated for future removal is marked `deprecated: true` in this spec and announced with reasonable notice; deprecated features keep working for the life of v1.",
+        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types and multiple output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. Obtain one from the admin panel.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/download/{uuid}`, `/save`, `/qrcodes`, `/qrcodes/{uuid}`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited.\n\n## Saved-Codes Library (Epic E3 stage 2a)\n\n`POST /save` claims a previously-generated QR code (by its `uuid`) into the authenticated caller's account, subject to the caller's plan `saved_codes` limit (`402 SAVED_CODES_LIMIT_REACHED` at/over the cap). `GET /qrcodes` lists ONLY the caller's own saved codes (paginated, optionally filtered by `type`). `GET/PATCH/DELETE /qrcodes/{uuid}` operate on a single saved code: ownership is re-checked on every request from the caller's authenticated identity, never from a client-supplied field. A code that is neither owned by the caller nor marked `is_public` is reported as `404` (never `403`) to avoid disclosing that a private UUID belonging to someone else exists. `DELETE` soft-deletes (frees a `saved_codes` slot; the row is retained for audit purposes). `is_public: true` (opt-in; default `false`) grants read/download access to any authenticated caller but never write access - only the owner may `PATCH`/`DELETE`.\n\n## Self-Service API Keys & Scopes (Epic E7 stage 1, #54)\n\nAuthenticated users (session/CSRF only - see below) can self-service manage their own API keys under `/keys`. `POST /keys` creates a key (caller-chosen `name` + an optional `scopes` array from the allowlist below) subject to the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap) and returns the FULL raw key EXACTLY ONCE in the response body (`data.api_key`) - it is never retrievable again, only its HMAC-SHA256 hash is stored. `GET /keys` lists ONLY the caller's own keys (id, prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at`, `expires_at` - NEVER the secret or its hash). `POST /keys/{id}/rotate` issues a NEW secret for a key the caller OWNS (returned once, exactly like create) and immediately invalidates the old one; `DELETE /keys/{id}` soft-revokes (`isActive = 0`) a key the caller OWNS. Every `{id}` operation re-derives the caller's identity server-side and re-checks ownership in the same query as any mutation - a key that is not owned by the caller (or does not exist) is reported as `404` (never `403`, avoiding existence disclosure).\n\n**Owner/design decision:** an X-API-Key-authenticated request to ANY `/keys*` endpoint is refused with `403 API_KEY_MANAGEMENT_FORBIDDEN`, regardless of that key's own scopes - only a CSRF/session-authenticated caller (the account dashboard) may create/list/rotate/revoke keys. This closes a self-escalation path: without it, a compromised low-scope key (e.g. only `generate`) could mint itself a brand-new key with EVERY scope.\n\n**Scope allowlist:** `generate`, `preview`, `download`, `bulk`, `qrcodes:read`, `qrcodes:write`, `save`. A key with no scopes granted can authenticate but cannot access any scoped endpoint. Every scoped endpoint below documents its `requiredScope` in its own description. Scope enforcement applies ONLY to `X-API-Key` authentication - a session/CSRF-authenticated web UI request is NEVER scope-limited (full user rights). A key missing a route's required scope gets `403 INSUFFICIENT_SCOPE`, with the missing scope named in both the `message` and a `required_scope` field alongside the standard error shape.\n\n## Rate Limiting\n\nAll endpoints, including `/health`, are rate limited by the same per-key/per-IP mechanism (no route is exempt). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above. For a modern, well-compressed raster format, **WebP** is the recommended alternative — it is widely supported, typically smaller than PNG, and is an accepted `format` value.\n\n## Non-QR Barcodes (#69)\n\n`POST /barcode` and `POST /barcode/preview` generate NON-QR barcode symbologies alongside the QR engine above, via the vendored tecnickcom/tc-lib-barcode library: 8 linear/1D types (`code128`, `code39`, `ean13`, `ean8`, `upca`, `upce`, `itf`, `codabar`) and 3 matrix/2D types (`datamatrix`, `pdf417`, `aztec`). These are DELIBERATELY separate endpoints from `/generate`/`/preview` - most QR customisation (colours, module/marker patterns, logos, frames) does not apply to a barcode symbol - accepting a small, symbology-appropriate `options` object instead (`format`: svg/png only, `scale`, `height`, `show_text`, `ecc`). STRICT server-side validation runs before rendering: EAN-13/EAN-8/UPC-A check digits are computed or independently verified and REJECTED if wrong, UPC-E is expanded to UPC-A for check-digit verification, Code39's charset and ITF's even-length-digits-only rule are enforced - an invalid `data` value is rejected with `422 GENERATION_FAILED` naming the specific problem, never silently coerced. A generated barcode is saved to `tblQRCodes` and is retrievable via the SAME `/download/{uuid}` endpoint, saved-codes library, and `GET /types` (`typeCategory: \"barcode\"`) as a QR code. Reuses the `generate`/`preview` scopes (not new ones) and is gated on the `barcode_generation` featuresJSON flag - seeded `true` on every current plan, so this is a framework-readiness gate for future tiering rather than a live restriction today.\n\n## Versioning & Deprecation Policy\n\nThe API is versioned in the URL path (`/api/v1/`). The current version is **v1** (`info.version` 1.0.0). `/api/v1/openapi.json` is the source of truth and always reflects the deployed contract.\n\n**Additive, backwards-compatible changes** are made within v1 without a version bump: new endpoints, new optional request fields, new response fields, and new enum/catalogue values (e.g. new QR types and new error codes in the `x-error-codes` catalogue). Clients MUST tolerate unknown response fields and previously-unseen enum/error-code values.\n\n**Breaking changes are never made to v1** (removing or renaming a field/endpoint, changing a field's type or meaning, or tightening validation). Any such change would ship under a new path version (`/api/v2/`) running alongside v1.\n\n**Deprecation:** a field or endpoint slated for future removal is marked `deprecated: true` in this spec and announced with reasonable notice; deprecated features keep working for the life of v1.",
         "version": "1.0.0",
         "contact": {
             "name": "CueRCode Support",
@@ -427,6 +427,260 @@
                     },
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    },
+                    "503": {
+                        "$ref": "#/components/responses/ServiceUnavailable"
+                    }
+                }
+            }
+        },
+        "/barcode": {
+            "post": {
+                "tags": [
+                    "Generation"
+                ],
+                "summary": "Generate a NON-QR barcode (1D or 2D)",
+                "description": "Generate a full, non-QR barcode symbology - 8 linear (1D) types (code128, code39, ean13, ean8, upca, upce, itf, codabar) and 3 matrix (2D) types (datamatrix, pdf417, aztec) - via the vendored tecnickcom/tc-lib-barcode library (#69). The generated code is saved to the database and filesystem exactly like a QR code (same `tblQRCodes` row shape, same `/download/{uuid}` endpoint, same saved-codes library), returning a UUID identifier and download URL.\n\n**STRICT server-side validation** runs before any rendering: EAN-13/EAN-8/UPC-A check digits are computed (12/7/11-digit input) or independently VERIFIED and REJECTED if wrong (13/8/12-digit input); UPC-E is expanded to UPC-A for check-digit verification; Code39's charset (digits, UPPERCASE letters, space, `- . $ / + %`) and ITF's even-length-digits-only requirement are enforced. An invalid `data` value for the chosen `symbology` is rejected with `422 GENERATION_FAILED` naming the specific problem (never silently coerced).\n\nMost QR-only customisation (colours, module/marker patterns, logos, frames) does NOT apply here - see `BarcodeOptions` for the small, symbology-appropriate option set this endpoint accepts instead (`format`, `scale`, `height`, `show_text`, `ecc`).\n\nRequires authentication (API key OR CSRF token). requiredScope: `generate` (the SAME scope as `/generate` - barcode generation is the same capability from a scope-taxonomy point of view, not a new scope). Gated on the `barcode_generation` featuresJSON flag (Epic E4/#53) - seeded `true` on every current plan (anonymous/free/pro/business), so this gate is a framework-readiness placeholder for future tiering rather than a live restriction today.",
+                "operationId": "generateBarcode",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BarcodeGenerateRequest"
+                            },
+                            "examples": {
+                                "code128": {
+                                    "summary": "Code 128 (1D)",
+                                    "value": {
+                                        "symbology": "code128",
+                                        "data": "HELLO123"
+                                    }
+                                },
+                                "ean13_with_options": {
+                                    "summary": "EAN-13 (check digit auto-computed) with rendering options",
+                                    "value": {
+                                        "symbology": "ean13",
+                                        "data": "590123412345",
+                                        "options": {
+                                            "format": "png",
+                                            "scale": 3,
+                                            "height": 60,
+                                            "show_text": true
+                                        }
+                                    }
+                                },
+                                "pdf417": {
+                                    "summary": "PDF417 (2D) with an error-correction level",
+                                    "value": {
+                                        "symbology": "pdf417",
+                                        "data": "Boarding pass reference ABC123",
+                                        "options": {
+                                            "format": "svg",
+                                            "ecc": 3
+                                        }
+                                    }
+                                },
+                                "datamatrix": {
+                                    "summary": "Data Matrix (2D)",
+                                    "value": {
+                                        "symbology": "datamatrix",
+                                        "data": "https://example.com/asset/42"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Barcode generated successfully",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BarcodeGenerateResponse"
+                                },
+                                "examples": {
+                                    "success": {
+                                        "summary": "JSON success",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Barcode generated successfully.",
+                                            "data": {
+                                                "uuid": "a1b2c3d4-e5f6-4890-abcd-ef1234567890",
+                                                "image": "<?xml version=\"1.0\" standalone=\"no\" ?>\n<svg ...>...</svg>",
+                                                "download_url": "/api/v1/download/a1b2c3d4-e5f6-4890-abcd-ef1234567890",
+                                                "mime_type": "image/svg+xml",
+                                                "format": "svg",
+                                                "symbology": "code128"
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            },
+                            "application/xml": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BarcodeGenerateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "402": {
+                        "$ref": "#/components/responses/PaymentRequired"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
+                    "413": {
+                        "$ref": "#/components/responses/PayloadTooLarge"
+                    },
+                    "415": {
+                        "$ref": "#/components/responses/UnsupportedMediaType"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/UnprocessableEntity"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "$ref": "#/components/responses/ServerError"
+                    },
+                    "503": {
+                        "$ref": "#/components/responses/ServiceUnavailable"
+                    }
+                }
+            }
+        },
+        "/barcode/preview": {
+            "post": {
+                "tags": [
+                    "Generation"
+                ],
+                "summary": "Generate a NON-QR barcode preview",
+                "description": "Generate a quick, unsaved preview of a non-QR barcode (#69). Always returns SVG (vector - no size/quality trade-off the way a raster preview would have) and is NOT saved to the database or filesystem. Accepts the SAME request body as `POST /barcode`, including the SAME strict per-symbology data validation.\n\nRequires authentication (API key OR CSRF token). requiredScope: `preview` (the SAME scope as `/preview`). Gated on `barcode_generation` exactly like `/barcode` - see that endpoint's description for the tier-placement note.",
+                "operationId": "previewBarcode",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BarcodeGenerateRequest"
+                            },
+                            "examples": {
+                                "preview": {
+                                    "summary": "Preview a Code 128 barcode",
+                                    "value": {
+                                        "symbology": "code128",
+                                        "data": "HELLO123"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Barcode preview generated successfully",
+                        "headers": {
+                            "X-RateLimit-Limit": {
+                                "$ref": "#/components/headers/X-RateLimit-Limit"
+                            },
+                            "X-RateLimit-Remaining": {
+                                "$ref": "#/components/headers/X-RateLimit-Remaining"
+                            },
+                            "X-RateLimit-Reset": {
+                                "$ref": "#/components/headers/X-RateLimit-Reset"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BarcodePreviewResponse"
+                                },
+                                "examples": {
+                                    "success": {
+                                        "summary": "JSON success",
+                                        "value": {
+                                            "success": true,
+                                            "message": "Barcode preview generated successfully.",
+                                            "data": {
+                                                "image": "<?xml version=\"1.0\" standalone=\"no\" ?>\n<svg ...>...</svg>",
+                                                "mime_type": "image/svg+xml",
+                                                "symbology": "code128"
+                                            },
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            },
+                            "application/xml": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BarcodePreviewResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "402": {
+                        "$ref": "#/components/responses/PaymentRequired"
                     },
                     "403": {
                         "$ref": "#/components/responses/InsufficientScope"
@@ -3764,7 +4018,7 @@
                 }
             },
             "PaymentRequired": {
-                "description": "The caller's plan does not allow this action at its current usage level (Epic E4/#53 feature/limit gating). The response includes `upgrade_url` and `plan_limit` alongside the standard error shape.",
+                "description": "The caller's plan does not allow this action at its current usage level (Epic E4/#53 feature/limit gating). The response includes `upgrade_url` alongside the standard error shape, plus EITHER `plan_limit` (a numeric limitsJSON gate, e.g. saved_codes/api_keys) OR `feature` (a boolean featuresJSON gate via requireFeatureOr402() - #69's `barcode_generation` is the first live route to use this shape, router 'requiredFeature'), never both.",
                 "content": {
                     "application/json": {
                         "schema": {
@@ -3781,8 +4035,13 @@
                                         },
                                         "plan_limit": {
                                             "type": "integer",
-                                            "description": "The caller's current plan limit for this action (-1 = unlimited, so this response is unreachable at -1)",
+                                            "description": "The caller's current plan limit for this action (-1 = unlimited, so this response is unreachable at -1). Present for a LIMIT gate; absent for a FEATURE gate.",
                                             "example": 25
+                                        },
+                                        "feature": {
+                                            "type": "string",
+                                            "description": "The featuresJSON key that is disabled on the caller's plan (e.g. 'barcode_generation'). Present for a FEATURE gate (requireFeatureOr402()); absent for a LIMIT gate.",
+                                            "example": "barcode_generation"
                                         }
                                     }
                                 }
@@ -3810,6 +4069,18 @@
                                     "error_code": "API_KEY_LIMIT_REACHED",
                                     "upgrade_url": "/pricing",
                                     "plan_limit": 1,
+                                    "timestamp": "2026-02-27T12:00:00+00:00"
+                                }
+                            },
+                            "feature_not_available": {
+                                "summary": "Boolean feature disabled on the caller's plan (Epic E4/#53 requireFeatureOr402() - e.g. barcode_generation, #69)",
+                                "value": {
+                                    "success": false,
+                                    "message": "This feature (\"barcode_generation\") is not available on your current plan.",
+                                    "data": {},
+                                    "error_code": "FEATURE_NOT_AVAILABLE",
+                                    "upgrade_url": "/pricing",
+                                    "feature": "barcode_generation",
                                     "timestamp": "2026-02-27T12:00:00+00:00"
                                 }
                             }
@@ -4313,6 +4584,174 @@
                         "nullable": true,
                         "description": "Recommended minimum print size (width = height) in millimetres, computed from the request's scan_distance_cm via the 10:1 scan-distance rule (20mm practical floor). Null when scan_distance_cm was not supplied.",
                         "example": 100
+                    }
+                }
+            },
+            "BarcodeGenerateRequest": {
+                "type": "object",
+                "description": "Request body for POST /barcode and POST /barcode/preview (#69).",
+                "required": [
+                    "symbology",
+                    "data"
+                ],
+                "properties": {
+                    "symbology": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "enum": [
+                            "code128",
+                            "code39",
+                            "ean13",
+                            "ean8",
+                            "upca",
+                            "upce",
+                            "itf",
+                            "codabar",
+                            "datamatrix",
+                            "pdf417",
+                            "aztec"
+                        ],
+                        "description": "The barcode symbology (one of 11 supported: 8 linear/1D + 3 matrix/2D). Use GET /types (typeCategory 'barcode') to retrieve the definitive active list.",
+                        "example": "code128"
+                    },
+                    "data": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "description": "The content to encode. STRICT, symbology-specific validation applies server-side (check digits for ean13/ean8/upca/upce, charset for code39/codabar, even-length-digits-only for itf, printable-ASCII for code128, valid UTF-8 up to 2048 characters for datamatrix/pdf417/aztec) - an invalid value is rejected with 422 GENERATION_FAILED naming the specific problem. See each symbology's GET /types formFieldsJSON hint for its exact rule.",
+                        "example": "HELLO123"
+                    },
+                    "options": {
+                        "$ref": "#/components/schemas/BarcodeOptions"
+                    }
+                }
+            },
+            "BarcodeOptions": {
+                "type": "object",
+                "description": "Rendering options for a barcode. All fields are optional; defaults are applied for missing values. Numeric fields are CLAMPED to their documented range rather than rejected (the STRICT reject-on-invalid behaviour is reserved for the `data` field's check digits/charset - see BarcodeGenerateRequest). Unknown keys are ignored.",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": [
+                            "svg",
+                            "png"
+                        ],
+                        "default": "svg",
+                        "description": "Output format. Only these two are supported for barcodes (no JPEG/GIF/WebP/PDF renderer - see GET /formats' separate `barcode_formats` list). An unrecognised value silently falls back to 'svg'."
+                    },
+                    "scale": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 2,
+                        "description": "Module/bar width multiplier in pixels (clamped 1-10)."
+                    },
+                    "height": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                        "description": "For 1D symbologies: the absolute bar height in pixels (clamped 10-300, default 50). For 2D symbologies: a row-height multiplier (clamped 1-10, default = `scale`, giving square modules) - useful to make PDF417 rows taller for easier scanning. Absent means \"use that category's own default\"."
+                    },
+                    "show_text": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Render the human-readable encoded value as a caption below the symbol. Applies to 1D symbologies only - a documented no-op for 2D (datamatrix/pdf417/aztec do not carry a conventional human-readable caption)."
+                    },
+                    "ecc": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Error-correction hint: for `pdf417`, an ECC LEVEL 0-8 (higher = more redundancy, larger symbol); for `aztec`, an ECC PERCENTAGE 1-100 (default 33). A documented no-op for every other symbology (datamatrix uses a fixed ECC200 scheme; 1D symbologies have no ECC concept).",
+                        "example": 3
+                    }
+                }
+            },
+            "BarcodeGenerateResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Barcode generated successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "uuid": {
+                                "type": "string",
+                                "format": "uuid",
+                                "description": "Unique identifier for the generated barcode. Use this with the /download endpoint (same mechanism as a QR code).",
+                                "example": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                            },
+                            "image": {
+                                "type": "string",
+                                "description": "Raw SVG markup (format=svg) or a base64 PNG data URI (format=png).",
+                                "example": "<?xml version=\"1.0\" standalone=\"no\" ?>\n<svg ...>...</svg>"
+                            },
+                            "download_url": {
+                                "type": "string",
+                                "description": "Relative URL for downloading the barcode file",
+                                "example": "/api/v1/download/a1b2c3d4-e5f6-4890-abcd-ef1234567890"
+                            },
+                            "mime_type": {
+                                "type": "string",
+                                "description": "MIME type of the generated image",
+                                "example": "image/svg+xml"
+                            },
+                            "format": {
+                                "type": "string",
+                                "description": "Output format used",
+                                "example": "svg"
+                            },
+                            "symbology": {
+                                "type": "string",
+                                "description": "The symbology that was generated (lowercased)",
+                                "example": "code128"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time",
+                        "example": "2026-02-27T12:00:00+00:00"
+                    }
+                }
+            },
+            "BarcodePreviewResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Barcode preview generated successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "image": {
+                                "type": "string",
+                                "description": "Raw SVG markup (previews are always SVG)",
+                                "example": "<?xml version=\"1.0\" standalone=\"no\" ?>\n<svg ...>...</svg>"
+                            },
+                            "mime_type": {
+                                "type": "string",
+                                "description": "MIME type (always image/svg+xml for barcode previews)",
+                                "example": "image/svg+xml"
+                            },
+                            "symbology": {
+                                "type": "string",
+                                "description": "The symbology that was previewed (lowercased)",
+                                "example": "code128"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
                     }
                 }
             },

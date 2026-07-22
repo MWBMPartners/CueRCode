@@ -12,7 +12,8 @@
 
 - **Consolidation:** PR **#63** merged `#46`/`#62` (autopilot) + `#51` (launch-prep) into **`alpha`** in one clean, green PR (`alpha` @ merge `3500971`, then bot version-bump `f3c5bf5`). **#46/#62/#51 CLOSED** as superseded (no content lost). Green baseline on alpha: **1564/1564** tests, `php -l` clean, actionlint clean.
 - **New branch model in effect:** work now flows **alpha → beta → main**. Cut new topic branches from the updated `alpha`. `main` = old baseline `68370c0`; `beta` = `68370c0`; `alpha` is far ahead.
-- **Vendored libs:** `chillerlan/php-qrcode` 5.0.5 + `php-settings-container` 3.2.1 + FPDF are **gitignored** ("downloaded separately"). CI (`ci.yml`) fetches them at run time; locally, install them under `web/CueRCode.net/_libraries/` to run the suite.
+- **Vendored libs:** `chillerlan/php-qrcode` 5.0.5 + `php-settings-container` 3.2.1 + FPDF are **gitignored** ("downloaded separately"). CI (`ci.yml`) fetches them at run time; locally, install them under `web/CueRCode.net/_libraries/` to run the suite. As of #69, `tecnickcom/tc-lib-barcode` 2.12.0 + `tc-lib-color` 2.13.1 join the same gitignored/CI-fetched pattern (see below).
+- **#69 barcodes API built** — `POST /api/v1/barcode` + `/barcode/preview`, 11 symbologies (Code128/Code39/EAN-13/EAN-8/UPC-A/UPC-E/ITF/Codabar/DataMatrix/PDF417/Aztec) via vendored `tc-lib-barcode`, gated on `barcode_generation` (seeded `true` on all 4 plans — future-tiering owner decision open). Branch `claude/barcodes-api` → alpha. Suite 1918/1918 (+120). See CHANGELOG.md "#69" entry + DEV_NOTES.md "Non-QR Barcode API (#69)".
 
 ### Issues opened this session
 `#64` deps/security (multi-branch Dependabot + CodeQL/Semgrep/gitleaks) · `#65` predefined-logo runtime bug · `#66` user/org saved-logo library · `#67` native UTF emoji picker · `#68` scheduled emoji-ingest Action · `#69` all-barcode-types API (re-scopes FG-016/G-011) · `#70` extensible pricing model (price-points/discounts/lifetime/PAYG) · `#71` dual-function enterprise QR (ProjectEPass/GS1). Cross-repo: **ProjectEPass#18** (scan-to-check-in contract). Commented `#27` (Go2My.Link redirect-layer prerequisite).
@@ -34,7 +35,7 @@ Deep analysis/planning → **Fable 5** sequential agents (see `/tmp/.../scratchp
 2. **Owner** to work through **`LAUNCH_DECISIONS.md`** (merge #72, enable GHAS/Dependabot/secret-scanning, pricing sign-off, PayPal/SSO/email creds, legal, live tests, G-007 go/no-go).
 3. Replicate scanning workflows to **`beta`**.
 4. Continue the **dev-team enhancement loop**: implement ungated candidates (D-1..D-8 in `fable_analysis.md` §D), keep opening/updating issues + this HANDOFF per task.
-5. Feature builds behind gates: emoji picker (#67), barcodes (#69), user logos (#66), then G-007-gated dynamic/dual-function (#27/#71).
+5. Feature builds behind gates: emoji picker (#67), user logos (#66), then G-007-gated dynamic/dual-function (#27/#71). Barcodes (#69) is DONE — see the bullet above.
 
 *(The §1+ snapshot below is the 2026-07-18 pre-consolidation state, kept for history. Where it conflicts with §0, §0 wins.)*
 
