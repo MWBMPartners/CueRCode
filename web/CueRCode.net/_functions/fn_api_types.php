@@ -4,6 +4,8 @@
  * 📋 CueRCode - API Types, Formats & Health Check Handlers
  * ==============================================================================
  *
+ * Path: _functions/fn_api_types.php
+ *
  * Provides handler functions for the informational API endpoints:
  *
  *   - GET /api/v1/types    -> handleGetTypes()     List available QR code types
@@ -15,6 +17,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/function.json-decode.php

@@ -4,6 +4,8 @@
  * 📄 CueRCode - Shared HTML Footer Template
  * ==============================================================================
  *
+ * Path: _includes/footer.php
+ *
  * Outputs the page footer, JavaScript resources (jQuery, Bootstrap JS,
  * custom scripts), debug panel (if debug mode active), and closing HTML tags.
  *
@@ -15,6 +17,7 @@
  *
  * @package     CueRCode
  * @subpackage  Templates
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  */
@@ -106,7 +109,10 @@ if (function_exists('isDebugMode')) {
                     <small>
                         <a href="/terms" class="text-body-secondary text-decoration-none me-3">Terms of Use</a>
                         <a href="/privacy" class="text-body-secondary text-decoration-none me-3">Privacy Policy</a>
-                        <a href="/api/docs" class="text-body-secondary text-decoration-none">API</a>
+                        <a href="/accessibility" class="text-body-secondary text-decoration-none me-3">Accessibility</a>
+                        <a href="/developers/" class="text-body-secondary text-decoration-none me-3">Developers</a>
+                        <a href="/api/docs" class="text-body-secondary text-decoration-none me-3">API</a>
+                        <a href="/pricing/" class="text-body-secondary text-decoration-none">Pricing</a>
                     </small>
                 </div>
             </div>
@@ -117,6 +123,10 @@ if (function_exists('isDebugMode')) {
          📦 JavaScript: jQuery (CDN with local fallback)
          @see https://jquery.com/
          ==================================================================== -->
+    <!-- TODO F-004: capture SRI hash for jquery@3.7.1 at live deploy —
+         public_html_landing/index.php does not reference jQuery, so no
+         existing verified hash can be safely copied for this version. Do NOT
+         guess a hash: an incorrect integrity value BLOCKS the resource. -->
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
             crossorigin="anonymous"></script>
     <script>
@@ -130,7 +140,10 @@ if (function_exists('isDebugMode')) {
          📦 JavaScript: Bootstrap 5.3 Bundle (CDN with local fallback)
          @see https://getbootstrap.com/docs/5.3/getting-started/javascript/
          ==================================================================== -->
+    <!-- 🔒 F-004 (SRI, DS-4): hash copied verbatim from
+         public_html_landing/index.php (same pinned version, bootstrap@5.3.3) -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
             crossorigin="anonymous"></script>
     <script>
         /* 🔄 Bootstrap JS CDN fallback to local copy */
@@ -252,7 +265,16 @@ if (function_exists('isDebugMode')) {
                     <dd class="col-sm-9"><code><?php
                     $sessionId = session_id();
                     if ($sessionId) {
-                        echo $sessionId;
+                        // 🛡️ Mask all but the last 8 characters so the full
+                        //    session token is never rendered, then HTML-escape
+                        //    the result before output (SECURITY.md F-019).
+                        if (strlen($sessionId) > 8) {
+                            $maskedSessionId = str_repeat('•', strlen($sessionId) - 8)
+                                . substr($sessionId, -8);
+                        } else {
+                            $maskedSessionId = $sessionId;
+                        }
+                        echo htmlspecialchars($maskedSessionId, ENT_QUOTES, 'UTF-8');
                     } else {
                         echo 'N/A';
                     }
@@ -262,6 +284,40 @@ if (function_exists('isDebugMode')) {
         </div>
     </div>
     <?php } ?>
+
+    <!-- ====================================================================
+         🍪 Cookie / Storage Consent Notice (FG-026)
+         A dismissible, non-modal banner (role="region") shown until the
+         user acknowledges it. Gated on the 'cuercode-consent' localStorage
+         key by cuercode-common.js (initCookieBanner). The banner starts
+         hidden and is revealed by JS only when no acknowledgement exists,
+         so users who have already dismissed it never see a flash. It does
+         NOT trap focus and the rest of the page stays usable.
+         @see https://www.w3.org/WAI/ARIA/apg/patterns/
+         ==================================================================== -->
+    <div id="cuercode-cookie-banner" role="region" aria-label="Cookie notice" hidden>
+        <div class="container">
+            <div class="cuercode-cookie-inner">
+                <p class="cuercode-cookie-text">
+                    <i class="fa-solid fa-cookie-bite me-1" aria-hidden="true"></i>
+                    CueRCode uses essential browser storage only (your theme,
+                    colourblind-palette and this notice preference). No
+                    non-essential or tracking storage is set. See our
+                    <a href="/privacy" class="text-cuercode-primary">Privacy Policy</a>
+                    for details.
+                </p>
+                <div class="cuercode-cookie-actions">
+                    <button type="button" class="btn btn-sm" id="cuercode-cookie-accept">
+                        Got it
+                    </button>
+                    <button type="button" class="btn btn-sm btn-link text-body-secondary"
+                            id="cuercode-cookie-close" aria-label="Dismiss cookie notice">
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
 </body>
 </html>

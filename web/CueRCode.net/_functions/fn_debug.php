@@ -4,6 +4,8 @@
  * 🐛 CueRCode - Debug Mode Utilities
  * ==============================================================================
  *
+ * Path: _functions/fn_debug.php
+ *
  * Provides functions for checking whether debug mode is active and for
  * outputting formatted debug information during development and
  * troubleshooting.
@@ -18,6 +20,7 @@
  *
  * @package     CueRCode
  * @subpackage  Debugging
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/reserved.variables.get.php

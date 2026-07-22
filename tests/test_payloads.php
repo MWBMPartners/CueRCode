@@ -1,0 +1,1549 @@
+<?php
+/**
+ * ==============================================================================
+ * 🧪 CueRCode - Characterization Tests for QR Payload Builders
+ * ==============================================================================
+ *
+ * Path: tests/test_payloads.php
+ *
+ * Locks in the CURRENT observed output of every payload builder in
+ * web/CueRCode.net/_functions/fn_qr_payloads.php. These are CHARACTERIZATION
+ * tests: each expected value below was captured by actually RUNNING the real
+ * production builder and pasting its exact output into the assertion. The goal
+ * is a SAFETY NET — if a future change alters any builder's output, these tests
+ * will flag it. We do NOT fix bugs here; where the current behaviour looks
+ * surprising it is documented with a "// BUG:" or "// NOTE:" comment and the
+ * CURRENT (possibly imperfect) behaviour is asserted as-is.
+ *
+ * Builders covered (the 21 seeded QR types, all DB-independent — the individual
+ * buildPayload_* functions never touch the database):
+ *   url, text, email, phone, sms, whatsapp, zoom, geo, vcard, calendar,
+ *   paypal, bitcoin, mp3, video, pdf, image, appstore, facebook, youtube,
+ *   wifi, linkedin
+ * Plus the pure escaping helpers: vcardEscape, icalEscape, wifiEscape.
+ * Plus a dispatcher characterization for an absent builder (instagram).
+ *
+ * ⚠️ Escaping note for the reader: in PHP single-quoted string literals, only
+ *    \\ (backslash-backslash → one backslash) and \' are special. So a literal
+ *    '\\;' is the two characters backslash + semicolon, and '\\\\' is two
+ *    backslashes. The expected values were verified byte-for-byte against the
+ *    raw (non var_export) output of the real builders.
+ *
+ * ⏰ Determinism note: buildPayload_calendar() uses strtotime()/date(), which
+ *    depend on the default timezone. We pin date_default_timezone_set('UTC')
+ *    before exercising it so the iCalendar DTSTART/DTEND are reproducible.
+ *
+ * @package     CueRCode
+ * @subpackage  Tests
+ * @copyright   2025–2026 MWBM Partners Ltd
+ * @version     1.0.0
+ * @since       Phase 1 (test safety-net cycle)
+ * @see         web/CueRCode.net/_functions/fn_qr_payloads.php
+ * @see         https://www.php.net/manual/en/function.var-export.php
+ */
+
+// ==============================================================================
+// 📦 Load the production payload builders (NO database connection)
+// ==============================================================================
+// requireFn() (from tests/bootstrap.php) includes the fn_ file, which only
+// REGISTERS the standalone builder functions — including it never opens a DB
+// connection. The individual buildPayload_* functions we test below are all
+// pure (no DB), so this is fully self-contained.
+// ==============================================================================
+
+requireFn('fn_qr_payloads.php');
+
+// 📌 Pin the timezone so calendar (strtotime/date) output is deterministic.
+date_default_timezone_set('UTC');
+
+// ==============================================================================
+// 🌐 buildPayload_url()
+// ==============================================================================
+
+// 📌 Already has a scheme → returned unchanged.
+assertEquals(
+    'https://example.com',
+    buildPayload_url(['url' => 'https://example.com']),
+    'url: full https URL passes through unchanged'
+);
+
+// 📌 No scheme → 'https://' is prepended.
+assertEquals(
+    'https://example.com',
+    buildPayload_url(['url' => 'example.com']),
+    'url: bare host gets https:// prepended'
+);
+
+// 📌 Leading/trailing whitespace is trimmed before scheme detection.
+assertEquals(
+    'http://test.org/path',
+    buildPayload_url(['url' => '  http://test.org/path  ']),
+    'url: surrounding whitespace trimmed, existing http scheme kept'
+);
+
+// 📌 NON-https existing scheme is preserved (parse_url sees a scheme).
+assertEquals(
+    'ftp://files.example.com',
+    buildPayload_url(['url' => 'ftp://files.example.com']),
+    'url: ftp scheme preserved (not forced to https)'
+);
+
+// 📌 Missing/empty URL throws InvalidArgumentException.
+assertThrows(
+    function (): void {
+        buildPayload_url([]);
+    },
+    'url: missing url key throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📝 buildPayload_text()
+// ==============================================================================
+
+// 📌 Plain text returned verbatim.
+assertEquals(
+    'Hello, World!',
+    buildPayload_text(['text' => 'Hello, World!']),
+    'text: plain text returned as-is'
+);
+
+// 📌 Newlines and HTML-special chars are NOT escaped — returned raw.
+assertEquals(
+    "Line1\nLine2 & <tag>",
+    buildPayload_text(['text' => "Line1\nLine2 & <tag>"]),
+    'text: newlines and &<> preserved verbatim'
+);
+
+// 📌 NOTE: the empty-check trims for VALIDATION, but the value is returned
+//          WITHOUT trimming, so surrounding whitespace survives in the payload.
+assertEquals(
+    '  spaced  ',
+    buildPayload_text(['text' => '  spaced  ']),
+    'text: surrounding whitespace preserved in returned value (only validation trims)'
+);
+
+// 📌 Whitespace-only text fails the trim() validation → throws.
+assertThrows(
+    function (): void {
+        buildPayload_text(['text' => '   ']);
+    },
+    'text: whitespace-only content throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📧 buildPayload_email()
+// ==============================================================================
+
+// 📌 Full mailto: with rawurlencode'd subject & body ('?' → %3F, space → %20).
+assertEquals(
+    'mailto:user@example.com?subject=Hello&body=How%20are%20you%3F',
+    buildPayload_email([
+        'email'   => 'user@example.com',
+        'subject' => 'Hello',
+        'body'    => 'How are you?',
+    ]),
+    'email: full mailto with encoded subject and body'
+);
+
+// 📌 Email only → no query string.
+assertEquals(
+    'mailto:user@example.com',
+    buildPayload_email(['email' => 'user@example.com']),
+    'email: address only, no query params'
+);
+
+// 📌 Subject only — '&' encodes to %26, space to %20 via rawurlencode.
+assertEquals(
+    'mailto:a@b.com?subject=Hi%20there%20%26%20bye',
+    buildPayload_email(['email' => 'a@b.com', 'subject' => 'Hi there & bye']),
+    'email: subject-only with special chars rawurlencoded'
+);
+
+// 📌 Body only — '=' → %3D, '&' → %26, space → %20.
+assertEquals(
+    'mailto:a@b.com?body=a%3Db%26c%20d',
+    buildPayload_email(['email' => 'a@b.com', 'body' => 'a=b&c d']),
+    'email: body-only with = and & rawurlencoded'
+);
+
+// 📌 Missing email throws.
+assertThrows(
+    function (): void {
+        buildPayload_email(['subject' => 'x']);
+    },
+    'email: missing email throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📞 buildPayload_phone()
+// ==============================================================================
+
+// 📌 Spaces stripped, leading + preserved.
+assertEquals(
+    'tel:+442012345678',
+    buildPayload_phone(['phone' => '+44 20 1234 5678']),
+    'phone: spaces removed, + kept'
+);
+
+// 📌 Parentheses, hyphens removed (no + present → none added).
+assertEquals(
+    'tel:5551234567',
+    buildPayload_phone(['phone' => '(555) 123-4567']),
+    'phone: formatting characters stripped'
+);
+
+// 📌 Missing phone throws.
+assertThrows(
+    function (): void {
+        buildPayload_phone([]);
+    },
+    'phone: missing phone throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 💬 buildPayload_sms()
+// ==============================================================================
+
+// 📌 smsto: with message appended after a colon.
+assertEquals(
+    'smsto:+1234567890:Hello!',
+    buildPayload_sms(['phone' => '+1234567890', 'message' => 'Hello!']),
+    'sms: phone + message via smsto:'
+);
+
+// 📌 No message → just the cleaned phone; formatting stripped, + kept.
+assertEquals(
+    'smsto:+1234567890',
+    buildPayload_sms(['phone' => '+1 (234) 567-890']),
+    'sms: phone only, formatting stripped'
+);
+
+// 📌 Missing phone throws.
+assertThrows(
+    function (): void {
+        buildPayload_sms(['message' => 'hi']);
+    },
+    'sms: missing phone throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📱 buildPayload_whatsapp()
+// ==============================================================================
+
+// 📌 wa.me uses DIGITS ONLY (the leading + is stripped), message rawurlencoded
+//    ('!' → %21).
+assertEquals(
+    'https://wa.me/1234567890?text=Hi%20there%21',
+    buildPayload_whatsapp(['phone' => '+1234567890', 'message' => 'Hi there!']),
+    'whatsapp: + stripped, message rawurlencoded'
+);
+
+// 📌 No message, all non-digits removed.
+assertEquals(
+    'https://wa.me/447700900000',
+    buildPayload_whatsapp(['phone' => '+44 7700 900000']),
+    'whatsapp: phone only, digits only'
+);
+
+// 📌 Missing phone throws.
+assertThrows(
+    function (): void {
+        buildPayload_whatsapp([]);
+    },
+    'whatsapp: missing phone throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🎥 buildPayload_zoom()
+// ==============================================================================
+
+// 📌 Full meeting_url with scheme → passes through.
+assertEquals(
+    'https://zoom.us/j/123456789',
+    buildPayload_zoom(['meeting_url' => 'https://zoom.us/j/123456789']),
+    'zoom: full URL passes through'
+);
+
+// 📌 meeting_url without scheme → https:// prepended.
+assertEquals(
+    'https://zoom.us/j/999',
+    buildPayload_zoom(['meeting_url' => 'zoom.us/j/999']),
+    'zoom: schemeless URL gets https://'
+);
+
+// 📌 meeting_id + password → zoommtg:// deep link. ID is digits-only
+//    (spaces stripped); password is rawurlencoded (space → %20).
+assertEquals(
+    'zoommtg://zoom.us/join?confno=1234567890&pwd=abc%20123',
+    buildPayload_zoom(['meeting_id' => '123 456 7890', 'password' => 'abc 123']),
+    'zoom: id+password builds zoommtg deep link'
+);
+
+// 📌 meeting_id only → deep link without pwd.
+assertEquals(
+    'zoommtg://zoom.us/join?confno=1234567890',
+    buildPayload_zoom(['meeting_id' => '1234567890']),
+    'zoom: id only deep link'
+);
+
+// 📌 Neither URL nor ID → throws.
+assertThrows(
+    function (): void {
+        buildPayload_zoom([]);
+    },
+    'zoom: no url and no id throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📍 buildPayload_geo()
+// ==============================================================================
+
+// 📌 Basic geo: URI, lat/lng passed through verbatim (already numeric).
+assertEquals(
+    'geo:51.5074,-0.1278',
+    buildPayload_geo(['latitude' => '51.5074', 'longitude' => '-0.1278']),
+    'geo: lat,long joined into geo: URI'
+);
+
+// 📌 Missing a coordinate → throws.
+assertThrows(
+    function (): void {
+        buildPayload_geo(['latitude' => '51.5']);
+    },
+    'geo: missing longitude throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Non-numeric coordinate → throws.
+assertThrows(
+    function (): void {
+        buildPayload_geo(['latitude' => 'north', 'longitude' => '0']);
+    },
+    'geo: non-numeric coordinate throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 👤 buildPayload_vcard()  (multi-line — assert exact full string)
+// ==============================================================================
+
+// 📌 Full vCard. Lines are joined with "\n". Special chars in ORG/ADR/NOTE are
+//    vCard-escaped (',' → '\,' and ';' → '\;'). The expected string below was
+//    captured from the real builder; '\\,' here is backslash + comma, '\\;' is
+//    backslash + semicolon (single-quoted PHP literal).
+$expectedVcardFull =
+    "BEGIN:VCARD\n"
+    . "VERSION:3.0\n"
+    . "N:Doe;John;;;\n"
+    . "FN:John Doe\n"
+    . 'ORG:ACME\, Corp' . "\n"
+    . "TITLE:Engineer\n"
+    . "TEL;TYPE=WORK:+1-555-111\n"
+    . "TEL;TYPE=CELL:+1-555-222\n"
+    . "EMAIL:john@acme.com\n"
+    . "URL:https://acme.com\n"
+    . 'ADR;TYPE=WORK:;;1 Main\; St;London;ENG;EC1A;UK' . "\n"
+    . 'NOTE:Note\, with comma' . "\n"
+    . "END:VCARD";
+assertEquals(
+    $expectedVcardFull,
+    buildPayload_vcard([
+        'first_name'   => 'John',
+        'last_name'    => 'Doe',
+        'organisation' => 'ACME, Corp',
+        'title'        => 'Engineer',
+        'phone_work'   => '+1-555-111',
+        'phone_cell'   => '+1-555-222',
+        'email'        => 'john@acme.com',
+        'url'          => 'https://acme.com',
+        'street'       => '1 Main; St',
+        'city'         => 'London',
+        'state'        => 'ENG',
+        'zip'          => 'EC1A',
+        'country'      => 'UK',
+        'note'         => 'Note, with comma',
+    ]),
+    'vcard: full card with escaping of , and ; in ORG/ADR/NOTE'
+);
+
+// 📌 Minimal with only first_name. N: has empty Last field; FN: is just first.
+assertEquals(
+    "BEGIN:VCARD\nVERSION:3.0\nN:;Jane;;;\nFN:Jane\nEND:VCARD",
+    buildPayload_vcard(['first_name' => 'Jane']),
+    'vcard: first name only'
+);
+
+// 📌 Last name only. N: has empty First field; FN: is just last.
+assertEquals(
+    "BEGIN:VCARD\nVERSION:3.0\nN:Smith;;;;\nFN:Smith\nEND:VCARD",
+    buildPayload_vcard(['last_name' => 'Smith']),
+    'vcard: last name only'
+);
+
+// 📌 American spelling 'organization' is accepted as a fallback for ORG.
+assertEquals(
+    "BEGIN:VCARD\nVERSION:3.0\nN:;A;;;\nFN:A\nORG:OrgZ\nEND:VCARD",
+    buildPayload_vcard(['first_name' => 'A', 'organization' => 'OrgZ']),
+    'vcard: organization (US spelling) fallback maps to ORG'
+);
+
+// 📌 FIX (2026-06-28): the seed formFieldsJSON for vcard uses field names
+//          'phone', 'mobile', 'website', 'postcode', 'notes'. The builder now
+//          accepts these as aliases for 'phone_work', 'phone_cell', 'url',
+//          'zip', 'note' respectively, so a vCard built straight from the
+//          rendered form now correctly emits TEL/URL/NOTE/ADR lines.
+//          (Previously these seed field names were silently ignored — see the
+//          git history of this assertion.)
+assertEquals(
+    "BEGIN:VCARD\n"
+    . "VERSION:3.0\n"
+    . "N:;A;;;\n"
+    . "FN:A\n"
+    . "TEL;TYPE=WORK:+1-555-999\n"   // 'phone'    → phone_work
+    . "TEL;TYPE=CELL:+1-555-000\n"   // 'mobile'   → phone_cell
+    . "URL:https://x.io\n"           // 'website'  → url
+    . "ADR;TYPE=WORK:;;;;;AB1;\n"    // 'postcode' → zip (only ZIP slot filled)
+    . "NOTE:hi\n"                    // 'notes'    → note
+    . "END:VCARD",
+    buildPayload_vcard([
+        'first_name' => 'A',
+        'phone'      => '+1-555-999',   // seed/form alias for phone_work
+        'mobile'     => '+1-555-000',   // seed/form alias for phone_cell
+        'website'    => 'https://x.io', // seed/form alias for url
+        'postcode'   => 'AB1',          // seed/form alias for zip
+        'notes'      => 'hi',           // seed/form alias for note
+    ]),
+    'vcard: FIX — seed field names (phone/mobile/website/postcode/notes) now emit TEL/URL/ADR/NOTE'
+);
+
+// 📌 When BOTH a legacy name and its seed alias are supplied, the legacy
+//    (canonical) name wins — confirming the preference order of the alias map.
+assertEquals(
+    "BEGIN:VCARD\n"
+    . "VERSION:3.0\n"
+    . "N:;A;;;\n"
+    . "FN:A\n"
+    . "TEL;TYPE=WORK:LEGACY-WORK\n"   // phone_work preferred over phone
+    . "TEL;TYPE=CELL:LEGACY-CELL\n"   // phone_cell preferred over mobile
+    . "URL:https://legacy.example\n"  // url preferred over website
+    . "ADR;TYPE=WORK:;;;;;LEGACYZIP;\n" // zip preferred over postcode
+    . "NOTE:legacy note\n"            // note preferred over notes
+    . "END:VCARD",
+    buildPayload_vcard([
+        'first_name' => 'A',
+        'phone_work' => 'LEGACY-WORK',  'phone'    => 'SEED-PHONE',
+        'phone_cell' => 'LEGACY-CELL',  'mobile'   => 'SEED-MOBILE',
+        'url'        => 'https://legacy.example', 'website' => 'https://seed.example',
+        'zip'        => 'LEGACYZIP',    'postcode' => 'SEEDZIP',
+        'note'       => 'legacy note',  'notes'    => 'seed note',
+    ]),
+    'vcard: legacy field names take precedence over seed aliases when both present'
+);
+
+// 📌 No name at all → throws.
+assertThrows(
+    function (): void {
+        buildPayload_vcard(['email' => 'x@y.com']);
+    },
+    'vcard: no first or last name throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 👤 buildPayload_vcard() — FG-031 vCard 4.0 support
+// ==============================================================================
+
+// 📌 BACK-COMPAT: an explicit version '3.0' must produce EXACTLY the same bytes
+//    as the default (no version supplied). This guards the 3.0 output against
+//    any regression introduced by the version branch.
+assertEquals(
+    buildPayload_vcard(['first_name' => 'Jane']),
+    buildPayload_vcard(['first_name' => 'Jane', 'version' => '3.0']),
+    'vcard: FG-031 — explicit version 3.0 equals the default output (back-compat)'
+);
+
+// 📌 vCard 4.0 full card. VERSION:4.0 and lowercase TYPE tokens
+//    (TEL;TYPE=work / TEL;TYPE=cell / ADR;TYPE=work). All other lines (N, FN,
+//    ORG/ADR/NOTE escaping, \n joining) are identical to the 3.0 output.
+//    Captured from the real builder. '\\,' is backslash+comma, '\\;' is
+//    backslash+semicolon (single-quoted PHP literal).
+$expectedVcard4Full =
+    "BEGIN:VCARD\n"
+    . "VERSION:4.0\n"
+    . "N:Doe;John;;;\n"
+    . "FN:John Doe\n"
+    . 'ORG:ACME\, Corp' . "\n"
+    . "TITLE:Engineer\n"
+    . "TEL;TYPE=work:+1-555-111\n"
+    . "TEL;TYPE=cell:+1-555-222\n"
+    . "EMAIL:john@acme.com\n"
+    . "URL:https://acme.com\n"
+    . 'ADR;TYPE=work:;;1 Main\; St;London;ENG;EC1A;UK' . "\n"
+    . 'NOTE:Note\, with comma' . "\n"
+    . "END:VCARD";
+assertEquals(
+    $expectedVcard4Full,
+    buildPayload_vcard([
+        'first_name'   => 'John',
+        'last_name'    => 'Doe',
+        'organisation' => 'ACME, Corp',
+        'title'        => 'Engineer',
+        'phone_work'   => '+1-555-111',
+        'phone_cell'   => '+1-555-222',
+        'email'        => 'john@acme.com',
+        'url'          => 'https://acme.com',
+        'street'       => '1 Main; St',
+        'city'         => 'London',
+        'state'        => 'ENG',
+        'zip'          => 'EC1A',
+        'country'      => 'UK',
+        'note'         => 'Note, with comma',
+        'version'      => '4.0',
+    ]),
+    'vcard: FG-031 — full 4.0 card emits VERSION:4.0 and lowercase TYPE tokens'
+);
+
+// 📌 vCard 4.0 minimal: only the header VERSION line differs from the 3.0 minimal.
+assertEquals(
+    "BEGIN:VCARD\nVERSION:4.0\nN:;Jane;;;\nFN:Jane\nEND:VCARD",
+    buildPayload_vcard(['first_name' => 'Jane', 'version' => '4.0']),
+    'vcard: FG-031 — minimal 4.0 card header'
+);
+
+// 📌 An unsupported version (e.g. '2.1') is rejected with InvalidArgumentException.
+assertThrows(
+    function (): void {
+        buildPayload_vcard(['first_name' => 'A', 'version' => '2.1']);
+    },
+    'vcard: FG-031 — unsupported version throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🔧 vcardEscape()
+// ==============================================================================
+
+// 📌 Backslash → \\, ';' → \;, ',' → \,, "\n" → \n (literal), "\r" → removed.
+//    Input here: a, backslash, b, ;, c, ,, d  →  a\\b\;c\,d
+assertEquals(
+    'a\\\\b\\;c\\,d',
+    vcardEscape('a\\b;c,d'),
+    'vcardEscape: backslash, semicolon, comma escaped'
+);
+
+// 📌 Newline becomes literal "\n"; carriage return is stripped.
+assertEquals(
+    'line1\\nline2',
+    vcardEscape("line1\nline2"),
+    'vcardEscape: newline -> \\n'
+);
+
+// 📌 Carriage return removed entirely (not converted).
+assertEquals(
+    'ab',
+    vcardEscape("a\rb"),
+    'vcardEscape: carriage return stripped'
+);
+
+// ==============================================================================
+// 📅 buildPayload_calendar()  (multi-line, CRLF joined — assert exact string)
+// ==============================================================================
+
+// 📌 Full event. Lines joined with "\r\n". SUMMARY/LOCATION/DESCRIPTION are
+//    ical-escaped (',' → '\,' ';' → '\;'). Dates → Ymd\THis (UTC pinned above).
+$expectedCalFull =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART:20260315T100000\r\n"
+    . "DTEND:20260315T110000\r\n"
+    . 'SUMMARY:Team\, Meeting' . "\r\n"
+    . 'LOCATION:Room\; A' . "\r\n"
+    . "DESCRIPTION:sync\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalFull,
+    buildPayload_calendar([
+        'title'       => 'Team, Meeting',
+        'start_date'  => '2026-03-15T10:00:00',
+        'end_date'    => '2026-03-15T11:00:00',
+        'location'    => 'Room; A',
+        'description' => 'sync',
+    ]),
+    'calendar: full VEVENT with escaped summary/location, CRLF joined'
+);
+
+// 📌 No end_date → DTEND defaults to start + 1 hour (3600s).
+$expectedCalDefault =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART:20260315T100000\r\n"
+    . "DTEND:20260315T110000\r\n"
+    . "SUMMARY:Solo\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalDefault,
+    buildPayload_calendar([
+        'title'      => 'Solo',
+        'start_date' => '2026-03-15T10:00:00',
+    ]),
+    'calendar: missing end_date defaults DTEND to start + 1 hour'
+);
+
+// 📌 Missing title throws.
+assertThrows(
+    function (): void {
+        buildPayload_calendar(['start_date' => '2026-03-15T10:00:00']);
+    },
+    'calendar: missing title throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Missing start_date throws.
+assertThrows(
+    function (): void {
+        buildPayload_calendar(['title' => 'X']);
+    },
+    'calendar: missing start_date throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Unparseable start_date throws (strtotime returns false).
+assertThrows(
+    function (): void {
+        buildPayload_calendar(['title' => 'X', 'start_date' => 'not-a-date']);
+    },
+    'calendar: invalid start_date throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📅 buildPayload_calendar() — B-007 optional 'tz' (IANA timezone) support
+// ==============================================================================
+// When a 'tz' is supplied the builder interprets the wall-clock start/end IN
+// that zone, tags DTSTART/DTEND with ";TZID=<tz>", and emits a minimal RFC 5545
+// VTIMEZONE block (a single STANDARD/DAYLIGHT subcomponent carrying the zone's
+// UTC offset at the event instant). When 'tz' is absent the historical
+// floating-local-time output is unchanged (asserted by the two tests above).
+// Outputs below were captured byte-for-byte from the real builder. The harness
+// pins date_default_timezone_set('UTC') at the top of this file, but the tz
+// path is independent of the process default (it uses the named zone), so these
+// are reproducible on any host.
+
+// 📌 Europe/London in WINTER → GMT, STANDARD subcomponent, +0000 offset. The
+//    wall-clock 10:00 is preserved (interpreted as local London time) and the
+//    VTIMEZONE is emitted before the VEVENT. SUMMARY/LOCATION are ical-escaped.
+$expectedCalTzLondonWinter =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VTIMEZONE\r\n"
+    . "TZID:Europe/London\r\n"
+    . "BEGIN:STANDARD\r\n"
+    . "DTSTART:20260115T100000\r\n"
+    . "TZOFFSETFROM:+0000\r\n"
+    . "TZOFFSETTO:+0000\r\n"
+    . "TZNAME:GMT\r\n"
+    . "END:STANDARD\r\n"
+    . "END:VTIMEZONE\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART;TZID=Europe/London:20260115T100000\r\n"
+    . "DTEND;TZID=Europe/London:20260115T110000\r\n"
+    . 'SUMMARY:Team\, Meeting' . "\r\n"
+    . 'LOCATION:Room\; A' . "\r\n"
+    . "DESCRIPTION:sync\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalTzLondonWinter,
+    buildPayload_calendar([
+        'title'       => 'Team, Meeting',
+        'start_date'  => '2026-01-15T10:00:00',
+        'end_date'    => '2026-01-15T11:00:00',
+        'location'    => 'Room; A',
+        'description' => 'sync',
+        'tz'          => 'Europe/London',
+    ]),
+    'calendar: B-007 — tz=Europe/London (winter) emits GMT STANDARD VTIMEZONE + TZID DTSTART/DTEND'
+);
+
+// 📌 Europe/London in SUMMER → BST, DAYLIGHT subcomponent, +0100 offset. No
+//    end_date → DTEND defaults to start + 1 hour (in-zone).
+$expectedCalTzLondonSummer =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VTIMEZONE\r\n"
+    . "TZID:Europe/London\r\n"
+    . "BEGIN:DAYLIGHT\r\n"
+    . "DTSTART:20260715T100000\r\n"
+    . "TZOFFSETFROM:+0100\r\n"
+    . "TZOFFSETTO:+0100\r\n"
+    . "TZNAME:BST\r\n"
+    . "END:DAYLIGHT\r\n"
+    . "END:VTIMEZONE\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART;TZID=Europe/London:20260715T100000\r\n"
+    . "DTEND;TZID=Europe/London:20260715T110000\r\n"
+    . "SUMMARY:Solo\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalTzLondonSummer,
+    buildPayload_calendar([
+        'title'      => 'Solo',
+        'start_date' => '2026-07-15T10:00:00',
+        'tz'         => 'Europe/London',
+    ]),
+    'calendar: B-007 — tz=Europe/London (summer) emits BST DAYLIGHT VTIMEZONE, DTEND defaults +1h'
+);
+
+// 📌 A negative-offset zone (America/New_York, EST, -0500) formats the offset
+//    with a leading '-'.
+$expectedCalTzNY =
+    "BEGIN:VCALENDAR\r\n"
+    . "VERSION:2.0\r\n"
+    . "PRODID:-//CueRCode//QR Code Generator//EN\r\n"
+    . "BEGIN:VTIMEZONE\r\n"
+    . "TZID:America/New_York\r\n"
+    . "BEGIN:STANDARD\r\n"
+    . "DTSTART:20260115T093000\r\n"
+    . "TZOFFSETFROM:-0500\r\n"
+    . "TZOFFSETTO:-0500\r\n"
+    . "TZNAME:EST\r\n"
+    . "END:STANDARD\r\n"
+    . "END:VTIMEZONE\r\n"
+    . "BEGIN:VEVENT\r\n"
+    . "DTSTART;TZID=America/New_York:20260115T093000\r\n"
+    . "DTEND;TZID=America/New_York:20260115T103000\r\n"
+    . "SUMMARY:NY\r\n"
+    . "END:VEVENT\r\n"
+    . "END:VCALENDAR";
+assertEquals(
+    $expectedCalTzNY,
+    buildPayload_calendar([
+        'title'      => 'NY',
+        'start_date' => '2026-01-15T09:30:00',
+        'end_date'   => '2026-01-15T10:30:00',
+        'tz'         => 'America/New_York',
+    ]),
+    'calendar: B-007 — tz=America/New_York (EST) emits negative -0500 offset'
+);
+
+// 📌 'timezone' is accepted as a friendly alias for 'tz' (same output as tz=).
+assertEquals(
+    buildPayload_calendar([
+        'title'      => 'Alias',
+        'start_date' => '2026-01-15T10:00:00',
+        'tz'         => 'Europe/London',
+    ]),
+    buildPayload_calendar([
+        'title'      => 'Alias',
+        'start_date' => '2026-01-15T10:00:00',
+        'timezone'   => 'Europe/London',
+    ]),
+    'calendar: B-007 — "timezone" key is an alias for "tz"'
+);
+
+// 📌 BACK-COMPAT: an empty tz is treated as absent → the default floating-local
+//    output is produced (identical to omitting the field entirely). This guards
+//    the default path against the tz branch being entered on a blank value.
+assertEquals(
+    buildPayload_calendar([
+        'title'      => 'Solo',
+        'start_date' => '2026-03-15T10:00:00',
+    ]),
+    buildPayload_calendar([
+        'title'      => 'Solo',
+        'start_date' => '2026-03-15T10:00:00',
+        'tz'         => '',
+    ]),
+    'calendar: B-007 — empty tz falls back to the default (no-TZID) output'
+);
+
+// 📌 An invalid IANA timezone name throws InvalidArgumentException.
+assertThrows(
+    function (): void {
+        buildPayload_calendar([
+            'title'      => 'X',
+            'start_date' => '2026-01-15T10:00:00',
+            'tz'         => 'Mars/Olympus_Mons',
+        ]);
+    },
+    'calendar: B-007 — invalid tz name throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🔧 icalEscape()
+// ==============================================================================
+
+// 📌 ';' → \;, ',' → \,, backslash → \\.  Input: x;y,z\w → x\;y\,z\\w
+assertEquals(
+    'x\\;y\\,z\\\\w',
+    icalEscape('x;y,z\\w'),
+    'icalEscape: semicolon, comma, backslash escaped'
+);
+
+// 📌 CRLF, lone LF, and lone CR all collapse to the literal "\n".
+assertEquals(
+    'a\\nb',
+    icalEscape("a\r\nb"),
+    'icalEscape: CRLF -> \\n'
+);
+
+// ==============================================================================
+// 💰 buildPayload_paypal()
+// ==============================================================================
+
+// 📌 username + numeric amount → paypal.me/<user>/<amount>.
+assertEquals(
+    'https://paypal.me/johndoe/25.00',
+    buildPayload_paypal(['username' => 'johndoe', 'amount' => '25.00']),
+    'paypal: username + amount'
+);
+
+// 📌 NOTE: the username is rawurlencode'd, so a space becomes %20 (PayPal.me
+//          usernames are not actually allowed spaces, but the builder encodes
+//          whatever it's given).
+assertEquals(
+    'https://paypal.me/jane%20doe',
+    buildPayload_paypal(['username' => 'jane doe']),
+    'paypal: username rawurlencoded (space -> %20)'
+);
+
+// 📌 Non-numeric amount is silently dropped (is_numeric gate).
+assertEquals(
+    'https://paypal.me/x',
+    buildPayload_paypal(['username' => 'x', 'amount' => 'lots']),
+    'paypal: non-numeric amount dropped'
+);
+
+// 📌 Direct paypal_url without scheme → https:// prepended.
+assertEquals(
+    'https://paypal.me/abc',
+    buildPayload_paypal(['paypal_url' => 'paypal.me/abc']),
+    'paypal: paypal_url without scheme gets https://'
+);
+
+// 📌 Neither username nor URL → throws.
+assertThrows(
+    function (): void {
+        buildPayload_paypal(['amount' => '5']);
+    },
+    'paypal: no username/url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// ₿ buildPayload_bitcoin()
+// ==============================================================================
+
+// 📌 Full BIP-21: amount unencoded (numeric), label/message rawurlencoded
+//    (space → %20, '!' → %21).
+assertEquals(
+    'bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=0.005&label=Donation%20gift&message=thanks%21',
+    buildPayload_bitcoin([
+        'address' => '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+        'amount'  => '0.005',
+        'label'   => 'Donation gift',
+        'message' => 'thanks!',
+    ]),
+    'bitcoin: full BIP-21 URI with encoded label/message'
+);
+
+// 📌 Address only → bare bitcoin: URI.
+assertEquals(
+    'bitcoin:1ABC',
+    buildPayload_bitcoin(['address' => '1ABC']),
+    'bitcoin: address only'
+);
+
+// 📌 Non-numeric amount dropped (is_numeric gate) → bare URI.
+assertEquals(
+    'bitcoin:1ABC',
+    buildPayload_bitcoin(['address' => '1ABC', 'amount' => 'free']),
+    'bitcoin: non-numeric amount dropped'
+);
+
+// 📌 Missing address → throws.
+assertThrows(
+    function (): void {
+        buildPayload_bitcoin(['amount' => '0.1']);
+    },
+    'bitcoin: missing address throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🎵🎬📄🖼️ buildPayload_mp3 / video / pdf / image  (URL pass-through builders)
+// ==============================================================================
+
+// 📌 mp3: schemeless URL → https:// prepended.
+assertEquals(
+    'https://example.com/a.mp3',
+    buildPayload_mp3(['url' => 'example.com/a.mp3']),
+    'mp3: schemeless URL gets https://'
+);
+
+// 📌 video: existing scheme preserved.
+assertEquals(
+    'https://example.com/v.mp4',
+    buildPayload_video(['url' => 'https://example.com/v.mp4']),
+    'video: full URL passes through'
+);
+
+// 📌 pdf: schemeless host → https:// prepended.
+assertEquals(
+    'https://docs.example.com/b.pdf',
+    buildPayload_pdf(['url' => 'docs.example.com/b.pdf']),
+    'pdf: schemeless URL gets https://'
+);
+
+// 📌 image: full URL passes through.
+assertEquals(
+    'https://example.com/p.jpg',
+    buildPayload_image(['url' => 'https://example.com/p.jpg']),
+    'image: full URL passes through'
+);
+
+// 📌 Each of these throws when URL missing.
+assertThrows(
+    function (): void {
+        buildPayload_mp3([]);
+    },
+    'mp3: missing url throws',
+    \InvalidArgumentException::class
+);
+assertThrows(
+    function (): void {
+        buildPayload_video([]);
+    },
+    'video: missing url throws',
+    \InvalidArgumentException::class
+);
+assertThrows(
+    function (): void {
+        buildPayload_pdf([]);
+    },
+    'pdf: missing url throws',
+    \InvalidArgumentException::class
+);
+assertThrows(
+    function (): void {
+        buildPayload_image([]);
+    },
+    'image: missing url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📱 buildPayload_appstore()
+// ==============================================================================
+
+// 📌 Direct URL (schemeless) → https:// prepended.
+assertEquals(
+    'https://apps.apple.com/app/id123',
+    buildPayload_appstore(['url' => 'apps.apple.com/app/id123']),
+    'appstore: schemeless URL gets https://'
+);
+
+// 📌 app_id + platform=android → Google Play URL.
+assertEquals(
+    'https://play.google.com/store/apps/details?id=com.example.app',
+    buildPayload_appstore(['app_id' => 'com.example.app', 'platform' => 'android']),
+    'appstore: android platform -> Google Play URL'
+);
+
+// 📌 app_id with no platform → defaults to Apple App Store ('id' + app_id).
+assertEquals(
+    'https://apps.apple.com/app/id123456789',
+    buildPayload_appstore(['app_id' => '123456789']),
+    'appstore: no platform defaults to Apple App Store'
+);
+
+// 📌 'google' (and the legacy 'android' alias) → Google Play, case-insensitive.
+assertEquals(
+    'https://play.google.com/store/apps/details?id=com.x',
+    buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'GOOGLE']),
+    'appstore: GOOGLE (case-insensitive) -> Google Play'
+);
+
+// 📌 'apple' explicitly selects the Apple App Store branch (numeric app ID).
+assertEquals(
+    'https://apps.apple.com/app/id123456789',
+    buildPayload_appstore(['app_id' => '123456789', 'platform' => 'apple']),
+    'appstore: apple platform -> Apple App Store (numeric app ID)'
+);
+
+// 📌 B-050 (2026-06-29): Apple app IDs accept an optional leading 'id' prefix
+//    and that prefix is normalised away (no doubled 'idid'). So 'id987654321'
+//    on the apple branch yields .../app/id987654321, not .../app/idid987654321.
+assertEquals(
+    'https://apps.apple.com/app/id987654321',
+    buildPayload_appstore(['app_id' => 'id987654321', 'platform' => 'apple']),
+    'appstore: B-050 — Apple app ID with leading "id" prefix is normalised'
+);
+
+// 📌 B-050: a non-numeric Apple app ID (e.g. a package name) now THROWS rather
+//    than building a malformed https://apps.apple.com/app/idcom.x URL.
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'apple']);
+    },
+    'appstore: B-050 — non-numeric Apple app ID throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 B-050: a Google Play app ID that is not a valid reverse-DNS package name
+//    (single label, no dot) is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'notapackage', 'platform' => 'google']);
+    },
+    'appstore: B-050 — invalid Google package name throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 B-050: a malformed package name whose segment starts with a digit is
+//    rejected (Android package segments must start with a letter).
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'com.1example', 'platform' => 'android']);
+    },
+    'appstore: B-050 — package segment starting with a digit throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 FIX (2026-06-28): the seed used to offer a 'platform' option of 'auto',
+//          and the builder silently fell 'auto' (and any unknown value) through
+//          to the Apple branch — producing a MALFORMED URL like
+//          https://apps.apple.com/app/idcom.example.app. A static QR code cannot
+//          auto-detect the platform, so 'auto' has been removed from the seed
+//          options and the builder now THROWS for any platform that is not
+//          'apple'/'ios' or 'google'/'android'. (Previously this asserted the
+//          malformed Apple URL — see the git history of this assertion.)
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['app_id' => 'com.x', 'platform' => 'auto']);
+    },
+    'appstore: FIX — invalid platform "auto" now throws instead of building a malformed URL',
+    \InvalidArgumentException::class
+);
+
+// 📌 Neither URL nor app_id → throws.
+assertThrows(
+    function (): void {
+        buildPayload_appstore(['platform' => 'android']);
+    },
+    'appstore: no url/app_id throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 👥 buildPayload_facebook()
+// ==============================================================================
+
+// 📌 username → facebook.com/<user>.
+assertEquals(
+    'https://facebook.com/johndoe',
+    buildPayload_facebook(['username' => 'johndoe']),
+    'facebook: username -> facebook.com/<user>'
+);
+
+// 📌 schemeless URL → https:// prepended.
+assertEquals(
+    'https://facebook.com/pages/my-page',
+    buildPayload_facebook(['url' => 'facebook.com/pages/my-page']),
+    'facebook: schemeless URL gets https://'
+);
+
+// 📌 Missing both → throws.
+assertThrows(
+    function (): void {
+        buildPayload_facebook([]);
+    },
+    'facebook: no url/username throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📺 buildPayload_youtube()
+// ==============================================================================
+
+// 📌 video_id → www.youtube.com/watch?v=<id>.
+assertEquals(
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    buildPayload_youtube(['video_id' => 'dQw4w9WgXcQ']),
+    'youtube: video_id -> watch URL'
+);
+
+// 📌 schemeless URL → https:// prepended (note: NOT normalised to www.).
+assertEquals(
+    'https://youtube.com/channel/UC123',
+    buildPayload_youtube(['url' => 'youtube.com/channel/UC123']),
+    'youtube: schemeless URL gets https:// (kept as-is otherwise)'
+);
+
+// 📌 Missing both → throws.
+assertThrows(
+    function (): void {
+        buildPayload_youtube([]);
+    },
+    'youtube: no url/video_id throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📶 buildPayload_wifi()
+// ==============================================================================
+
+// 📌 Standard WPA network. Format: WIFI:T:<enc>;S:<ssid>;P:<pass>;H:<hidden>;;
+assertEquals(
+    'WIFI:T:WPA;S:MyNetwork;P:secretpass;H:false;;',
+    buildPayload_wifi([
+        'ssid'       => 'MyNetwork',
+        'password'   => 'secretpass',
+        'encryption' => 'WPA',
+        'hidden'     => false,
+    ]),
+    'wifi: standard WPA network string'
+);
+
+// 📌 No password → encryption forced to 'nopass', empty P field.
+assertEquals(
+    'WIFI:T:nopass;S:Guest;P:;H:false;;',
+    buildPayload_wifi(['ssid' => 'Guest']),
+    'wifi: no password forces nopass'
+);
+
+// 📌 Special chars in SSID/password are wifiEscape'd: ';' → \;, ',' → \,,
+//    '"' → \", ':' → \:, backslash → \\. hidden=true → H:true.
+//    Expected captured raw: WIFI:T:WPA;S:My\;Net\,\"work\";P:pa\:ss\\word;H:true;;
+assertEquals(
+    'WIFI:T:WPA;S:My\\;Net\\,\\"work\\";P:pa\\:ss\\\\word;H:true;;',
+    buildPayload_wifi([
+        'ssid'       => 'My;Net,"work"',
+        'password'   => 'pa:ss\\word',
+        'encryption' => 'WPA',
+        'hidden'     => true,
+    ]),
+    'wifi: SSID and password special chars escaped, hidden=true'
+);
+
+// 📌 Unrecognised encryption ('WPA3') falls back to 'WPA'.
+assertEquals(
+    'WIFI:T:WPA;S:N;P:p;H:false;;',
+    buildPayload_wifi(['ssid' => 'N', 'password' => 'p', 'encryption' => 'WPA3']),
+    'wifi: BUG — unrecognised encryption (WPA3) silently downgraded to WPA'
+);
+
+// 📌 'wep' (lowercase) is upper-cased to a valid 'WEP'.
+assertEquals(
+    'WIFI:T:WEP;S:N;P:p;H:false;;',
+    buildPayload_wifi(['ssid' => 'N', 'password' => 'p', 'encryption' => 'wep']),
+    'wifi: lowercase wep normalised to WEP'
+);
+
+// 📌 hidden given as the string '1' is treated as true.
+assertEquals(
+    'WIFI:T:WPA;S:N;P:p;H:true;;',
+    buildPayload_wifi(['ssid' => 'N', 'password' => 'p', 'hidden' => '1']),
+    'wifi: hidden string "1" -> true'
+);
+
+// 📌 Missing SSID → throws.
+assertThrows(
+    function (): void {
+        buildPayload_wifi(['password' => 'p']);
+    },
+    'wifi: missing ssid throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🔧 wifiEscape()
+// ==============================================================================
+
+// 📌 backslash → \\, ';' → \;, ',' → \,, '"' → \", ':' → \:.
+//    Input: a\b;c,d"e:f → a\\b\;c\,d\"e\:f
+assertEquals(
+    'a\\\\b\\;c\\,d\\"e\\:f',
+    wifiEscape('a\\b;c,d"e:f'),
+    'wifiEscape: backslash, ;, ,, ", : all escaped'
+);
+
+// ==============================================================================
+// 💼 buildPayload_linkedin()
+// ==============================================================================
+
+// 📌 username → www.linkedin.com/in/<user>.
+assertEquals(
+    'https://www.linkedin.com/in/johndoe',
+    buildPayload_linkedin(['username' => 'johndoe']),
+    'linkedin: username -> /in/<user>'
+);
+
+// 📌 schemeless URL → https:// prepended (kept as given otherwise).
+assertEquals(
+    'https://linkedin.com/company/acme',
+    buildPayload_linkedin(['url' => 'linkedin.com/company/acme']),
+    'linkedin: schemeless URL gets https://'
+);
+
+// 📌 Missing both → throws.
+assertThrows(
+    function (): void {
+        buildPayload_linkedin([]);
+    },
+    'linkedin: no url/username throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 💬 buildPayload_facebook_messenger()  (FG-025)
+// ==============================================================================
+
+// 📌 Bare username with a leading '@' → m.me/<user> ('@' stripped). Dots are a
+//    legal Facebook username character so they survive.
+assertEquals(
+    'https://m.me/acme.support',
+    buildPayload_facebook_messenger(['username' => '@acme.support']),
+    'messenger: @username stripped -> m.me/<user>'
+);
+
+// 📌 Username without '@' passes straight through.
+assertEquals(
+    'https://m.me/acme',
+    buildPayload_facebook_messenger(['username' => 'acme']),
+    'messenger: bare username -> m.me/<user>'
+);
+
+// 📌 A direct (schemeless) URL gets https:// prepended and passes through.
+assertEquals(
+    'https://m.me/acme',
+    buildPayload_facebook_messenger(['url' => 'm.me/acme']),
+    'messenger: schemeless URL gets https://'
+);
+
+// 📌 A username containing a path separator is rejected (would corrupt m.me path).
+assertThrows(
+    function (): void {
+        buildPayload_facebook_messenger(['username' => 'foo/bar']);
+    },
+    'messenger: invalid username (slash) throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Missing both username and URL → throws.
+assertThrows(
+    function (): void {
+        buildPayload_facebook_messenger([]);
+    },
+    'messenger: no username/url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 📸 buildPayload_instagram()  (FG-025)
+// ==============================================================================
+
+// 📌 Bare handle with a leading '@' → instagram.com/<handle> ('@' stripped).
+assertEquals(
+    'https://instagram.com/natgeo',
+    buildPayload_instagram(['username' => '@natgeo']),
+    'instagram: @handle stripped -> instagram.com/<handle>'
+);
+
+// 📌 Dots and underscores are legal Instagram handle characters.
+assertEquals(
+    'https://instagram.com/nat.geo_',
+    buildPayload_instagram(['username' => 'nat.geo_']),
+    'instagram: dots and underscores preserved in handle'
+);
+
+// 📌 A direct (schemeless) URL gets https:// prepended and passes through.
+assertEquals(
+    'https://instagram.com/natgeo',
+    buildPayload_instagram(['url' => 'instagram.com/natgeo']),
+    'instagram: schemeless URL gets https://'
+);
+
+// 📌 A handle containing a space is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_instagram(['username' => 'foo bar']);
+    },
+    'instagram: invalid handle (space) throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Missing both username and URL → throws.
+assertThrows(
+    function (): void {
+        buildPayload_instagram([]);
+    },
+    'instagram: no username/url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// ⭐ buildPayload_rating()  (FG-025)
+// ==============================================================================
+
+// 📌 A valid https review URL passes through unchanged.
+assertEquals(
+    'https://g.page/r/CcExampleReview/review',
+    buildPayload_rating(['url' => 'https://g.page/r/CcExampleReview/review']),
+    'rating: full https review URL passes through'
+);
+
+// 📌 A schemeless review URL gets https:// prepended.
+assertEquals(
+    'https://trustpilot.com/review/example.com',
+    buildPayload_rating(['url' => 'trustpilot.com/review/example.com']),
+    'rating: schemeless review URL gets https://'
+);
+
+// 📌 A non-http(s) scheme (e.g. ftp) is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_rating(['url' => 'ftp://files.example.com/r']);
+    },
+    'rating: non-http(s) scheme throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 Missing URL → throws.
+assertThrows(
+    function (): void {
+        buildPayload_rating([]);
+    },
+    'rating: missing url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🔗 buildPayload_deeplink()  (FG-007)
+// ==============================================================================
+
+// 📌 A full https Universal/App Link passes through unchanged — this single
+//    https link IS the encoded payload (the OS, not the QR, does the routing).
+assertEquals(
+    'https://example.com/app/item/42',
+    buildPayload_deeplink(['url' => 'https://example.com/app/item/42']),
+    'deeplink: full https Universal/App Link passes through'
+);
+
+// 📌 A schemeless link gets https:// prepended (so 'example.com/x' becomes a
+//    proper Universal Link rather than a malformed string).
+assertEquals(
+    'https://example.com/open/thing',
+    buildPayload_deeplink(['url' => 'example.com/open/thing']),
+    'deeplink: schemeless link gets https:// prepended'
+);
+
+// 📌 app_scheme and fallback_url are DOCUMENTATION-ONLY: the encoded payload is
+//    still just the https link. (Validated when present, but never encoded.)
+assertEquals(
+    'https://ex.com/x',
+    buildPayload_deeplink([
+        'url'          => 'https://ex.com/x',
+        'app_scheme'   => 'myapp',
+        'fallback_url' => 'https://ex.com/get',
+    ]),
+    'deeplink: app_scheme/fallback_url are doc-only, not encoded into the payload'
+);
+
+// 📌 A bare (schemeless) fallback_url is accepted (https:// is prepended for the
+//    validation) and the encoded payload is still only the primary link.
+assertEquals(
+    'https://ex.com/x',
+    buildPayload_deeplink([
+        'url'          => 'https://ex.com/x',
+        'fallback_url' => 'ex.com/get',
+    ]),
+    'deeplink: schemeless fallback_url validated, primary link still the payload'
+);
+
+// 📌 Missing url → throws.
+assertThrows(
+    function (): void {
+        buildPayload_deeplink([]);
+    },
+    'deeplink: missing url throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A non-http(s) primary link (e.g. ftp) is rejected — a Universal/App Link
+//    must be http(s) for the OS to perform the app-or-web routing.
+assertThrows(
+    function (): void {
+        buildPayload_deeplink(['url' => 'ftp://files.example.com/x']);
+    },
+    'deeplink: non-http(s) primary link throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A supplied fallback_url with a non-http(s) scheme is rejected.
+assertThrows(
+    function (): void {
+        buildPayload_deeplink(['url' => 'https://ex.com/x', 'fallback_url' => 'mailto:a@b.com']);
+    },
+    'deeplink: non-http(s) fallback_url throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🏷️ buildPayload_gs1_product()  (FG-009 — GS1 Digital Link)
+// ==============================================================================
+
+// 📌 GTIN only → minimal GS1 Digital Link with AI 01 and the default resolver.
+assertEquals(
+    'https://id.gs1.org/01/09521234543213',
+    buildPayload_gs1_product(['gtin' => '09521234543213']),
+    'gs1_product: GTIN only -> /01/{gtin} on default resolver id.gs1.org'
+);
+
+// 📌 Full: GTIN + batch (AI 10) + serial (AI 21) as path segments, expiry
+//    (AI 17, YYMMDD) as a ?17= query parameter — canonical AI order.
+assertEquals(
+    'https://id.gs1.org/01/09521234543213/10/LOT42/21/SN0001?17=261231',
+    buildPayload_gs1_product([
+        'gtin'   => '09521234543213',
+        'batch'  => 'LOT42',
+        'serial' => 'SN0001',
+        'expiry' => '261231',
+    ]),
+    'gs1_product: full GTIN+batch+serial+expiry Digital Link'
+);
+
+// 📌 GTIN-8 (8 digits) is accepted.
+assertEquals(
+    'https://id.gs1.org/01/12345670',
+    buildPayload_gs1_product(['gtin' => '12345670']),
+    'gs1_product: GTIN-8 accepted'
+);
+
+// 📌 A configurable resolver host is honoured; any scheme/path the user pastes
+//    is stripped down to the bare host before building the link.
+assertEquals(
+    'https://id.example.com/01/09521234543213',
+    buildPayload_gs1_product(['gtin' => '09521234543213', 'resolver' => 'https://id.example.com/foo/']),
+    'gs1_product: custom resolver host honoured, scheme/path stripped'
+);
+
+// 📌 AI-significant characters in batch are rawurlencoded so they cannot corrupt
+//    the Digital Link path structure ('/' → %2F, '?' → %3F).
+assertEquals(
+    'https://id.gs1.org/01/09521234543213/10/A%2FB%3FC',
+    buildPayload_gs1_product(['gtin' => '09521234543213', 'batch' => 'A/B?C']),
+    'gs1_product: batch path-significant chars rawurlencoded'
+);
+
+// 📌 Missing GTIN → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product([]);
+    },
+    'gs1_product: missing GTIN throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A GTIN of an unsupported length (3 digits) → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '123']);
+    },
+    'gs1_product: invalid GTIN length throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A non-numeric GTIN → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '0952123454321X']);
+    },
+    'gs1_product: non-numeric GTIN throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 A malformed expiry (not 6 digits) → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '09521234543213', 'expiry' => '2612']);
+    },
+    'gs1_product: short expiry (not YYMMDD) throws',
+    \InvalidArgumentException::class
+);
+
+// 📌 An out-of-range expiry month (13) → throws.
+assertThrows(
+    function (): void {
+        buildPayload_gs1_product(['gtin' => '09521234543213', 'expiry' => '261331']);
+    },
+    'gs1_product: invalid expiry month throws',
+    \InvalidArgumentException::class
+);
+
+// ==============================================================================
+// 🔀 Dispatcher routing for the FG-007 / FG-009 builders
+// ==============================================================================
+
+// 📌 buildPayloadByType('deeplink', ...) routes to buildPayload_deeplink().
+assertEquals(
+    'https://x.io/p',
+    buildPayloadByType('deeplink', ['url' => 'https://x.io/p']),
+    'dispatcher: deeplink routes to buildPayload_deeplink()'
+);
+
+// 📌 buildPayloadByType('gs1_product', ...) routes to buildPayload_gs1_product().
+assertEquals(
+    'https://id.gs1.org/01/09521234543213',
+    buildPayloadByType('gs1_product', ['gtin' => '09521234543213']),
+    'dispatcher: gs1_product routes to buildPayload_gs1_product()'
+);
+
+// ==============================================================================
+// ❓ Dispatcher: absent builder
+// ==============================================================================
+// FG-025 added buildPayload_facebook_messenger / buildPayload_instagram /
+// buildPayload_rating, so those names now resolve. We keep a dispatcher
+// characterization for a name that genuinely has NO builder: 'twitter' exists
+// in seed_data.sql ONLY as a tblPredefinedLogos row (a branding logo), NOT as a
+// tblQRCodeTypes row, so there is no buildPayload_twitter() function. Routing it
+// through buildPayloadByType() therefore throws InvalidArgumentException.
+
+assertThrows(
+    function (): void {
+        buildPayloadByType('twitter', ['url' => 'https://twitter.com/x']);
+    },
+    'dispatcher: twitter has no builder -> throws (not a QR type, only a logo)',
+    \InvalidArgumentException::class
+);
+
+// 📌 Confirm the exact current error message for the missing builder.
+$twitterMessage = '';
+try {
+    buildPayloadByType('twitter', ['url' => 'x']);
+} catch (\InvalidArgumentException $e) {
+    $twitterMessage = $e->getMessage();
+}
+assertEquals(
+    'Unknown QR code type: "twitter". '
+    . 'No payload builder function "buildPayload_twitter()" found.',
+    $twitterMessage,
+    'dispatcher: exact "unknown type" message for absent twitter builder'
+);

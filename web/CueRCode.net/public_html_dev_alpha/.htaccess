@@ -2,20 +2,56 @@
 # 🧪 CueRCode - Alpha Development Environment Access Control
 # ==============================================================================
 # This .htaccess restricts access to the alpha development version.
-# Only authorised users with valid credentials can access this environment.
+#
+# 🔒 SECURE-BY-DEFAULT / FAIL-CLOSED (DS-1 hardening): the ACTIVE DEFAULT below
+#    denies ALL public HTTP access to this environment. Nobody can reach the
+#    alpha build until the owner deliberately switches this file over to Basic
+#    Auth (see the commented block further down) — this environment must
+#    NEVER be left open by accident just because a .htpasswd file has not yet
+#    been created on the server. Net effect: DENIED until the owner opts in.
 #
 # @package     CueRCode
 # @subpackage  Development
-# @version     1.0.0
-# @since       Phase 1
+# @version     2.0.0
+# @since       Phase 1 (DS-1 security hardening)
 # @see         https://httpd.apache.org/docs/2.4/howto/auth.html
+# @see         https://httpd.apache.org/docs/2.4/howto/access.html
 # ==============================================================================
 
+# ==============================================================================
+# 🚫 ACTIVE DEFAULT — deny all public access (fail-closed)
+# ==============================================================================
+# 🆕 Apache 2.4+ — the modern, preferred authorization syntax.
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# 🕰️ Apache 2.2 legacy fallback — used only when mod_authz_core is absent
+#    (i.e. the modern Require directive is unavailable). Harmless on 2.4 since
+#    it is gated to mod_authz_host's older behaviour.
+<IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+</IfModule>
+
+# ==============================================================================
+# 🔐 TO ENABLE OWNER/TESTER ACCESS (disabled by default — opt in deliberately)
+# ==============================================================================
+# Steps to switch this environment from "deny all" to "Basic Auth protected":
+#   1. On the SERVER (never in this repo), create a .htpasswd file outside
+#      the web root, e.g.:
+#        htpasswd -c /home/username/.htpasswd yourusername
+#      (omit the -c flag for additional users so you do not overwrite the
+#      file)
+#   2. Update the AuthUserFile path below to the real absolute path on the
+#      Dreamhost account.
+#   3. Comment OUT (or delete) the "ACTIVE DEFAULT — deny all" block above
+#      (both <IfModule> stanzas) so it no longer wins.
+#   4. Uncomment the four lines below.
+#
 # 🔒 Basic Authentication for Alpha Access
-# ⚠️ Create .htpasswd file using: htpasswd -c /path/to/.htpasswd username
-AuthType Basic
-AuthName "CueRCode Alpha - Authorised Access Only"
-# 📌 Update this path to your actual .htpasswd file location on the server
+# AuthType Basic
+# AuthName "CueRCode Alpha - Authorised Access Only"
 # AuthUserFile /home/username/.htpasswd
 # Require valid-user
 

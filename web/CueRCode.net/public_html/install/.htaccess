@@ -1,0 +1,32 @@
+# ==============================================================================
+# 🔒 CueRCode - Installer Directory Access Lockdown
+# ==============================================================================
+# Denies ALL HTTP access to the install/ directory (F-020).
+#
+# ⚠️ The installer should be REMOVED entirely once setup is complete. This deny
+#    rule is defence-in-depth for the window before deletion (and in case the
+#    directory is accidentally re-uploaded): it blocks scanners from reaching
+#    install/index.php to probe install status or re-trigger setup, on top of
+#    the application-level .installed.lock guard.
+#
+#    To run the installer again, you must temporarily remove or rename this file.
+#
+# @package     CueRCode
+# @subpackage  Installer
+# @version     1.0.0
+# @since       Phase 1 (security hardening)
+# @see         https://httpd.apache.org/docs/2.4/howto/access.html
+# ==============================================================================
+
+# 🆕 Apache 2.4+ — the modern, preferred authorization syntax.
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# 🕰️ Apache 2.2 legacy fallback — used only when mod_authz_core is absent
+#    (i.e. the modern Require directive is unavailable). Harmless on 2.4 since
+#    it is gated to mod_authz_host's older behaviour.
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

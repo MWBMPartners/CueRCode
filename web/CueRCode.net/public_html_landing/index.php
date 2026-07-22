@@ -4,11 +4,14 @@
  * 🚀 CueRCode - Coming Soon Landing Page
  * ==============================================================================
  *
+ * Path: public_html_landing/index.php
+ *
  * Pre-launch landing page displayed while the service is under development.
  * This page is served from the public_html_landing web root.
  *
  * @package     CueRCode
  * @subpackage  Landing
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  */

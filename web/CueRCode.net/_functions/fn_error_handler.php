@@ -4,6 +4,8 @@
  * 🚨 CueRCode - Error and Exception Handler
  * ==============================================================================
  *
+ * Path: _functions/fn_error_handler.php
+ *
  * Registers custom error, exception, and shutdown handlers to capture all
  * PHP errors and exceptions. Errors are logged to the tblErrorLog database
  * table with full context (backtrace, request details, headers, etc.).
@@ -17,6 +19,7 @@
  *
  * @package     CueRCode
  * @subpackage  Error Handling
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/function.set-error-handler.php
@@ -47,8 +50,19 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 // @see https://www.php-fig.org/psr/psr-3/#5-psrlogloglevel
 // ==============================================================================
 
+// 🛡️ B-052: E_STRICT is DEPRECATED as of PHP 8.4 — even *naming* the constant
+//     (e.g. as an array key) emits a "Constant E_STRICT is deprecated" notice.
+//     PHP no longer raises any E_STRICT errors on 8.4+, so the map key is only
+//     useful on older runtimes. We therefore add it conditionally, and read its
+//     value via constant('E_STRICT') guarded by a version check so the constant
+//     is only ever referenced on PHP < 8.4 (where it is not deprecated). This
+//     keeps the historical severity-map behaviour for every other code intact
+//     while emitting ZERO deprecation notices when the file is loaded on 8.4+.
+// @see https://www.php.net/manual/en/migration84.deprecated.php
+// @see https://www.php.net/manual/en/function.constant.php
+
 /** @var array<int,string> Map of PHP error constants to PSR-3 severity strings */
-define('CUERCODE_ERROR_SEVERITY_MAP', [
+$cuercodeErrorSeverityMap = [
     E_ERROR             => 'critical',   // 🔴 Fatal run-time error
     E_WARNING           => 'warning',    // 🟡 Run-time warning
     E_PARSE             => 'critical',   // 🔴 Compile-time parse error
@@ -60,11 +74,20 @@ define('CUERCODE_ERROR_SEVERITY_MAP', [
     E_USER_ERROR        => 'error',      // 🟠 User-triggered error
     E_USER_WARNING      => 'warning',    // 🟡 User-triggered warning
     E_USER_NOTICE       => 'notice',     // 🔵 User-triggered notice
-    E_STRICT            => 'info',       // 🔵 Strict standards suggestion
     E_RECOVERABLE_ERROR => 'error',      // 🟠 Catchable fatal error
     E_DEPRECATED        => 'info',       // 🔵 Deprecated feature notice
     E_USER_DEPRECATED   => 'info',       // 🔵 User-triggered deprecation
-]);
+];
+
+// 🔵 Add the legacy E_STRICT severity ONLY on PHP versions where the constant
+//    is still live (< 8.4). constant('E_STRICT') avoids a literal reference to
+//    the deprecated constant on newer PHP, suppressing the deprecation notice.
+if (version_compare(PHP_VERSION, '8.4', '<') && defined('E_STRICT')) {
+    $cuercodeErrorSeverityMap[constant('E_STRICT')] = 'info'; // 🔵 Strict standards suggestion
+}
+
+define('CUERCODE_ERROR_SEVERITY_MAP', $cuercodeErrorSeverityMap);
+unset($cuercodeErrorSeverityMap);
 
 // ==============================================================================
 // ⚙️ Register Custom Error Handler
@@ -276,9 +299,13 @@ function logError(
 
     if ($isLogging) {
         // 🔄 Fallback to PHP's built-in error log to avoid infinite loop
+        // 🔒 F-008: mask SQL text + absolute filesystem paths before they reach
+        //     the plaintext error_log() channel. Full, unmasked detail still
+        //     goes to tblErrorLog (access-controlled DB) on the normal path.
         // @see https://www.php.net/manual/en/function.error-log.php
         error_log(
-            'CueRCode [' . $severity . '] (re-entrant): ' . $title . ' | ' . $detail
+            'CueRCode [' . $severity . '] (re-entrant): '
+            . maskSensitiveForLog($title) . ' | ' . maskSensitiveForLog($detail)
         );
         return;
     }
@@ -340,10 +367,28 @@ function logError(
         $userAgent = 'unknown';
     }
 
-    // 🎫 Session ID (if session is active)
+    // 🎫 Session ID (if session is active) - MASKED before storage (F-022,
+    // defence-in-depth). tblErrorLog is a lower-privilege, longer-retention
+    // audit table than the session store itself; storing the raw PHP
+    // session id here would let anyone with read access to tblErrorLog
+    // (which is broader than "can hijack live sessions") directly replay a
+    // still-live session. We store only a truncated SHA-256 hash of the raw
+    // id (first 16 hex chars) - enough to correlate multiple error rows
+    // from the SAME session/request for debugging, without ever persisting
+    // (or being derivable back into) the actual bearer value. This mirrors
+    // the intent of the footer's own session-id masking (SECURITY.md
+    // F-019), which is a same-session DISPLAY concern (masks all but the
+    // last 8 raw characters); this is AT-REST storage, so we go further and
+    // never store any raw characters at all.
     // @see https://www.php.net/manual/en/function.session-id.php
+    // @see https://www.php.net/manual/en/function.hash.php
     if (session_status() === PHP_SESSION_ACTIVE) {
-        $sessionID = session_id();
+        $rawSessionID = session_id();
+        if (is_string($rawSessionID) && $rawSessionID !== '') {
+            $sessionID = substr(hash('sha256', $rawSessionID), 0, 16);
+        } else {
+            $sessionID = null;
+        }
     } else {
         $sessionID = null;
     }
@@ -449,17 +494,125 @@ function logError(
     } catch (\Throwable $e) {
         // ❌ Database logging failed - fall back to PHP error_log
         // This ensures errors are always captured somewhere, even if the
-        // database is down or not yet initialised.
+        // database is down or not yet initialised (pre-DB-init path).
+        // 🔒 F-008: this is the plaintext fallback channel (a shared server
+        //     error_log, not access-controlled like tblErrorLog). $detail can
+        //     carry raw SQL statement text (db_connect.php throws RuntimeException
+        //     messages containing "SQL: <query>") and absolute filesystem paths
+        //     from PHP error/exception messages. Mask both BEFORE they hit the
+        //     log: SQL bodies are redacted to a placeholder and absolute paths
+        //     are abbreviated to web-root-relative form. Full, unmasked detail
+        //     is preserved only on the DB path above (which failed here).
         // @see https://www.php.net/manual/en/function.error-log.php
         error_log(
-            'CueRCode [' . $severity . ']: ' . $title
-            . ' | Detail: ' . $detail
-            . ' | DB Log Error: ' . $e->getMessage()
+            'CueRCode [' . $severity . ']: ' . maskSensitiveForLog($title)
+            . ' | Detail: ' . maskSensitiveForLog($detail)
+            . ' | DB Log Error: ' . maskSensitiveForLog($e->getMessage())
         );
     }
 
     // 🔓 Reset the re-entrancy guard
     $isLogging = false;
+}
+
+// ==============================================================================
+// 🔒 maskSensitiveForLog() - Redact SQL + abbreviate paths for the error_log() fallback
+// ==============================================================================
+
+/**
+ * 🔒 Mask sensitive substrings before they are written to PHP's error_log()
+ *
+ * The error_log() fallback channel (used only when the access-controlled
+ * tblErrorLog DB write is impossible — e.g. DB down, pre-bootstrap, or a
+ * re-entrant logging loop) typically lands in a shared / less-protected
+ * server log. To avoid leaking sensitive technical detail there (F-008),
+ * this helper performs two reductions on the plaintext message:
+ *
+ *   1. SQL statement bodies — db_connect.php throws RuntimeException messages
+ *      shaped as "... | SQL: <query text>". The query text can embed schema
+ *      details and (in non-prepared paths) literal values. Everything after a
+ *      "SQL:" marker, up to the next pipe delimiter or end of string, is
+ *      replaced with a fixed "[SQL REDACTED]" placeholder. Common standalone
+ *      DML/DDL verbs at the start of a fragment are also blanked as a backstop.
+ *
+ *   2. Absolute filesystem paths — PHP error/exception messages contain
+ *      absolute paths (e.g. /home/user/example.com/.../_functions/foo.php)
+ *      that disclose the server layout. Everything up to and including the
+ *      site web root is stripped so only a web-root-relative path remains.
+ *      The web root is derived from this file's own location (this file lives
+ *      at <webroot>/_functions/fn_error_handler.php).
+ *
+ * NOTE: Full, UNMASKED detail is still recorded in tblErrorLog on the normal
+ * path — this masking applies ONLY to the plaintext error_log() fallback, so
+ * no diagnostic capability is lost for anyone with DB access. This is a
+ * defence-in-depth reduction of at-rest leakage, not a security boundary.
+ *
+ * @param string $message The raw log message (title, detail, or exception text)
+ *
+ * @return string The message with SQL bodies redacted and absolute paths
+ *                abbreviated to web-root-relative form
+ *
+ * @see https://www.php.net/manual/en/function.error-log.php
+ * @see https://www.php.net/manual/en/function.preg-replace.php
+ */
+function maskSensitiveForLog(string $message): string
+{
+    // 🛑 Fast path: nothing to mask on an empty string
+    if ($message === '') {
+        return $message;
+    }
+
+    $masked = $message;
+
+    // ----------------------------------------------------------------------
+    // 1️⃣ Redact SQL statement bodies after a "SQL:" marker
+    // ----------------------------------------------------------------------
+    // Matches "SQL:" (any case, optional surrounding whitespace) and replaces
+    // the query body up to the next " | " field delimiter (or end of string)
+    // with a fixed placeholder. The non-greedy [^|]* keeps masking scoped to
+    // the SQL field so other appended context (e.g. "| DB Log Error: ...") is
+    // preserved intact.
+    $masked = preg_replace(
+        '/SQL:\s*[^|]*/i',
+        'SQL: [SQL REDACTED]',
+        $masked
+    );
+
+    // 🛡️ Backstop: blank any remaining bare SQL statements that were NOT
+    // introduced by a "SQL:" marker (e.g. a raw query echoed elsewhere).
+    // Anchored to a fragment start (line start or after a pipe) so it does not
+    // clobber prose that merely contains a verb like "selected" or "updated".
+    $masked = preg_replace(
+        '/(^|\|\s*)(SELECT|INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|TRUNCATE)\b[^|]*/i',
+        '$1[SQL REDACTED]',
+        $masked
+    );
+
+    // ----------------------------------------------------------------------
+    // 2️⃣ Abbreviate absolute filesystem paths to web-root-relative form
+    // ----------------------------------------------------------------------
+    // This file lives at <webroot>/_functions/fn_error_handler.php, so the web
+    // root is two directories up from __DIR__. Strip the web-root prefix from
+    // any occurrence so logs show e.g. "_functions/foo.php" not the full
+    // /home/.../<site>/_functions/foo.php server path.
+    $webRoot = dirname(__DIR__);
+
+    if ($webRoot !== '' && $webRoot !== DIRECTORY_SEPARATOR) {
+        // 🔁 Normalise to forward slashes for a single, OS-independent match.
+        $needle = str_replace('\\', '/', $webRoot);
+        $haystack = str_replace('\\', '/', $masked);
+
+        // Only rewrite if the web-root prefix actually appears, to avoid
+        // disturbing messages that contain no absolute paths at all.
+        if (strpos($haystack, $needle) !== false) {
+            // Replace "<webroot>/" with "" (relative) and a bare "<webroot>"
+            // with "." so a trailing-slash-less reference still reads sensibly.
+            $masked = str_replace($needle . '/', '', $haystack);
+            $masked = str_replace($needle, '.', $masked);
+        }
+    }
+
+    return $masked;
 }
 
 // ==============================================================================
@@ -558,11 +711,18 @@ function getErrorCodeName(int $code): string
         E_USER_ERROR        => 'E_USER_ERROR',
         E_USER_WARNING      => 'E_USER_WARNING',
         E_USER_NOTICE       => 'E_USER_NOTICE',
-        E_STRICT            => 'E_STRICT',
         E_RECOVERABLE_ERROR => 'E_RECOVERABLE_ERROR',
         E_DEPRECATED        => 'E_DEPRECATED',
         E_USER_DEPRECATED   => 'E_USER_DEPRECATED',
     ];
+
+    // 🛡️ B-052: add the deprecated E_STRICT name only on PHP < 8.4, reading the
+    //     constant value via constant() so the deprecated constant is never
+    //     referenced literally on newer runtimes (no deprecation notice).
+    // @see https://www.php.net/manual/en/migration84.deprecated.php
+    if (version_compare(PHP_VERSION, '8.4', '<') && defined('E_STRICT')) {
+        $names[constant('E_STRICT')] = 'E_STRICT';
+    }
 
     if (isset($names[$code])) {
         return $names[$code];

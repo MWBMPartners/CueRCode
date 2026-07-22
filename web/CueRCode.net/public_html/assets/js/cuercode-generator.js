@@ -167,8 +167,39 @@
             format:     $('#opt-format').val(),
             size:       parseInt($('#opt-size').val(), 10),
             ecc:        $('input[name="ecc_level"]:checked').val(),
-            quiet_zone: $('#opt-quiet-zone').is(':checked')
+            quiet_zone: $('#opt-quiet-zone').is(':checked'),
+
+            /* ♿ PDF print layout (E5 / #49): only meaningful when format=pdf;
+               harmless (ignored server-side) otherwise, so it is always safe
+               to include. */
+            pdf_layout: $('#opt-pdf-layout').val()
         };
+
+        /* 🔢 QR version (B-055): only send a pinned version when the user picks
+           a numeric value; 'auto' (the default) is omitted so the API/library
+           auto-selects the smallest version that fits the payload. */
+        var versionVal = $('#opt-version').val();
+        if (versionVal && versionVal !== 'auto') {
+            customization.version = parseInt(versionVal, 10);
+        }
+
+        /* ♿ Accessible QR preset (E5 / #48): 'accessible' when the toggle is
+           checked, 'none' otherwise. The API treats 'none' as a complete
+           no-op, so it is always safe to send. */
+        if ($('#opt-accessible-preset').is(':checked')) {
+            customization.preset = 'accessible';
+        } else {
+            customization.preset = 'none';
+        }
+
+        /* 📏 Intended scan distance (cm), used server-side to compute the
+           recommended print size via the 10:1 rule. Only sent when the user
+           has entered a positive value - omitted otherwise (matches the
+           "when set" contract). */
+        var scanDistanceVal = parseInt($('#opt-scan-distance').val(), 10);
+        if (scanDistanceVal && scanDistanceVal > 0) {
+            customization.scan_distance_cm = scanDistanceVal;
+        }
 
         /* 📌 Include uploaded logo base64 data if present */
         if (uploadedLogoBase64 && customization.logo === 'upload') {
@@ -600,12 +631,19 @@
                 currentPreviewXHR = null;
 
                 if (response.success && response.data) {
-                    /* 📌 Show the generated preview image */
-                    showPreviewImage(response.data);
+                    /* 📌 Show the generated preview image.
+                       🐛 Fixed alongside the E3 stage 2b "Save" wiring: the
+                       API's `data` is an OBJECT ({image, metadata, ...}), not
+                       a bare base64 string - passing the whole object here
+                       previously rendered a broken "[object Object]" <img
+                       src>. See handleGenerate()'s identical `data.image`
+                       shape in fn_api_generate.php. */
+                    showPreviewImage(response.data.image);
                     previewReady = true;
 
-                    /* 📌 Enable the download button */
+                    /* 📌 Enable the download + save-to-account buttons */
                     $('#btn-download').prop('disabled', false);
+                    $('#btn-save-account').prop('disabled', false).attr('aria-disabled', 'false');
 
                     /* 📌 Update status badge to success */
                     $('#preview-status').removeClass('bg-secondary bg-danger')
@@ -627,6 +665,7 @@
                     showPreviewError(errorMsg);
                     previewReady = false;
                     $('#btn-download').prop('disabled', true);
+                    $('#btn-save-account').prop('disabled', true).attr('aria-disabled', 'true');
                 }
             },
             error: function (xhr, status) {
@@ -645,6 +684,7 @@
                 showPreviewError(errorMsg);
                 previewReady = false;
                 $('#btn-download').prop('disabled', true);
+                $('#btn-save-account').prop('disabled', true).attr('aria-disabled', 'true');
 
                 /* 📌 Update status badge to error */
                 $('#preview-status').removeClass('d-none bg-secondary bg-success')
@@ -685,6 +725,7 @@
         $('#qr-preview-error').addClass('d-none');
         $('#preview-status').addClass('d-none');
         $('#btn-download').prop('disabled', true);
+        $('#btn-save-account').prop('disabled', true).attr('aria-disabled', 'true');
         previewReady = false;
     }
 
@@ -813,14 +854,21 @@
      * When the hex text input changes, validates and updates the colour picker.
      * Also triggers a preview update on any colour change.
      *
-     * @param {string} pickerId - The colour picker element ID (with #)
-     * @param {string} hexId    - The hex text input element ID (with #)
+     * @param {string} pickerId          - The colour picker element ID (with #)
+     * @param {string} hexId             - The hex text input element ID (with #)
+     * @param {Function} [onChange]      - Optional extra callback fired after a
+     *                                     valid colour change (e.g. to refresh a
+     *                                     live contrast read-out). Used by the
+     *                                     fg/bg pairs only - @see updateContrastReadout()
      */
-    function setupColourSync(pickerId, hexId) {
+    function setupColourSync(pickerId, hexId, onChange) {
         /* 📌 Colour picker -> hex text input */
         $(pickerId).on('input change', function () {
             $(hexId).val($(this).val());
             triggerPreview();
+            if (typeof onChange === 'function') {
+                onChange();
+            }
         });
 
         /* 📌 Hex text input -> colour picker */
@@ -837,8 +885,161 @@
             if (CueRCode.isValidHexColor(hex)) {
                 $(pickerId).val(hex);
                 triggerPreview();
+                if (typeof onChange === 'function') {
+                    onChange();
+                }
             }
         });
+    }
+
+    // ==========================================================================
+    // ♿ Accessibility Helpers (E5 / #48) - WCAG contrast + print-size calculator
+    // ==========================================================================
+    // Client-side mirrors of qrContrastRatio() and qrRecommendedPrintSizeMm()
+    // (web/CueRCode.net/_functions/fn_qr_options.php) so the live UI read-outs
+    // update instantly (no AJAX round-trip needed). The server remains the
+    // AUTHORITATIVE calculation - these are for immediate user feedback only;
+    // the final /generate and /preview responses carry the server-computed
+    // values in `data.metadata` whenever preset=accessible is sent.
+    // ==========================================================================
+
+    /**
+     * ♿ Convert a hex colour string to an [r, g, b] array (0-255 each)
+     *
+     * Mirrors hexToRgb() in fn_qr_options.php: supports 3/6/8-digit hex, with
+     * or without a leading '#'. Malformed input falls back to black, matching
+     * the PHP implementation's fallback.
+     *
+     * @param {string} hex
+     * @returns {Array<number>} [r, g, b]
+     */
+    function hexToRgbClient(hex) {
+        var h = (hex || '').replace('#', '').trim();
+
+        if (h.length === 3) {
+            h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+        }
+        if (h.length === 8) {
+            h = h.substring(0, 6);
+        }
+        if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) {
+            return [0, 0, 0];
+        }
+
+        return [
+            parseInt(h.substring(0, 2), 16),
+            parseInt(h.substring(2, 4), 16),
+            parseInt(h.substring(4, 6), 16)
+        ];
+    }
+
+    /**
+     * ♿ Compute the WCAG 2.1 contrast ratio between two hex colours
+     *
+     * Client-side mirror of qrContrastRatio() (fn_qr_options.php): sRGB
+     * linearisation -> relative luminance -> (lighter + 0.05) / (darker + 0.05).
+     *
+     * @param {string} hexA
+     * @param {string} hexB
+     * @returns {number} Contrast ratio, 1.0-21.0
+     *
+     * @see https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+     */
+    function computeContrastRatio(hexA, hexB) {
+        function lineariseChannel(channel) {
+            var normalised = channel / 255;
+            if (normalised <= 0.03928) {
+                return normalised / 12.92;
+            }
+            return Math.pow((normalised + 0.055) / 1.055, 2.4);
+        }
+
+        function relativeLuminance(rgb) {
+            return (0.2126 * lineariseChannel(rgb[0]))
+                + (0.7152 * lineariseChannel(rgb[1]))
+                + (0.0722 * lineariseChannel(rgb[2]));
+        }
+
+        var luminanceA = relativeLuminance(hexToRgbClient(hexA));
+        var luminanceB = relativeLuminance(hexToRgbClient(hexB));
+        var lighter = Math.max(luminanceA, luminanceB);
+        var darker = Math.min(luminanceA, luminanceB);
+
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    /**
+     * ♿ Compute the recommended minimum print size (mm) from a scan distance (cm)
+     *
+     * Client-side mirror of qrRecommendedPrintSizeMm() (fn_qr_options.php):
+     * the 10:1 scan-distance rule with a 20mm practical floor.
+     *
+     * @param {number} scanDistanceCm
+     * @returns {number} Recommended print size in millimetres (>= 20)
+     */
+    function computeRecommendedPrintSizeMm(scanDistanceCm) {
+        var distanceCm = Math.max(0, scanDistanceCm || 0);
+        var distanceMm = distanceCm * 10;
+        var recommendedMm = Math.ceil(distanceMm / 10);
+
+        return Math.max(20, recommendedMm);
+    }
+
+    /**
+     * ♿ Refresh the live WCAG contrast read-out from the current fg/bg colours
+     *
+     * Updates the role="status" ratio text, and shows/hides the role="alert"
+     * warning banner: red/blocking language below 3:1 (matches the Accessible
+     * QR preset's hard rejection), amber/advisory language from 3:1 up to
+     * 4.5:1 (matches the preset's non-blocking warning band).
+     */
+    function updateContrastReadout() {
+        var fg = $('#opt-fg-color').val();
+        var bg = $('#opt-bg-color').val();
+        var ratio = computeContrastRatio(fg, bg);
+        var ratioDisplay = ratio.toFixed(2);
+
+        $('#contrast-ratio-value').text('Contrast ratio: ' + ratioDisplay + ':1');
+
+        var $warning = $('#contrast-warning');
+
+        if (ratio < 3) {
+            $warning.removeClass('d-none alert-warning').addClass('alert-danger').text(
+                'This colour pair fails WCAG contrast (' + ratioDisplay + ':1). The Accessible QR '
+                + 'preset will reject it - use at least 3:1 contrast (4.5:1 recommended).'
+            );
+        } else if (ratio < 4.5) {
+            $warning.removeClass('d-none alert-danger').addClass('alert-warning').text(
+                'Contrast is ' + ratioDisplay + ':1 - below the recommended WCAG AA level of 4.5:1. '
+                + 'Consider a higher-contrast colour pair for maximum readability.'
+            );
+        } else {
+            $warning.addClass('d-none');
+        }
+    }
+
+    /**
+     * ♿ Refresh the live physical print-size recommendation from the scan-distance input
+     *
+     * Reads #opt-scan-distance and writes a human-readable recommendation
+     * into the role="status" #print-size-readout element.
+     */
+    function updatePrintSizeReadout() {
+        var scanDistanceVal = parseInt($('#opt-scan-distance').val(), 10);
+        var $readout = $('#print-size-readout');
+
+        if (!scanDistanceVal || scanDistanceVal <= 0 || isNaN(scanDistanceVal)) {
+            $readout.text('Enter a scan distance to see the recommended minimum print size.');
+            return;
+        }
+
+        var sizeMm = computeRecommendedPrintSizeMm(scanDistanceVal);
+        var sizeCm = (sizeMm / 10).toFixed(1);
+
+        $readout.text(
+            'Recommended minimum print size: ' + sizeMm + 'mm (' + sizeCm + 'cm) square, '
+            + 'per the 10:1 scan-distance rule.'
+        );
     }
 
     // ==========================================================================
@@ -1116,8 +1317,13 @@
                     var filename = 'cuercode-' + selectedType + '-' + Date.now() + getFileExtension(format);
                     var mimeType = getMimeType(format);
 
-                    /* 📌 Trigger the file download */
-                    downloadFile(response.data, filename, mimeType);
+                    /* 📌 Trigger the file download.
+                       🐛 Fixed alongside the E3 stage 2b "Save" wiring: see
+                       the identical fix + explanation on the /preview
+                       success handler above - `response.data` is
+                       {uuid, image, download_url, mime_type, format, ...},
+                       not a bare base64 string. */
+                    downloadFile(response.data.image, filename, mimeType);
 
                     CueRCode.notify('QR code downloaded successfully!', 'success');
                 } else {
@@ -1146,6 +1352,110 @@
             complete: function () {
                 /* 📌 Restore the download button state */
                 $btn.prop('disabled', false).html(originalHtml);
+            }
+        });
+    }
+
+    // ==========================================================================
+    // 💾 Save-to-Account Functionality (Epic E3 stage 2b, #52/#24)
+    // ==========================================================================
+
+    /**
+     * 💾 Handle "Save to my account" button click
+     *
+     * Anonymous visitors are sent to /login/ (never a silent no-op) with a
+     * `?next=` back to this page. Logged-in visitors get a FRESH
+     * POST /api/v1/generate call (the same one #btn-download makes - preview
+     * generation never persists a row, see fn_api_generate.php
+     * handlePreview()'s `save_file = false`) to obtain a claimable `uuid`,
+     * then POST /api/v1/save with that uuid. A 402 plan-limit response shows
+     * the aria-disabled-style upgrade prompt panel (never silently hidden);
+     * every other failure is surfaced via CueRCode.notify().
+     *
+     * @see CueRCodeConfig.isLoggedIn - set server-side in index.php
+     */
+    function handleSaveToAccount() {
+        if (!previewReady) {
+            CueRCode.notify('Please generate a preview first.', 'warning');
+            return;
+        }
+
+        if (!CueRCodeConfig.isLoggedIn) {
+            var nextUrl = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = '/login/?next=' + nextUrl;
+            return;
+        }
+
+        var $btn         = $('#btn-save-account');
+        var $status      = $('#save-account-status');
+        var $upgradePanel = $('#save-account-upgrade');
+        var originalHtml = $btn.html();
+
+        $upgradePanel.addClass('d-none');
+        $status.addClass('d-none').text('');
+
+        $btn.prop('disabled', true).attr('aria-disabled', 'true').html(
+            '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Saving...'
+        );
+
+        var payload = {
+            type:          selectedType,
+            input:         collectFormData(),
+            customization: collectCustomization()
+        };
+
+        CueRCode.ajax({
+            url: CueRCodeConfig.apiBase + '/generate',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+            success: function (generateResponse) {
+                if (!generateResponse.success || !generateResponse.data || !generateResponse.data.uuid) {
+                    CueRCode.notify('Failed to prepare the QR code for saving.', 'danger');
+                    return;
+                }
+
+                CueRCode.ajax({
+                    url: CueRCodeConfig.apiBase + '/save',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ uuid: generateResponse.data.uuid }),
+                    success: function (saveResponse) {
+                        $status.removeClass('d-none').text(saveResponse.message || 'Saved to your account.');
+                        CueRCode.notify(saveResponse.message || 'QR code saved to your account!', 'success');
+                    },
+                    error: function (xhr, status) {
+                        if (status === 'abort') {
+                            return;
+                        }
+
+                        /* ♿ 402 = plan saved_codes limit reached - show the
+                           persistent, visible upgrade panel (never silently
+                           hidden) rather than only a transient toast. */
+                        if (xhr.status === 402) {
+                            if (xhr.responseJSON && xhr.responseJSON.upgrade_url) {
+                                $('#save-account-upgrade-link').attr('href', xhr.responseJSON.upgrade_url);
+                            }
+                            $upgradePanel.removeClass('d-none');
+                            return;
+                        }
+
+                        var errorMsg = 'Failed to save this QR code to your account.';
+                        if (xhr.responseJSON && xhr.responseJSON.message) {
+                            errorMsg = xhr.responseJSON.message;
+                        }
+                        CueRCode.notify(errorMsg, 'danger');
+                    }
+                });
+            },
+            error: function (xhr, status) {
+                if (status === 'abort') {
+                    return;
+                }
+                CueRCode.notify('Failed to prepare the QR code for saving. Please try again.', 'danger');
+            },
+            complete: function () {
+                $btn.prop('disabled', false).attr('aria-disabled', 'false').html(originalHtml);
             }
         });
     }
@@ -1181,7 +1491,10 @@
     /**
      * 📏 Handle output format dropdown changes
      *
-     * Updates the download format label display.
+     * Updates the download format label display and shows/hides the PDF
+     * print-layout panel (E5 / #49 - only meaningful when format=pdf; the
+     * live preview is always PNG regardless of pdf_layout, so no preview
+     * refresh is needed for that panel itself).
      */
     function handleFormatChange() {
         var format = $('#opt-format').val();
@@ -1193,6 +1506,14 @@
             formatDisplay = format.toUpperCase();
         }
         $('#download-format-label').text(formatDisplay);
+
+        /* ♿ PDF print layout (E5 / #49): only relevant when format=pdf. */
+        if (format === 'pdf') {
+            $('#pdf-layout-panel').removeClass('d-none');
+        } else {
+            $('#pdf-layout-panel').addClass('d-none');
+        }
+
         triggerPreview();
     }
 
@@ -1209,7 +1530,280 @@
      *
      * @see https://api.jquery.com/ready/
      */
+    // ==========================================================================
+    // 📦 Bulk Generation Panel (FG-003)
+    // ==========================================================================
+
+    /**
+     * 📦 Count the items implied by the current bulk textarea contents.
+     *
+     * For CSV mode this is the number of non-blank lines minus the header row.
+     * For JSON mode it is the length of the parsed `items` array. Returns -1
+     * when the input cannot be interpreted (so callers can show a hint without
+     * claiming a misleading count).
+     *
+     * @param {string} mode - 'csv' or 'json'
+     * @param {string} text - The raw textarea contents
+     * @returns {number} The item count, or -1 if indeterminate
+     */
+    function bulkCountItems(mode, text) {
+        var trimmed = (text || '').trim();
+        if (trimmed === '') {
+            return 0;
+        }
+
+        if (mode === 'json') {
+            try {
+                var parsed = JSON.parse(trimmed);
+                if (parsed && Array.isArray(parsed.items)) {
+                    return parsed.items.length;
+                }
+                return -1;
+            } catch (e) {
+                return -1;
+            }
+        }
+
+        /* 📌 CSV mode: count non-blank lines, minus the header row. */
+        var lines = trimmed.split(/\r\n|\r|\n/);
+        var nonBlank = 0;
+        for (var i = 0; i < lines.length; i++) {
+            if (lines[i].trim() !== '') {
+                nonBlank++;
+            }
+        }
+        return Math.max(0, nonBlank - 1);
+    }
+
+    /**
+     * 🔢 Refresh the live "items detected" count preview for the bulk panel.
+     */
+    function updateBulkCount() {
+        var mode = $('#bulk-input-mode').val();
+        var text = $('#bulk-data').val();
+        var count = bulkCountItems(mode, text);
+        var $count = $('#bulk-count');
+
+        if (count === -1) {
+            $count.text('Could not read the data — check it matches the selected format.');
+            return;
+        }
+        if (count === 0) {
+            $count.text('No items detected yet.');
+            return;
+        }
+        if (count === 1) {
+            $count.text('1 item detected.');
+            return;
+        }
+        $count.text(count + ' items detected.');
+    }
+
+    /**
+     * 📦 Build the JSON request body for the bulk endpoint from the panel.
+     *
+     * @returns {Object|null} The request body object, or null on a JSON parse
+     *                        error (an error message is shown to the user).
+     */
+    function buildBulkPayload() {
+        var mode = $('#bulk-input-mode').val();
+        var text = $('#bulk-data').val();
+        var sharedFormat = $('#bulk-format').val();
+
+        var body = {};
+
+        if (mode === 'json') {
+            try {
+                var parsed = JSON.parse((text || '').trim());
+                if (parsed && typeof parsed === 'object') {
+                    body = parsed;
+                } else {
+                    showBulkError('JSON body must be an object with an "items" array.');
+                    return null;
+                }
+            } catch (e) {
+                showBulkError('Invalid JSON: ' + e.message);
+                return null;
+            }
+        } else {
+            body.csv = text;
+        }
+
+        /* 📌 Apply the shared output format (when chosen) without clobbering an
+              existing customization object the user may have supplied in JSON. */
+        if (sharedFormat) {
+            if (!body.customization || typeof body.customization !== 'object') {
+                body.customization = {};
+            }
+            body.customization.format = sharedFormat;
+        }
+
+        return body;
+    }
+
+    /**
+     * ❌ Show a bulk-panel error message (and hide any success message).
+     *
+     * @param {string} message - The error text to display
+     */
+    function showBulkError(message) {
+        $('#bulk-success').addClass('d-none').text('');
+        $('#bulk-error').removeClass('d-none').text(message);
+    }
+
+    /**
+     * ✅ Show a bulk-panel success message (and hide any error message).
+     *
+     * @param {string} message - The success text to display
+     */
+    function showBulkSuccess(message) {
+        $('#bulk-error').addClass('d-none').text('');
+        $('#bulk-success').removeClass('d-none').text(message);
+    }
+
+    /**
+     * 📦 Submit the bulk request and trigger a ZIP download.
+     *
+     * Uses the native fetch() API because the response is a binary ZIP blob
+     * (jQuery's JSON dataType cannot handle it). The CSRF token is sent in the
+     * X-CSRF-Token header so session-based (web UI) requests authenticate, even
+     * though the endpoint is anonymous-capable. On a non-OK response the JSON
+     * error body is parsed and surfaced.
+     */
+    function submitBulk() {
+        var payload = buildBulkPayload();
+        if (payload === null) {
+            return;
+        }
+
+        var count = bulkCountItems($('#bulk-input-mode').val(), $('#bulk-data').val());
+        if (count === 0) {
+            showBulkError('Enter at least one item before generating.');
+            return;
+        }
+
+        var $btn = $('#bulk-submit');
+        var originalHtml = $btn.html();
+        $btn.prop('disabled', true).html(
+            '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Generating...'
+        );
+        $('#bulk-error').addClass('d-none').text('');
+        $('#bulk-success').addClass('d-none').text('');
+
+        var headers = {
+            'Content-Type': 'application/json'
+        };
+        if (CueRCode && typeof CueRCode.getCSRFToken === 'function') {
+            headers['X-CSRF-Token'] = CueRCode.getCSRFToken();
+        }
+
+        fetch(CueRCodeConfig.apiBase + '/bulk-generate', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(payload)
+        }).then(function (response) {
+            var contentType = response.headers.get('Content-Type') || '';
+
+            if (response.ok && contentType.indexOf('application/zip') === 0) {
+                /* 📌 Success: download the ZIP blob. */
+                var succeeded = response.headers.get('X-Bulk-Succeeded');
+                var failed = response.headers.get('X-Bulk-Failed');
+                return response.blob().then(function (blob) {
+                    var blobUrl = URL.createObjectURL(blob);
+                    var link = document.createElement('a');
+                    link.href = blobUrl;
+                    link.download = 'cuercode-bulk.zip';
+                    link.style.display = 'none';
+                    document.body.appendChild(link);
+                    link.click();
+                    setTimeout(function () {
+                        URL.revokeObjectURL(blobUrl);
+                        document.body.removeChild(link);
+                    }, 100);
+
+                    var msg = 'ZIP downloaded.';
+                    if (succeeded !== null) {
+                        msg = 'ZIP downloaded — ' + succeeded + ' generated';
+                        if (failed !== null && parseInt(failed, 10) > 0) {
+                            msg += ', ' + failed + ' failed (see manifest.txt inside the ZIP)';
+                        }
+                        msg += '.';
+                    }
+                    showBulkSuccess(msg);
+                });
+            }
+
+            /* 📌 Error: try to parse a JSON error body for a useful message. */
+            return response.json().then(function (data) {
+                var message = 'Bulk generation failed (HTTP ' + response.status + ').';
+                if (data && data.message) {
+                    message = data.message;
+                }
+                showBulkError(message);
+            }).catch(function () {
+                showBulkError('Bulk generation failed (HTTP ' + response.status + ').');
+            });
+        }).catch(function () {
+            showBulkError('Network error — could not reach the bulk endpoint.');
+        }).then(function () {
+            $btn.prop('disabled', false).html(originalHtml);
+        });
+    }
+
+    /**
+     * 📂 Read an uploaded file into the bulk textarea and auto-detect the mode.
+     *
+     * @param {Event} e - The file input change event
+     */
+    function handleBulkFileUpload(e) {
+        var input = e.target;
+        if (!input.files || input.files.length === 0) {
+            return;
+        }
+
+        var file = input.files[0];
+        var name = (file.name || '').toLowerCase();
+
+        /* 📌 Auto-select the input mode from the file extension. */
+        if (name.lastIndexOf('.json') === name.length - 5) {
+            $('#bulk-input-mode').val('json');
+        } else if (name.lastIndexOf('.csv') === name.length - 4) {
+            $('#bulk-input-mode').val('csv');
+        }
+
+        var reader = new FileReader();
+        reader.onload = function (readerEvent) {
+            $('#bulk-data').val(readerEvent.target.result);
+            updateBulkCount();
+        };
+        reader.onerror = function () {
+            showBulkError('Could not read the selected file.');
+        };
+        reader.readAsText(file);
+    }
+
     $(document).ready(function () {
+
+        // ======================================================================
+        // 📦 Bulk Generate Panel Events (FG-003)
+        // ======================================================================
+
+        /* 📌 Live count preview on data / mode changes. */
+        $('#bulk-data').on('input', updateBulkCount);
+        $('#bulk-input-mode').on('change', updateBulkCount);
+
+        /* 📌 File upload fills the textarea. */
+        $('#bulk-file').on('change', handleBulkFileUpload);
+
+        /* 📌 Submit + clear. */
+        $('#bulk-submit').on('click', submitBulk);
+        $('#bulk-clear').on('click', function () {
+            $('#bulk-data').val('');
+            $('#bulk-file').val('');
+            $('#bulk-error').addClass('d-none').text('');
+            $('#bulk-success').addClass('d-none').text('');
+            updateBulkCount();
+        });
 
         // ======================================================================
         // 📱 QR Type Selector
@@ -1236,9 +1830,11 @@
         // 🎨 Colour Picker Synchronisation
         // ======================================================================
 
-        /* 📌 Set up two-way sync for each colour picker / hex input pair */
-        setupColourSync('#opt-fg-color', '#opt-fg-color-hex');
-        setupColourSync('#opt-bg-color', '#opt-bg-color-hex');
+        /* 📌 Set up two-way sync for each colour picker / hex input pair.
+           The fg/bg pair also refreshes the live WCAG contrast read-out
+           (E5 / #48) on every valid colour change. */
+        setupColourSync('#opt-fg-color', '#opt-fg-color-hex', updateContrastReadout);
+        setupColourSync('#opt-bg-color', '#opt-bg-color-hex', updateContrastReadout);
         setupColourSync('#opt-marker-color', '#opt-marker-color-hex');
         setupColourSync('#opt-frame-color', '#opt-frame-color-hex');
 
@@ -1353,11 +1949,30 @@
         $('#opt-logo-size').on('input', handleLogoSizeChange);
 
         // ======================================================================
+        // ♿ Accessible QR preset (E5 / #48)
+        // ======================================================================
+
+        /* 📌 Toggling the Accessible QR preset re-requests a preview so the
+           enforced ECC/quiet-zone/version take effect immediately. */
+        $('#opt-accessible-preset').on('change', function () {
+            triggerPreview();
+        });
+
+        /* 📌 Scan-distance input: refresh the local print-size read-out
+           instantly (a pure calculation - no AJAX round-trip needed) AND
+           request a fresh preview so the server-side metadata stays in sync. */
+        $('#opt-scan-distance').on('input', function () {
+            updatePrintSizeReadout();
+            triggerPreview();
+        });
+
+        // ======================================================================
         // 📥 Download Button
         // ======================================================================
 
         /* 📌 Download button click handler */
         $('#btn-download').on('click', handleDownload);
+        $('#btn-save-account').on('click', handleSaveToAccount);
 
         // ======================================================================
         // 🔄 Initialise Default State
@@ -1409,6 +2024,21 @@
             initFormatDisplay = 'PNG';
         }
         $('#download-format-label').text(initFormatDisplay);
+
+        /* ♿ PDF print layout panel (E5 / #49): initial visibility mirrors
+           handleFormatChange()'s toggle, without triggering a redundant
+           preview request at page load. */
+        if ($('#opt-format').val() === 'pdf') {
+            $('#pdf-layout-panel').removeClass('d-none');
+        } else {
+            $('#pdf-layout-panel').addClass('d-none');
+        }
+
+        /* ♿ Initialise the accessibility read-outs (E5 / #48) from the
+           server-rendered default colours/scan-distance so they are never
+           blank on first paint. */
+        updateContrastReadout();
+        updatePrintSizeReadout();
     });
 
     // ==========================================================================

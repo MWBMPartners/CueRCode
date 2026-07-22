@@ -30,10 +30,19 @@
 # 🔒 CORS Headers for API Access
 # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
 # ==============================================================================
+# ⚠️ Access-Control-Allow-Origin is INTENTIONALLY NOT SET HERE (F-001).
+#    The previous hardcoded 'Header set Access-Control-Allow-Origin "*"' allowed
+#    any origin to call the API. Origin handling is now owned by the PHP router
+#    (api/v1/index.php), which echoes a validated, allowlisted origin per request
+#    — a static "*" here would shadow that logic and re-open the permissive hole.
+#    Do NOT re-add an Access-Control-Allow-Origin directive in this file.
+#
+#    The remaining headers below are non-sensitive request-shaping metadata and
+#    are safe to set statically: Allow-Methods/Allow-Headers advertise what the
+#    API accepts, and Max-Age caches the preflight result. They do not by
+#    themselves grant any origin access without a matching Allow-Origin.
 <IfModule mod_headers.c>
-    # 📌 Allow cross-origin requests (adjust for production)
-    Header set Access-Control-Allow-Origin "*"
-    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header set Access-Control-Allow-Methods "GET, POST, PATCH, DELETE, OPTIONS"
     Header set Access-Control-Allow-Headers "Content-Type, X-API-Key, X-CSRF-Token, Accept"
     Header set Access-Control-Max-Age "3600"
 </IfModule>

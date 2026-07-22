@@ -4,6 +4,8 @@
  * ⚙️ CueRCode - QR Code Options Builder
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_options.php
+ *
  * Provides functions for mapping UI customization choices (colors, format,
  * size, pattern, logo space, gradient, etc.) to a QROptions object from
  * the chillerlan/php-qrcode v5.x library.
@@ -17,6 +19,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://php-qrcode.readthedocs.io/ chillerlan/php-qrcode documentation
@@ -48,6 +51,7 @@ if (basename($scriptFilenameValue) === basename(__FILE__)) {
 
 use chillerlan\QRCode\QROptions;
 use chillerlan\QRCode\Common\EccLevel;
+use chillerlan\QRCode\Common\Version as QRCodeVersion;
 use chillerlan\QRCode\Data\QRMatrix;
 use chillerlan\QRCode\Output\QROutputInterface;
 use chillerlan\QRCode\Output\QRGdImagePNG;
@@ -76,9 +80,13 @@ use chillerlan\QRCode\Output\QRFpdf;
  *   - 'bg_color'      (string)  Background (light module) color as hex (#ffffff)
  *   - 'marker_color'  (string)  Finder pattern (corner squares) color as hex
  *   - 'pattern'       (string)  Module shape: square, round, dot (default: square)
+ *   - 'marker_border' (string)  Finder outer-border shape: square, round, circle, extra-rounded (default: square)
+ *   - 'marker_center' (string)  Finder centre-dot shape: square, round, circle, diamond (default: square)
  *   - 'logo'          (mixed)   Logo identifier (triggers logo space reservation)
  *   - 'logo_size_pct' (int)     Logo size as percentage of QR code (default: 20)
  *   - 'transparent'   (bool)    Whether background should be transparent (default: false)
+ *   - 'quiet_zone'    (bool)    Whether to add the quiet-zone margin (default: true)
+ *   - 'version'       (int)     Fixed QR version 1-40 (omit for Version::AUTO auto-select)
  *   - 'gradient'      (array)   Gradient config: [type, color1, color2, direction] (SVG only)
  *   - 'payload'       (string)  The data payload (used for scale calculation)
  *
@@ -160,6 +168,27 @@ function buildQROptions(array $customization): QROptions
     }
     $pattern = strtolower(trim($patternValue));
 
+    // 📌 Marker (finder pattern) outer border shape (square, round, circle, extra-rounded)
+    // 🔧 PARITY: the API/UI offer a finder-pattern border shape. The chillerlan
+    //    GD + markup outputs used here do not render per-finder corner radii, but
+    //    a NON-square marker border IS meaningful when the modules are circular:
+    //    it tells us to let the finder patterns be rounded too (i.e. NOT force
+    //    them back to squares). We map the choice onto keepAsSquare below.
+    if (isset($customization['marker_border'])) {
+        $markerBorderValue = $customization['marker_border'];
+    } else {
+        $markerBorderValue = 'square';
+    }
+    $markerBorder = strtolower(trim((string) $markerBorderValue));
+
+    // 📌 Marker (finder pattern) centre dot shape (square, round, circle, diamond)
+    if (isset($customization['marker_center'])) {
+        $markerCenterValue = $customization['marker_center'];
+    } else {
+        $markerCenterValue = 'square';
+    }
+    $markerCenter = strtolower(trim((string) $markerCenterValue));
+
     // 📌 Logo space configuration
     $hasLogo = !empty($customization['logo']);
     if (isset($customization['logo_size_pct'])) {
@@ -174,6 +203,37 @@ function buildQROptions(array $customization): QROptions
         $transparent = (bool) $customization['transparent'];
     } else {
         $transparent = false;
+    }
+
+    // 📌 Quiet zone (margin) toggle. Defaults to true (matches the chillerlan
+    //    library default $addQuietzone = true and the UI's default-checked box).
+    // 🔧 PARITY: the UI offers a quiet-zone checkbox; honour it here so an API
+    //    caller can disable the margin (e.g. for tight layouts) exactly as the
+    //    web UI does. Mapped to the addQuietzone QROptions property below.
+    if (isset($customization['quiet_zone'])) {
+        $addQuietzone = (bool) $customization['quiet_zone'];
+    } else {
+        $addQuietzone = true;
+    }
+
+    // 📌 QR code version (module grid size). B-055: when the caller pins a
+    //    version (integer 1-40) we set QROptions->version so the grid is fixed;
+    //    when omitted we leave the library default (Version::AUTO = -1) so the
+    //    smallest version that fits the payload at the chosen ECC is auto-chosen.
+    // 🔧 The chillerlan QROptions setter (set_version) itself clamps a non-AUTO
+    //    value to 1..40, but we ALSO clamp here defensively so a stray value can
+    //    never produce an unexpected pin. A value outside 1..40 (or any non-int)
+    //    falls back to AUTO rather than guessing.
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/QROptionsTrait.php - set_version()
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/Common/Version.php - AUTO = -1
+    if (isset($customization['version'])
+        && is_int($customization['version'])
+        && $customization['version'] >= 1
+        && $customization['version'] <= 40
+    ) {
+        $qrVersion = $customization['version'];
+    } else {
+        $qrVersion = QRCodeVersion::AUTO;
     }
 
     // 📌 Gradient configuration (SVG only)
@@ -220,6 +280,14 @@ function buildQROptions(array $customization): QROptions
         'scale'           => $scale,
         'eccLevel'        => $eccLevel,
         'imageBase64'     => false,
+        // 🔧 PARITY: honour the quiet-zone toggle. When false the library omits
+        //    the 4-module margin; true (default) keeps it for scan reliability.
+        // @see chillerlan\QRCode\QROptionsTrait::$addQuietzone
+        'addQuietzone'    => $addQuietzone,
+        // 🔧 B-055: pin the QR version when the caller requested one (1-40),
+        //    otherwise Version::AUTO lets the library pick the smallest fit.
+        // @see chillerlan\QRCode\QROptionsTrait::$version / set_version()
+        'version'         => $qrVersion,
     ];
 
     // 📌 Set output type if applicable (GD image formats need outputType)
@@ -261,14 +329,29 @@ function buildQROptions(array $customization): QROptions
         $optionsArray['drawCircularModules'] = true;
         $optionsArray['circleRadius']        = 0.45;
 
-        // 📌 Keep finder patterns (corner squares) as squares for scanner compatibility
-        // These module types define the three large squares in the corners.
+        // 📌 By default keep finder patterns (corner squares) as squares for
+        //    scanner compatibility. These module types define the three large
+        //    corner squares (outer border = M_FINDER_DARK / M_FINDER; centre dot
+        //    = M_FINDER_DOT).
+        // 🔧 PARITY: the marker_border / marker_center shape choices decide
+        //    whether those finder module types are kept square or allowed to be
+        //    rounded along with the data modules. A non-square border shape
+        //    (round|circle|extra-rounded) lets the OUTER finder modules round;
+        //    a non-square centre shape (round|circle|diamond) lets the CENTRE
+        //    dot round. Anything left as 'square' stays square.
         // @see https://php-qrcode.readthedocs.io/en/main/Usage/Configuration.html
-        $optionsArray['keepAsSquare'] = [
-            QRMatrix::M_FINDER_DARK,
-            QRMatrix::M_FINDER,
-            QRMatrix::M_FINDER_DOT,
-        ];
+        $keepAsSquare = [];
+
+        if ($markerBorder === 'square') {
+            $keepAsSquare[] = QRMatrix::M_FINDER_DARK;
+            $keepAsSquare[] = QRMatrix::M_FINDER;
+        }
+
+        if ($markerCenter === 'square') {
+            $keepAsSquare[] = QRMatrix::M_FINDER_DOT;
+        }
+
+        $optionsArray['keepAsSquare'] = $keepAsSquare;
     } else {
         // 📌 Default square modules
         $optionsArray['drawCircularModules'] = false;
@@ -514,34 +597,37 @@ function estimateModuleCount(int $eccLevel, int $dataLength): int
 
     // 📌 Byte-mode capacities at different ECC levels (selected versions)
     // Format: [max_bytes => version]
+    // The rows are keyed by the LOGICAL ECC name (L/M/Q/H), NOT by the library's
+    // numeric EccLevel constant — those constants are deliberately bit-packed and
+    // are NOT in L,M,Q,H order (L=1, M=0, Q=3, H=2). See the mapping below.
     // @see https://www.qrcode.com/en/about/version.html
     $capacityTable = [
-        // EccLevel::L = 0 (approximately 7% recovery)
-        0 => [
+        // EccLevel L (approximately 7% recovery)
+        'L' => [
             17  => 1,   41  => 2,   77  => 3,   114 => 4,   154 => 5,
             195 => 6,   224 => 7,   279 => 8,   335 => 9,   395 => 10,
             512 => 12,  652 => 14,  818 => 16,  1003 => 18, 1249 => 20,
             1574 => 23, 1852 => 25, 2232 => 28, 2603 => 30, 2956 => 32,
             3391 => 35, 3909 => 38, 4296 => 40,
         ],
-        // EccLevel::M = 1 (approximately 15% recovery)
-        1 => [
+        // EccLevel M (approximately 15% recovery)
+        'M' => [
             14  => 1,   32  => 2,   53  => 3,   78  => 4,   106 => 5,
             134 => 6,   154 => 7,   192 => 8,   230 => 9,   271 => 10,
             367 => 12,  458 => 14,  570 => 16,  700 => 18,  871 => 20,
             1089 => 23, 1273 => 25, 1528 => 28, 1732 => 30, 2009 => 32,
             2324 => 35, 2670 => 38, 2956 => 40,
         ],
-        // EccLevel::Q = 2 (approximately 25% recovery)
-        2 => [
+        // EccLevel Q (approximately 25% recovery)
+        'Q' => [
             11  => 1,   24  => 2,   40  => 3,   54  => 4,   74  => 5,
             97  => 6,   111 => 7,   135 => 8,   160 => 9,   192 => 10,
             259 => 12,  321 => 14,  401 => 16,  489 => 18,  604 => 20,
             762 => 23,  894 => 25,  1062 => 28, 1222 => 30, 1415 => 32,
             1628 => 35, 1867 => 38, 2068 => 40,
         ],
-        // EccLevel::H = 3 (approximately 30% recovery)
-        3 => [
+        // EccLevel H (approximately 30% recovery)
+        'H' => [
             7   => 1,   17  => 2,   32  => 3,   42  => 4,   56  => 5,
             74  => 6,   86  => 7,   108 => 8,   130 => 9,   151 => 10,
             203 => 12,  253 => 14,  313 => 16,  385 => 18,  468 => 20,
@@ -550,14 +636,29 @@ function estimateModuleCount(int $eccLevel, int $dataLength): int
         ],
     ];
 
-    // 📌 Look up the appropriate capacity table for the ECC level
-    // Clamp ECC level to valid range (0-3)
-    $eccIndex = max(0, min(3, $eccLevel));
-    if (isset($capacityTable[$eccIndex])) {
-        $table = $capacityTable[$eccIndex];
+    // 📌 Map the library's numeric EccLevel constant to the correct capacity row.
+    // 🐛 FIX (2026-06-28): the rows were previously keyed 0=L,1=M,2=Q,3=H and
+    //    indexed with the raw EccLevel value. But chillerlan's EccLevel constants
+    //    are L=1, M=0, Q=3, H=2, so the raw value selected the WRONG row for every
+    //    level (e.g. ecc=L (1) picked the M row, ecc=H (2) picked the Q row). We
+    //    now translate the constant to its logical L/M/Q/H name and look that up.
+    //    Affects scale ESTIMATION only — the generated QR is unaffected.
+    // @see web/CueRCode.net/_libraries/chillerlan/php-qrcode/src/Common/EccLevel.php
+    $eccRowMap = [
+        EccLevel::L => 'L',
+        EccLevel::M => 'M',
+        EccLevel::Q => 'Q',
+        EccLevel::H => 'H',
+    ];
+
+    if (isset($eccRowMap[$eccLevel])) {
+        $eccRowKey = $eccRowMap[$eccLevel];
     } else {
-        $table = $capacityTable[1];
+        // ⚠️ Unknown ECC value — fall back to the M (Medium) capacity row.
+        $eccRowKey = 'M';
     }
+
+    $table = $capacityTable[$eccRowKey];
 
     // 📌 Find the smallest version that can hold the data
     $version = 1;
@@ -945,4 +1046,323 @@ function buildSvgGradientDefs(array $gradient): string
     }
 
     return $svgDefs;
+}
+
+// ==============================================================================
+// ♿ qrLineariseSrgbChannel() - sRGB gamma-decode a single 0-255 channel
+// ==============================================================================
+
+/**
+ * ♿ Linearise a single 0-255 sRGB channel value per the WCAG formula
+ *
+ * Step 1 of the WCAG relative-luminance calculation: each 8-bit sRGB channel
+ * is normalised to 0.0-1.0 and then "linearised" (gamma-decoded) so the
+ * values can be combined with the perceptual luminance coefficients.
+ *
+ * @param int $channel A single colour channel value, 0-255.
+ *
+ * @return float The linearised channel value, 0.0-1.0.
+ *
+ * @see https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+ */
+function qrLineariseSrgbChannel(int $channel): float
+{
+    // 📌 Clamp defensively - callers always pass 0-255 (from hexToRgb()), but a
+    //    stray out-of-range value must never reach the fractional exponent
+    //    below with a negative base (undefined in real arithmetic).
+    $channel = max(0, min(255, $channel));
+
+    // 📌 Normalise the 0-255 channel to the 0.0-1.0 range the WCAG formula uses.
+    $normalisedChannel = $channel / 255.0;
+
+    // 📐 The WCAG piecewise gamma-decode: a linear segment near black, then a
+    //    power-law curve for the rest of the range.
+    // @see https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+    if ($normalisedChannel <= 0.03928) {
+        return $normalisedChannel / 12.92;
+    }
+
+    return (($normalisedChannel + 0.055) / 1.055) ** 2.4;
+}
+
+// ==============================================================================
+// ♿ qrRelativeLuminance() - WCAG relative luminance of an sRGB colour
+// ==============================================================================
+
+/**
+ * ♿ Compute the WCAG relative luminance of an [r, g, b] colour
+ *
+ * Combines the three linearised channels using the ITU-R BT.709 luminance
+ * coefficients specified by WCAG: L = 0.2126*R + 0.7152*G + 0.0722*B.
+ *
+ * @param array $rgb Indexed array [red, green, blue], each 0-255 (the shape
+ *                    returned by hexToRgb()).
+ *
+ * @return float The relative luminance, 0.0 (black) to 1.0 (white).
+ *
+ * @see https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+ * @see hexToRgb() - produces the [r, g, b] shape this function expects
+ */
+function qrRelativeLuminance(array $rgb): float
+{
+    // 📌 Extract channels defensively (a malformed array falls back to black).
+    if (isset($rgb[0])) {
+        $redChannel = (int) $rgb[0];
+    } else {
+        $redChannel = 0;
+    }
+
+    if (isset($rgb[1])) {
+        $greenChannel = (int) $rgb[1];
+    } else {
+        $greenChannel = 0;
+    }
+
+    if (isset($rgb[2])) {
+        $blueChannel = (int) $rgb[2];
+    } else {
+        $blueChannel = 0;
+    }
+
+    // 📐 Linearise each channel independently.
+    $redLinear   = qrLineariseSrgbChannel($redChannel);
+    $greenLinear = qrLineariseSrgbChannel($greenChannel);
+    $blueLinear  = qrLineariseSrgbChannel($blueChannel);
+
+    // 📐 WCAG relative luminance formula (BT.709 coefficients).
+    // @see https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+    return (0.2126 * $redLinear) + (0.7152 * $greenLinear) + (0.0722 * $blueLinear);
+}
+
+// ==============================================================================
+// ♿ qrContrastRatio() - WCAG 2.1 relative-luminance contrast ratio
+// ==============================================================================
+
+/**
+ * ♿ Compute the WCAG 2.1 contrast ratio between two colours
+ *
+ * Implements the W3C WCAG relative-luminance formula that underlies both the
+ * 1.4.3 (text contrast) and 1.4.11 (non-text contrast) success criteria:
+ *
+ *   1. Each sRGB channel (0-255) is linearised - @see qrLineariseSrgbChannel()
+ *   2. Relative luminance L = 0.2126*R + 0.7152*G + 0.0722*B - @see qrRelativeLuminance()
+ *   3. Contrast ratio = (L_lighter + 0.05) / (L_darker + 0.05)
+ *
+ * The result ranges from 1.0 (identical colours, no contrast) to 21.0 (pure
+ * black on pure white, maximum possible contrast). Pure and deterministic -
+ * no I/O, no external library dependency beyond hexToRgb() in this file, so
+ * it is trivially unit-testable.
+ *
+ * @param string $hexA First colour as a hex string (any hexToRgb()-supported form).
+ * @param string $hexB Second colour as a hex string.
+ *
+ * @return float The contrast ratio, always >= 1.0 and <= 21.0.
+ *
+ * @see https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+ * @see https://www.w3.org/TR/WCAG21/#contrast-minimum
+ * @see hexToRgb() - colour parsing shared with the rest of this file
+ *
+ * @example
+ *   qrContrastRatio('#000000', '#ffffff');  // Returns: 21.0 (maximum contrast)
+ *   qrContrastRatio('#777777', '#ffffff');  // Returns: ~4.5 (borderline AA)
+ *   qrContrastRatio('#123456', '#123456');  // Returns: 1.0 (identical colours)
+ */
+function qrContrastRatio(string $hexA, string $hexB): float
+{
+    // 📌 Parse both colours into [r, g, b] integer channels (0-255).
+    // @see hexToRgb()
+    $rgbA = hexToRgb($hexA);
+    $rgbB = hexToRgb($hexB);
+
+    // 📐 Relative luminance of each colour.
+    $luminanceA = qrRelativeLuminance($rgbA);
+    $luminanceB = qrRelativeLuminance($rgbB);
+
+    // 📌 WCAG orders the pair as (lighter, darker) regardless of the order the
+    //    caller passed them in, so qrContrastRatio($a, $b) === qrContrastRatio($b, $a).
+    $lighterLuminance = max($luminanceA, $luminanceB);
+    $darkerLuminance  = min($luminanceA, $luminanceB);
+
+    // ➗ (L1 + 0.05) / (L2 + 0.05) - the +0.05 offset avoids a divide-by-zero
+    //    on pure black (luminance 0.0) and matches the WCAG-published formula.
+    // @see https://www.w3.org/TR/WCAG21/#contrast-minimum
+    return ($lighterLuminance + 0.05) / ($darkerLuminance + 0.05);
+}
+
+// ==============================================================================
+// ♿ qrRecommendedPrintSizeMm() - Physical print-size calculator (10:1 rule)
+// ==============================================================================
+
+/**
+ * ♿ Recommend a minimum printed QR code width/height from a scan distance
+ *
+ * Implements the widely-used "10:1" scan-distance rule for QR/barcode
+ * legibility: the minimum code width should be at least one-tenth of the
+ * intended scanning distance (e.g. a code meant to be scanned from 1 m away
+ * should be at least 10 cm / 100 mm wide). A practical floor of 20 mm (2 cm)
+ * is enforced regardless of how short the intended scan distance is, per the
+ * general ISO/IEC 18004 print-size guidance referenced in PROJECT_ROADMAP.md
+ * (E5 "Open, freely-implementable standards").
+ *
+ * Pure and unit-testable - no I/O, no external library dependency.
+ *
+ * @param int $scanDistanceCm The intended scanning distance in centimetres.
+ *                            Values <= 0 are clamped to 0 (the floor below
+ *                            still applies, so the return is never smaller
+ *                            than the floor).
+ *
+ * @return int The recommended minimum print size (width = height), in
+ *             millimetres, never smaller than the 20mm floor.
+ *
+ * @see https://www.qrcode.com/en/howto/ (general placement/size guidance)
+ * @see PROJECT_ROADMAP.md - E5 "Open, freely-implementable standards" (10:1 rule, 20mm floor)
+ *
+ * @example
+ *   qrRecommendedPrintSizeMm(100);  // Returns: 100 (10 cm code for a 1 m scan distance)
+ *   qrRecommendedPrintSizeMm(10);   // Returns: 20  (10:1 alone gives 10mm; floor applies)
+ *   qrRecommendedPrintSizeMm(0);    // Returns: 20  (floor)
+ */
+function qrRecommendedPrintSizeMm(int $scanDistanceCm): int
+{
+    // 🔧 Defensive: a negative/missing distance cannot recommend anything
+    //    smaller than the floor, so clamp up to zero rather than reject.
+    $scanDistanceCm = max(0, $scanDistanceCm);
+
+    // 📐 Convert the scan distance to millimetres, then apply the 10:1 rule.
+    //    Rounding UP (ceil) errs on the generous/safer side for accessibility.
+    $scanDistanceMm = $scanDistanceCm * 10;
+    $recommendedMm  = (int) ceil($scanDistanceMm / 10);
+
+    // 📌 Practical print-size floor: never recommend smaller than 20mm (2cm),
+    //    even for a very short intended scan distance.
+    $minimumFloorMm = 20;
+
+    return max($minimumFloorMm, $recommendedMm);
+}
+
+// ==============================================================================
+// ♿ applyAccessiblePreset() - "Accessible QR" preset enforcement (E5 / #48)
+// ==============================================================================
+
+/**
+ * ♿ Enforce the "Accessible QR" preset's rules on a customisation array
+ *
+ * When `$customization['preset'] === 'accessible'`, this forces the settings
+ * an accessibility-focused code needs and evaluates the chosen colours
+ * against WCAG contrast thresholds:
+ *
+ *   - ecc        forced to 'H' (30% recovery - the highest level)
+ *   - quiet_zone forced to true (>= 4-module margin per ISO/IEC 18004, which
+ *                is the chillerlan library's own quiet-zone width whenever
+ *                addQuietzone is true - @see buildQROptions())
+ *   - version    unset so the library auto-picks the smallest version that
+ *                fits the payload (a smaller version means larger modules at
+ *                a given print size, which is the accessibility goal)
+ *   - contrast   qrContrastRatio() is computed on fg_color/bg_color (falling
+ *                back to black-on-white when either is missing) and
+ *                classified: < 3:1 = 'fail', 3:1-4.5:1 = 'warning',
+ *                >= 4.5:1 = 'pass'. The result is NOT rejected here - the
+ *                caller (fn_api_generate.php handlers) decides whether a
+ *                'fail' classification becomes a 422 response, so this
+ *                function stays a pure, side-effect-free transform with no
+ *                knowledge of HTTP.
+ *
+ * For any other preset value (absent, 'none', or an unrecognised string -
+ * already normalised to 'none' by buildCustomizationFromRequest()), the
+ * array is returned COMPLETELY UNCHANGED so existing, non-accessible
+ * behaviour is byte-for-byte identical to before this feature existed.
+ *
+ * @param array $customization The sanitised customisation array (as returned
+ *                              by buildCustomizationFromRequest()).
+ *
+ * @return array The (possibly enforced) customisation array. When the preset
+ *               is 'accessible', an additional reserved '_accessible_meta'
+ *               key is added:
+ *                 [
+ *                   'contrast_ratio'            => float (rounded to 2dp),
+ *                   'contrast_level'            => 'fail'|'warning'|'pass',
+ *                   'recommended_print_size_mm' => int|null,
+ *                 ]
+ *
+ * @see qrContrastRatio() - the underlying WCAG contrast calculation
+ * @see qrRecommendedPrintSizeMm() - the physical print-size calculation
+ * @see fn_api_generate.php - buildCustomizationFromRequest(), handleGenerate(), handlePreview()
+ */
+function applyAccessiblePreset(array $customization): array
+{
+    // 📌 Normalise the preset value (default 'none' when absent/non-string).
+    if (isset($customization['preset'])) {
+        $presetName = strtolower(trim((string) $customization['preset']));
+    } else {
+        $presetName = 'none';
+    }
+
+    // 🟢 Non-accessible presets: return completely untouched (parity guarantee
+    //    - existing/default behaviour must stay byte-for-byte identical).
+    if ($presetName !== 'accessible') {
+        return $customization;
+    }
+
+    // ==================================================================
+    // ♿ Force the ISO/IEC 18004 + accessibility-oriented settings
+    // ==================================================================
+
+    // 1) Highest error correction, regardless of what was requested.
+    $customization['ecc'] = 'H';
+
+    // 2) Quiet zone always on.
+    $customization['quiet_zone'] = true;
+
+    // 3) Minimise version: drop any pinned value so the smallest version that
+    //    fits the payload at ECC H is auto-selected.
+    unset($customization['version']);
+
+    // ==================================================================
+    // ♿ Evaluate WCAG contrast on the (possibly still user-chosen) colours
+    // ==================================================================
+    if (isset($customization['fg_color']) && $customization['fg_color'] !== '') {
+        $fgColorForContrast = (string) $customization['fg_color'];
+    } else {
+        $fgColorForContrast = '#000000';
+    }
+
+    if (isset($customization['bg_color']) && $customization['bg_color'] !== '') {
+        $bgColorForContrast = (string) $customization['bg_color'];
+    } else {
+        $bgColorForContrast = '#ffffff';
+    }
+
+    $contrastRatio = qrContrastRatio($fgColorForContrast, $bgColorForContrast);
+
+    // 📌 Classify against the two WCAG-derived thresholds specified for this
+    //    preset: reject below 3:1 (WCAG 1.4.11 non-text minimum), warn below
+    //    4.5:1 (WCAG 1.4.3 text-level AA - the stricter/safer target).
+    if ($contrastRatio < 3.0) {
+        $contrastLevel = 'fail';
+    } elseif ($contrastRatio < 4.5) {
+        $contrastLevel = 'warning';
+    } else {
+        $contrastLevel = 'pass';
+    }
+
+    // ==================================================================
+    // 📏 Physical print-size recommendation (only when a scan distance was
+    //    supplied - an optional add-on the caller may include alongside the
+    //    accessible preset).
+    // ==================================================================
+    $recommendedPrintSizeMm = null;
+
+    if (isset($customization['scan_distance_cm']) && is_int($customization['scan_distance_cm'])) {
+        $recommendedPrintSizeMm = qrRecommendedPrintSizeMm($customization['scan_distance_cm']);
+    }
+
+    // 📦 Stash everything the caller needs under one reserved key so it does
+    //    not need to recompute anything or reach back into this function.
+    $customization['_accessible_meta'] = [
+        'contrast_ratio'            => round($contrastRatio, 2),
+        'contrast_level'            => $contrastLevel,
+        'recommended_print_size_mm' => $recommendedPrintSizeMm,
+    ];
+
+    return $customization;
 }

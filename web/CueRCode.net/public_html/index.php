@@ -4,6 +4,8 @@
  * 🏠 CueRCode - Main QR Code Generator Page
  * ==============================================================================
  *
+ * Path: public_html/index.php
+ *
  * The primary page for the CueRCode service. Provides a responsive two-column
  * layout with QR type selection, dynamic content form, customization tabs
  * (Colors, Design, Logo, Frame, Options), and a live AJAX preview panel.
@@ -18,6 +20,7 @@
  *
  * @package     CueRCode
  * @subpackage  Pages
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://getbootstrap.com/docs/5.3/layout/grid/
@@ -41,6 +44,7 @@ require_once __DIR__ . '/../_includes/bootstrap.php';
 $qrFunctionFiles = [
     'fn_qr_payloads.php',
     'fn_qr_options.php',
+    'fn_qr_accessible_pdf.php',
     'fn_qr_generate.php',
     'fn_qr_logo.php',
     'fn_qr_frames.php',
@@ -234,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['qr_type'])) {
             'ecc_level', 'fg_color', 'bg_color', 'marker_color',
             'pattern', 'marker_border', 'marker_center', 'logo',
             'logo_upload', 'logo_size', 'frame_style', 'frame_label',
-            'frame_color', 'transparent_bg',
+            'frame_color', 'transparent_bg', 'pdf_layout',
         ];
 
         $inputData = [];
@@ -290,6 +294,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['qr_type'])) {
         } else {
             $custFrameColor = '';
         }
+
+        // 📌 PDF print layout (E5 / #49) - only meaningful when output_format=pdf.
+        //    Validated against the same allowlist as the API/AJAX path
+        //    (buildCustomizationFromRequest() in fn_api_generate.php).
+        if (isset($_POST['pdf_layout'])) {
+            $custPdfLayout = strtolower(trim((string) $_POST['pdf_layout']));
+        } else {
+            $custPdfLayout = 'standard';
+        }
+        $validPdfLayoutsNoJs = ['standard', 'accessible_caption', 'tactile', 'avery_5160', 'avery_l7160'];
+        if (!in_array($custPdfLayout, $validPdfLayoutsNoJs, true)) {
+            $custPdfLayout = 'standard';
+        }
+
         $customization = [
             'format'       => $postFormat,
             'size'         => $custSize,
@@ -302,6 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['qr_type'])) {
             'frame_style'  => $custFrameStyle,
             'frame_label'  => $custFrameLabel,
             'frame_color'  => $custFrameColor,
+            'pdf_layout'   => $custPdfLayout,
         ];
 
         // 📌 Handle logo from POST
@@ -840,6 +859,34 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </select>
                                     </div>
 
+                                    <!-- ================================================
+                                         ♿ PDF print layout (E5 / #49) - shown only when
+                                         Output Format above is "pdf". Braille-caption /
+                                         tactile-frame / Avery label-sheet print templates.
+                                         Visibility toggled by handleFormatChange() in
+                                         cuercode-generator.js.
+                                         ================================================ -->
+                                    <div class="mb-4 d-none" id="pdf-layout-panel">
+                                        <label for="opt-pdf-layout" class="form-label fw-semibold">
+                                            <i class="fa-solid fa-braille me-1" aria-hidden="true"></i> PDF Print Layout
+                                        </label>
+                                        <select class="form-select" id="opt-pdf-layout" name="pdf_layout">
+                                            <option value="standard" selected>Standard - QR code only (today's PDF)</option>
+                                            <option value="accessible_caption">Accessible caption - large-print + Braille caption line</option>
+                                            <option value="tactile">Tactile frame - accessible caption + locator-frame overlay page</option>
+                                            <option value="avery_5160">Avery 5160 label sheet (US Letter, 3&times;10)</option>
+                                            <option value="avery_l7160">Avery L7160 label sheet (A4, 3&times;7)</option>
+                                        </select>
+                                        <small class="text-body-secondary mt-1 d-block">
+                                            Braille dots are Grade-1 (uncontracted) and geometrically drawn (not a
+                                            Unicode font). Avery layouts fill one label on a full printable sheet
+                                            template; use <code>/api/v1/bulk-generate</code> with the same
+                                            <code>pdf_layout</code> to fill a whole sheet from multiple codes. See the
+                                            <a href="/accessibility">accessible/tactile printing guide</a> for
+                                            best-practice sizing, placement and embossing workflow.
+                                        </small>
+                                    </div>
+
                                     <!-- Output Size -->
                                     <div class="mb-4">
                                         <label for="opt-size" class="form-label fw-semibold">
@@ -883,12 +930,88 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </div>
 
                                     <!-- Quiet Zone -->
-                                    <div class="form-check form-switch">
+                                    <div class="form-check form-switch mb-4">
                                         <input class="form-check-input" type="checkbox" role="switch"
                                                id="opt-quiet-zone" name="quiet_zone" checked>
                                         <label class="form-check-label" for="opt-quiet-zone">
                                             Include Quiet Zone (recommended for scanning)
                                         </label>
+                                    </div>
+
+                                    <!-- QR Version (module grid size) — B-055 -->
+                                    <div class="mb-4">
+                                        <label for="opt-version" class="form-label fw-semibold">
+                                            <i class="fa-solid fa-table-cells me-1" aria-hidden="true"></i> QR Version
+                                        </label>
+                                        <select class="form-select" id="opt-version" name="qr_version">
+                                            <option value="auto" selected>Auto (fit to data)</option>
+                                            <?php
+                                            // 🔢 Versions 1-40 set a fixed module grid (modules = 4 * v + 17).
+                                            for ($qrVersionOption = 1; $qrVersionOption <= 40; $qrVersionOption++) {
+                                                echo '<option value="' . $qrVersionOption . '">'
+                                                    . 'Version ' . $qrVersionOption
+                                                    . ' (' . ((4 * $qrVersionOption) + 17) . '&times;'
+                                                    . ((4 * $qrVersionOption) + 17) . ')'
+                                                    . '</option>';
+                                            }
+                                            ?>
+                                        </select>
+                                        <small class="text-body-secondary mt-1 d-block">
+                                            Leave on <strong>Auto</strong> unless you need a fixed size. A version too small for the data will be rejected.
+                                        </small>
+                                    </div>
+
+                                    <!-- ================================================
+                                         ♿ Accessible QR preset (E5 / #48)
+                                         ISO/IEC 18004 + WCAG 2.1 accessibility enforcement:
+                                         forced ECC H, forced quiet zone, auto-minimised
+                                         version, WCAG contrast validation, and a physical
+                                         print-size calculator (10:1 scan-distance rule).
+                                         ================================================ -->
+                                    <div class="mb-2 p-3 border rounded" id="accessible-qr-panel">
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" role="switch"
+                                                   id="opt-accessible-preset" name="preset"
+                                                   aria-describedby="accessible-preset-help">
+                                            <label class="form-check-label fw-semibold" for="opt-accessible-preset">
+                                                <i class="fa-solid fa-universal-access me-1" aria-hidden="true"></i> Accessible QR
+                                            </label>
+                                        </div>
+                                        <small class="text-body-secondary d-block mb-3" id="accessible-preset-help">
+                                            When enabled: forces Error Correction to <strong>High (30%)</strong>, forces the
+                                            <strong>quiet zone</strong> on, auto-selects the smallest QR version that fits your
+                                            data, and enforces WCAG 2.1 colour contrast on the foreground/background above
+                                            (codes under <strong>3:1</strong> contrast are rejected; under <strong>4.5:1</strong>
+                                            triggers a warning). Overrides the ECC, Quiet Zone, and QR Version choices above
+                                            while enabled.
+                                        </small>
+
+                                        <!-- 🎨 Live WCAG contrast read-out (always visible - useful even before enabling
+                                             the toggle, mirrors the roadmap's "standalone" framing for the contrast check). -->
+                                        <div class="mb-3">
+                                            <span class="form-label d-block fw-semibold mb-1" id="contrast-readout-label">
+                                                <i class="fa-solid fa-circle-half-stroke me-1" aria-hidden="true"></i> Foreground/background contrast
+                                            </span>
+                                            <div id="contrast-readout" role="status" aria-live="polite"
+                                                 aria-labelledby="contrast-readout-label" class="small">
+                                                <span id="contrast-ratio-value">Enter colours above to see the contrast ratio.</span>
+                                            </div>
+                                            <div id="contrast-warning" class="alert alert-warning py-1 px-2 mt-2 mb-0 small d-none" role="alert"></div>
+                                        </div>
+
+                                        <!-- 📏 Physical print-size calculator (10:1 scan-distance rule) -->
+                                        <div>
+                                            <label for="opt-scan-distance" class="form-label fw-semibold">
+                                                <i class="fa-solid fa-ruler me-1" aria-hidden="true"></i> Intended scan distance (cm)
+                                            </label>
+                                            <input type="number" class="form-control" id="opt-scan-distance" name="scan_distance_cm"
+                                                   min="1" max="10000" step="1" placeholder="e.g. 100"
+                                                   aria-describedby="print-size-readout">
+                                            <small class="text-body-secondary mt-1 d-block" id="print-size-readout"
+                                                   role="status" aria-live="polite">
+                                                Enter a scan distance to see the recommended minimum print size.
+                                            </small>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -961,11 +1084,36 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <?php } ?>
                         </div>
                         <div class="card-footer bg-transparent">
-                            <!-- Download Controls -->
+                            <!-- Download + Save Controls -->
                             <div class="d-grid gap-2">
                                 <button type="button" class="btn btn-primary btn-lg" id="btn-download" disabled>
                                     <i class="fa-solid fa-download me-1" aria-hidden="true"></i> Download QR Code
                                 </button>
+                                <!-- ============================================================
+                                     💾 "Save to my account" (Epic E3 stage 2b, #52/#24)
+                                     Claims the next-generated code into the visitor's account via
+                                     POST /api/v1/save. Anonymous visitors are prompted to sign in
+                                     first (never a silent no-op); a plan-limit 402 response shows
+                                     the aria-disabled upgrade prompt below rather than failing
+                                     silently. Disabled (not hidden) until a preview exists, mirroring
+                                     #btn-download's own gating so both controls behave consistently.
+                                     ============================================================ -->
+                                <button type="button" class="btn btn-outline-primary btn-lg" id="btn-save-account" disabled
+                                        aria-describedby="save-account-status">
+                                    <i class="fa-solid fa-bookmark me-1" aria-hidden="true"></i>
+                                    <span id="btn-save-account-label">
+                                        <?php echo (function_exists('currentUser') && currentUser() !== null) ? 'Save to my account' : 'Sign in to save'; ?>
+                                    </span>
+                                </button>
+                                <div id="save-account-status" class="form-text text-center d-none" role="status" aria-live="polite"></div>
+                                <!-- ♿ Upgrade prompt: rendered disabled-looking but NEVER hidden
+                                     when the caller's saved_codes plan limit is reached (a 402
+                                     response from POST /save) - see cuercode-generator.js
+                                     handleSaveToAccount(). -->
+                                <div id="save-account-upgrade" class="alert alert-warning d-none d-flex justify-content-between align-items-center flex-wrap gap-2 mb-0 mt-2" role="alert">
+                                    <span>You've reached your plan's saved-codes limit.</span>
+                                    <a href="/pricing" id="save-account-upgrade-link" class="btn btn-sm btn-warning">Upgrade plan</a>
+                                </div>
                             </div>
                             <div class="text-center mt-2">
                                 <small class="text-body-secondary">
@@ -977,6 +1125,128 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     </div>
                 </div>
 
+            </div>
+        </div>
+    </section>
+
+    <!-- ====================================================================
+         📦 Bulk Generate Panel (FG-003) - CSV / JSON -> ZIP download
+         ====================================================================
+         A simple, accessible panel for generating many QR codes at once.
+         Paste a CSV (header row + data rows) or a JSON body, see a live count
+         preview, then submit to download a ZIP. The endpoint is synchronous and
+         anonymous-capable (POST /api/v1/bulk-generate). Without JavaScript the
+         panel degrades to an explanatory note plus a documentation link.
+         ==================================================================== -->
+    <section class="py-4 border-top" id="bulk-section" aria-labelledby="bulk-heading">
+        <div class="container">
+            <div class="row justify-content-center">
+                <div class="col-lg-9">
+                    <div class="card shadow-sm">
+                        <div class="card-header bg-transparent">
+                            <h2 class="h5 mb-0" id="bulk-heading">
+                                <i class="fa-solid fa-layer-group me-2" style="color: var(--cuercode-primary);" aria-hidden="true"></i>
+                                Bulk generate
+                            </h2>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-body-secondary">
+                                Generate many QR codes at once and download them as a single ZIP file.
+                                Paste a <strong>CSV</strong> (a header row with a <code>type</code> column
+                                plus one or more input columns) or a <strong>JSON</strong> body with an
+                                <code>items</code> array.
+                            </p>
+
+                            <!-- ⛔ No-JS fallback: explain the API directly. -->
+                            <noscript>
+                                <div class="alert alert-info" role="note">
+                                    <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
+                                    Bulk generation needs JavaScript in this panel. You can still use it
+                                    directly by sending a <code>POST</code> request to
+                                    <code>/api/v1/bulk-generate</code> with a JSON body
+                                    (<code>Content-Type: application/json</code>). See the API
+                                    documentation for the request format.
+                                </div>
+                            </noscript>
+
+                            <!-- 📥 Input mode + file upload row -->
+                            <div class="row g-3 align-items-end mb-3">
+                                <div class="col-sm-4">
+                                    <label for="bulk-input-mode" class="form-label">
+                                        <i class="fa-solid fa-table-list me-1" aria-hidden="true"></i> Input format
+                                    </label>
+                                    <select class="form-select" id="bulk-input-mode" aria-describedby="bulk-input-mode-help">
+                                        <option value="csv" selected>CSV (header + rows)</option>
+                                        <option value="json">JSON (items array)</option>
+                                    </select>
+                                    <div id="bulk-input-mode-help" class="form-text">
+                                        Choose how your pasted data is interpreted.
+                                    </div>
+                                </div>
+                                <div class="col-sm-5">
+                                    <label for="bulk-file" class="form-label">
+                                        <i class="fa-solid fa-file-arrow-up me-1" aria-hidden="true"></i> Upload a file (optional)
+                                    </label>
+                                    <input type="file" class="form-control" id="bulk-file"
+                                           accept=".csv,.json,.txt,text/csv,application/json,text/plain"
+                                           aria-describedby="bulk-file-help">
+                                    <div id="bulk-file-help" class="form-text">
+                                        A <code>.csv</code> or <code>.json</code> file fills the box below.
+                                    </div>
+                                </div>
+                                <div class="col-sm-3">
+                                    <label for="bulk-format" class="form-label">
+                                        <i class="fa-solid fa-image me-1" aria-hidden="true"></i> Output format
+                                    </label>
+                                    <select class="form-select" id="bulk-format" aria-label="Shared output format for all items">
+                                        <option value="" selected>Per-item / default</option>
+                                        <option value="png">PNG</option>
+                                        <option value="jpg">JPG</option>
+                                        <option value="webp">WebP</option>
+                                        <option value="gif">GIF</option>
+                                        <option value="svg">SVG</option>
+                                        <option value="pdf">PDF</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- 📝 Data textarea -->
+                            <div class="mb-2">
+                                <label for="bulk-data" class="form-label">
+                                    <i class="fa-solid fa-pen-to-square me-1" aria-hidden="true"></i> Bulk data
+                                </label>
+                                <textarea class="form-control font-monospace" id="bulk-data" rows="8"
+                                          spellcheck="false"
+                                          aria-describedby="bulk-data-help bulk-count"
+                                          placeholder="type,input.url&#10;url,https://example.com&#10;url,https://example.org"></textarea>
+                                <div id="bulk-data-help" class="form-text">
+                                    CSV example: a <code>type</code> column plus <code>input.&lt;field&gt;</code>
+                                    columns (e.g. <code>input.url</code>). JSON example:
+                                    <code>{ "items": [ { "type": "url", "input": { "url": "https://example.com" } } ] }</code>.
+                                </div>
+                            </div>
+
+                            <!-- 🔢 Count preview + status (polite live region) -->
+                            <div id="bulk-count" class="small text-body-secondary mb-3" aria-live="polite" role="status">
+                                No items detected yet.
+                            </div>
+
+                            <div id="bulk-error" class="alert alert-danger d-none" role="alert"></div>
+                            <div id="bulk-success" class="alert alert-success d-none" role="status"></div>
+
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary" id="bulk-submit">
+                                    <i class="fa-solid fa-file-zipper me-1" aria-hidden="true"></i>
+                                    Generate ZIP
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" id="bulk-clear">
+                                    <i class="fa-solid fa-eraser me-1" aria-hidden="true"></i>
+                                    Clear
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
@@ -1001,7 +1271,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
             } else {
                 echo json_encode('');
             }
-            ?>
+            ?>,
+            /* 👤 Epic E3 stage 2b (#52/#24): whether the visitor already has an
+               authenticated account session - drives the "Save to my account"
+               button's behaviour (save directly vs. prompt to sign in). */
+            isLoggedIn: <?php echo json_encode(function_exists('currentUser') && currentUser() !== null); ?>
         };
     </script>
 

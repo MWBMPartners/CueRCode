@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS `tblSettings` (
     `isSensitive`   TINYINT(1)          NOT NULL DEFAULT 0       COMMENT '🔐 1 = value is encrypted with AES-256-GCM + salt',
     `isEditable`    TINYINT(1)          NOT NULL DEFAULT 1       COMMENT '✏️ 1 = can be modified via admin UI',
     `description`   VARCHAR(500)        NULL                     COMMENT '📖 Human-readable description of this setting',
+    `encryptionSalt` BINARY(16)         NULL                     COMMENT '🧂 F-006/G-010 per-record encryption salt, populated when isSensitive = 1. The authoritative salt actually travels embedded in settingValue ciphertext blob produced by encryptValue() (self describing - decryptValue() never needs this column), so this column is a DBA-visible auditability mirror proving each row genuinely uses its own independent salt rather than one shared global salt. See fn_encryption.php / fn_config.php setConfig().',
     `createdAt`     DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Record creation timestamp',
     `updatedAt`     DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
 
@@ -222,8 +223,19 @@ CREATE TABLE IF NOT EXISTS `tblQRCodes` (
     `orgID`           INT UNSIGNED      NULL                     COMMENT '🏢 Owning organisation ID (Phase 2)',
     `apiKeyID`        INT UNSIGNED      NULL                     COMMENT '🔑 API key used for generation (NULL = web UI)',
 
+    -- 📚 Saved-codes library (Epic E3 stage 2a, #52/#24, B-001/B-002) - once a
+    -- code is claimed by a user via POST /api/v1/save, `qrLabel` is the
+    -- caller's own nickname for it (editable via PATCH /api/v1/qrcodes/{uuid});
+    -- `deletedAt` is the soft-delete marker set by DELETE /api/v1/qrcodes/{uuid}
+    -- (see DEV_NOTES.md/SECURITY.md for the soft-vs-hard-delete decision) -
+    -- every saved-codes query (list/get/patch/delete/save-limit-count) filters
+    -- `deletedAt IS NULL`, so a deleted row both disappears from the caller's
+    -- library AND frees a saved-codes slot without losing the audit trail.
+    `qrLabel`         VARCHAR(150)      NULL                     COMMENT '🏷️ Caller-supplied nickname for a saved code (NULL = unlabelled)',
+    `deletedAt`       DATETIME          NULL                     COMMENT '🗑️ Soft-delete timestamp (NULL = active); set by DELETE /api/v1/qrcodes/{uuid}',
+
     -- 📊 Metadata
-    `isPublic`        TINYINT(1)        NOT NULL DEFAULT 0       COMMENT '🌐 1 = visible in public gallery (future feature)',
+    `isPublic`        TINYINT(1)        NOT NULL DEFAULT 0       COMMENT '🌐 1 = readable/downloadable by ANY caller regardless of ownership (default 0 = private to the owner - Epic E3 stage 2a)',
     `downloadCount`   INT UNSIGNED      NOT NULL DEFAULT 0       COMMENT '📥 Number of times this QR code has been downloaded',
     `requestIP`       VARCHAR(45)       NULL                     COMMENT '🌍 IP address of the request that generated this code',
     `userAgent`       VARCHAR(500)      NULL                     COMMENT '🖥️ User agent of the generating request',
@@ -236,6 +248,7 @@ CREATE TABLE IF NOT EXISTS `tblQRCodes` (
     UNIQUE KEY `idx_qr_uuid` (`qrUUID`),
     INDEX `idx_qr_type` (`qrTypeID`),
     INDEX `idx_qr_user` (`userID`),
+    INDEX `idx_qr_user_active` (`userID`, `deletedAt`),
     INDEX `idx_qr_org` (`orgID`),
     INDEX `idx_qr_created` (`createdAt`),
     INDEX `idx_qr_format` (`qrOutputFormat`),
@@ -335,37 +348,51 @@ CREATE TABLE IF NOT EXISTS `tblAPIRateLog` (
   COMMENT='⏱️ API request rate limiting tracking log';
 
 -- ==============================================================================
--- 📋 Table 9: tblUsers (STUB - Phase 2)
+-- 📋 Table 9: tblUsers (Epic E3 stage 1 - #11/#12/#14/#15)
 -- ==============================================================================
--- User account table - created as a schema stub in Phase 1.
--- Will be fully implemented in Phase 2 with registration, authentication,
--- profile management, SSO integration, and role-based access control.
+-- User account table. Fully implemented in Epic E3 stage 1: registration,
+-- email verification, Argon2id password hashing, login with lockout, and
+-- password reset. Organisation membership/roles are tracked per-organisation in
+-- tblOrganisationMembers; orgID/roleID here remain the home-organisation quick
+-- lookup and platform-wide role respectively. SSO (Epic E2) and WebAuthn
+-- (Epic E3 stage 7) identities live in their own linked tables below.
 --
 -- @see https://www.php.net/manual/en/function.password-hash.php
+-- @see _functions/fn_password.php   - hashPassword()/verifyPassword() (Argon2id)
+-- @see _functions/fn_auth.php       - registerUser()/loginUser()/... (the auth engine)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS `tblUsers` (
-    `userID`          INT UNSIGNED    NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing user identifier',
-    `email`           VARCHAR(255)    NOT NULL                 COMMENT '📧 User email address (unique, used for login)',
-    `passwordHash`    VARCHAR(255)    NOT NULL                 COMMENT '🔐 Password hash (bcrypt via password_hash())',
-    `displayName`     VARCHAR(100)    NULL                     COMMENT '📝 User display name',
-    `firstName`       VARCHAR(100)    NULL                     COMMENT '📝 User first name',
-    `lastName`        VARCHAR(100)    NULL                     COMMENT '📝 User last name',
-    `avatarPath`      VARCHAR(500)    NULL                     COMMENT '🖼️ Path to user avatar image',
-    `orgID`           INT UNSIGNED    NULL                     COMMENT '🏢 FK to tblOrganisations',
-    `roleID`          INT UNSIGNED    NULL                     COMMENT '🎭 User role (1=Global Admin, 2=Admin, 3=Regular User)',
-    `isActive`        TINYINT(1)      NOT NULL DEFAULT 1       COMMENT '✅ 1 = account active, 0 = deactivated',
-    `isVerified`      TINYINT(1)      NOT NULL DEFAULT 0       COMMENT '✅ 1 = email verified',
-    `lastLoginAt`     DATETIME        NULL                     COMMENT '📅 Last successful login timestamp',
-    `createdAt`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Account creation timestamp',
-    `updatedAt`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+    `userID`            INT UNSIGNED      NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing user identifier',
+    `email`             VARCHAR(255)      NOT NULL                 COMMENT '📧 User email address (unique, used for login/verification/reset - normalised lowercase before storage)',
+    `emailVerifiedAt`   DATETIME          NULL                     COMMENT '✅ Timestamp the email address was verified (NULL = not yet verified)',
+    `passwordHash`      VARCHAR(255)      NULL                     COMMENT '🔐 Password hash (Argon2id via password_hash(..., PASSWORD_ARGON2ID)) - NULL only for a future SSO-only account (Epic E2) with no local password set',
+    `displayName`       VARCHAR(100)      NULL                     COMMENT '📝 User display name',
+    `firstName`         VARCHAR(100)      NULL                     COMMENT '📝 User first name',
+    `lastName`          VARCHAR(100)      NULL                     COMMENT '📝 User last name',
+    `avatarPath`        VARCHAR(500)      NULL                     COMMENT '🖼️ Path to user avatar image',
+    `orgID`             INT UNSIGNED      NULL                     COMMENT '🏢 Home/primary organisation quick-lookup (fine-grained multi-organisation membership + per-org role lives in tblOrganisationMembers) - no FK here so tblUsers can be created before tblOrganisations in a fresh install run',
+    `roleID`            INT UNSIGNED      NULL                     COMMENT '🎭 Platform-wide role (1=Global Admin, 2=Admin, 3=Regular User) - distinct from the per-organisation role in tblOrganisationMembers.roleID',
+    `status`            ENUM(
+                            'active',
+                            'suspended',
+                            'pending',
+                            'deleted'
+                        )                 NOT NULL DEFAULT 'pending' COMMENT '📊 Account lifecycle status - pending until email verified, active thereafter, suspended by an administrator, or deleted via GDPR/CCPA self-service erasure (#37/#52 - see erasedAt below; a "deleted" account is ANONYMIZED in place, never a removed row, so referential integrity with tblSubscriptions/tblPayments/tblActivityLog survives)',
+    `failedLoginCount`  SMALLINT UNSIGNED NOT NULL DEFAULT 0       COMMENT '🔢 Consecutive failed login attempts since the last success - drives the lockedUntil lockout below',
+    `lockedUntil`       DATETIME          NULL                     COMMENT '🔒 Account locked until this timestamp (NULL = not locked) - set once failedLoginCount reaches the security.max_login_attempts setting',
+    `lastLoginAt`       DATETIME          NULL                     COMMENT '📅 Last successful login timestamp',
+    `erasedAt`          DATETIME          NULL                     COMMENT '🗑️ GDPR/CCPA self-service erasure timestamp (#37/#52 - POST /api/v1/account/erase) - NULL unless status=''deleted''. Set the moment PII (email/displayName/firstName/lastName/avatarPath/passwordHash) was anonymized; the row itself is kept (not hard-deleted) so tblSubscriptions/tblPayments/tblActivityLog retain a valid, referentially-intact FK for legal/financial audit retention. See DEV_NOTES.md "Account erasure: anonymize now, hard-purge later" for the owner-run hard-purge runbook that permanently removes rows past the retention window.',
+    `createdAt`         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Account creation timestamp',
+    `updatedAt`         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
 
     PRIMARY KEY (`userID`),
     UNIQUE KEY `idx_user_email` (`email`),
     INDEX `idx_user_org` (`orgID`),
-    INDEX `idx_user_active` (`isActive`)
+    INDEX `idx_user_status` (`status`),
+    INDEX `idx_user_locked` (`lockedUntil`)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='👤 User accounts (Phase 2 stub - schema only in Phase 1)';
+  COMMENT='👤 User accounts - Epic E3 stage 1 (registration, verification, login, sessions, password reset)';
 
 -- ==============================================================================
 -- 📋 Table 10: tblOrganisations (STUB - Phase 2)
@@ -392,19 +419,502 @@ CREATE TABLE IF NOT EXISTS `tblOrganisations` (
   COMMENT='🏢 Organisation accounts (Phase 2 stub - schema only in Phase 1)';
 
 -- ==============================================================================
+-- 📋 Table 11: tblEmailQueue (Epic E8, #29)
+-- ==============================================================================
+-- Outbound transactional email queue with retry/backoff support. Emails are
+-- NEVER sent synchronously inline with a user-facing request beyond the
+-- opportunistic ≤2-per-request shutdown hook (see fn_email.php
+-- maybeProcessEmailQueueOnShutdown() - gated OFF by default via the
+-- email_queue_autoprocess setting; a Dreamhost panel cron job hitting a
+-- small processor script is the recommended production path).
+--
+-- Rows are inserted by queueEmail() (fn_email.php) and consumed by
+-- processEmailQueue(), which claims due rows (status queued/failed AND
+-- nextAttemptAt <= NOW() AND attempts < maxAttempts), attempts a Microsoft
+-- Graph sendMail call, then transitions status:
+--   queued  -> sending -> sent              (success)
+--   queued  -> sending -> queued (backoff)   (failure, attempts < maxAttempts)
+--   queued  -> sending -> failed             (failure, attempts reaches maxAttempts)
+--
+-- Backoff schedule: nextAttemptAt = NOW() + (2 ^ attempts) MINUTES, computed by
+-- the pure/unit-tested computeEmailBackoffMinutes() helper in fn_email.php.
+--
+-- @see fn_email.php - queueEmail(), processEmailQueue(), computeEmailBackoffMinutes()
+-- @see https://dev.mysql.com/doc/refman/8.0/en/enum.html ENUM type
+-- @see https://dev.mysql.com/doc/refman/8.0/en/json.html JSON column type
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblEmailQueue` (
+    `emailID`         BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing email queue identifier',
+    `toAddress`       VARCHAR(320)      NOT NULL                 COMMENT '📧 Recipient email address (RFC 5321 max length 320)',
+    `toName`          VARCHAR(255)      NULL                     COMMENT '📝 Recipient display name (optional)',
+    `templateKey`     VARCHAR(64)       NOT NULL                 COMMENT '🏷️ Template identifier (e.g., verification, password_reset, invitation, receipt) - must match an allowlisted _includes/email_templates/{key}.php file',
+    `paramsJSON`      JSON              NULL                     COMMENT '📦 Template parameters as JSON (rendered fresh at send time; NEVER stores rendered HTML or secrets)',
+    `subject`         VARCHAR(255)      NOT NULL                 COMMENT '📝 Email subject line (rendered at queue time for admin visibility)',
+    `status`          ENUM(
+                          'queued',
+                          'sending',
+                          'sent',
+                          'failed',
+                          'skipped'
+                      )                 NOT NULL DEFAULT 'queued' COMMENT '📊 Current lifecycle status of this queued email',
+    `attempts`        INT UNSIGNED      NOT NULL DEFAULT 0       COMMENT '🔁 Number of send attempts made so far',
+    `maxAttempts`     INT UNSIGNED      NOT NULL DEFAULT 5       COMMENT '🔁 Maximum send attempts before permanently marking failed',
+    `lastError`       TEXT              NULL                     COMMENT '⚠️ Last error message (HTTP status/Graph error code only - never logs credentials or full response bodies)',
+    `nextAttemptAt`   DATETIME          NULL                     COMMENT '⏰ Earliest time this row is eligible to be picked up again (exponential backoff after a failure)',
+    `createdAt`       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Row creation (queue) timestamp',
+    `updatedAt`       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+    `sentAt`          DATETIME          NULL                     COMMENT '📅 Timestamp the email was successfully accepted by Microsoft Graph (HTTP 202)',
+
+    PRIMARY KEY (`emailID`),
+    INDEX `idx_email_status_next` (`status`, `nextAttemptAt`),
+    INDEX `idx_email_template` (`templateKey`),
+    INDEX `idx_email_created` (`createdAt`)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='📧 Outbound transactional email queue with retry/backoff (Microsoft Graph sendMail, Epic E8)';
+
+-- ==============================================================================
+-- 📋 Table 12: tblUserSessions (Epic E3 stage 1 - #14)
+-- ==============================================================================
+-- Database-backed authenticated user sessions, independent of the PHP session
+-- store. A random 64-hex-character token is issued on successful login
+-- (fn_auth.php issueUserSession()), stored server-side only, and referenced
+-- from the PHP session ($_SESSION['cuercode_user_session_id']). Keeping this
+-- as its own table (rather than relying solely on PHP native sessions) allows
+-- targeted revocation (logout, password reset, a future "sign out this
+-- device" UI) without depending on the PHP session storage backend.
+--
+-- @see _functions/fn_auth.php - issueUserSession(), currentUser(), logoutCurrentUser()
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblUserSessions` (
+    `sessionID`   CHAR(64)        NOT NULL                 COMMENT '🔑 Primary key - random 64-char hex session token (bin2hex(random_bytes(32)))',
+    `userID`      INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the authenticated user this session belongs to',
+    `ipAddress`   VARCHAR(45)     NULL                     COMMENT '🌍 Client IP address at session creation (IPv4/IPv6)',
+    `userAgent`   VARCHAR(500)    NULL                     COMMENT '🖥️ Client user agent string at session creation',
+    `createdAt`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Session creation (login) timestamp',
+    `lastSeenAt`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Last time this session authenticated a request (opportunistically bumped by currentUser())',
+    `expiresAt`   DATETIME        NOT NULL                 COMMENT '⏰ Absolute session expiry timestamp (createdAt + security.session_lifetime)',
+    `revokedAt`   DATETIME        NULL                     COMMENT '🚫 Explicit revocation timestamp (logout, password reset, or a future admin action) - NULL = not revoked',
+
+    PRIMARY KEY (`sessionID`),
+    INDEX `idx_session_user` (`userID`),
+    INDEX `idx_session_expiry` (`expiresAt`),
+    INDEX `idx_session_revoked` (`revokedAt`),
+
+    CONSTRAINT `fk_session_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🎫 Authenticated user sessions, database-backed and independently revocable - Epic E3 stage 1';
+
+-- ==============================================================================
+-- 📋 Table 13: tblPasswordResets (Epic E3 stage 1 - #15)
+-- ==============================================================================
+-- Single-use, expiring password reset tokens. Only the SHA-256 hash of the
+-- random raw token is ever stored - the raw token is emailed once (via the
+-- password_reset template) and never persisted. requestPasswordReset()
+-- inserts a row; resetPasswordWithToken() atomically claims it (usedAt IS
+-- NULL guard) before applying the new password.
+--
+-- @see _functions/fn_auth.php - requestPasswordReset(), resetPasswordWithToken()
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblPasswordResets` (
+    `resetID`    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing reset request identifier',
+    `userID`     INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the account this reset token applies to',
+    `tokenHash`  CHAR(64)        NOT NULL                 COMMENT '🔐 SHA-256 hash of the random reset token (the raw token itself is never stored)',
+    `expiresAt`  DATETIME        NOT NULL                 COMMENT '⏰ Token expiry timestamp (short-lived, default 60 minutes)',
+    `usedAt`     DATETIME        NULL                     COMMENT '✅ Timestamp the token was consumed (NULL = still unused) - enforces single-use',
+    `requestIP`  VARCHAR(45)     NULL                     COMMENT '🌍 IP address that requested this reset (audit trail)',
+    `createdAt`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Token creation timestamp',
+
+    PRIMARY KEY (`resetID`),
+    UNIQUE KEY `idx_reset_token_hash` (`tokenHash`),
+    INDEX `idx_reset_user` (`userID`),
+    INDEX `idx_reset_expiry` (`expiresAt`),
+
+    CONSTRAINT `fk_reset_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🔑 Single-use, expiring password reset tokens (hashed at rest) - Epic E3 stage 1';
+
+-- ==============================================================================
+-- 📋 Table 14: tblEmailVerifications (Epic E3 stage 1 - #12)
+-- ==============================================================================
+-- Single-use, expiring email verification tokens issued at registration.
+-- Only the SHA-256 hash of the random raw token is stored; the raw token is
+-- emailed once (via the verification template). verifyEmailToken() atomically
+-- claims the row (usedAt IS NULL guard) then flips the owning user from
+-- pending to active.
+--
+-- @see _functions/fn_auth.php - registerUser(), verifyEmailToken()
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblEmailVerifications` (
+    `verificationID` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing verification request identifier',
+    `userID`         INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the account this verification token applies to',
+    `tokenHash`      CHAR(64)        NOT NULL                 COMMENT '🔐 SHA-256 hash of the random verification token (the raw token itself is never stored)',
+    `expiresAt`      DATETIME        NOT NULL                 COMMENT '⏰ Token expiry timestamp (default 24 hours)',
+    `usedAt`         DATETIME        NULL                     COMMENT '✅ Timestamp the token was consumed (NULL = still unused) - enforces single-use',
+    `createdAt`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Token creation timestamp',
+
+    PRIMARY KEY (`verificationID`),
+    UNIQUE KEY `idx_verification_token_hash` (`tokenHash`),
+    INDEX `idx_verification_user` (`userID`),
+    INDEX `idx_verification_expiry` (`expiresAt`),
+
+    CONSTRAINT `fk_verification_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='📧 Single-use, expiring email verification tokens (hashed at rest) - Epic E3 stage 1';
+
+-- ==============================================================================
+-- 📋 Table 15: tblUserOAuth (Epic E2 - #55/#19/#20/#28 - client code BUILT)
+-- ==============================================================================
+-- Linked external SSO/OAuth identities per local user account. This schema
+-- was created in Epic E3 stage 1 (the whole trust-boundary schema shipped
+-- together) and is now BACKED by a real OIDC authorization-code+PKCE client
+-- (_functions/fn_oauth.php, Epic E2, #55/#19/#20/#28) - Microsoft 365 and
+-- Google are fully wired; 'signula' remains present in the ENUM below but
+-- stays structurally INERT (its seeded discovery URL is empty) pending
+-- upstream OIDC support in the SIGNula.id repo (issue #88).
+-- Every SSO identity MUST link to a local tblUsers account (ProjectBrief section 5.3),
+-- never stand alone - see fn_oauth.php's decideOAuthAccountLinkAction() for
+-- the conservative (anti-account-takeover) linking decision table.
+--
+-- @see PROJECT_ROADMAP.md - Epic E2 (SIGNula.id SSO sign-in)
+-- @see _functions/fn_oauth.php - the OAuth2/OIDC client engine
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblUserOAuth` (
+    `oauthID`            INT UNSIGNED  NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing linked-identity identifier',
+    `userID`             INT UNSIGNED  NOT NULL                 COMMENT '👤 FK to tblUsers - the local account this external identity is linked to',
+    `provider`           ENUM(
+                             'signula',
+                             'microsoft',
+                             'google',
+                             'apple',
+                             'facebook'
+                         )             NOT NULL                 COMMENT '🌐 SSO/OAuth provider identifier (Epic E2)',
+    `providerSubjectID`  VARCHAR(255)  NOT NULL                 COMMENT '🆔 The stable subject/user identifier issued by the provider (e.g. an OIDC "sub" claim)',
+    `tokensEncrypted`    TEXT          NULL                     COMMENT '🔐 AES-256-GCM-encrypted provider token bundle (access/refresh) via encryptValue() - populated once Epic E2 ships',
+    `linkedAt`           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Timestamp this identity was linked to the local account',
+
+    PRIMARY KEY (`oauthID`),
+    UNIQUE KEY `idx_oauth_provider_subject` (`provider`, `providerSubjectID`),
+    UNIQUE KEY `idx_oauth_user_provider` (`userID`, `provider`),
+    INDEX `idx_oauth_user` (`userID`),
+
+    CONSTRAINT `fk_oauth_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🔗 Linked external SSO/OAuth identities per user (Epic E2, #55/#19/#20/#28 - Microsoft/Google client code BUILT; signula inert pending upstream)';
+
+-- ==============================================================================
+-- 📋 Table 16: tblWebAuthnCredentials (G-006 schema stub - not implemented until E3 stage 7)
+-- ==============================================================================
+-- WebAuthn/passkey credentials. Schema-only this stage - no registration or
+-- assertion verification code exists yet; that is Epic E3 stage 7, gated on
+-- G-006 (self-hosted, no-Composer FIDO2 implementation evaluation).
+--
+-- @see PROJECT_ROADMAP.md - Epic E3 stage 7 (WebAuthn/passkeys)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblWebAuthnCredentials` (
+    `webauthnID`    INT UNSIGNED    NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing credential identifier',
+    `userID`        INT UNSIGNED    NOT NULL                 COMMENT '👤 FK to tblUsers - the owning account',
+    `credentialID`  VARCHAR(255)    NOT NULL                 COMMENT '🆔 Base64url-encoded WebAuthn credential ID (unique per registered authenticator)',
+    `publicKey`     TEXT            NOT NULL                 COMMENT '🔐 Base64-encoded COSE public key bytes, used to verify future assertions',
+    `signCount`     BIGINT UNSIGNED NOT NULL DEFAULT 0       COMMENT '🔢 Authenticator signature counter, used for cloned-authenticator detection',
+    `transports`    VARCHAR(255)    NULL                     COMMENT '🔌 Comma-separated transport hints (usb, nfc, ble, internal)',
+    `nickname`      VARCHAR(100)    NULL                     COMMENT '📝 User-assigned label for this passkey/security key',
+    `createdAt`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Registration timestamp',
+    `lastUsedAt`    DATETIME        NULL                     COMMENT '📅 Last time this credential was used to authenticate',
+
+    PRIMARY KEY (`webauthnID`),
+    UNIQUE KEY `idx_webauthn_credential_id` (`credentialID`),
+    INDEX `idx_webauthn_user` (`userID`),
+
+    CONSTRAINT `fk_webauthn_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🔐 WebAuthn/passkey credentials (G-006 schema stub - not implemented until Epic E3 stage 7)';
+
+-- ==============================================================================
+-- 📋 Table 17: tblOrganisationMembers (Epic E3 org stage schema stub)
+-- ==============================================================================
+-- Organisation membership and per-organisation role assignment. Schema-only
+-- this stage - creation UI, role management, and enforcement are Epic E3's
+-- second (organisations) stage.
+--
+-- @see PROJECT_ROADMAP.md - Epic E3 stage 6 (Organisations - second stage)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblOrganisationMembers` (
+    `orgMemberID`  INT UNSIGNED  NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing membership identifier',
+    `orgID`        INT UNSIGNED  NOT NULL                 COMMENT '🏢 FK to tblOrganisations',
+    `userID`       INT UNSIGNED  NOT NULL                 COMMENT '👤 FK to tblUsers',
+    `roleID`       INT UNSIGNED  NOT NULL DEFAULT 3       COMMENT '🎭 Organisation-scoped role (1=Global Admin, 2=Admin, 3=Regular User per the project role model)',
+    `joinedAt`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Timestamp this user joined the organisation',
+
+    PRIMARY KEY (`orgMemberID`),
+    UNIQUE KEY `idx_org_member_unique` (`orgID`, `userID`),
+    INDEX `idx_org_member_user` (`userID`),
+
+    CONSTRAINT `fk_org_member_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_org_member_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🏢 Organisation membership and per-organisation role (schema stub - org UI/logic deferred to a later E3 stage)';
+
+-- ==============================================================================
+-- 📋 Table 18: tblInvitations (Epic E3 org stage schema stub)
+-- ==============================================================================
+-- Pending/accepted organisation invitations, tokenised the same way as
+-- password reset / email verification (hashed at rest, single use). Schema-
+-- only this stage - sending/accepting invitations needs E8 email (already
+-- available) and the organisations UI, which is a later E3 stage.
+--
+-- @see PROJECT_ROADMAP.md - Epic E3 stage 6 (Organisations - second stage)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblInvitations` (
+    `invitationID`     INT UNSIGNED  NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing invitation identifier',
+    `orgID`            INT UNSIGNED  NOT NULL                 COMMENT '🏢 FK to tblOrganisations - the organisation being invited into',
+    `email`            VARCHAR(255)  NOT NULL                 COMMENT '📧 Invited email address (need not yet have a tblUsers row)',
+    `tokenHash`        CHAR(64)      NOT NULL                 COMMENT '🔐 SHA-256 hash of the random invitation token (the raw token itself is never stored)',
+    `roleID`           INT UNSIGNED  NOT NULL DEFAULT 3       COMMENT '🎭 Role the invitee will receive on acceptance',
+    `invitedByUserID`  INT UNSIGNED  NULL                     COMMENT '👤 FK to tblUsers - who sent the invitation (NULL if the inviting account is later deleted)',
+    `expiresAt`        DATETIME      NOT NULL                 COMMENT '⏰ Invitation expiry timestamp',
+    `acceptedAt`       DATETIME      NULL                     COMMENT '✅ Timestamp the invitation was accepted (NULL = pending)',
+    `createdAt`        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Invitation creation timestamp',
+
+    PRIMARY KEY (`invitationID`),
+    UNIQUE KEY `idx_invitation_token_hash` (`tokenHash`),
+    INDEX `idx_invitation_org` (`orgID`),
+    INDEX `idx_invitation_email` (`email`),
+    INDEX `idx_invitation_expiry` (`expiresAt`),
+
+    CONSTRAINT `fk_invitation_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_invitation_inviter` FOREIGN KEY (`invitedByUserID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='✉️ Pending/accepted organisation invitations (schema stub - org UI/logic deferred to a later E3 stage)';
+
+-- ==============================================================================
+-- 📋 Table 19: tblSubscriptionPlans (Epic E4 - #25/#26/#53, PROJECT_ROADMAP.md
+--    "Premium Tier Design")
+-- ==============================================================================
+-- 💳 THE SINGLE SOURCE OF TRUTH for every premium tier CueRCode offers. This
+-- table is deliberately DATA-DRIVEN so that adding a brand-new tier, moving a
+-- feature between tiers, or changing a price point NEVER requires a code
+-- deploy - only an INSERT/UPDATE against this table (via the admin plan
+-- editor once it ships, or directly via SQL/phpMyAdmin today). The gating
+-- engine (`_functions/fn_features.php`) reads featuresJSON/limitsJSON with
+-- fully GENERIC key lookups - it contains zero per-feature/per-tier branches,
+-- so a key that does not exist yet in any plan's JSON simply resolves to a
+-- fail-closed default (false / 0) until an admin adds it to a plan row.
+--
+-- featuresJSON shape - a flat JSON object of booleans, e.g.:
+--   {"expiry_scheduling": true, "password_protected_qr": true, "sso": false,
+--    "organisations": false, "webhooks": true, "csv_export": true}
+--
+-- limitsJSON shape - a flat JSON object of integers, where -1 means
+-- UNLIMITED, e.g.:
+--   {"saved_codes": 500, "bulk_batch_size": 500, "dynamic_codes": 100,
+--    "api_keys": 5, "analytics_days": 90, "api_rate_limit_per_min": 120,
+--    "api_rate_limit_per_day": 20000}
+--
+-- To add a new tier: INSERT a new row with a unique planKey and its own
+-- featuresJSON/limitsJSON - `fn_features.php` resolves ANY planKey found on
+-- an active tblSubscriptions row with no code change whatsoever. To add a
+-- new gated feature/limit to the app: just start reading it via
+-- featureEnabled()/limitFor() in the new code path, then set its value on
+-- whichever plan rows should have it (defaults to denied/0 everywhere it is
+-- absent, so a rollout is opt-in per plan). See DEV_NOTES.md "How to add or
+-- modify a premium tier" for the full walkthrough + worked SQL examples.
+--
+-- @see https://dev.mysql.com/doc/refman/8.0/en/json.html JSON column type
+-- @see _functions/fn_features.php - planByKey(), featureEnabled(), limitFor()
+-- @see seed_data.sql - the four seeded tiers (anonymous/free/pro/business)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblSubscriptionPlans` (
+    `planID`        INT UNSIGNED    NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing plan identifier',
+    `planKey`       VARCHAR(32)     NOT NULL                 COMMENT '🏷️ Machine-readable UNIQUE plan key (anonymous, free, pro, business, or any future custom tier) - this is the only value fn_features.php ever matches against, never a hardcoded name',
+    `planName`      VARCHAR(100)    NOT NULL                 COMMENT '📝 Human-readable display name (e.g. "Pro")',
+    `description`   VARCHAR(500)    NULL                     COMMENT '📖 Short marketing description for a future pricing/plan-selection page',
+    `priceMonthly`  DECIMAL(10,2)   NOT NULL DEFAULT 0.00    COMMENT '💷 Monthly price in `currency` (0.00 for the anonymous/free tiers) - admin-editable config, not code',
+    `priceYearly`   DECIMAL(10,2)   NOT NULL DEFAULT 0.00    COMMENT '💷 Yearly price in `currency` (0.00 for the anonymous/free tiers) - admin-editable config, not code',
+    `currency`      CHAR(3)         NOT NULL DEFAULT 'GBP'   COMMENT '💱 ISO 4217 currency code the two price columns above are denominated in',
+    `featuresJSON`  JSON            NOT NULL                 COMMENT '🚩 Flat JSON object of boolean feature flags for this tier - SINGLE SOURCE OF TRUTH read generically by fn_features.php::featureEnabled(); see this table''s header comment for the shape',
+    `limitsJSON`    JSON            NOT NULL                 COMMENT '🔢 Flat JSON object of numeric limits for this tier (-1 = unlimited) - SINGLE SOURCE OF TRUTH read generically by fn_features.php::limitFor(); see this table''s header comment for the shape',
+    `isActive`      TINYINT(1)      NOT NULL DEFAULT 1       COMMENT '✅ 1 = selectable/resolvable, 0 = retired (existing subscribers keep their subscription row; the plan is just hidden from new signups)',
+    `sortOrder`     INT             NOT NULL DEFAULT 0       COMMENT '📊 Display order for a future pricing page / admin plan editor (E3 admin stage)',
+    `createdAt`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Record creation timestamp',
+    `updatedAt`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+
+    PRIMARY KEY (`planID`),
+    UNIQUE KEY `idx_plan_key` (`planKey`),
+    INDEX `idx_plan_active_sort` (`isActive`, `sortOrder`)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💳 Extensible, data-driven subscription tier definitions (Epic E4) - plans/features/limits/prices are 100% DB config, admin-editable, zero-code-change extensible';
+
+-- ==============================================================================
+-- 📋 Table 20: tblSubscriptions (Epic E4 - #25/#26/#53)
+-- ==============================================================================
+-- Links a subscribing subject - EITHER an individual user OR an organisation,
+-- never both - to the plan they are currently on. `fn_features.php` resolves
+-- the caller's EFFECTIVE plan by looking up the single ACTIVE-ish (active /
+-- trialing / past_due) row here for their userID/orgID; cancelled/expired
+-- rows are historical and no longer resolve (the subject falls back to the
+-- free/anonymous plan on next resolution).
+--
+-- Exactly one active/trialing/past_due subscription per subject (userID OR
+-- orgID) is an APPLICATION-LEVEL invariant enforced by the (deferred) plan
+-- change / webhook handling code, not a DB constraint - MySQL cannot express
+-- "at most one row where status IN (...)" per nullable FK declaratively
+-- without a generated/virtual-column workaround that would needlessly
+-- complicate a table that is intentionally simple pending the E4 payments
+-- stage.
+--
+-- @see _functions/fn_features.php - resolveActiveSubscription(), planForUser(), planForOrg()
+-- @see PROJECT_ROADMAP.md - Epic E4 "Enforcement design"
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblSubscriptions` (
+    `subscriptionID`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing subscription identifier',
+    `userID`                  INT UNSIGNED    NULL                     COMMENT '👤 FK tblUsers - the subscribing individual account (NULL when this is an org-level subscription instead)',
+    `orgID`                   INT UNSIGNED    NULL                     COMMENT '🏢 FK tblOrganisations - the subscribing organisation (NULL when this is an individual subscription instead). Exactly one of userID/orgID is expected to be non-NULL per row - see this table''s header comment',
+    `planID`                  INT UNSIGNED    NOT NULL                 COMMENT '🔗 FK tblSubscriptionPlans - the plan this subscription currently grants',
+    `status`                  ENUM(
+                                  'active',
+                                  'trialing',
+                                  'past_due',
+                                  'cancelled',
+                                  'expired'
+                              )             NOT NULL DEFAULT 'active' COMMENT '📊 Lifecycle status - past_due keeps READ access to existing gated objects but the gating engine downgrades the EFFECTIVE plan for CREATING new gated objects until payment recovers (fn_features.php); cancelled/expired subscriptions simply stop resolving (subject falls back to the free/anonymous plan)',
+    `currentPeriodStart`      DATETIME        NULL                     COMMENT '📅 Start of the current billing period (owner-facing display + proration math once payments ship)',
+    `currentPeriodEnd`        DATETIME        NULL                     COMMENT '📅 End of the current billing period - the (deferred) PayPal webhook renews this on each successful billing-cycle payment',
+    `provider`                VARCHAR(32)     NULL                     COMMENT '🏦 Payment provider identifier (paypal, ...) - NULL for a manually-granted/comp subscription with no external billing relationship',
+    `providerSubscriptionRef` VARCHAR(255)    NULL                     COMMENT '🆔 The provider-side subscription/agreement identifier (e.g. a PayPal subscription ID such as I-XXXXXXXXXXXX) - used to correlate inbound webhook events back to this row',
+    `createdAt`               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Subscription record creation timestamp',
+    `updatedAt`               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+
+    PRIMARY KEY (`subscriptionID`),
+    INDEX `idx_subscription_user` (`userID`, `status`),
+    INDEX `idx_subscription_org` (`orgID`, `status`),
+    INDEX `idx_subscription_plan` (`planID`),
+    INDEX `idx_subscription_provider_ref` (`providerSubscriptionRef`),
+
+    CONSTRAINT `fk_subscription_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_subscription_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_subscription_plan` FOREIGN KEY (`planID`)
+        REFERENCES `tblSubscriptionPlans` (`planID`)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💳 Active/historical subscriptions linking a user OR an organisation to a plan (Epic E4)';
+
+-- ==============================================================================
+-- 📋 Table 21: tblPayments (Epic E4 - #25/#26/#53, SCHEMA ONLY this stage)
+-- ==============================================================================
+-- Payment/transaction ledger per subscription. This table is created now so
+-- the NEXT E4 stage (the PayPal Subscriptions webhook listener, owner-gated
+-- on PayPal business credentials - see DEV_NOTES.md "Deferred: PayPal
+-- Subscriptions webhook") has somewhere to write to on day one; nothing in
+-- this codebase populates it yet.
+--
+-- `providerTxnRef` is UNIQUE so that a re-delivered webhook event (PayPal, or
+-- any provider, routinely retries delivery until it gets a 2xx) is processed
+-- IDEMPOTENTLY - a second INSERT attempt for the same providerTxnRef fails
+-- the unique constraint and the webhook handler treats that as "already
+-- processed, no-op" rather than double-crediting a payment.
+--
+-- The FK to tblSubscriptions uses ON DELETE RESTRICT (not CASCADE, unlike
+-- most FKs in this file) deliberately - a payment/financial audit record
+-- must never silently disappear as a side effect of deleting its parent
+-- subscription row; deleting a subscription with payment history attached
+-- must fail loudly and be a conscious, separate decision.
+--
+-- @see PROJECT_ROADMAP.md - Epic E4 "Enforcement design" point 5
+-- @see DEV_NOTES.md - "Deferred: PayPal Subscriptions webhook" for the full plan
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblPayments` (
+    `paymentID`       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing payment identifier',
+    `subscriptionID`  BIGINT UNSIGNED NOT NULL                 COMMENT '🔗 FK tblSubscriptions - the subscription this payment applies to',
+    `provider`        VARCHAR(32)     NOT NULL                 COMMENT '🏦 Payment provider identifier (paypal, ...)',
+    `providerTxnRef`  VARCHAR(255)    NOT NULL                 COMMENT '🆔 Provider transaction/event identifier - UNIQUE so a re-delivered webhook is idempotent (a duplicate INSERT attempt simply fails and is treated as already-processed)',
+    `amount`          DECIMAL(10,2)   NOT NULL                 COMMENT '💷 Amount captured/refunded, denominated in `currency`',
+    `currency`        CHAR(3)         NOT NULL DEFAULT 'GBP'   COMMENT '💱 ISO 4217 currency code for `amount`',
+    `status`          VARCHAR(32)     NOT NULL DEFAULT 'completed' COMMENT '📊 Provider-reported payment status (completed, refunded, failed, reversed, ...) - deliberately free text (not an ENUM) because it mirrors the payment provider''s own vocabulary rather than an internal state machine, and a future second provider may use different terms',
+    `rawWebhookJSON`  JSON            NULL                     COMMENT '📦 Full raw webhook payload for audit/debugging/replay - schema-only this stage; populated once the PayPal webhook listener ships (public_html/api/v1/webhooks/paypal/, see DEV_NOTES.md)',
+    `createdAt`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Payment record creation timestamp',
+
+    PRIMARY KEY (`paymentID`),
+    UNIQUE KEY `idx_payment_provider_txn` (`providerTxnRef`),
+    INDEX `idx_payment_subscription` (`subscriptionID`),
+    INDEX `idx_payment_created` (`createdAt`),
+
+    CONSTRAINT `fk_payment_subscription` FOREIGN KEY (`subscriptionID`)
+        REFERENCES `tblSubscriptions` (`subscriptionID`)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💳 Payment/transaction log per subscription (schema only this stage - populated by the deferred PayPal webhook listener)';
+
+-- ==============================================================================
 -- ✅ Installation Complete
 -- ==============================================================================
--- All 10 tables have been created:
---   1. tblSettings          - Application configuration
---   2. tblErrorLog          - Error/exception logging
---   3. tblActivityLog       - Activity tracking
---   4. tblQRCodeTypes       - QR code type definitions
---   5. tblQRCodes           - Generated QR code records
---   6. tblPredefinedLogos   - Predefined logo library
---   7. tblAPIKeys           - API key management
---   8. tblAPIRateLog        - API rate limiting
---   9. tblUsers             - User accounts (Phase 2 stub)
---  10. tblOrganisations     - Organisation accounts (Phase 2 stub)
+-- All 21 tables have been created:
+--   1. tblSettings              - Application configuration (now incl. per-record encryptionSalt, F-006/G-010)
+--   2. tblErrorLog              - Error/exception logging
+--   3. tblActivityLog           - Activity tracking
+--   4. tblQRCodeTypes           - QR code type definitions
+--   5. tblQRCodes               - Generated QR code records
+--   6. tblPredefinedLogos       - Predefined logo library
+--   7. tblAPIKeys               - API key management
+--   8. tblAPIRateLog            - API rate limiting
+--   9. tblUsers                 - User accounts (Epic E3 stage 1 - #11/#12/#14/#15)
+--  10. tblOrganisations         - Organisation accounts
+--  11. tblEmailQueue            - Outbound email queue with retry/backoff (Epic E8)
+--  12. tblUserSessions          - Authenticated user sessions (Epic E3 stage 1 - #14)
+--  13. tblPasswordResets        - Password reset tokens (Epic E3 stage 1 - #15)
+--  14. tblEmailVerifications    - Email verification tokens (Epic E3 stage 1 - #12)
+--  15. tblUserOAuth             - Linked SSO/OAuth identities (Epic E2, #55/#19/#20/#28 - client code BUILT)
+--  16. tblWebAuthnCredentials   - WebAuthn/passkey credentials (G-006 schema stub)
+--  17. tblOrganisationMembers   - Organisation membership + roles (Epic E3 org stage stub)
+--  18. tblInvitations           - Organisation invitations (Epic E3 org stage stub)
+--  19. tblSubscriptionPlans     - Data-driven premium tier definitions (Epic E4, #25/#26/#53)
+--  20. tblSubscriptions         - User/org subscriptions to a plan (Epic E4, #25/#26/#53)
+--  21. tblPayments              - Payment ledger, schema only (Epic E4, #25/#26/#53)
 --
 -- 📌 Next step: Run seed_data.sql to populate initial data.
 -- ==============================================================================

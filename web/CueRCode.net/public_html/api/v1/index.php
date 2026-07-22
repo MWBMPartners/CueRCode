@@ -4,6 +4,8 @@
  * 🌐 CueRCode - REST API v1 Router
  * ==============================================================================
  *
+ * Path: public_html/api/v1/index.php
+ *
  * Central entry point for all REST API v1 requests. All requests are routed
  * here via .htaccess RewriteRule, which passes the request path as the
  * 'route' query parameter.
@@ -21,18 +23,58 @@
  * Registered routes:
  *   POST   /api/v1/generate          Generate a full QR code
  *   POST   /api/v1/preview           Generate a preview QR code
+ *   POST   /api/v1/bulk-generate     Generate many QR codes -> ZIP (anonymous)
  *   GET    /api/v1/download/{uuid}   Download a previously generated QR code
  *   GET    /api/v1/types             List available QR code types
  *   GET    /api/v1/formats           List supported output formats
  *   GET    /api/v1/health            Health check endpoint
+ *   POST   /api/v1/save              Save a generated QR code to the caller's account (Epic E3 stage 2a)
+ *   GET    /api/v1/qrcodes           List the caller's OWN saved QR codes (paginated)
+ *   GET    /api/v1/qrcodes/{uuid}    Fetch one saved QR code (owner or public only)
+ *   PATCH  /api/v1/qrcodes/{uuid}    Update a saved QR code the caller OWNS
+ *   DELETE /api/v1/qrcodes/{uuid}    Soft-delete a saved QR code the caller OWNS
+ *   PATCH  /api/v1/account/profile           Update the caller's OWN display name/avatar (Epic E3 stage 2b) [SESSION-ONLY, F-026]
+ *   GET    /api/v1/account/sessions          List ONLY the caller's OWN active sessions [SESSION-ONLY, F-026]
+ *   DELETE /api/v1/account/sessions/{id}     Revoke ONE of the caller's OWN sessions [SESSION-ONLY, F-026]
+ *   POST   /api/v1/account/change-password   Change the caller's OWN password [SESSION-ONLY, F-026]
+ *   GET    /api/v1/account/export            Download a complete JSON export of the caller's OWN data (#37/#52) [SESSION-ONLY, F-026]
+ *   POST   /api/v1/account/erase             Erase the caller's OWN account by anonymization (#37/#52) [SESSION-ONLY, F-026]
+ *   POST   /api/v1/keys                      Create a self-service API key (Epic E7 stage 1, #54) [SESSION-ONLY]
+ *   GET    /api/v1/keys                      List ONLY the caller's OWN API keys (never the secret) [SESSION-ONLY]
+ *   POST   /api/v1/keys/{id}/rotate          Rotate an API key the caller OWNS [SESSION-ONLY]
+ *   DELETE /api/v1/keys/{id}                 Revoke an API key the caller OWNS [SESSION-ONLY]
  *
  * Authentication:
  *   - X-API-Key header: API key authentication for external consumers
  *   - X-CSRF-Token header: Session-based auth for web UI AJAX calls
- *   - Anonymous: Allowed for health, types, and formats endpoints
+ *   - Anonymous: Allowed for health, types, formats, and bulk-generate endpoints
+ *
+ * Scope enforcement (Epic E7 stage 1, #54):
+ *   - A route's 'requiredScope' (string, or an array keyed by HTTP method for
+ *     a shared multi-method route) is checked ONLY when the request
+ *     authenticated via X-API-Key - session/CSRF requests are NEVER
+ *     scope-limited (full user rights). A key missing the required scope
+ *     gets 403 INSUFFICIENT_SCOPE listing the missing scope.
+ *   - See fn_api_keys.php (CUERCODE_API_KEY_SCOPE_ALLOWLIST) for the scope
+ *     taxonomy and fn_api_auth.php (apiKeyRequestHasScope()) for the check.
+ *
+ * Session-only management routes (F-026, fn_api_auth.php - isInteractiveSessionAuth()):
+ *   - The ten routes marked [SESSION-ONLY] above stay 'auth' => true /
+ *     'requiredScope' => null in THIS route table (any authenticated caller
+ *     reaches the handler), but every one of their handlers additionally
+ *     REFUSES an X-API-Key-authenticated request with 403
+ *     ACCOUNT_MANAGEMENT_FORBIDDEN (account/*) or 403
+ *     API_KEY_MANAGEMENT_FORBIDDEN (keys/*) - see fn_api_account.php's
+ *     accountManagementAllowedFor() and fn_api_keys.php's
+ *     apiKeyManagementAllowedFor(), both of which now delegate to the SAME
+ *     shared primitive, isInteractiveSessionAuth(). No 'requiredScope'
+ *     value could express this correctly (a key can never be granted
+ *     "account management" as a scope) - only a real interactive session
+ *     may manage the account or its API keys.
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/reserved.variables.server.php
@@ -60,8 +102,17 @@ require_once __DIR__ . '/../../../_includes/bootstrap.php';
 $apiFunctionFiles = [
     'fn_api_auth.php',       // 🔐 Authentication & rate limiting
     'fn_api_generate.php',   // 🎯 Generate & preview handlers
+    'fn_api_bulk.php',       // 📦 Bulk generate handler (ZIP)
     'fn_api_download.php',   // 📥 Download handler
     'fn_api_types.php',      // 📋 Types, formats & health check handlers
+    'fn_password.php',       // 🔑 Argon2id password hashing (Epic E3 stage 1) - loaded before fn_auth.php
+    'fn_email.php',          // 📧 queueEmail() (Epic E8) - needed by fn_auth.php's verification/reset emails
+    'fn_auth.php',           // 🔐 Registration/login/session/reset engine (Epic E3 stage 1)
+    'fn_api_accounts.php',   // 🌐 Account HTTP handlers (Epic E3 stage 1)
+    'fn_features.php',       // 💳 Premium tier / feature gating engine (Epic E4/#53) - planForUser(), featureEnabled(), limitFor()
+    'fn_api_qrcodes.php',    // 📚 Saved-codes API: /save, /qrcodes CRUD, ownership predicates (Epic E3 stage 2a, #52/#24)
+    'fn_api_account.php',    // 👤 Own-account dashboard API: profile/avatar, sessions, change-password (Epic E3 stage 2b, #52/#12/#14/#23/#24)
+    'fn_api_keys.php',       // 🔑 Self-service API keys: /keys CRUD, scope taxonomy, ownership predicates (Epic E7 stage 1, #54)
 ];
 
 foreach ($apiFunctionFiles as $apiFile) {
@@ -84,15 +135,16 @@ foreach ($apiFunctionFiles as $apiFile) {
 // ==============================================================================
 
 if (!headers_sent()) {
-    // 📌 Allow configured origins (default: all origins)
-    if (function_exists('getConfig')) {
-        $corsOrigin = getConfig('api_cors_allowed_origins', '*');
-    } else {
-        $corsOrigin = '*';
+    // 📌 Allow only allowlisted origins (🔐 F-001 - no wildcard default).
+    // emitCorsHeaders() is defined in fn_response.php (loaded via bootstrap)
+    // and reflects only an exact-match allowed Origin, adding Vary: Origin.
+    // Same-origin web UI requests are unaffected (no cross-origin ACAO needed).
+    // @see fn_response.php - emitCorsHeaders()
+    if (function_exists('emitCorsHeaders')) {
+        emitCorsHeaders();
     }
 
-    header('Access-Control-Allow-Origin: ' . $corsOrigin);
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, X-API-Key, X-CSRF-Token, Accept');
     header('Access-Control-Max-Age: 86400');
 
@@ -156,11 +208,22 @@ if ($route !== '') {
 // 📋 Route Definitions
 // ==============================================================================
 // Each route is defined with:
-//   - 'pattern'   (string)    Route pattern (with {param} placeholders)
-//   - 'methods'   (array)     Allowed HTTP methods
-//   - 'handler'   (string)    Handler function name
-//   - 'auth'      (bool)      Whether authentication is required
-//   - 'rateLimit' (bool)      Whether rate limiting applies
+//   - 'pattern'         (string)      Route pattern (with {param} placeholders)
+//   - 'methods'         (array)       Allowed HTTP methods
+//   - 'handler'         (string)      Handler function name
+//   - 'auth'            (bool)        Whether authentication is required
+//   - 'rateLimit'       (bool)        Whether rate limiting applies
+//   - 'requiredFeature' (string|null) Epic E4/#53 - a tblSubscriptionPlans
+//     featuresJSON key (e.g. 'webhooks') that must be enabled on the caller's
+//     plan for this route to proceed, or null for no feature gate. UNUSED
+//     (every route below is null) as of this framework stage - no existing
+//     route needs a boolean feature gate yet (the one gate this stage wires,
+//     bulk-generate's item-count cap, is a LIMIT, not a boolean feature, so
+//     it is enforced inside handleBulkGenerate() via limitFor() instead, not
+//     here). The dispatch section below already calls requireFeatureOr402()
+//     whenever a future route sets this to a non-null key - see "🔐 Feature
+//     Gate (Epic E4/#53)" further down - so adding a gated route later is a
+//     one-line change to that route's definition, zero router-logic changes.
 // ==============================================================================
 
 /**
@@ -175,6 +238,8 @@ $routes = [
         'handler'   => 'handleGenerate',
         'auth'      => true,
         'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => 'generate',
     ],
 
     // 📌 POST /api/v1/preview - Generate a preview QR code
@@ -184,6 +249,26 @@ $routes = [
         'handler'   => 'handlePreview',
         'auth'      => true,
         'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => 'preview',
+    ],
+
+    // 📌 POST /api/v1/bulk-generate - Generate many QR codes and stream a ZIP
+    //    Synchronous + anonymous-capable (no auth required, like /types). The
+    //    same body-size cap (413) and JSON Content-Type (415) guards as other
+    //    POST endpoints apply, plus rate limiting. (FG-003 / #32)
+    //    'requiredScope' only bites when a caller VOLUNTARILY supplies an
+    //    X-API-Key on this anonymous-capable route - a truly anonymous
+    //    request never reaches the scope check at all (see the router's
+    //    Scope Enforcement section: it only runs when $auth['method'] === 'api_key').
+    [
+        'pattern'   => 'bulk-generate',
+        'methods'   => ['POST'],
+        'handler'   => 'handleBulkGenerate',
+        'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => 'bulk',
     ],
 
     // 📌 GET /api/v1/download/{uuid} - Download a generated QR code
@@ -193,6 +278,8 @@ $routes = [
         'handler'   => 'handleDownload',
         'auth'      => true,
         'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => 'download',
     ],
 
     // 📌 GET /api/v1/types - List available QR code types
@@ -202,6 +289,8 @@ $routes = [
         'handler'   => 'handleGetTypes',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
     ],
 
     // 📌 GET /api/v1/formats - List supported output formats
@@ -211,6 +300,8 @@ $routes = [
         'handler'   => 'handleGetFormats',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
     ],
 
     // 📌 GET /api/v1/health - Health check endpoint
@@ -220,6 +311,295 @@ $routes = [
         'handler'   => 'handleHealthCheck',
         'auth'      => false,
         'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // ==========================================================================
+    // 🔐 Account / authentication routes (Epic E3 stage 1, #11/#12/#14/#15)
+    // ==========================================================================
+    // 'auth' is deliberately FALSE for all six routes below - the router's
+    // generic authenticateAPIRequest() gate always replies 401 on failure,
+    // but these account-management endpoints must (a) be reachable by a
+    // not-yet-authenticated visitor (register/login/reset) and (b) reply 403
+    // - the more semantically correct code for a rejected CSRF token - on a
+    // missing/invalid credential. Each handler therefore performs its OWN
+    // CSRF-or-API-key check via requireCsrfOrApiKey() (fn_api_accounts.php),
+    // reusing the exact same validateCSRFToken()/validateAPIKey() primitives.
+    // 'rateLimit' stays TRUE so the existing tblAPIRateLog/checkRateLimit
+    // mechanism (per-IP for anonymous callers) still applies to every route.
+    // ==========================================================================
+
+    // 📌 POST /api/v1/auth/register - Register a new account
+    [
+        'pattern'   => 'auth/register',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthRegister',
+        'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/auth/login - Authenticate and issue a session
+    [
+        'pattern'   => 'auth/login',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthLogin',
+        'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/auth/logout - Revoke the current session
+    [
+        'pattern'   => 'auth/logout',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthLogout',
+        'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/auth/verify-email - Consume an email verification token
+    [
+        'pattern'   => 'auth/verify-email',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthVerifyEmail',
+        'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/auth/request-password-reset - Request a password reset email
+    [
+        'pattern'   => 'auth/request-password-reset',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthRequestPasswordReset',
+        'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/auth/reset-password - Consume a password reset token
+    [
+        'pattern'   => 'auth/reset-password',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAuthResetPassword',
+        'auth'      => false,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // ==========================================================================
+    // 📚 Saved-codes routes (Epic E3 stage 2a, #52/#24, B-001/B-002)
+    // ==========================================================================
+    // The app's first OWNERSHIP-SCOPED resource surface. All four routes
+    // require 'auth' => true (the router's normal 401-on-failure gate, same
+    // as /generate and /download/{uuid}) - unlike the pre-authentication
+    // account routes above, these operate on an ALREADY-authenticated
+    // identity, so the standard 401 (not a bespoke 403) is the correct code.
+    // Ownership itself is enforced inside each handler (fn_api_qrcodes.php),
+    // never by the router - see that file's IDOR posture docblock.
+    // ==========================================================================
+
+    // 📌 POST /api/v1/save - Claim a generated QR code into the caller's account
+    [
+        'pattern'   => 'save',
+        'methods'   => ['POST'],
+        'handler'   => 'handleSaveQRCode',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => 'save',
+    ],
+
+    // 📌 GET /api/v1/qrcodes - List ONLY the caller's own saved QR codes
+    [
+        'pattern'   => 'qrcodes',
+        'methods'   => ['GET'],
+        'handler'   => 'handleListQRCodes',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => 'qrcodes:read',
+    ],
+
+    // 📌 GET/PATCH/DELETE /api/v1/qrcodes/{uuid} - Single saved QR code.
+    // One route table entry shared by all three methods (the router matches
+    // by PATTERN, not pattern+method) - handleQrCodeItem() dispatches by
+    // $_SERVER['REQUEST_METHOD'] to the method-specific handler. 'requiredScope'
+    // is a PER-METHOD array here (Epic E7 stage 1, #54) - GET needs only
+    // read access; PATCH/DELETE need write access - see the router's Scope
+    // Enforcement section for how an array value is resolved by HTTP method.
+    [
+        'pattern'   => 'qrcodes/{uuid}',
+        'methods'   => ['GET', 'PATCH', 'DELETE'],
+        'handler'   => 'handleQrCodeItem',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => [
+            'GET'    => 'qrcodes:read',
+            'PATCH'  => 'qrcodes:write',
+            'DELETE' => 'qrcodes:write',
+        ],
+    ],
+
+    // ==========================================================================
+    // 👤 Own-account dashboard routes (Epic E3 stage 2b, #52/#12/#14/#23/#24)
+    // ==========================================================================
+    // All four routes require 'auth' => true (the router's normal 401-on-
+    // failure gate, same as /save and /qrcodes) - every one of these acts on
+    // an ALREADY-authenticated identity, resolved server-side only, never
+    // from a request field. Ownership itself is enforced inside each handler
+    // (fn_api_account.php) - see that file's header docblock for the full
+    // IDOR/own-scope posture (sessions/profile/password are ALL own-account
+    // only, never cross-user).
+    //
+    // 🔐 F-026 (#52/#54): 'requiredScope' stays null here - unlike the
+    // scope-enforced routes above, an API-key-authenticated caller cannot
+    // reach these handlers AT ALL, regardless of scope. Every one of the
+    // four handlers below (fn_api_account.php) additionally requires an
+    // INTERACTIVE (CSRF/session) caller via accountManagementAllowedFor()
+    // (the FIRST statement in each handler) - an X-API-Key-authenticated
+    // request, however broadly scoped, gets 403 ACCOUNT_MANAGEMENT_FORBIDDEN.
+    // This mirrors the "🔑 Self-service API key routes" section below
+    // exactly (fn_api_keys.php's apiKeyManagementAllowedFor()) - account
+    // control, like key management, is reserved for the user's own
+    // interactive session/token, never a scoped API key. Both guards now
+    // delegate to the SAME shared primitive, isInteractiveSessionAuth()
+    // (fn_api_auth.php).
+    // ==========================================================================
+
+    // 📌 PATCH /api/v1/account/profile - Update display name / avatar
+    [
+        'pattern'   => 'account/profile',
+        'methods'   => ['PATCH'],
+        'handler'   => 'handleAccountProfilePatch',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 GET /api/v1/account/sessions - List ONLY the caller's own active sessions
+    [
+        'pattern'   => 'account/sessions',
+        'methods'   => ['GET'],
+        'handler'   => 'handleAccountSessionsList',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 DELETE /api/v1/account/sessions/{id} - Revoke ONE of the caller's own sessions
+    [
+        'pattern'   => 'account/sessions/{id}',
+        'methods'   => ['DELETE'],
+        'handler'   => 'handleAccountSessionDelete',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/account/change-password - Own-account password change
+    [
+        'pattern'   => 'account/change-password',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAccountChangePassword',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // ==========================================================================
+    // 📦 GDPR/CCPA data-subject rights (#37, epic #52) - export + erasure
+    // ==========================================================================
+    // Session-only exactly like the four routes above (F-026 pattern) -
+    // handleAccountDataExport()/handleAccountErase() (fn_api_account.php)
+    // both call accountManagementAllowedFor() as their FIRST statement, so an
+    // X-API-Key-authenticated caller gets 403 ACCOUNT_MANAGEMENT_FORBIDDEN
+    // regardless of scope, same as every other account/* route.
+    // ==========================================================================
+
+    // 📌 GET /api/v1/account/export - Download a complete JSON export of the caller's OWN data
+    [
+        'pattern'   => 'account/export',
+        'methods'   => ['GET'],
+        'handler'   => 'handleAccountDataExport',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/account/erase - Erase the caller's OWN account by anonymization
+    [
+        'pattern'   => 'account/erase',
+        'methods'   => ['POST'],
+        'handler'   => 'handleAccountErase',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // ==========================================================================
+    // 🔑 Self-service API key routes (Epic E7 stage 1, #54)
+    // ==========================================================================
+    // All four routes require 'auth' => true (any authenticated caller reaches
+    // the handler), but EVERY handler in fn_api_keys.php additionally requires
+    // the caller to be CSRF/session-authenticated specifically
+    // (apiKeyManagementAllowedFor()) - an X-API-Key-authenticated request gets
+    // 403 API_KEY_MANAGEMENT_FORBIDDEN regardless of scope, closing the
+    // self-escalation path where a compromised low-scope key could mint a
+    // brand-new, broader-scoped key for itself (see fn_api_keys.php's header
+    // docblock "Owner/design decision" for the full rationale). 'requiredScope'
+    // therefore stays null here - the CSRF-only guard is a stronger,
+    // unconditional restriction than any scope value could express.
+    // ==========================================================================
+
+    // 📌 POST /api/v1/keys - Create a self-service API key
+    // 📌 GET  /api/v1/keys - List ONLY the caller's own API keys
+    [
+        'pattern'   => 'keys',
+        'methods'   => ['POST', 'GET'],
+        'handler'   => 'handleApiKeysCollection',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 POST /api/v1/keys/{id}/rotate - Rotate a key the caller OWNS
+    [
+        'pattern'   => 'keys/{id}/rotate',
+        'methods'   => ['POST'],
+        'handler'   => 'handleRotateApiKey',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
+    ],
+
+    // 📌 DELETE /api/v1/keys/{id} - Revoke a key the caller OWNS
+    [
+        'pattern'   => 'keys/{id}',
+        'methods'   => ['DELETE'],
+        'handler'   => 'handleDeleteApiKey',
+        'auth'      => true,
+        'rateLimit' => true,
+        'requiredFeature' => null,
+        'requiredScope'   => null,
     ],
 ];
 
@@ -314,6 +694,7 @@ $auth = [
         'perMin' => CUERCODE_API_ANON_RATE_PER_MIN,
         'perDay' => CUERCODE_API_ANON_RATE_PER_DAY,
     ],
+    'scopes'        => [],
 ];
 
 if (function_exists('authenticateAPIRequest')) {
@@ -335,6 +716,108 @@ if ($matchedRoute['auth'] === true && $auth['authenticated'] === false) {
     }
 
     errorResponse($authErrorMsg, 401, $authErrorCode);
+}
+
+// ==============================================================================
+// 🔒 Scope Enforcement (Epic E7 stage 1, #54)
+// ==============================================================================
+// Enforces a route's 'requiredScope' (see the route table comment above), but
+// ONLY when the request authenticated via an X-API-Key header
+// ($auth['method'] === 'api_key') - a session/CSRF-authenticated request is
+// NEVER scope-limited (full user rights) and skips this block entirely,
+// regardless of what 'requiredScope' the matched route defines. An anonymous
+// request also skips this block (anonymous-capable routes like
+// /bulk-generate only reach the check if the caller VOLUNTARILY supplied a
+// valid API key).
+//
+// 'requiredScope' may be either a plain string (applies to every method the
+// route allows) or an array keyed by HTTP method (for a route shared across
+// multiple methods via one table entry, e.g. "qrcodes/{uuid}" - GET needs
+// read, PATCH/DELETE need write). A null/absent 'requiredScope' (or a null
+// resolved value for the CURRENT method inside a per-method array) means "no
+// scope required" - existing behaviour for every route that predates this
+// stage is completely unaffected (every one of them defines 'requiredScope'
+// as null).
+//
+// A key missing the required scope gets 403 INSUFFICIENT_SCOPE, listing the
+// missing scope so the caller knows exactly what to grant the key (or which
+// key to use instead) - fail-closed: an unset/malformed scopes list on the
+// $auth array is treated as "no scopes granted" by apiKeyRequestHasScope(),
+// never as "everything allowed".
+// @see fn_api_auth.php  - apiKeyRequestHasScope()
+// @see fn_api_keys.php  - CUERCODE_API_KEY_SCOPE_ALLOWLIST (the scope taxonomy)
+// ==============================================================================
+
+if ($auth['method'] === 'api_key'
+    && isset($matchedRoute['requiredScope'])
+    && $matchedRoute['requiredScope'] !== null
+) {
+    $routeRequiredScope = $matchedRoute['requiredScope'];
+
+    // 📌 Per-method scope map (e.g. "qrcodes/{uuid}") - resolve to THIS
+    // request's HTTP method; a method with no entry in the map requires no
+    // scope (defensive default, though every route defining a per-method map
+    // today covers all of its own 'methods').
+    if (is_array($routeRequiredScope)) {
+        if (isset($routeRequiredScope[$httpMethod])) {
+            $routeRequiredScope = $routeRequiredScope[$httpMethod];
+        } else {
+            $routeRequiredScope = null;
+        }
+    }
+
+    if ($routeRequiredScope !== null) {
+        $hasRequiredScope = function_exists('apiKeyRequestHasScope')
+            && apiKeyRequestHasScope($auth, (string) $routeRequiredScope);
+
+        if (!$hasRequiredScope) {
+            errorResponse(
+                'This API key does not have the required scope: "' . $routeRequiredScope . '". '
+                . 'Create or update a key with this scope in your account dashboard to access this endpoint.',
+                403,
+                'INSUFFICIENT_SCOPE',
+                ['required_scope' => $routeRequiredScope]
+            );
+        }
+    }
+}
+
+// ==============================================================================
+// 🔐 Feature Gate (Epic E4/#53)
+// ==============================================================================
+// Enforces a route's 'requiredFeature' (see the route table comment above),
+// if one is set. UNUSED today - every route above defines it as null, so
+// this block never triggers yet - but it is fully wired so a future gated
+// route (e.g. a webhooks CRUD route requiring the 'webhooks' feature) is a
+// one-line change to that route's 'requiredFeature' value, nothing here.
+// Resolves the caller's userID the same way handleBulkGenerate() does
+// (resolveUserIdFromAuth()) so a session-authenticated web UI user and an
+// API-key request both gate against their OWN plan, not the anonymous plan.
+// @see fn_features.php - requireFeatureOr402(), resolveUserIdFromAuth()
+// ==============================================================================
+
+if (isset($matchedRoute['requiredFeature']) && $matchedRoute['requiredFeature'] !== null) {
+    if (function_exists('resolveUserIdFromAuth')) {
+        $featureGateUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $featureGateUserId = null;
+    }
+
+    if (function_exists('requireFeatureOr402')) {
+        $featureDenied = requireFeatureOr402((string) $matchedRoute['requiredFeature'], $featureGateUserId);
+
+        if ($featureDenied !== null) {
+            errorResponse(
+                $featureDenied['message'],
+                $featureDenied['httpCode'],
+                $featureDenied['errorCode'],
+                [
+                    'upgrade_url' => $featureDenied['upgradeUrl'],
+                    'feature'     => $featureDenied['feature'],
+                ]
+            );
+        }
+    }
 }
 
 // ==============================================================================
@@ -360,13 +843,25 @@ if ($matchedRoute['rateLimit'] === true) {
     if (function_exists('checkRateLimit')) {
         $rateCheck = checkRateLimit($auth['apiKeyId'], $clientIP, $auth['rateLimits']);
 
+        // 🔐 F-011: compute the reset time (Unix epoch seconds) at which the
+        // limited window frees up. retryAfter is seconds-from-now; 0 means the
+        // window is not currently blocking, in which case the next minute
+        // window boundary is a sensible reset hint.
+        if (isset($rateCheck['retryAfter']) && (int) $rateCheck['retryAfter'] > 0) {
+            $rateLimitReset = time() + (int) $rateCheck['retryAfter'];
+        } else {
+            $rateLimitReset = time() + 60;
+        }
+
         if (!$rateCheck['allowed']) {
             // 📌 Set rate limit headers per RFC conventions
             // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
             if (!headers_sent()) {
-                header('Retry-After: ' . $rateCheck['retryAfter']);
-                header('X-RateLimit-Limit: ' . $rateCheck['limitPerMin']);
-                header('X-RateLimit-Remaining: ' . $rateCheck['remainingMin']);
+                header('Retry-After: ' . (int) $rateCheck['retryAfter']);
+                header('X-RateLimit-Limit: ' . (int) $rateCheck['limitPerMin']);
+                header('X-RateLimit-Remaining: ' . (int) $rateCheck['remainingMin']);
+                // 🔐 F-011: surface when the limit resets so clients can back off.
+                header('X-RateLimit-Reset: ' . $rateLimitReset);
             }
 
             errorResponse(
@@ -376,10 +871,11 @@ if ($matchedRoute['rateLimit'] === true) {
             );
         }
 
-        // 📌 Set rate limit headers for successful requests
+        // 📌 Set rate limit headers for successful requests (🔐 F-011)
         if (!headers_sent()) {
-            header('X-RateLimit-Limit: ' . $rateCheck['limitPerMin']);
-            header('X-RateLimit-Remaining: ' . $rateCheck['remainingMin']);
+            header('X-RateLimit-Limit: ' . (int) $rateCheck['limitPerMin']);
+            header('X-RateLimit-Remaining: ' . (int) $rateCheck['remainingMin']);
+            header('X-RateLimit-Reset: ' . $rateLimitReset);
         }
     }
 
@@ -421,15 +917,82 @@ if (!function_exists($handlerFunction)) {
     );
 }
 
-// 📌 Parse JSON request body for POST requests
+// 📌 Parse JSON request body for body-carrying methods (POST/PUT/PATCH).
 // @see https://www.php.net/manual/en/function.json-decode.php
 // @see https://www.php.net/manual/en/wrappers.php.php#wrappers.php.input
 $requestBody = [];
 
-if ($httpMethod === 'POST') {
+// 🔐 F-007: maximum accepted request body size (bytes). Bodies larger than
+// this are rejected with 413 BEFORE we read/decode them, so a hostile client
+// cannot exhaust memory by streaming a huge JSON document into json_decode().
+// Configurable via the 'api_max_request_body_bytes' setting; default 256 KiB.
+if (function_exists('getConfig')) {
+    $maxBodyBytes = (int) getConfig('api_max_request_body_bytes', 262144);
+} else {
+    $maxBodyBytes = 262144;
+}
+// 📌 Guard against a misconfigured non-positive limit (fall back to default).
+if ($maxBodyBytes <= 0) {
+    $maxBodyBytes = 262144;
+}
+
+// 📌 Methods that may legitimately carry a request body in this API.
+$bodyMethods = ['POST', 'PUT', 'PATCH'];
+
+if (in_array($httpMethod, $bodyMethods, true)) {
     $rawInput = file_get_contents('php://input');
 
-    if ($rawInput !== false && $rawInput !== '') {
+    if ($rawInput === false) {
+        $rawInput = '';
+    }
+
+    if ($rawInput !== '') {
+        // 🔐 F-007: enforce the body-size cap before any further processing.
+        // Prefer the advertised Content-Length when present, but always fall
+        // back to the actual byte length so a missing/lying header cannot
+        // bypass the cap.
+        if (isset($_SERVER['CONTENT_LENGTH']) && (int) $_SERVER['CONTENT_LENGTH'] > $maxBodyBytes) {
+            errorResponse(
+                'Request body too large. Maximum allowed size is ' . $maxBodyBytes . ' bytes.',
+                413,
+                'PAYLOAD_TOO_LARGE'
+            );
+        }
+
+        if (strlen($rawInput) > $maxBodyBytes) {
+            errorResponse(
+                'Request body too large. Maximum allowed size is ' . $maxBodyBytes . ' bytes.',
+                413,
+                'PAYLOAD_TOO_LARGE'
+            );
+        }
+
+        // 🔐 F-009: require a JSON Content-Type for non-empty request bodies.
+        // We accept 'application/json' optionally followed by parameters
+        // (e.g. '; charset=utf-8'). Anything else is rejected with 415 BEFORE
+        // we attempt to json_decode() the body.
+        // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/415
+        if (isset($_SERVER['CONTENT_TYPE'])) {
+            $contentType = $_SERVER['CONTENT_TYPE'];
+        } else {
+            $contentType = '';
+        }
+
+        // 📌 Normalise: trim and lowercase the media type for comparison.
+        $contentTypeNormalised = strtolower(trim($contentType));
+
+        $isJsonContentType = ($contentTypeNormalised === 'application/json')
+            || (strncmp($contentTypeNormalised, 'application/json;', 17) === 0);
+
+        if (!$isJsonContentType) {
+            errorResponse(
+                'Unsupported Media Type. Request body must be sent as '
+                . 'Content-Type: application/json.',
+                415,
+                'UNSUPPORTED_MEDIA_TYPE'
+            );
+        }
+
         $requestBody = json_decode($rawInput, true);
 
         // ❌ Invalid JSON body
@@ -478,13 +1041,22 @@ switch ($handlerFunction) {
         handlePreview($requestBody);
         break;
 
+    case 'handleBulkGenerate':
+        // 📦 Bulk handler reads php://input itself (it may be a CSV-bearing
+        //    JSON body) and needs the auth context for activity logging.
+        handleBulkGenerate($auth);
+        break;
+
     case 'handleDownload':
         if (isset($routeParams['uuid'])) {
             $uuid = $routeParams['uuid'];
         } else {
             $uuid = '';
         }
-        handleDownload($uuid);
+        // 🔐 Epic E3 stage 2a: $auth is now passed through so handleDownload()
+        // can enforce owner-or-public on a SAVED (claimed) code - see
+        // fn_api_download.php's docblock amendment for the full rule.
+        handleDownload($uuid, $auth);
         break;
 
     case 'handleGetTypes':
@@ -497,6 +1069,98 @@ switch ($handlerFunction) {
 
     case 'handleHealthCheck':
         handleHealthCheck();
+        break;
+
+    case 'handleAuthRegister':
+        handleAuthRegister($requestBody);
+        break;
+
+    case 'handleAuthLogin':
+        handleAuthLogin($requestBody);
+        break;
+
+    case 'handleAuthLogout':
+        handleAuthLogout();
+        break;
+
+    case 'handleAuthVerifyEmail':
+        handleAuthVerifyEmail($requestBody);
+        break;
+
+    case 'handleAuthRequestPasswordReset':
+        handleAuthRequestPasswordReset($requestBody);
+        break;
+
+    case 'handleAuthResetPassword':
+        handleAuthResetPassword($requestBody);
+        break;
+
+    case 'handleSaveQRCode':
+        handleSaveQRCode($requestBody, $auth);
+        break;
+
+    case 'handleListQRCodes':
+        handleListQRCodes($auth);
+        break;
+
+    case 'handleQrCodeItem':
+        if (isset($routeParams['uuid'])) {
+            $uuid = $routeParams['uuid'];
+        } else {
+            $uuid = '';
+        }
+        handleQrCodeItem($uuid, $requestBody, $auth);
+        break;
+
+    case 'handleAccountProfilePatch':
+        handleAccountProfilePatch($requestBody, $auth);
+        break;
+
+    case 'handleAccountSessionsList':
+        handleAccountSessionsList($auth);
+        break;
+
+    case 'handleAccountSessionDelete':
+        if (isset($routeParams['id'])) {
+            $sessionId = $routeParams['id'];
+        } else {
+            $sessionId = '';
+        }
+        handleAccountSessionDelete($sessionId, $auth);
+        break;
+
+    case 'handleAccountChangePassword':
+        handleAccountChangePassword($requestBody, $auth);
+        break;
+
+    case 'handleAccountDataExport':
+        handleAccountDataExport($auth);
+        break;
+
+    case 'handleAccountErase':
+        handleAccountErase($requestBody, $auth);
+        break;
+
+    case 'handleApiKeysCollection':
+        handleApiKeysCollection($requestBody, $auth);
+        break;
+
+    case 'handleRotateApiKey':
+        if (isset($routeParams['id'])) {
+            $apiKeyIdParam = $routeParams['id'];
+        } else {
+            $apiKeyIdParam = '';
+        }
+        handleRotateApiKey($apiKeyIdParam, $auth);
+        break;
+
+    case 'handleDeleteApiKey':
+        if (isset($routeParams['id'])) {
+            $apiKeyIdParam = $routeParams['id'];
+        } else {
+            $apiKeyIdParam = '';
+        }
+        handleDeleteApiKey($apiKeyIdParam, $auth);
         break;
 
     default:

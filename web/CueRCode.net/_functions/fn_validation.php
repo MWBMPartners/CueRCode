@@ -4,6 +4,8 @@
  * ✅ CueRCode - Input Validation and Sanitisation
  * ==============================================================================
  *
+ * Path: _functions/fn_validation.php
+ *
  * Provides functions for validating and sanitising user input. All user-facing
  * input must pass through these functions before being used in database queries,
  * file operations, or output rendering.
@@ -20,6 +22,7 @@
  *
  * @package     CueRCode
  * @subpackage  Validation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/filter.filters.sanitize.php
@@ -39,6 +42,26 @@ if (isset($_SERVER['SCRIPT_FILENAME'])) {
 if (basename($scriptFilename) === basename(__FILE__)) {
     header('HTTP/1.1 403 Forbidden');
     exit('Access denied.');
+}
+
+// ==============================================================================
+// 🛡️ Image upload pixel-dimension limits (F-005)
+// ==============================================================================
+// Maximum width/height (in pixels) accepted for an uploaded image. getimagesize()
+// reads only the header, so a tiny file declaring enormous dimensions (a
+// decompression / "pixel bomb") is rejected before any downstream code allocates
+// a canvas for it. Conservative defaults that comfortably fit any real logo;
+// each is overridable via an earlier define() (e.g. in bootstrap/config) so the
+// owner can tune them without editing this file. The byte-size cap is the
+// $maxSize parameter of validateImageUpload() (default 5 MB).
+// @see https://www.php.net/manual/en/function.getimagesize.php
+if (!defined('CUERCODE_UPLOAD_MAX_WIDTH')) {
+    // 📐 Max image width in pixels.
+    define('CUERCODE_UPLOAD_MAX_WIDTH', 4096);
+}
+if (!defined('CUERCODE_UPLOAD_MAX_HEIGHT')) {
+    // 📐 Max image height in pixels.
+    define('CUERCODE_UPLOAD_MAX_HEIGHT', 4096);
 }
 
 // ==============================================================================
@@ -66,9 +89,15 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * @see https://www.php.net/manual/en/function.htmlspecialchars.php
  * @see https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
  *
+ * ⚠️ CAUTION: this is NOT tag/script *removal*. strip_tags() removes only the
+ * tag delimiters, leaving the inner text; htmlspecialchars() then encodes it so
+ * the result is inert in an HTML context — but the original text content remains.
+ *
  * @example
  *   $clean = sanitizeInput('<script>alert("XSS")</script>Hello');
- *   // Returns: 'Hello'
+ *   // Returns: 'alert(&quot;XSS&quot;)Hello'
+ *   // (the <script> tags are stripped, the inner text is KEPT, and the quotes
+ *   //  are entity-encoded by htmlspecialchars with ENT_QUOTES)
  *
  *   $clean = sanitizeInput('  Hello World  ');
  *   // Returns: 'Hello World'
@@ -310,26 +339,41 @@ function validateColor(string $hex): bool
 // ==============================================================================
 
 /**
- * 📋 Validate that a string is valid JSON
+ * 📋 Validate that a string is a JSON object or array
  *
- * Attempts to parse the input as JSON and checks for syntax errors.
- * An empty string or 'null' is considered invalid (must be a non-trivial
- * JSON structure like an object or array).
+ * Attempts to parse the input as JSON, checks for syntax errors, AND requires
+ * that the decoded value be a JSON *structure* — an object or an array. Bare
+ * JSON scalars (the literals null, true, false, a number, or a quoted string)
+ * are rejected even though they are technically well-formed JSON. This matches
+ * the intended use: validating config / form payloads that must be a structured
+ * object or array, never a lone scalar.
+ *
+ * An empty string is likewise invalid.
+ *
+ * 🐛 FIX (2026-06-28): previously this accepted ANY well-formed JSON, so the
+ *    literal 'null' (and 'true' / '123' / '"x"') returned true — contradicting
+ *    this docblock. The decoded value is now required to be an array/object,
+ *    making code and docblock consistent. validateJSON has no external callers,
+ *    so tightening the contract is the lowest-risk fix.
  *
  * @param string $json The JSON string to validate
  *
- * @return bool True if the string is valid JSON, false otherwise
+ * @return bool True if the string is a valid JSON object or array, false otherwise
  *
  * @see https://www.php.net/manual/en/function.json-decode.php
  * @see https://www.php.net/manual/en/function.json-last-error.php
  * @see https://www.php.net/manual/en/json.constants.php
  *
  * @example
- *   validateJSON('{"key": "value"}');        // true
- *   validateJSON('[1, 2, 3]');                // true
- *   validateJSON('not json');                  // false
- *   validateJSON('');                          // false
- *   validateJSON('{invalid: json}');           // false
+ *   validateJSON('{"key": "value"}');        // true  (object)
+ *   validateJSON('[1, 2, 3]');                // true  (array)
+ *   validateJSON('not json');                  // false (parse error)
+ *   validateJSON('');                          // false (empty)
+ *   validateJSON('{invalid: json}');           // false (parse error)
+ *   validateJSON('null');                      // false (bare scalar, not a structure)
+ *   validateJSON('true');                      // false (bare scalar)
+ *   validateJSON('123');                       // false (bare scalar)
+ *   validateJSON('"a string"');               // false (bare scalar)
  */
 function validateJSON(string $json): bool
 {
@@ -342,15 +386,25 @@ function validateJSON(string $json): bool
     }
 
     // ✅ Attempt to decode the JSON
-    // json_decode() returns null on failure (or for the literal JSON 'null').
-    // We then check json_last_error() to distinguish valid null from parse errors.
+    // json_decode() returns null on a parse failure OR for the literal JSON
+    // 'null'. We capture the decoded value AND check json_last_error() so we can
+    // both reject parse errors and reject well-formed-but-scalar values.
+    // Associative decoding (true) makes JSON objects decode to PHP arrays, so a
+    // single is_array() check below covers both JSON objects and JSON arrays.
     // @see https://www.php.net/manual/en/function.json-decode.php
     // @see https://www.php.net/manual/en/function.json-last-error.php
-    json_decode($json);
+    $decoded = json_decode($json, true);
 
-    // 📌 JSON_ERROR_NONE indicates successful parsing
+    // 📌 JSON_ERROR_NONE indicates the string parsed without a syntax error.
     // @see https://www.php.net/manual/en/json.constants.php
-    return json_last_error() === JSON_ERROR_NONE;
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return false;
+    }
+
+    // 📌 Require a JSON structure (object or array). With associative decoding,
+    // both JSON objects and JSON arrays become PHP arrays; bare scalars
+    // (null / true / false / number / string) do not, so they are rejected.
+    return is_array($decoded);
 }
 
 // ==============================================================================
@@ -430,6 +484,15 @@ function sanitizeFileName(string $filename): string
     $name      = strtolower($name);
     $extension = strtolower($extension);
 
+    // 📌 Step 7b: Trim whitespace from the extension
+    // 🐛 FIX (2026-06-28): pathinfo() keeps any trailing/leading whitespace as
+    //    part of the extension (e.g. 'world.PNG  ' -> extension 'png  '), which
+    //    then leaked into the reassembled name as 'hello-world.png  '. Trim it.
+    //    An extension that is *only* whitespace collapses to '' (treated as no
+    //    extension), so 'file.   ' does not produce a trailing-dot result.
+    // @see https://www.php.net/manual/en/function.trim.php
+    $extension = trim($extension);
+
     // 📌 Step 8: Ensure the name is not empty after sanitisation
     if ($name === '') {
         $name = 'unnamed';
@@ -449,11 +512,155 @@ function sanitizeFileName(string $filename): string
 }
 
 // ==============================================================================
+// 🛡️ screenSvgLogoContent() - Shared SVG active-content screener (F-024)
+// ==============================================================================
+
+/**
+ * 🛡️ Screen raw SVG markup for active/script content (XSS vectors)
+ *
+ * SHARED screener used by BOTH logo-intake paths so they enforce the SAME
+ * rule set instead of drifting:
+ *   1. The multipart `$_FILES` upload path — validateImageUpload() (below,
+ *      this file) calls this function for the `image/svg+xml` branch.
+ *   2. The JSON API's base64 `data:image/svg+xml;base64,...` path —
+ *      `saveBase64LogoToTemp()` (fn_qr_logo.php) calls this function before
+ *      writing decoded SVG bytes to disk. Closes F-024 (SECURITY.md): the
+ *      base64 path previously enforced ONLY the F-005 size/pixel caps and
+ *      let unscreened SVG bytes reach `overlayLogoOnSVG()`'s output.
+ *
+ * This is a DEFENSIVE, deny-list content screen — not a full XML sanitiser.
+ * When in doubt it rejects, on the theory that a false-positive (a clean SVG
+ * momentarily rejected) is far cheaper than a false-negative (a malicious SVG
+ * logo reaching the browser inside the generated QR code's own SVG markup).
+ *
+ * Vectors covered (case-insensitive; matched anywhere in the raw markup so
+ * they cannot be smuggled inside CDATA sections, comments, or attribute
+ * values):
+ *   - `<script` .................. embedded JavaScript
+ *   - `on*=` ...................... inline DOM event-handler attributes
+ *                                   (onclick, onload, onerror, onmouseover, …)
+ *   - `javascript:` / `vbscript:` . scriptable URI schemes in any attribute
+ *   - `data:` ..................... data URIs (can smuggle nested active
+ *                                   content, e.g. a `data:image/svg+xml`
+ *                                   payload containing its OWN `<script>`)
+ *   - `<foreignObject` ............ embeds arbitrary (X)HTML inside SVG
+ *   - `<!DOCTYPE` / `<!ENTITY` .... XXE / "billion laughs" entity-expansion
+ *   - `@import` ................... CSS `@import` (can load external CSS)
+ *   - `expression(` ............... legacy CSS `expression()` code execution
+ *   - `attributeName="on...` ...... SMIL `<animate>`/`<set>` retargeting an
+ *                                   event-handler attribute dynamically,
+ *                                   bypassing a naive static `on*=` scan
+ *   - non-local `href`/`xlink:href` any `href`/`xlink:href` value that is
+ *                                   NOT a same-document `#fragment` — blocks
+ *                                   `<use>`/`<image>` pulling in EXTERNAL SVG
+ *                                   content (which could itself carry script)
+ *
+ * @param string $svgContent The raw SVG markup (already decoded — NOT a data
+ *                            URI or base64 string) to screen.
+ *
+ * @return array{valid: bool, error: string|null} 'valid' is true when no
+ *              disallowed construct was found; 'error' is a human-readable
+ *              reason when 'valid' is false, otherwise null.
+ *
+ * @see https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+ * @see https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing
+ * @see https://developer.mozilla.org/en-US/docs/Web/SVG/Element/foreignObject
+ * @see https://developer.mozilla.org/en-US/docs/Web/SVG/Element/animate
+ * @see fn_qr_logo.php - saveBase64LogoToTemp() (the base64 intake caller)
+ *
+ * @example
+ *   screenSvgLogoContent('<svg><path d="M0 0h10v10H0z"/></svg>');
+ *   // Returns: ['valid' => true, 'error' => null]
+ *
+ *   screenSvgLogoContent('<svg onload="alert(1)"></svg>');
+ *   // Returns: ['valid' => false, 'error' => 'SVG content contains a
+ *   //   disallowed construct: inline event-handler attribute (on*=).']
+ */
+function screenSvgLogoContent(string $svgContent): array
+{
+    // 📌 Default result: clean until a disallowed construct is found.
+    $result = [
+        'valid' => true,
+        'error' => null,
+    ];
+
+    // ==================================================================
+    // 📌 Step 1: Simple deny-list of dangerous inline constructs
+    // Each pattern is matched case-insensitively against the RAW markup.
+    // The array key is the regex; the value is the human-readable label
+    // used in the rejection message.
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    // ==================================================================
+    $dangerousPatterns = [
+        '/<script\b/i'                              => 'embedded <script> element',
+        '/\bon[a-z]+\s*=/i'                          => 'inline event-handler attribute (on*=)',
+        '/javascript\s*:/i'                          => 'javascript: URI scheme',
+        '/vbscript\s*:/i'                             => 'vbscript: URI scheme',
+        '/data\s*:/i'                                 => 'data: URI (potential embedded active content)',
+        '/<foreignObject\b/i'                         => '<foreignObject> element (can embed arbitrary HTML)',
+        '/<!doctype/i'                                => 'DOCTYPE declaration (XXE / entity-expansion risk)',
+        '/<!entity/i'                                 => 'ENTITY declaration (XXE / "billion laughs" risk)',
+        '/@import/i'                                  => 'CSS @import',
+        '/expression\s*\(/i'                          => 'CSS expression()',
+        '/attributeName\s*=\s*["\']?\s*on[a-z]+/i'    => 'SMIL animation (<animate>/<set>) retargeting an event-handler attribute',
+    ];
+
+    foreach ($dangerousPatterns as $pattern => $label) {
+        if (preg_match($pattern, $svgContent) === 1) {
+            $result['valid'] = false;
+            $result['error'] = 'SVG content contains a disallowed construct: ' . $label . '.';
+            return $result;
+        }
+    }
+
+    // ==================================================================
+    // 📌 Step 2: Non-local href / xlink:href references
+    // A legitimate logo SVG never needs to reference anything OUTSIDE its
+    // own markup — internal same-document fragment refs (href="#id",
+    // used by <use>/<symbol> reuse) are the only accepted form. Anything
+    // else (an absolute/relative URL, a protocol-relative "//host/..."
+    // reference, or an empty-scheme reference) is rejected: it could pull
+    // in an externally-hosted SVG/HTML document carrying its own script.
+    // \b before "href" matches both "href=" and "xlink:href=" (the ':' is a
+    // non-word character, so the boundary lands correctly either way).
+    // @see https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/href
+    // ==================================================================
+    if (preg_match_all('/\bhref\s*=\s*["\']([^"\']*)["\']/i', $svgContent, $hrefMatches) > 0) {
+        foreach ($hrefMatches[1] as $hrefValue) {
+            $hrefValue = trim($hrefValue);
+
+            if ($hrefValue !== '' && !str_starts_with($hrefValue, '#')) {
+                $result['valid'] = false;
+                $result['error'] = 'SVG content contains a disallowed construct: '
+                    . 'external or non-local href/xlink:href reference.';
+                return $result;
+            }
+        }
+    }
+
+    return $result;
+}
+
+// ==============================================================================
 // 🖼️ validateImageUpload() - Image file upload validation
 // ==============================================================================
 
 /**
  * 🖼️ Validate an uploaded image file
+ *
+ * ⚠️ RESERVED / DORMANT (DS-5, SECURITY.md coverage ledger): this function
+ * currently has NO call sites anywhere in the codebase. It is deliberately
+ * KEPT (not dead code to delete) because it is the reserved validator for the
+ * account-era logo-UPLOAD path (Epic E3, multipart/form-data `$_FILES['logo']`
+ * uploads once authenticated accounts exist) — see PROJECT_ROADMAP.md Epic E3.
+ * Today's ANONYMOUS Phase-1 logo path does NOT use $_FILES at all: it accepts
+ * a base64 data-URI in the JSON customization payload, which is validated and
+ * size/dimension-capped by saveBase64LogoToTemp() in fn_qr_logo.php (decoded-
+ * byte cap + getimagesize() pixel-dimension guard, F-005). Do NOT wire this
+ * function into a route that does not exist yet — when the E3 file-upload
+ * route ships, call this function first (before move_uploaded_file()) and
+ * apply the SAME decoded-size/pixel-dimension caps used by
+ * saveBase64LogoToTemp() for consistency between the two logo-intake paths.
  *
  * Performs comprehensive validation of an uploaded image file:
  *   1. Checks that the file was uploaded via HTTP POST (is_uploaded_file)
@@ -479,6 +686,9 @@ function sanitizeFileName(string $filename): string
  * @see https://www.php.net/manual/en/function.getimagesize.php
  * @see https://www.php.net/manual/en/function.mime-content-type.php
  * @see https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+ * @see web/CueRCode.net/_functions/fn_qr_logo.php saveBase64LogoToTemp() — the
+ *      active anonymous-era logo intake path this function is the future
+ *      account-era counterpart to.
  *
  * @example
  *   $result = validateImageUpload($_FILES['logo'], 2 * 1024 * 1024); // 2MB max
@@ -624,29 +834,46 @@ function validateImageUpload(array $file, int $maxSize = 5242880): array
                 . htmlspecialchars($imageInfo['mime'], ENT_QUOTES, 'UTF-8') . '.';
             return $result;
         }
+
+        // 🛡️ F-005: enforce a pixel-dimension cap to block decompression /
+        //    "pixel bomb" images. getimagesize() already read the header above,
+        //    so we reuse $imageInfo[0]/[1] (width/height) — no extra I/O. A file
+        //    declaring dimensions beyond the cap is rejected BEFORE any caller
+        //    hands it to GD (which would allocate ~4 bytes per pixel).
+        // @see https://www.php.net/manual/en/function.getimagesize.php
+        // @see CUERCODE_UPLOAD_MAX_WIDTH / CUERCODE_UPLOAD_MAX_HEIGHT
+        $imageWidth  = (int) ($imageInfo[0] ?? 0);
+        $imageHeight = (int) ($imageInfo[1] ?? 0);
+
+        if ($imageWidth > CUERCODE_UPLOAD_MAX_WIDTH
+            || $imageHeight > CUERCODE_UPLOAD_MAX_HEIGHT
+        ) {
+            $result['error'] = 'Image dimensions are too large. Maximum allowed is '
+                . CUERCODE_UPLOAD_MAX_WIDTH . ' x ' . CUERCODE_UPLOAD_MAX_HEIGHT
+                . ' pixels. This image is '
+                . $imageWidth . ' x ' . $imageHeight . ' pixels.';
+            return $result;
+        }
     } else {
         // 🔒 SVG-specific validation: check for potentially dangerous content
         // SVGs can contain embedded scripts, event handlers, and external references.
+        // 🛡️ F-024 (#52): the actual pattern set now lives in the SHARED
+        //    screenSvgLogoContent() helper (defined earlier in this file) so
+        //    this multipart upload path and the JSON API's base64 logo_data
+        //    path (fn_qr_logo.php - saveBase64LogoToTemp()) enforce IDENTICAL
+        //    screening instead of the base64 path having none at all.
+        // @see screenSvgLogoContent() - the shared screener
         // @see https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
         $svgContent = file_get_contents($file['tmp_name']);
 
         if ($svgContent !== false) {
-            // 📌 Check for common SVG attack vectors (case-insensitive)
-            $dangerousPatterns = [
-                '/<script/i',           // Embedded JavaScript
-                '/on[a-z]+\s*=/i',      // Event handlers (onclick, onload, onerror, etc.)
-                '/javascript\s*:/i',    // JavaScript protocol in href/xlink
-                '/data\s*:/i',          // Data URIs (can embed scripts)
-                '/<foreignObject/i',    // foreignObject can embed arbitrary HTML
-            ];
+            $svgScreen = screenSvgLogoContent($svgContent);
 
-            foreach ($dangerousPatterns as $pattern) {
-                if (preg_match($pattern, $svgContent) === 1) {
-                    $result['error'] = 'SVG file contains potentially unsafe content '
-                        . '(scripts, event handlers, or embedded data). '
-                        . 'Please upload a clean SVG file.';
-                    return $result;
-                }
+            if ($svgScreen['valid'] === false) {
+                $result['error'] = 'SVG file contains potentially unsafe content: '
+                    . $svgScreen['error']
+                    . ' Please upload a clean SVG file.';
+                return $result;
             }
         }
     }

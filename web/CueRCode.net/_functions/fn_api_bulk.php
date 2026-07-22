@@ -1,0 +1,1447 @@
+<?php
+/**
+ * ==============================================================================
+ * 📦 CueRCode - API Bulk QR Generation Handler (FG-003 / #32)
+ * ==============================================================================
+ *
+ * Path: _functions/fn_api_bulk.php
+ *
+ * Provides the handler and pure helper functions for the synchronous bulk
+ * QR code generation API endpoint:
+ *
+ *   POST /api/v1/bulk-generate  -> handleBulkGenerate()
+ *
+ * The endpoint accepts a batch of QR code generation requests in a single
+ * call and streams back a ZIP archive containing every generated image. It
+ * is deliberately SYNCHRONOUS and ANONYMOUS-CAPABLE: there is no job queue,
+ * no tblBatchJobs table, and no per-item database persistence. Each item is
+ * generated in-memory and written straight into the ZIP, so a caller (or the
+ * web UI's bulk panel) gets an immediate download with no follow-up polling.
+ *
+ * Request body (JSON, Content-Type: application/json). Two shapes are
+ * accepted; provide EITHER one:
+ *
+ *   1. An explicit item list:
+ *      {
+ *          "items": [
+ *              { "type": "url",  "input": { "url": "https://example.com" } },
+ *              { "type": "text", "input": { "text": "Hello" },
+ *                "customization": { "format": "png", "size": 600 } }
+ *          ],
+ *          "customization": { "format": "svg" }   // optional shared defaults
+ *      }
+ *
+ *   2. A CSV string (first non-empty line is a header row). The header MUST
+ *      contain a "type" column and at least one input column. Any column
+ *      whose name starts with "input." (e.g. "input.url") or that is not a
+ *      reserved customization column is treated as an input field; reserved
+ *      customization columns - the full 19-name list lives in
+ *      CUERCODE_API_BULK_CSV_RESERVED below (format, size, ecc, fg_color,
+ *      bg_color, marker_color, pattern, marker_border, marker_center, logo,
+ *      logo_size_pct, frame_style, frame_label, frame_color, transparent,
+ *      quiet_zone, preset, scan_distance_cm, pdf_layout) - are
+ *      folded into that row's customization. NOTE: "version" is deliberately
+ *      NOT reserved - see the CUERCODE_API_BULK_CSV_RESERVED docblock below
+ *      for why (it collides with the vCard input field of the same name):
+ *      {
+ *          "csv": "type,input.url,format\nurl,https://a.com,png\nurl,https://b.com,svg",
+ *          "customization": { "ecc": "H" }        // optional shared defaults
+ *      }
+ *
+ * Per-item shared customization precedence (lowest -> highest):
+ *   request-level "customization"  <  per-item/per-row "customization".
+ *
+ * Responses:
+ *   - 200 application/zip   The bulk archive (attachment; cuercode-bulk.zip).
+ *                           A manifest.txt inside records per-item outcomes,
+ *                           so individual failures NEVER abort the whole batch.
+ *   - 400 BULK_*            Malformed body / no items / bad item shape.
+ *   - 413 BULK_TOO_MANY_ITEMS  Too many items for the caller's plan (see
+ *                              "Bulk generation limits" below, Epic E4) - the
+ *                              response includes an 'upgrade_url' hint.
+ *   - 415                   Wrong Content-Type (enforced by the router).
+ *   - 429 RATE_LIMIT        Rate limited (enforced by the router).
+ *   - 501 ZIP_UNAVAILABLE   The PHP zip extension is not installed.
+ *
+ * The pure helpers parseBulkInput() and validateBulkRequest() do NOT touch the
+ * database, the filesystem, or any QR library, so they are unit-testable in
+ * isolation (see tests/test_bulk.php).
+ *
+ * @package     CueRCode
+ * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
+ * @version     1.0.0
+ * @since       Phase 2 (FG-003 bulk generation; Epic E4/#53 plan-based cap)
+ * @see         fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization()
+ * @see         fn_qr_generate.php  - generateQRCode()
+ * @see         fn_response.php     - errorResponse()
+ * @see         fn_features.php     - limitFor('bulk_batch_size', ...), resolveUserIdFromAuth()
+ * @see         https://www.php.net/manual/en/class.ziparchive.php
+ * @see         https://www.php.net/manual/en/function.str-getcsv.php
+ */
+
+// ==============================================================================
+// 🚫 Direct access protection
+// ==============================================================================
+if (isset($_SERVER['SCRIPT_FILENAME'])) {
+    $scriptFilename = $_SERVER['SCRIPT_FILENAME'];
+} else {
+    $scriptFilename = '';
+}
+if (basename($scriptFilename) === basename(__FILE__)) {
+    header('HTTP/1.1 403 Forbidden');
+    exit('Access denied.');
+}
+
+// ==============================================================================
+// 📌 Bulk generation limits (Epic E4, #53 - plan-based, replaces the old
+//    fixed global cap)
+// ==============================================================================
+// The maximum item count per bulk request is now the caller's PLAN limit -
+// tblSubscriptionPlans.limitsJSON's 'bulk_batch_size' key, resolved via
+// fn_features.php's limitFor('bulk_batch_size', $currentUserId) at the call
+// site inside handleBulkGenerate() below. There is deliberately no separate
+// 'getBulkMaxItems()'/'api_bulk_max_items' global setting any more - a single
+// source of truth (the plan row) replaces the old fixed default (previously
+// 100 for everyone, anonymous included). Anonymous callers resolve to the
+// 'anonymous' plan's bulk_batch_size (seeded 25); a logged-in user or an
+// API-key request resolves to that user's actual plan via
+// resolveUserIdFromAuth($auth) (fn_features.php).
+// ==============================================================================
+
+/**
+ * @var array Reserved customization column names for CSV parsing. A CSV column
+ * whose (lower-cased) header matches one of these is folded into the row's
+ * customization rather than treated as a QR input field. Mirrors EVERY key
+ * recognised by buildCustomizationFromRequest() in fn_api_generate.php THAT
+ * DOES NOT ALSO COLLIDE with a consumed per-type INPUT field name (see the
+ * "version" note immediately below).
+ *
+ * 🔧 FG-033 / #57: this list previously omitted marker_border, marker_center,
+ * quiet_zone, version, preset, scan_distance_cm, and pdf_layout - a CSV caller
+ * had no way to reach the accessible preset (or any PDF layout, or the marker
+ * shape overrides) at all, silently forcing a fallback to the JSON 'items'
+ * shape. Six of those seven are folded like every other reserved column,
+ * closing that CSV/items parity gap.
+ *
+ * 🩹 Post-#57 review fix: "version" was REVERTED out of this list. Reserving
+ * it broke every vCard CSV row that supplies a "version" column, because
+ * buildPayload_vcard() (fn_qr_payloads.php) ALSO reads an INPUT field named
+ * "version" (the vCard spec version, '3.0'/'4.0') - folding that column into
+ * customization instead sent the string "4.0" to validateCustomization() as
+ * a QR-symbol-version override, which rejects it (QR symbol versions are
+ * integers 1-40), turning a previously-working vCard CSV row into a manifest
+ * FAILED item. "version" now folds into the row's INPUT object again (its
+ * pre-#57, pre-regression behaviour) so vCard CSV rows work correctly; QR
+ * symbol VERSION pinning remains fully reachable via the JSON 'items' shape's
+ * per-item/shared 'customization' object (which never collides with a vCard
+ * "version" input field, since the two live in separate objects there), or
+ * via a CSV "input.version" explicit-prefix column if a non-vCard type ever
+ * needs it. The other six newly-reserved names (marker_border, marker_center,
+ * quiet_zone, preset, scan_distance_cm, pdf_layout) have no such input-field
+ * collision and are unaffected.
+ */
+if (!defined('CUERCODE_API_BULK_CSV_RESERVED')) {
+    // 📌 Stored as a comma-separated string because PHP < 8.x cannot define()
+    //    an array as easily across versions; we explode() it where needed.
+    define(
+        'CUERCODE_API_BULK_CSV_RESERVED',
+        'format,size,ecc,fg_color,bg_color,marker_color,pattern,marker_border,'
+        . 'marker_center,logo,logo_size_pct,frame_style,frame_label,frame_color,'
+        . 'transparent,quiet_zone,preset,scan_distance_cm,pdf_layout'
+    );
+}
+
+// ==============================================================================
+// 🧹 parseBulkInput() - Normalise a bulk request body into an item list (PURE)
+// ==============================================================================
+
+/**
+ * 🧹 Parse a bulk request body into a normalised list of items (no I/O).
+ *
+ * Accepts the decoded JSON request body and produces a flat list of items,
+ * each shaped as:
+ *   [ 'type' => string, 'input' => array, 'customization' => array ]
+ *
+ * Supports two input shapes (provide exactly one):
+ *   - 'items' : a list of objects, each with type/input and optional
+ *               customization.
+ *   - 'csv'   : a CSV string whose first non-empty line is the header row.
+ *
+ * A request-level 'customization' object (when present) supplies SHARED
+ * defaults that each item's own customization overrides key-by-key.
+ *
+ * This function performs NO database, filesystem, or QR-library work, so it is
+ * fully unit-testable. It validates only the OUTER shape (that something
+ * parseable was supplied); deep per-item validation is validateBulkRequest()'s
+ * job.
+ *
+ * @param array $requestData The decoded JSON request body.
+ *
+ * @return array On success: [ 'items' => array<int, array> ].
+ *               On failure: [ 'error' => string, 'code' => string, 'http' => int ].
+ *
+ * @see https://www.php.net/manual/en/function.str-getcsv.php
+ *
+ * @example
+ *   $parsed = parseBulkInput(['items' => [['type' => 'url', 'input' => ['url' => 'https://a']]]]);
+ *   // $parsed === ['items' => [['type' => 'url', 'input' => ['url' => 'https://a'], 'customization' => []]]]
+ */
+function parseBulkInput(array $requestData): array
+{
+    // 📌 Resolve the shared, request-level customization defaults (optional).
+    if (isset($requestData['customization']) && is_array($requestData['customization'])) {
+        $sharedCustomization = $requestData['customization'];
+    } else {
+        $sharedCustomization = [];
+    }
+
+    // 📌 Determine which shape was supplied. 'items' takes precedence; if it is
+    //    present but not an array we report a shape error rather than silently
+    //    falling through to CSV.
+    $hasItems = array_key_exists('items', $requestData);
+    $hasCsv   = array_key_exists('csv', $requestData);
+
+    if (!$hasItems && !$hasCsv) {
+        return [
+            'error' => 'Bulk request must include either an "items" array or a "csv" string.',
+            'code'  => 'BULK_NO_INPUT',
+            'http'  => 400,
+        ];
+    }
+
+    if ($hasItems) {
+        return parseBulkItemsArray($requestData['items'], $sharedCustomization);
+    }
+
+    return parseBulkCsv($requestData['csv'], $sharedCustomization);
+}
+
+// ==============================================================================
+// 🧩 parseBulkItemsArray() - Normalise an explicit items array (PURE)
+// ==============================================================================
+
+/**
+ * 🧩 Normalise an explicit 'items' array into the canonical item list.
+ *
+ * @param mixed $items               The raw 'items' value from the request.
+ * @param array $sharedCustomization Request-level shared customization defaults.
+ *
+ * @return array On success: [ 'items' => array ]. On failure: structured error.
+ */
+function parseBulkItemsArray(mixed $items, array $sharedCustomization): array
+{
+    // ❌ 'items' must be an array (and a non-empty, list-like one).
+    if (!is_array($items)) {
+        return [
+            'error' => 'Field "items" must be an array of QR code requests.',
+            'code'  => 'BULK_INVALID_ITEMS',
+            'http'  => 400,
+        ];
+    }
+
+    if (count($items) === 0) {
+        return [
+            'error' => 'Field "items" must contain at least one QR code request.',
+            'code'  => 'BULK_EMPTY',
+            'http'  => 400,
+        ];
+    }
+
+    $normalised = [];
+
+    foreach ($items as $index => $item) {
+        // ❌ Each item must be an object/associative array.
+        if (!is_array($item)) {
+            return [
+                'error' => 'Item at index ' . (int) $index . ' must be an object with "type" and "input".',
+                'code'  => 'BULK_INVALID_ITEM',
+                'http'  => 400,
+            ];
+        }
+
+        // 📌 Type (string, required - deep-checked by validateBulkRequest()).
+        if (isset($item['type'])) {
+            $type = $item['type'];
+        } else {
+            $type = '';
+        }
+
+        // 📌 Input (object/array, required - deep-checked downstream).
+        if (isset($item['input']) && is_array($item['input'])) {
+            $input = $item['input'];
+        } else {
+            $input = [];
+        }
+
+        // 📌 Per-item customization overrides the shared request-level defaults.
+        if (isset($item['customization']) && is_array($item['customization'])) {
+            $itemCustomization = array_merge($sharedCustomization, $item['customization']);
+        } else {
+            $itemCustomization = $sharedCustomization;
+        }
+
+        $normalised[] = [
+            'type'          => $type,
+            'input'         => $input,
+            'customization' => $itemCustomization,
+        ];
+    }
+
+    return ['items' => $normalised];
+}
+
+// ==============================================================================
+// 🔘 bulkCsvCoerceBoolean() - Coerce a CSV boolean-column cell to bool (PURE)
+// ==============================================================================
+
+/**
+ * 🔘 Coerce a reserved boolean CSV column's cell value into a real PHP bool.
+ *
+ * 'transparent' and 'quiet_zone' are boolean-typed once folded into a row's
+ * customization - buildCustomizationFromRequest() applies a bare `(bool)`
+ * cast to whatever ends up in that key. A bare cast of the raw CSV STRING is
+ * unsafe for this purpose: PHP only treats '' and '0' as falsy strings, so a
+ * cell literally containing the text "false" (or "no"/"off") would cast to
+ * `true` - the exact trap this function closes (FG-033 / #57).
+ *
+ * Recognised falsy spellings (case-insensitive, whitespace-trimmed): 'false',
+ * '0', 'no', 'off'. Every other non-empty value (including 'true', '1',
+ * 'yes', 'on', or anything unrecognised) coerces to `true`. The caller
+ * (parseBulkCsv()) never invokes this on an empty cell - empty reserved cells
+ * are skipped upstream before this function would see them.
+ *
+ * @param string $value The raw (already-trimmed) CSV cell value.
+ *
+ * @return bool The coerced boolean.
+ */
+function bulkCsvCoerceBoolean(string $value): bool
+{
+    // 📌 Normalise case/whitespace once, then check against the falsy set.
+    $normalised = strtolower(trim($value));
+
+    $falsyValues = ['false', '0', 'no', 'off'];
+
+    return !in_array($normalised, $falsyValues, true);
+}
+
+// ==============================================================================
+// 📄 parseBulkCsv() - Normalise a CSV string into the canonical item list (PURE)
+// ==============================================================================
+
+/**
+ * 📄 Parse a CSV string into the canonical bulk item list.
+ *
+ * The first non-empty line is the header row. It MUST contain a "type" column
+ * and at least one input column. Columns are classified as:
+ *   - "type"                         -> the item type
+ *   - a reserved customization name  -> folded into the row's customization
+ *     (format, size, ecc, fg_color, bg_color, marker_color, pattern,
+ *      marker_border, marker_center, logo, logo_size_pct, frame_style,
+ *      frame_label, frame_color, transparent, quiet_zone, preset,
+ *      scan_distance_cm, pdf_layout - the full CUERCODE_API_BULK_CSV_RESERVED
+ *      list; FG-033 / #57 completed it, and a post-#57 review fix then
+ *      REMOVED "version" from it - see that constant's docblock above for why)
+ *   - "input.<field>"                -> input field <field> (explicit prefix)
+ *   - anything else                  -> input field (bare name, e.g. a bare
+ *      "version" column - the vCard spec-version input field)
+ *
+ * The two boolean reserved columns ("transparent", "quiet_zone") are coerced
+ * through bulkCsvCoerceBoolean() rather than a bare (bool) cast of the CSV
+ * cell string, so a cell literally containing "false" (or "0"/"no"/"off",
+ * case-insensitively) folds to boolean false instead of PHP's usual
+ * non-empty-string truthiness.
+ *
+ * Empty cells are skipped (so an item only carries the input fields it
+ * actually populates). Blank lines are ignored.
+ *
+ * @param mixed $csv                 The raw 'csv' value from the request.
+ * @param array $sharedCustomization Request-level shared customization defaults.
+ *
+ * @return array On success: [ 'items' => array ]. On failure: structured error.
+ *
+ * @see https://www.php.net/manual/en/function.str-getcsv.php
+ * @see bulkCsvCoerceBoolean() - the boolean-column coercion helper
+ */
+function parseBulkCsv(mixed $csv, array $sharedCustomization): array
+{
+    // ❌ CSV must be a string.
+    if (!is_string($csv) || trim($csv) === '') {
+        return [
+            'error' => 'Field "csv" must be a non-empty CSV string.',
+            'code'  => 'BULK_INVALID_CSV',
+            'http'  => 400,
+        ];
+    }
+
+    // 📌 Split into lines, normalising CRLF / CR to LF first.
+    $normalised = str_replace(["\r\n", "\r"], "\n", $csv);
+    $lines      = explode("\n", $normalised);
+
+    // 📌 Reserved customization column names (lower-cased) for classification.
+    $reserved = explode(',', CUERCODE_API_BULK_CSV_RESERVED);
+
+    // 📌 Locate the header row (first non-blank line) and parse its columns.
+    $headers   = null;
+    $dataLines = [];
+
+    foreach ($lines as $line) {
+        if (trim($line) === '') {
+            continue;
+        }
+
+        if ($headers === null) {
+            // 📌 str_getcsv() handles quoted fields / embedded commas correctly.
+            $rawHeaders = str_getcsv($line, ',', '"', '\\');
+            $headers    = [];
+            foreach ($rawHeaders as $h) {
+                $headers[] = strtolower(trim((string) $h));
+            }
+            continue;
+        }
+
+        $dataLines[] = $line;
+    }
+
+    // ❌ A header row is required.
+    if ($headers === null || count($headers) === 0) {
+        return [
+            'error' => 'CSV must contain a header row with a "type" column.',
+            'code'  => 'BULK_CSV_NO_HEADER',
+            'http'  => 400,
+        ];
+    }
+
+    // ❌ A "type" column is required.
+    $typeIndex = array_search('type', $headers, true);
+    if ($typeIndex === false) {
+        return [
+            'error' => 'CSV header must include a "type" column.',
+            'code'  => 'BULK_CSV_NO_TYPE',
+            'http'  => 400,
+        ];
+    }
+
+    // ❌ At least one input column is required (a non-type, non-reserved column,
+    //    or any column explicitly prefixed with "input.").
+    $hasInputColumn = false;
+    foreach ($headers as $colIndex => $colName) {
+        if ($colIndex === $typeIndex) {
+            continue;
+        }
+        if (str_starts_with($colName, 'input.')) {
+            $hasInputColumn = true;
+            break;
+        }
+        if (!in_array($colName, $reserved, true)) {
+            $hasInputColumn = true;
+            break;
+        }
+    }
+
+    if (!$hasInputColumn) {
+        return [
+            'error' => 'CSV header must include at least one input column besides "type".',
+            'code'  => 'BULK_CSV_NO_INPUT',
+            'http'  => 400,
+        ];
+    }
+
+    // ❌ At least one data row is required.
+    if (count($dataLines) === 0) {
+        return [
+            'error' => 'CSV must contain at least one data row beneath the header.',
+            'code'  => 'BULK_EMPTY',
+            'http'  => 400,
+        ];
+    }
+
+    // 📌 Build the item list, row by row.
+    $items = [];
+
+    foreach ($dataLines as $line) {
+        $cells = str_getcsv($line, ',', '"', '\\');
+
+        $type              = '';
+        $input             = [];
+        $rowCustomization  = [];
+
+        foreach ($headers as $colIndex => $colName) {
+            // 📌 Tolerate short rows (missing trailing cells -> empty value).
+            if (isset($cells[$colIndex])) {
+                $value = trim((string) $cells[$colIndex]);
+            } else {
+                $value = '';
+            }
+
+            if ($colIndex === $typeIndex) {
+                $type = $value;
+                continue;
+            }
+
+            // 📌 Skip empty cells so we do not inject blank input fields.
+            if ($value === '') {
+                continue;
+            }
+
+            if (str_starts_with($colName, 'input.')) {
+                // 📌 Explicit input field, prefix stripped.
+                $fieldName = substr($colName, strlen('input.'));
+                if ($fieldName !== '') {
+                    $input[$fieldName] = $value;
+                }
+                continue;
+            }
+
+            if (in_array($colName, $reserved, true)) {
+                // 📌 Reserved customization column. 'transparent' and
+                //    'quiet_zone' are boolean-typed downstream
+                //    (buildCustomizationFromRequest() applies a bare (bool)
+                //    cast) - a raw CSV string like "false" would otherwise
+                //    cast to `true` (PHP only treats '' and '0' as falsy
+                //    strings), so coerce those two columns explicitly here.
+                if ($colName === 'transparent' || $colName === 'quiet_zone') {
+                    $rowCustomization[$colName] = bulkCsvCoerceBoolean($value);
+                } else {
+                    $rowCustomization[$colName] = $value;
+                }
+                continue;
+            }
+
+            // 📌 Otherwise treat as a bare input field.
+            $input[$colName] = $value;
+        }
+
+        // 📌 Per-row customization overrides shared request-level defaults.
+        $items[] = [
+            'type'          => $type,
+            'input'         => $input,
+            'customization' => array_merge($sharedCustomization, $rowCustomization),
+        ];
+    }
+
+    return ['items' => $items];
+}
+
+// ==============================================================================
+// ✅ validateBulkRequest() - Validate a normalised item list (PURE)
+// ==============================================================================
+
+/**
+ * ✅ Validate a normalised bulk item list against the cap and per-item shape.
+ *
+ * Enforces:
+ *   1. The total item count does not exceed $maxItems (-> 413).
+ *   2. Each item has a non-empty string "type".
+ *   3. Each item has a non-empty "input" object/array.
+ *
+ * Returns null when every item is valid, or a structured error array
+ * (matching the parse helpers' shape) describing the FIRST problem found. This
+ * function performs NO database / filesystem / QR-library work.
+ *
+ * @param array $items    The normalised item list from parseBulkInput().
+ * @param int   $maxItems The maximum number of items permitted.
+ *
+ * @return array|null Null if valid; otherwise [ 'error', 'code', 'http' ].
+ */
+function validateBulkRequest(array $items, int $maxItems): ?array
+{
+    // ❌ Must contain at least one item.
+    if (count($items) === 0) {
+        return [
+            'error' => 'Bulk request contains no items to generate.',
+            'code'  => 'BULK_EMPTY',
+            'http'  => 400,
+        ];
+    }
+
+    // ❌ Enforce the maximum item count (413 Payload Too Large).
+    if (count($items) > $maxItems) {
+        return [
+            'error' => 'Too many items in bulk request: ' . count($items)
+                . '. Maximum allowed is ' . $maxItems . '.',
+            'code'  => 'BULK_TOO_MANY_ITEMS',
+            'http'  => 413,
+        ];
+    }
+
+    // ❌ Validate each item's shape.
+    foreach ($items as $index => $item) {
+        if (!is_array($item)) {
+            return [
+                'error' => 'Item at index ' . (int) $index . ' is malformed.',
+                'code'  => 'BULK_INVALID_ITEM',
+                'http'  => 400,
+            ];
+        }
+
+        // 📌 Type must be a non-empty string.
+        if (!isset($item['type']) || !is_string($item['type']) || trim($item['type']) === '') {
+            return [
+                'error' => 'Item at index ' . (int) $index
+                    . ' is missing a valid "type".',
+                'code'  => 'BULK_ITEM_MISSING_TYPE',
+                'http'  => 400,
+            ];
+        }
+
+        // 📌 Input must be a non-empty array.
+        if (!isset($item['input']) || !is_array($item['input']) || count($item['input']) === 0) {
+            return [
+                'error' => 'Item at index ' . (int) $index
+                    . ' (type "' . $item['type'] . '") is missing "input" data.',
+                'code'  => 'BULK_ITEM_MISSING_INPUT',
+                'http'  => 400,
+            ];
+        }
+    }
+
+    // ✅ All items are well-formed.
+    return null;
+}
+
+// ==============================================================================
+// 🔡 bulkBuildFilename() - Build a safe per-item filename inside the ZIP (PURE)
+// ==============================================================================
+
+/**
+ * 🔡 Build a safe, unique filename for an item's image inside the ZIP.
+ *
+ * Produces "{NNN}-{type}.{ext}" where NNN is the 1-based, zero-padded item
+ * index and {type} is sanitised to [a-z0-9_-]. The leading index guarantees
+ * uniqueness even when many items share a type.
+ *
+ * @param int    $oneBasedIndex The 1-based item index.
+ * @param string $type          The item type (used in the name).
+ * @param string $extension     The file extension WITHOUT a leading dot.
+ *
+ * @return string The ZIP entry filename.
+ *
+ * @see https://www.php.net/manual/en/function.preg-replace.php
+ */
+function bulkBuildFilename(int $oneBasedIndex, string $type, string $extension): string
+{
+    // 📌 Sanitise the type into a filesystem/zip-safe slug.
+    $slug = strtolower(trim($type));
+    $slug = preg_replace('/[^a-z0-9_-]+/', '-', $slug);
+    if ($slug === null || $slug === '') {
+        $slug = 'qr';
+    }
+    $slug = trim($slug, '-');
+    if ($slug === '') {
+        $slug = 'qr';
+    }
+
+    // 📌 Sanitise the extension similarly (default png).
+    $ext = strtolower(trim($extension));
+    $ext = preg_replace('/[^a-z0-9]+/', '', $ext);
+    if ($ext === null || $ext === '') {
+        $ext = 'png';
+    }
+
+    return sprintf('%03d-%s.%s', $oneBasedIndex, $slug, $ext);
+}
+
+// ==============================================================================
+// 📄 bulkRequestWantsAveryLayout() - detect an Avery-sheet bulk request (PURE)
+// ==============================================================================
+
+/**
+ * 📄 Detect whether a bulk request's SHARED customisation asks for an Avery
+ *     label-sheet PDF instead of the default ZIP-of-images output (E5 / #49).
+ *
+ * Only the request-level (shared) 'customization' object is inspected - a
+ * per-item override cannot flip the WHOLE batch between a ZIP and a single
+ * combined PDF, since that is a request-shape decision, not a per-item one.
+ * Pure and side-effect-free: no I/O, directly unit-testable.
+ *
+ * @param array $requestData The parsed JSON request body (as passed to
+ *                            parseBulkInput()/handleBulkGenerate()).
+ *
+ * @return string|null 'avery_5160' or 'avery_l7160' when requested; null
+ *                     otherwise (the existing ZIP behaviour applies).
+ *
+ * @see fn_qr_accessible_pdf.php - averySheetSpec(), renderAveryLabelSheetPdf()
+ * @see handleBulkAverySheet() - the branch this gates
+ */
+function bulkRequestWantsAveryLayout(array $requestData): ?string
+{
+    if (!isset($requestData['customization']) || !is_array($requestData['customization'])) {
+        return null;
+    }
+
+    $sharedCustomization = $requestData['customization'];
+
+    if (!isset($sharedCustomization['format'])
+        || strtolower(trim((string) $sharedCustomization['format'])) !== 'pdf'
+    ) {
+        return null;
+    }
+
+    if (!isset($sharedCustomization['pdf_layout'])) {
+        return null;
+    }
+
+    $pdfLayout = strtolower(trim((string) $sharedCustomization['pdf_layout']));
+
+    if ($pdfLayout === 'avery_5160' || $pdfLayout === 'avery_l7160') {
+        return $pdfLayout;
+    }
+
+    return null;
+}
+
+// ==============================================================================
+// 🎯 handleBulkGenerate() - Handle a bulk QR generation API request
+// ==============================================================================
+
+/**
+ * 🎯 Handle a synchronous bulk QR generation request and stream a ZIP.
+ *
+ * Pipeline:
+ *   1. Require the PHP zip extension (else 501).
+ *   2. Read + decode the JSON request body (size/Content-Type guards are the
+ *      router's responsibility, mirroring the other POST endpoints).
+ *   3. parseBulkInput() -> normalised item list (or structured error).
+ *   4. validateBulkRequest() -> enforce cap + per-item shape (or error).
+ *   5. Load the QR generation functions.
+ *   5a. E5/#49: if the SHARED customisation requests format=pdf with
+ *       pdf_layout=avery_5160/avery_l7160, delegate the ENTIRE request to
+ *       handleBulkAverySheet() instead - it streams a single combined Avery
+ *       label-sheet PDF (one item per label, spanning extra sheet pages as
+ *       needed) and this function returns immediately afterwards. This is a
+ *       different RESPONSE SHAPE (application/pdf, not application/zip), so
+ *       it is a fork, not an add-on to the ZIP pipeline below.
+ *   6. (default path) loop generateQRCode() IN-MEMORY for each item
+ *      (save_file = false so nothing is written to disk; the DB record save
+ *      inside generateQRCode() is best-effort and never required).
+ *   7. Assemble a ZIP: one image per successful item, plus a manifest.txt that
+ *      records every item's outcome. Per-item failures are recorded in the
+ *      manifest rather than aborting the batch.
+ *   8. Stream the ZIP with application/zip + attachment Content-Disposition.
+ *
+ * @param array      $auth        The authentication context from the router. Used
+ *                                (Epic E4/#53) to resolve the caller's plan-based
+ *                                bulk_batch_size limit via resolveUserIdFromAuth($auth)
+ *                                + limitFor() (fn_features.php) - an anonymous caller
+ *                                (or when fn_features.php is unavailable) falls back
+ *                                to the 'anonymous' plan's seeded limit (25).
+ * @param array|null $requestData FG-033/#57 TESTABLE BODY INJECTION: an optional
+ *                                pre-decoded request body. When null (the router's
+ *                                normal `handleBulkGenerate($auth)` call - unchanged,
+ *                                backward-compatible), Step 2 below reads + decodes
+ *                                php://input itself exactly as before. When a caller
+ *                                supplies an array here, Step 2 is skipped entirely and
+ *                                parsing proceeds straight from this array. WHY: unlike
+ *                                a superglobal, php://input is a read-once stream tied
+ *                                to the real SAPI request - it cannot be seeded or
+ *                                re-read from CLI PHP 8.5 test code, so there was
+ *                                previously no way to unit-test this function's full
+ *                                ZIP-assembly pipeline (accessible-preset enforcement,
+ *                                manifest formatting, actual ZipArchive contents)
+ *                                without a live HTTP server. This mirrors
+ *                                fn_api_generate.php's handleGenerate(array $requestData),
+ *                                which already receives its body pre-decoded from the
+ *                                router rather than reading php://input itself.
+ *
+ * @return void (streams the ZIP or Avery-sheet PDF and exits, or sends an error response)
+ *
+ * @see fn_qr_generate.php  - generateQRCode()
+ * @see fn_api_generate.php - buildCustomizationFromRequest(), validateCustomization(), handleGenerate()
+ * @see fn_features.php     - limitFor(), resolveUserIdFromAuth()
+ * @see handleBulkAverySheet() - the Avery-sheet fork (E5 / #49)
+ * @see https://www.php.net/manual/en/class.ziparchive.php
+ * @see tests/test_bulk.php - the end-to-end ZIP/Avery subprocess coverage this enables
+ */
+function handleBulkGenerate(array $auth, ?array $requestData = null): void
+{
+    // ==================================================================
+    // 📌 Step 1: Require the zip extension (else 501 Not Implemented).
+    // @see https://www.php.net/manual/en/function.extension-loaded.php
+    // ==================================================================
+    if (!extension_loaded('zip')) {
+        errorResponse(
+            'Bulk ZIP generation is unavailable: the server is missing the PHP "zip" extension.',
+            501,
+            'ZIP_UNAVAILABLE'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    // ==================================================================
+    // 📌 Step 2: Read + decode the JSON request body - SKIPPED when
+    // $requestData was already injected by the caller (see the "Testable
+    // body injection" @param note on this function's docblock above; FG-033
+    // / #57). The router's normal call site (public_html/api/v1/index.php)
+    // still invokes `handleBulkGenerate($auth)` with no second argument, so
+    // $requestData is null there and this block runs exactly as before -
+    // fully backward-compatible.
+    // The router already enforces the body-size cap (413) and JSON
+    // Content-Type (415) for POST bodies; we re-read here so the handler
+    // is self-contained and testable, and decode defensively.
+    // @see https://www.php.net/manual/en/function.json-decode.php
+    // ==================================================================
+    if ($requestData === null) {
+        $rawInput = file_get_contents('php://input');
+        if ($rawInput === false) {
+            $rawInput = '';
+        }
+
+        if (trim($rawInput) === '') {
+            errorResponse(
+                'Bulk request body is empty. Provide an "items" array or a "csv" string.',
+                400,
+                'BULK_NO_INPUT'
+            );
+            return;
+        }
+
+        $requestData = json_decode($rawInput, true);
+        if ($requestData === null && json_last_error() !== JSON_ERROR_NONE) {
+            errorResponse(
+                'Invalid JSON in request body: ' . json_last_error_msg(),
+                400,
+                'INVALID_JSON'
+            );
+            return;
+        }
+        if (!is_array($requestData)) {
+            errorResponse(
+                'Bulk request body must be a JSON object.',
+                400,
+                'BULK_INVALID_BODY'
+            );
+            return;
+        }
+    }
+
+    // ==================================================================
+    // 📌 Step 3: Parse the body into a normalised item list.
+    // ==================================================================
+    $parsed = parseBulkInput($requestData);
+
+    if (isset($parsed['error'])) {
+        if (isset($parsed['http'])) {
+            $httpCode = (int) $parsed['http'];
+        } else {
+            $httpCode = 400;
+        }
+        if (isset($parsed['code'])) {
+            $errorCode = (string) $parsed['code'];
+        } else {
+            $errorCode = 'BULK_PARSE_ERROR';
+        }
+        errorResponse((string) $parsed['error'], $httpCode, $errorCode);
+        return;
+    }
+
+    if (isset($parsed['items']) && is_array($parsed['items'])) {
+        $items = $parsed['items'];
+    } else {
+        $items = [];
+    }
+
+    // ==================================================================
+    // 📌 Step 4: Validate the item list (cap + per-item shape).
+    // 🔢 Epic E4/#53: the cap is now the caller's PLAN limit
+    // ('bulk_batch_size' in tblSubscriptionPlans.limitsJSON), resolved via
+    // fn_features.php - resolveUserIdFromAuth() maps the router's $auth
+    // context (session/CSRF user, or an API key's owning user) to a userID,
+    // then limitFor() reads that user's (or the anonymous plan's, if no
+    // subject resolves) allowance. Both helpers degrade gracefully if
+    // fn_features.php is not loaded for some reason (defensive
+    // function_exists() guards, matching this codebase's house style).
+    // ==================================================================
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
+
+    if (function_exists('limitFor')) {
+        $maxItems = limitFor('bulk_batch_size', $currentUserId);
+    } else {
+        // 🚨 Fail-safe: fn_features.php unavailable - fall back to the
+        // anonymous plan's seeded default rather than an unbounded/absent cap.
+        $maxItems = 25;
+    }
+
+    // 📌 A resolved limit of 0 or less would make bulk generation entirely
+    // unusable even for the most restrictive real tier - that should never
+    // happen for a correctly-seeded 'anonymous' plan (bulk_batch_size: 25),
+    // but guard against a misconfigured plan row zeroing this out by mistake.
+    if ($maxItems <= 0) {
+        $maxItems = 25;
+    }
+
+    $validationError = validateBulkRequest($items, $maxItems);
+
+    if ($validationError !== null) {
+        if (isset($validationError['http'])) {
+            $httpCode = (int) $validationError['http'];
+        } else {
+            $httpCode = 400;
+        }
+        if (isset($validationError['code'])) {
+            $errorCode = (string) $validationError['code'];
+        } else {
+            $errorCode = 'BULK_VALIDATION_ERROR';
+        }
+
+        // 📌 Epic E4/#53: the over-cap error is plan-dependent, so add an
+        // upgrade hint. Every other validation error (empty batch, malformed
+        // item, ...) is unrelated to plan tier and gets no extra data.
+        $extraData = [];
+        if ($errorCode === 'BULK_TOO_MANY_ITEMS' && function_exists('resolveUpgradeUrl')) {
+            $extraData = [
+                'upgrade_url' => resolveUpgradeUrl(),
+                'plan_limit'  => $maxItems,
+            ];
+        }
+
+        errorResponse((string) $validationError['error'], $httpCode, $errorCode, $extraData);
+        return;
+    }
+
+    // ==================================================================
+    // 📌 Step 5: Load the QR generation functions.
+    // loadQRGenerationFunctions() lives in fn_api_generate.php (loaded by the
+    // router alongside this file). Guard in case of an unexpected load order.
+    // ==================================================================
+    if (function_exists('loadQRGenerationFunctions')) {
+        loadQRGenerationFunctions();
+    }
+
+    if (!function_exists('generateQRCode')) {
+        errorResponse(
+            'QR code generation service is unavailable. Please try again later.',
+            503,
+            'SERVICE_UNAVAILABLE'
+        );
+        return;
+    }
+
+    // ==================================================================
+    // 📌 Step 5a: Fork to the Avery label-sheet PDF path (E5 / #49) when the
+    // SHARED customisation requests it. A single combined PDF (not a ZIP) is
+    // a different response shape, so this is a complete fork - it streams
+    // its own response and this function returns immediately afterwards.
+    // ==================================================================
+    $averyLayout = bulkRequestWantsAveryLayout($requestData);
+
+    if ($averyLayout !== null && function_exists('renderAveryLabelSheetPdf')) {
+        handleBulkAverySheet($items, $averyLayout, $auth);
+        return;
+    }
+
+    // ==================================================================
+    // 📌 Step 6: Generate each item in-memory and build the ZIP.
+    // ==================================================================
+
+    // 📌 Create a unique temp file for the archive. ZipArchive needs a path;
+    //    we stream + unlink it afterwards.
+    // @see https://www.php.net/manual/en/function.tempnam.php
+    $tmpDir  = sys_get_temp_dir();
+    $tmpFile = tempnam($tmpDir, 'cuercode-bulk-');
+
+    if ($tmpFile === false) {
+        errorResponse(
+            'Failed to allocate a temporary file for the bulk archive.',
+            500,
+            'BULK_TEMP_FAILED'
+        );
+        return;
+    }
+
+    $zip = new \ZipArchive();
+    // @see https://www.php.net/manual/en/ziparchive.open.php
+    if ($zip->open($tmpFile, \ZipArchive::OVERWRITE) !== true) {
+        @unlink($tmpFile);
+        errorResponse(
+            'Failed to create the bulk ZIP archive.',
+            500,
+            'BULK_ZIP_FAILED'
+        );
+        return;
+    }
+
+    // 📌 Manifest lines (one per item) recording the per-item outcome.
+    $manifestLines = [];
+    $manifestLines[] = 'CueRCode bulk generation manifest';
+    $manifestLines[] = 'Generated: ' . gmdate('Y-m-d\TH:i:s+00:00');
+    $manifestLines[] = 'Items requested: ' . count($items);
+    $manifestLines[] = str_repeat('-', 60);
+
+    $successCount = 0;
+    $failureCount = 0;
+
+    foreach ($items as $index => $item) {
+        $oneBased = (int) $index + 1;
+        $type     = (string) $item['type'];
+        $input    = $item['input'];
+
+        // 📌 Build a sanitised customization for this item, forcing save_file
+        //    off so the in-memory loop never writes to disk.
+        if (isset($item['customization']) && is_array($item['customization'])) {
+            $rawCustomization = $item['customization'];
+        } else {
+            $rawCustomization = [];
+        }
+
+        if (function_exists('buildCustomizationFromRequest')) {
+            $customization = buildCustomizationFromRequest($rawCustomization);
+        } else {
+            $customization = $rawCustomization;
+        }
+        $customization['save_file'] = false;
+
+        // ==================================================================
+        // ♿ Accessible-preset enforcement (FG-033 / #57 bulk-pipeline parity)
+        // Mirrors fn_api_generate.php's handleGenerate() Step 3a: this is a
+        // complete no-op unless THIS item's customization['preset'] ===
+        // 'accessible' (guaranteed by applyAccessiblePreset()'s own documented
+        // no-op contract for every other preset value - see its docblock in
+        // fn_qr_options.php). When active it forces ecc=H + quiet_zone=true,
+        // drops any pinned version, and evaluates the WCAG contrast ratio of
+        // this item's fg_color/bg_color.
+        //
+        // DESIGN DECISION: unlike handleGenerate()'s single-item HTTP 422
+        // rejection on a sub-3:1 ratio, a bulk item with a failing ratio is
+        // recorded as a per-item manifest FAILURE (and the loop simply
+        // continues to the next item) rather than aborting the whole batch -
+        // bulk generation's documented invariant that "individual failures
+        // NEVER abort the batch" (see this file's own header docblock) wins
+        // here, and no new HTTP error code is introduced for this endpoint.
+        // @see fn_qr_options.php  - applyAccessiblePreset()
+        // @see fn_api_generate.php - handleGenerate() Step 3a (the single-item
+        //      422 counterpart this deliberately does NOT replicate)
+        // ==================================================================
+        $accessibleMeta = null;
+        if (function_exists('applyAccessiblePreset')) {
+            $customization = applyAccessiblePreset($customization);
+
+            if (isset($customization['_accessible_meta']) && is_array($customization['_accessible_meta'])) {
+                $accessibleMeta = $customization['_accessible_meta'];
+                // 🧹 Never let the internal bookkeeping key reach buildQROptions()/
+                //    generateQRCode() - it is meaningless to the QR engine.
+                unset($customization['_accessible_meta']);
+            }
+        }
+
+        if ($accessibleMeta !== null
+            && isset($accessibleMeta['contrast_level'])
+            && $accessibleMeta['contrast_level'] === 'fail'
+        ) {
+            $failureCount++;
+            $manifestLines[] = sprintf(
+                '[%03d] FAILED  type=%s  reason=%s',
+                $oneBased,
+                $type,
+                'Accessible preset rejected: contrast ratio ' . $accessibleMeta['contrast_ratio']
+                    . ':1 is below the WCAG minimum of 3:1.'
+            );
+            continue;
+        }
+
+        // 📌 Validate this item's customization (colours, size range).
+        if (function_exists('validateCustomization')) {
+            $customizationError = validateCustomization($customization);
+        } else {
+            $customizationError = null;
+        }
+
+        if ($customizationError !== null) {
+            $failureCount++;
+            $manifestLines[] = sprintf(
+                '[%03d] FAILED  type=%s  reason=%s',
+                $oneBased,
+                $type,
+                $customizationError
+            );
+            continue;
+        }
+
+        // 📌 Generate the QR code in-memory. generateQRCode() returns the image
+        //    as a base64 data URI for raster formats, or raw markup for SVG/PDF.
+        try {
+            $result = generateQRCode($type, $input, $customization);
+        } catch (\Throwable $e) {
+            $failureCount++;
+            $manifestLines[] = sprintf(
+                '[%03d] FAILED  type=%s  reason=%s',
+                $oneBased,
+                $type,
+                'Exception: ' . $e->getMessage()
+            );
+            continue;
+        }
+
+        if (!is_array($result) || empty($result['success'])) {
+            if (is_array($result) && isset($result['error'])) {
+                $reason = (string) $result['error'];
+            } else {
+                $reason = 'Unknown generation error.';
+            }
+            $failureCount++;
+            $manifestLines[] = sprintf(
+                '[%03d] FAILED  type=%s  reason=%s',
+                $oneBased,
+                $type,
+                $reason
+            );
+            continue;
+        }
+
+        // 📌 Resolve the output format/extension to name the ZIP entry and to
+        //    decide whether the data is base64 or raw.
+        if (isset($customization['format'])) {
+            $format = strtolower(trim((string) $customization['format']));
+        } else {
+            $format = 'png';
+        }
+
+        $extension = $format;
+        if ($format === 'jpeg') {
+            $extension = 'jpg';
+        }
+
+        // 📌 Extract the raw bytes from the result's 'data' field.
+        $data = (string) $result['data'];
+        if (str_starts_with($data, 'data:')) {
+            // 📌 base64 data URI: strip the "data:<mime>;base64," prefix and decode.
+            $commaPos = strpos($data, ',');
+            if ($commaPos !== false) {
+                $base64 = substr($data, $commaPos + 1);
+                $bytes  = base64_decode($base64, true);
+                if ($bytes === false) {
+                    $bytes = '';
+                }
+            } else {
+                $bytes = '';
+            }
+        } else {
+            // 📌 Raw SVG / PDF markup is already the file content.
+            $bytes = $data;
+        }
+
+        if ($bytes === '') {
+            $failureCount++;
+            $manifestLines[] = sprintf(
+                '[%03d] FAILED  type=%s  reason=%s',
+                $oneBased,
+                $type,
+                'Generated image was empty.'
+            );
+            continue;
+        }
+
+        $entryName = bulkBuildFilename($oneBased, $type, $extension);
+        $zip->addFromString($entryName, $bytes);
+
+        $successCount++;
+        $manifestLines[] = sprintf(
+            '[%03d] OK      type=%-10s file=%s',
+            $oneBased,
+            $type,
+            $entryName
+        );
+
+        // ♿ FG-033/#57: when this item went through the accessible preset,
+        //    append an ADDITIONAL indented detail line reporting the contrast
+        //    ratio/level (and the recommended physical print size, when the
+        //    item also supplied scan_distance_cm) - a sub-3:1 ratio never
+        //    reaches here (it `continue`s above as a FAILED line instead), so
+        //    only 'warning'/'pass' levels are ever reported on this line.
+        if ($accessibleMeta !== null) {
+            $detailLine = sprintf(
+                '      accessible: contrast=%s:1 (%s)',
+                $accessibleMeta['contrast_ratio'],
+                $accessibleMeta['contrast_level']
+            );
+            if (isset($accessibleMeta['recommended_print_size_mm'])
+                && $accessibleMeta['recommended_print_size_mm'] !== null
+            ) {
+                $detailLine .= '  recommended_print_size_mm=' . $accessibleMeta['recommended_print_size_mm'];
+            }
+            $manifestLines[] = $detailLine;
+        }
+    }
+
+    // 📌 Append the summary + manifest to the ZIP.
+    $manifestLines[] = str_repeat('-', 60);
+    $manifestLines[] = 'Succeeded: ' . $successCount . '  Failed: ' . $failureCount;
+
+    $zip->addFromString('manifest.txt', implode("\n", $manifestLines) . "\n");
+
+    $zip->close();
+
+    // ==================================================================
+    // 📌 Step 7: Log the activity (best-effort) and stream the ZIP.
+    // ==================================================================
+    if (function_exists('logActivity')) {
+        if (isset($auth['method'])) {
+            $authMethod = (string) $auth['method'];
+        } else {
+            $authMethod = 'anonymous';
+        }
+        logActivity(
+            'api_bulk_generate',
+            'API: Bulk generated ' . $successCount . ' QR code(s) ('
+                . $failureCount . ' failed) in a ZIP.',
+            'qr_code',
+            null,
+            [
+                'requested' => count($items),
+                'succeeded' => $successCount,
+                'failed'    => $failureCount,
+                'authType'  => $authMethod,
+                'endpoint'  => 'bulk-generate',
+            ]
+        );
+    }
+
+    // 📌 Read the assembled archive back into memory for streaming.
+    $zipBytes = @file_get_contents($tmpFile);
+    @unlink($tmpFile);
+
+    if ($zipBytes === false) {
+        errorResponse(
+            'Failed to read the assembled bulk archive.',
+            500,
+            'BULK_READ_FAILED'
+        );
+        return;
+    }
+
+    // 📌 Stream the ZIP with download headers. We send these directly (the
+    //    response is binary, not JSON, so jsonResponse() is not used).
+    // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
+    if (!headers_sent()) {
+        http_response_code(200);
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="cuercode-bulk.zip"');
+        header('Content-Length: ' . strlen($zipBytes));
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('X-Content-Type-Options: nosniff');
+        // 📌 Surface batch counts in headers for non-UI consumers.
+        header('X-Bulk-Succeeded: ' . $successCount);
+        header('X-Bulk-Failed: ' . $failureCount);
+        if (function_exists('emitCorsHeaders')) {
+            emitCorsHeaders();
+        }
+    }
+
+    echo $zipBytes;
+    exit;
+}
+
+// ==============================================================================
+// 📄 handleBulkAverySheet() - stream a combined Avery label-sheet PDF (E5 / #49)
+// ==============================================================================
+
+/**
+ * 📄 Build and stream a single combined Avery label-sheet PDF for a bulk request.
+ *
+ * Called from handleBulkGenerate() (Step 5a) instead of the ZIP pipeline when
+ * the request's shared customisation asks for format=pdf with
+ * pdf_layout=avery_5160/avery_l7160. For each validated item: builds the
+ * payload + QR options + raw module matrix (bypassing image rendering
+ * entirely, since only the matrix is needed for label tiling), then hands
+ * the full list to renderAveryLabelSheetPdf() (fn_qr_accessible_pdf.php),
+ * which tiles them into successive label slots across as many sheet pages
+ * as needed. Every item is FORCED onto the SAME sheet layout regardless of
+ * what its own (possibly per-item-overridden) customisation requested - a
+ * mixed-layout Avery sheet is not a coherent single PDF.
+ *
+ * Per-item failures are OMITTED from $sheetItems entirely (not padded with a
+ * placeholder), rather than aborting the whole batch, mirroring
+ * handleBulkGenerate()'s ZIP pipeline's per-item resilience. Because
+ * renderAveryLabelSheetPdf() tiles $sheetItems SEQUENTIALLY into successive
+ * label slots, a failed item does NOT leave its own slot blank - every
+ * label AFTER it simply shifts forward one slot to fill the gap (this
+ * compaction is pre-existing sheet-tiling behaviour for every failure type,
+ * not special to the accessible-preset check below; changing it is a
+ * separate concern). The failure/success counts are still surfaced via the
+ * same X-Bulk-Succeeded/X-Bulk-Failed response headers - this Avery path has
+ * no per-item manifest (unlike the ZIP pipeline), so those headers are the
+ * ONLY place a caller can see that a failure occurred at all.
+ *
+ * @param array  $items       The normalised, already-validated item list from
+ *                            parseBulkInput()/validateBulkRequest().
+ * @param string $averyLayout 'avery_5160' or 'avery_l7160'.
+ * @param array  $auth        The authentication context (for activity logging parity
+ *                            with handleBulkGenerate()'s ZIP path).
+ *
+ * @return void (streams the PDF and exits, or sends an error response)
+ *
+ * @see fn_qr_accessible_pdf.php - renderAveryLabelSheetPdf(), buildQrMatrixForAccessiblePdf(),
+ *                                 accessiblePdfResolveDarkRgb()
+ * @see fn_api_generate.php      - buildCustomizationFromRequest(), validateCustomization()
+ * @see fn_qr_payloads.php       - buildQRPayload()
+ * @see fn_qr_options.php        - buildQROptions()
+ */
+function handleBulkAverySheet(array $items, string $averyLayout, array $auth): void
+{
+    $sheetItems       = [];
+    $failureCount     = 0;
+
+    foreach ($items as $index => $item) {
+        if (isset($item['type'])) {
+            $type = (string) $item['type'];
+        } else {
+            $type = '';
+        }
+
+        if (isset($item['input']) && is_array($item['input'])) {
+            $input = $item['input'];
+        } else {
+            $input = [];
+        }
+
+        if (isset($item['customization']) && is_array($item['customization'])) {
+            $rawCustomization = $item['customization'];
+        } else {
+            $rawCustomization = [];
+        }
+
+        if (function_exists('buildCustomizationFromRequest')) {
+            $customization = buildCustomizationFromRequest($rawCustomization);
+        } else {
+            $customization = $rawCustomization;
+        }
+
+        // ==================================================================
+        // ♿ Accessible-preset enforcement (FG-033 / #57 bulk-pipeline parity)
+        // Same no-op-unless-'accessible' contract as the ZIP pipeline's loop
+        // in handleBulkGenerate() above, and the same per-item (not
+        // whole-request) failure handling: a sub-3:1 contrast ratio skips
+        // (continue) THIS item entirely rather than aborting the sheet. This
+        // item is simply OMITTED from $sheetItems - it does NOT leave its own
+        // label slot blank, since renderAveryLabelSheetPdf() tiles the
+        // surviving items sequentially, so every later label shifts forward
+        // one slot to fill the gap (see the compaction note on this
+        // function's own docblock above). The pre-existing "every item
+        // failed" 422 (BULK_AVERY_ALL_FAILED, below) already covers the
+        // all-failed case, so no new HTTP error code is introduced here
+        // either; short of that 422, this failure is reported ONLY via the
+        // X-Bulk-Failed response header count - there is no per-item
+        // manifest on this Avery path.
+        // @see fn_qr_options.php - applyAccessiblePreset()
+        // @see handleBulkGenerate() - the ZIP pipeline's sibling enforcement
+        // ==================================================================
+        $accessibleMeta = null;
+        if (function_exists('applyAccessiblePreset')) {
+            $customization = applyAccessiblePreset($customization);
+
+            if (isset($customization['_accessible_meta']) && is_array($customization['_accessible_meta'])) {
+                $accessibleMeta = $customization['_accessible_meta'];
+                // 🧹 Never let the internal bookkeeping key reach buildQROptions().
+                unset($customization['_accessible_meta']);
+            }
+        }
+
+        if ($accessibleMeta !== null
+            && isset($accessibleMeta['contrast_level'])
+            && $accessibleMeta['contrast_level'] === 'fail'
+        ) {
+            $failureCount++;
+            continue;
+        }
+
+        // 🔒 Force the SAME sheet layout regardless of what the item itself
+        //    requested - a mixed-layout Avery sheet is not a coherent PDF.
+        $customization['format']     = 'pdf';
+        $customization['pdf_layout'] = $averyLayout;
+
+        if (function_exists('validateCustomization')) {
+            $customizationError = validateCustomization($customization);
+        } else {
+            $customizationError = null;
+        }
+
+        if ($customizationError !== null) {
+            $failureCount++;
+            continue;
+        }
+
+        try {
+            $payload   = buildQRPayload($type, $input);
+            $qrOptions = buildQROptions($customization);
+            $matrix    = buildQrMatrixForAccessiblePdf($qrOptions, $payload);
+        } catch (\Throwable $e) {
+            $failureCount++;
+            if (function_exists('logError')) {
+                logError('warning', 'Bulk Avery item generation failed', $e->getMessage(), [
+                    'index' => (int) $index,
+                    'type'  => $type,
+                ]);
+            }
+            continue;
+        }
+
+        $sheetItems[] = [
+            'matrix'      => $matrix->getMatrix(true),
+            'moduleCount' => $matrix->getSize(),
+            'darkRgb'     => accessiblePdfResolveDarkRgb($customization),
+        ];
+    }
+
+    // ❌ Every item failed - nothing to render.
+    if (count($sheetItems) === 0) {
+        errorResponse(
+            'None of the requested items could be generated for the Avery label sheet.',
+            422,
+            'BULK_AVERY_ALL_FAILED'
+        );
+        return;
+    }
+
+    $pdfBytes = renderAveryLabelSheetPdf($sheetItems, $averyLayout);
+
+    // 📌 Log the activity (best-effort), mirroring the ZIP path's logging.
+    if (function_exists('logActivity')) {
+        if (isset($auth['method'])) {
+            $authMethod = (string) $auth['method'];
+        } else {
+            $authMethod = 'anonymous';
+        }
+        logActivity(
+            'api_bulk_generate',
+            'API: Bulk generated ' . count($sheetItems) . ' QR code(s) ('
+                . $failureCount . ' failed) as an Avery label-sheet PDF ('
+                . $averyLayout . ').',
+            'qr_code',
+            null,
+            [
+                'requested'  => count($items),
+                'succeeded'  => count($sheetItems),
+                'failed'     => $failureCount,
+                'authType'   => $authMethod,
+                'endpoint'   => 'bulk-generate',
+                'pdf_layout' => $averyLayout,
+            ]
+        );
+    }
+
+    // 📌 Stream the PDF with download headers, mirroring the ZIP path's headers.
+    // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
+    if (!headers_sent()) {
+        http_response_code(200);
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="cuercode-bulk-' . $averyLayout . '.pdf"');
+        header('Content-Length: ' . strlen($pdfBytes));
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('X-Content-Type-Options: nosniff');
+        // 📌 Surface batch counts in headers for non-UI consumers.
+        header('X-Bulk-Succeeded: ' . count($sheetItems));
+        header('X-Bulk-Failed: ' . $failureCount);
+        if (function_exists('emitCorsHeaders')) {
+            emitCorsHeaders();
+        }
+    }
+
+    echo $pdfBytes;
+    exit;
+}

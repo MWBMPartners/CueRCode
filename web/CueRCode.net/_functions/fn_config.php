@@ -4,6 +4,8 @@
  * ⚙️ CueRCode - Configuration Manager
  * ==============================================================================
  *
+ * Path: _functions/fn_config.php
+ *
  * Provides functions for reading and writing application settings stored in
  * the tblSettings database table. Settings marked as isSensitive are
  * automatically encrypted/decrypted using fn_encryption.php.
@@ -16,6 +18,7 @@
  *
  * @package     CueRCode
  * @subpackage  Configuration
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/language.types.type-juggling.php
@@ -82,14 +85,19 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  */
 function getConfig(string $key, mixed $default = null): mixed
 {
-    // 📌 Static cache persists across calls within the same request
-    // This avoids repeated database queries for the same setting key.
-    // @see https://www.php.net/manual/en/language.variables.scope.php#language.variables.scope.static
-    static $cache = [];
-
-    // 🔍 Return from cache if already fetched during this request
-    if (array_key_exists($key, $cache)) {
-        return $cache[$key];
+    // 📌 Per-request cache lives in the SHARED config cache store (not a local
+    //    static) so that setConfig()/clearConfigCache()/populateConfigCache() can
+    //    evict and warm entries that getConfig() then honours.
+    // 🐛 B-004 FIX: previously getConfig() kept its OWN static $cache that no
+    //    other function could touch, so clearConfigCache() (which wrote to an
+    //    unrelated static) and populateConfigCache() (a no-op) had ZERO effect —
+    //    a stale value could be served after a setConfig() within the same
+    //    request. The cache now lives in configCacheStore() and all four
+    //    functions operate on it.
+    // @see configCacheStore() - the single shared static store
+    // 🔍 Return from cache if already fetched/warmed during this request.
+    if (configCacheStore('has', $key)) {
+        return configCacheStore('get', $key);
     }
 
     // 🗄️ Query the database for the setting
@@ -164,8 +172,8 @@ function getConfig(string $key, mixed $default = null): mixed
     // @see https://www.php.net/manual/en/language.types.type-juggling.php
     $typedValue = castSettingValue($rawValue, $settingType);
 
-    // 💾 Store in the static cache for subsequent calls
-    $cache[$key] = $typedValue;
+    // 💾 Store in the shared cache for subsequent calls within this request.
+    configCacheStore('set', $key, $typedValue);
 
     return $typedValue;
 }
@@ -287,12 +295,23 @@ function setConfig(string $key, mixed $value, array $options = []): bool
         }
     }
 
+    // 🧂 F-006/G-010: captures the per-record salt encryptValue() generates
+    // below (via its by-reference 4th parameter), so it can be mirrored into
+    // the tblSettings.encryptionSalt column for DBA-visible auditability.
+    // Stays NULL for non-sensitive settings (nothing to mirror) or when the
+    // stored value is empty (encryptValue() is never called in that case).
+    $usedSalt = null;
+
     // 🔒 Encrypt the value if marked as sensitive
     // @see fn_encryption.php - encryptValue()
     if ($effectiveSensitive === 1 && $storeValue !== null && $storeValue !== '') {
         if (function_exists('encryptValue')) {
             try {
-                $storeValue = encryptValue($storeValue);
+                // 🧂 The salt is auto-generated fresh per call (F-006/G-010 -
+                // no more shared global salt) and embedded in $storeValue
+                // itself; $usedSalt additionally captures it for the mirror
+                // column below.
+                $storeValue = encryptValue($storeValue, null, null, $usedSalt);
             } catch (\RuntimeException $e) {
                 if (function_exists('logError')) {
                     logError(
@@ -322,12 +341,15 @@ function setConfig(string $key, mixed $value, array $options = []): bool
     try {
         if ($existing !== null) {
             // ✏️ Update existing setting
+            // 🧂 encryptionSalt is refreshed alongside settingValue on every
+            // write (NULL when this write is not sensitive) so it can never
+            // drift out of sync with the ciphertext blob it mirrors.
             $stmt = dbQuery(
                 "UPDATE `tblSettings` "
-                . "SET `settingValue` = ? "
+                . "SET `settingValue` = ?, `encryptionSalt` = ? "
                 . "WHERE `settingKey` = ?",
-                'ss',
-                [$storeValue, $key]
+                'sss',
+                [$storeValue, $usedSalt, $key]
             );
         } else {
             // ➕ Insert new setting
@@ -338,9 +360,9 @@ function setConfig(string $key, mixed $value, array $options = []): bool
             }
             $stmt = dbQuery(
                 "INSERT INTO `tblSettings` "
-                . "(`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) "
-                . "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                'ssssiis',
+                . "(`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`, `encryptionSalt`) "
+                . "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                'ssssiiss',
                 [
                     $group,
                     $key,
@@ -348,7 +370,8 @@ function setConfig(string $key, mixed $value, array $options = []): bool
                     $type,
                     $effectiveSensitive,
                     $isEditableInt,
-                    $description
+                    $description,
+                    $usedSalt
                 ]
             );
         }
@@ -715,20 +738,17 @@ function convertValueForStorage(mixed $value, string $type): ?string
  */
 function clearConfigCache(?string $key = null): void
 {
-    // 📌 We need to access the static $cache inside getConfig().
-    // Since PHP does not allow direct access to another function's static variables,
-    // we use a shared static variable in a dedicated cache management function.
-    // The getConfig() function checks this "invalidation registry" before returning
-    // cached values.
-
-    // 🗑️ Use a static invalidation list that getConfig() and populateConfigCache() share
-    static $invalidated = [];
-
+    // 🐛 B-004 FIX: actually EVICT from the shared cache so the next getConfig()
+    //    re-reads from the database. Previously this wrote a boolean into an
+    //    unrelated static that getConfig() never consulted, so the eviction was
+    //    a no-op and a stale value survived a setConfig() in the same request.
+    // @see configCacheStore() - the single shared static store
     if ($key === null) {
-        // 🗑️ Mark all as invalidated - forces full refresh
-        $invalidated['__ALL__'] = true;
+        // 🗑️ Flush the entire cache — forces a full refresh on next read.
+        configCacheStore('clearAll');
     } else {
-        $invalidated[$key] = true;
+        // 🗑️ Evict just the affected key.
+        configCacheStore('clear', $key);
     }
 }
 
@@ -750,16 +770,85 @@ function clearConfigCache(?string $key = null): void
  */
 function populateConfigCache(string $key, mixed $value): void
 {
-    // 📌 This function is intentionally a no-op wrapper.
-    // The actual caching happens inside getConfig() via its static $cache variable.
-    // Since we cannot write to getConfig()'s static from outside, we rely on
-    // getConfig() fetching from DB on its next call - the DB query result is fast
-    // because MySQL caches recent queries.
-    //
-    // However, if performance becomes a concern, this can be refactored to use
-    // a shared static class or a global cache array. For Phase 1, the static
-    // cache inside getConfig() is sufficient for the most common use case:
-    // repeated calls for the same key within a single request.
-    //
-    // @see https://www.php.net/manual/en/language.variables.scope.php#language.variables.scope.static
+    // 💾 B-004 FIX: warm the SHARED cache so a subsequent getConfig() for this
+    //    key is served from memory. getConfigGroup()/getAllConfig() call this for
+    //    every row they fetch, so a single bulk read primes the per-key cache.
+    //    Previously this was a no-op and getConfig() re-queried the DB for each
+    //    key despite the bulk fetch already having the value in hand.
+    // @see configCacheStore() - the single shared static store
+    // @see getConfigGroup(), getAllConfig() - callers that warm the cache
+    configCacheStore('set', $key, $value);
+}
+
+// ==============================================================================
+// 🗃️ configCacheStore() - Shared static config cache store (B-004)
+// ==============================================================================
+
+/**
+ * 🗃️ Single shared static store backing the per-request config cache
+ *
+ * 🐛 B-004: getConfig() previously owned a PRIVATE static $cache that no other
+ * function could see, so clearConfigCache() and populateConfigCache() could not
+ * actually evict or warm it — they operated on unrelated statics. This function
+ * centralises the cache in ONE static array that getConfig() (read + write),
+ * setConfig() (via clearConfigCache eviction), getConfigGroup()/getAllConfig()
+ * (via populateConfigCache warming) all share, so invalidation and warming take
+ * real effect within a request.
+ *
+ * The store distinguishes a cached NULL value (a real setting whose typed value
+ * is null) from "absent" by tracking presence with array_key_exists(), so a
+ * legitimately-null cached value is still returned from cache rather than
+ * triggering a re-query.
+ *
+ * @param string      $op    The operation: 'get' | 'set' | 'has' | 'clear' | 'clearAll'
+ * @param string|null $key   The settingKey (required for get/set/has/clear)
+ * @param mixed       $value The value to cache (only used by 'set')
+ *
+ * @return mixed For 'get' the cached value (or null if absent); for 'has' a bool;
+ *               for set/clear/clearAll, null.
+ *
+ * @see https://www.php.net/manual/en/language.variables.scope.php#language.variables.scope.static
+ * @see https://www.php.net/manual/en/function.array-key-exists.php
+ */
+function configCacheStore(string $op, ?string $key = null, mixed $value = null): mixed
+{
+    // 📌 The one and only request-lifetime config cache.
+    static $store = [];
+
+    switch ($op) {
+
+        // 🔍 Presence test (distinguishes a cached null from "not cached").
+        case 'has':
+            return $key !== null && array_key_exists($key, $store);
+
+        // 📖 Fetch a cached value (returns null if absent — callers gate on 'has').
+        case 'get':
+            if ($key !== null && array_key_exists($key, $store)) {
+                return $store[$key];
+            }
+            return null;
+
+        // 💾 Cache a value under a key.
+        case 'set':
+            if ($key !== null) {
+                $store[$key] = $value;
+            }
+            return null;
+
+        // 🗑️ Evict a single key.
+        case 'clear':
+            if ($key !== null && array_key_exists($key, $store)) {
+                unset($store[$key]);
+            }
+            return null;
+
+        // 🗑️ Flush the whole cache.
+        case 'clearAll':
+            $store = [];
+            return null;
+
+        // ⚠️ Unknown op — no-op (defensive).
+        default:
+            return null;
+    }
 }

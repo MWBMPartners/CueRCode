@@ -4,6 +4,8 @@
  * 🎯 CueRCode - QR Code Generation Orchestrator
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_generate.php
+ *
  * The main entry point for QR code generation. This file orchestrates the
  * entire generation pipeline:
  *
@@ -26,6 +28,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://php-qrcode.readthedocs.io/ chillerlan/php-qrcode documentation
@@ -249,6 +252,60 @@ function generateQRCode(string $typeName, array $inputData, array $customization
             ]);
         }
         return $result;
+    }
+
+    // ==================================================================
+    // ♿ Step 4a: Accessible/tactile/Avery PDF layout composition (E5 / #49)
+    // Only applies when format === 'pdf' AND a non-'standard' pdf_layout was
+    // requested. 'standard' (the default/absent case) is a COMPLETE NO-OP -
+    // $qrOutput stays EXACTLY the chillerlan QRFpdf bytes from Step 4 above,
+    // preserving byte-for-byte compatibility with pre-#49 PDF output. A
+    // composition failure falls back to the standard PDF already in
+    // $qrOutput rather than failing the whole generation.
+    // @see fn_qr_accessible_pdf.php - normalisePdfLayout(), renderAccessiblePdfLayout()
+    // ==================================================================
+    if ($format === 'pdf') {
+        if (isset($customization['pdf_layout'])) {
+            $pdfLayoutRawValue = $customization['pdf_layout'];
+        } else {
+            $pdfLayoutRawValue = 'standard';
+        }
+
+        if (function_exists('normalisePdfLayout')) {
+            $pdfLayout = normalisePdfLayout($pdfLayoutRawValue);
+        } else {
+            $pdfLayout = 'standard';
+        }
+
+        if ($pdfLayout !== 'standard' && function_exists('renderAccessiblePdfLayout')) {
+            try {
+                if (function_exists('deriveAccessiblePdfCaptionText')) {
+                    $accessibleCaptionText = deriveAccessiblePdfCaptionText($typeName, $inputData, $payload);
+                } else {
+                    $accessibleCaptionText = $payload;
+                }
+
+                $qrOutput = renderAccessiblePdfLayout(
+                    $pdfLayout,
+                    $payload,
+                    $accessibleCaptionText,
+                    $qrOptions,
+                    $customization
+                );
+            } catch (\Throwable $e) {
+                // ⚠️ Layout composition failed - fall back to the standard
+                //    chillerlan PDF (already generated above) rather than
+                //    failing the whole request over a print-layout error.
+                if (function_exists('logError')) {
+                    logError(
+                        'warning',
+                        'Accessible PDF layout composition failed - falling back to standard PDF',
+                        $e->getMessage(),
+                        ['pdf_layout' => $pdfLayout]
+                    );
+                }
+            }
+        }
     }
 
     // ==================================================================
@@ -847,19 +904,23 @@ function saveQRCodeRecord(
             $userIdType = 's';
         }
 
+        // 📌 Column names aligned to the canonical install.sql schema:
+        //    qrUUID, qrTypeID (FK), qrPayload, qrOptions (JSON), qrOutputFormat, userID.
+        //    There is no typeName/qrFormat/customizationJSON column on tblQRCodes -
+        //    the type name resolves to qrTypeID above and the customisation snapshot
+        //    is stored in the qrOptions JSON column.
         $stmt = dbQuery(
             "INSERT INTO `tblQRCodes` ("
-            . "`qrUUID`, `typeID`, `typeName`, `qrPayload`, `qrFormat`, "
-            . "`customizationJSON`, `userID`"
-            . ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-            'sissss' . $userIdType,
+            . "`qrUUID`, `qrTypeID`, `qrPayload`, `qrOptions`, `qrOutputFormat`, "
+            . "`userID`"
+            . ") VALUES (?, ?, ?, ?, ?, ?)",
+            'sisss' . $userIdType,
             [
                 $uuid,
                 $typeId,
-                $typeName,
                 $payload,
-                $format,
                 $customizationJson,
+                $format,
                 $userId,
             ]
         );
@@ -911,7 +972,7 @@ function updateQRCodeFilePath(int $qrCodeId, string $filePath): void
 
     try {
         $stmt = dbQuery(
-            "UPDATE `tblQRCodes` SET `filePath` = ? WHERE `qrCodeID` = ?",
+            "UPDATE `tblQRCodes` SET `qrFilePath` = ? WHERE `qrID` = ?",
             'si',
             [$filePath, $qrCodeId]
         );

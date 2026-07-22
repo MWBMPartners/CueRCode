@@ -4,6 +4,8 @@
  * 📦 CueRCode - QR Code Payload Builders
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_payloads.php
+ *
  * Provides functions for building QR code data payloads (the actual content
  * encoded into the QR code) based on the QR code type selected by the user.
  *
@@ -12,13 +14,15 @@
  * placeholder replacement) or delegates to a type-specific builder function
  * for complex payloads (vCard, iCalendar, Zoom, Wi-Fi, etc.).
  *
- * Supported QR code types (21 total):
+ * Supported QR code types (26 total):
  *   - url, text, email, phone, sms, whatsapp, zoom, geo, vcard, calendar,
  *     paypal, bitcoin, mp3, video, pdf, image, appstore, facebook, youtube,
- *     wifi, linkedin
+ *     wifi, linkedin, facebook_messenger, instagram, rating, deeplink,
+ *     gs1_product
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/function.urlencode.php
@@ -701,20 +705,35 @@ function buildPayload_geo(array $inputData): string
 // ==============================================================================
 
 /**
- * 👤 Build a vCard 3.0 payload for QR code encoding
+ * 👤 Build a vCard 3.0 / 4.0 payload for QR code encoding
  *
- * Generates a complete vCard 3.0 contact card that can be scanned and
- * imported into the device's contacts app. Includes name, organisation,
- * title, phone numbers, email, URL, address, and notes.
+ * Generates a complete vCard contact card that can be scanned and imported
+ * into the device's contacts app. Includes name, organisation, title, phone
+ * numbers, email, URL, address, and notes.
  *
- * vCard 3.0 format (RFC 2426) is used for maximum compatibility across
- * QR code scanner apps on both iOS and Android.
+ * The optional 'version' field selects the vCard version:
+ *   - '3.0' (default, RFC 2426): uppercase TYPE tokens (TEL;TYPE=WORK). Output
+ *      is byte-for-byte identical to the historical 3.0 output for back-compat.
+ *   - '4.0' (RFC 6350): emits VERSION:4.0 with lowercase TYPE tokens
+ *      (TEL;TYPE=work) as the 4.0 spec prescribes.
+ * vCard 3.0 remains the default for maximum compatibility across QR code
+ * scanner apps on both iOS and Android.
  *
  * @param array $inputData Contact fields (all optional except first_name or last_name):
  *   - first_name, last_name, organisation, title
  *   - phone_work, phone_cell, email, url
  *   - street, city, state, zip, country
  *   - note
+ *
+ * 🔁 Seed/form-field aliases (the vcard formFieldsJSON in seed_data.sql uses
+ *    these shorter names) are also accepted, so a vCard built from the actual
+ *    rendered form emits TEL/URL/NOTE/ADR correctly:
+ *   - phone    → phone_work
+ *   - mobile   → phone_cell
+ *   - website  → url
+ *   - postcode → zip (also postal_code)
+ *   - notes    → note
+ *   The canonical/legacy name is preferred when both are supplied.
  *
  * @return string The complete vCard 3.0 payload string
  *
@@ -764,15 +783,22 @@ function buildPayload_vcard(array $inputData): string
     }
     $title = trim($titleValue);
 
+    // 🔁 'phone' is the seed/form field name; 'phone_work' is the legacy name.
+    //    Prefer the legacy name when both are provided.
     if (isset($inputData['phone_work'])) {
         $phoneWorkValue = $inputData['phone_work'];
+    } elseif (isset($inputData['phone'])) {
+        $phoneWorkValue = $inputData['phone'];
     } else {
         $phoneWorkValue = '';
     }
     $phoneWork = trim($phoneWorkValue);
 
+    // 🔁 'mobile' is the seed/form field name; 'phone_cell' is the legacy name.
     if (isset($inputData['phone_cell'])) {
         $phoneCellValue = $inputData['phone_cell'];
+    } elseif (isset($inputData['mobile'])) {
+        $phoneCellValue = $inputData['mobile'];
     } else {
         $phoneCellValue = '';
     }
@@ -785,8 +811,11 @@ function buildPayload_vcard(array $inputData): string
     }
     $email = trim($vcardEmailValue);
 
+    // 🔁 'website' is the seed/form field name; 'url' is the legacy name.
     if (isset($inputData['url'])) {
         $vcardUrlValue = $inputData['url'];
+    } elseif (isset($inputData['website'])) {
+        $vcardUrlValue = $inputData['website'];
     } else {
         $vcardUrlValue = '';
     }
@@ -813,10 +842,13 @@ function buildPayload_vcard(array $inputData): string
     }
     $state = trim($stateValue);
 
+    // 🔁 'postcode' is the seed/form field name; 'zip'/'postal_code' are legacy.
     if (isset($inputData['zip'])) {
         $zipValue = $inputData['zip'];
     } elseif (isset($inputData['postal_code'])) {
         $zipValue = $inputData['postal_code'];
+    } elseif (isset($inputData['postcode'])) {
+        $zipValue = $inputData['postcode'];
     } else {
         $zipValue = '';
     }
@@ -829,12 +861,35 @@ function buildPayload_vcard(array $inputData): string
     }
     $country = trim($countryValue);
 
+    // 🔁 'notes' is the seed/form field name; 'note' is the legacy name.
     if (isset($inputData['note'])) {
         $noteValue = $inputData['note'];
+    } elseif (isset($inputData['notes'])) {
+        $noteValue = $inputData['notes'];
     } else {
         $noteValue = '';
     }
     $note = trim($noteValue);
+
+    // 🔢 'version' is an optional select; default '3.0' for full back-compat.
+    //    Only '3.0' and '4.0' are accepted — anything else is rejected so a
+    //    malformed VERSION line can never reach a scanner.
+    // @see https://datatracker.ietf.org/doc/html/rfc6350 vCard 4.0 specification
+    if (isset($inputData['version'])) {
+        $versionValue = $inputData['version'];
+    } else {
+        $versionValue = '3.0';
+    }
+    $version = trim((string) $versionValue);
+    if ($version === '') {
+        $version = '3.0';
+    }
+    if ($version !== '3.0' && $version !== '4.0') {
+        throw new \InvalidArgumentException(
+            'Invalid vCard version: "' . $version . '". Supported versions are 3.0 and 4.0.'
+        );
+    }
+    $isV4 = ($version === '4.0');
 
     // ❌ Validate that at least a first name or last name is provided
     if ($firstName === '' && $lastName === '') {
@@ -848,22 +903,37 @@ function buildPayload_vcard(array $inputData): string
     $fullName = trim($firstName . ' ' . $lastName);
 
     // ==================================================================
-    // 📋 Construct the vCard 3.0 payload
+    // 📋 Construct the vCard payload
     // Each property is on its own line, separated by \n (line feed).
     // vCard uses CRLF per spec, but \n is widely compatible with scanners.
-    // @see https://datatracker.ietf.org/doc/html/rfc2426
+    //
+    // Two property TYPE syntaxes are emitted depending on $version:
+    //   - 3.0 (RFC 2426): uppercase tokens, e.g. TEL;TYPE=WORK / ADR;TYPE=WORK
+    //   - 4.0 (RFC 6350): lowercase tokens, e.g. TEL;TYPE=work / ADR;TYPE=work
+    // The 3.0 branch is byte-for-byte identical to the historical output.
+    // @see https://datatracker.ietf.org/doc/html/rfc2426 (vCard 3.0)
+    // @see https://datatracker.ietf.org/doc/html/rfc6350 (vCard 4.0)
     // ==================================================================
+    // 📌 vCard 4.0 uses lowercase TYPE tokens; 3.0 uses uppercase.
+    if ($isV4) {
+        $typeWork = 'work';
+        $typeCell = 'cell';
+    } else {
+        $typeWork = 'WORK';
+        $typeCell = 'CELL';
+    }
+
     $lines = [];
 
     // 📌 vCard header - mandatory
     $lines[] = 'BEGIN:VCARD';
-    $lines[] = 'VERSION:3.0';
+    $lines[] = 'VERSION:' . $version;
 
     // 📌 N property: structured name (Last;First;Middle;Prefix;Suffix)
     // @see https://datatracker.ietf.org/doc/html/rfc2426#section-3.1.2
     $lines[] = 'N:' . vcardEscape($lastName) . ';' . vcardEscape($firstName) . ';;;';
 
-    // 📌 FN property: formatted (display) name - mandatory in vCard 3.0
+    // 📌 FN property: formatted (display) name - mandatory in vCard 3.0 and 4.0
     // @see https://datatracker.ietf.org/doc/html/rfc2426#section-3.1.1
     $lines[] = 'FN:' . vcardEscape($fullName);
 
@@ -878,15 +948,15 @@ function buildPayload_vcard(array $inputData): string
     }
 
     // 📌 TEL property: work phone number
-    // TYPE=WORK indicates a work number per vCard 3.0 spec
+    // TYPE=WORK (3.0) / TYPE=work (4.0) indicates a work number
     if ($phoneWork !== '') {
-        $lines[] = 'TEL;TYPE=WORK:' . vcardEscape($phoneWork);
+        $lines[] = 'TEL;TYPE=' . $typeWork . ':' . vcardEscape($phoneWork);
     }
 
     // 📌 TEL property: cell/mobile phone number
-    // TYPE=CELL indicates a mobile number
+    // TYPE=CELL (3.0) / TYPE=cell (4.0) indicates a mobile number
     if ($phoneCell !== '') {
-        $lines[] = 'TEL;TYPE=CELL:' . vcardEscape($phoneCell);
+        $lines[] = 'TEL;TYPE=' . $typeCell . ':' . vcardEscape($phoneCell);
     }
 
     // 📌 EMAIL property: email address
@@ -900,10 +970,10 @@ function buildPayload_vcard(array $inputData): string
     }
 
     // 📌 ADR property: structured address (PO Box;Extended;Street;City;State;ZIP;Country)
-    // TYPE=WORK indicates a work address
+    // TYPE=WORK (3.0) / TYPE=work (4.0) indicates a work address
     // @see https://datatracker.ietf.org/doc/html/rfc2426#section-3.2.1
     if ($street !== '' || $city !== '' || $state !== '' || $zip !== '' || $country !== '') {
-        $lines[] = 'ADR;TYPE=WORK:;;'
+        $lines[] = 'ADR;TYPE=' . $typeWork . ':;;'
             . vcardEscape($street) . ';'
             . vcardEscape($city) . ';'
             . vcardEscape($state) . ';'
@@ -971,11 +1041,27 @@ function vcardEscape(string $value): string
  * Date/time values should be provided in ISO 8601 format (e.g., 2026-03-15T10:00:00)
  * and are converted to iCalendar format (YYYYMMDDTHHmmss).
  *
- * @param array $inputData Required: 'title', 'start_date'; Optional: 'end_date', 'location', 'description'
+ * 🕒 Timezone handling (B-007):
+ *   - WITHOUT a 'tz' field (default, back-compatible): DTSTART/DTEND are emitted
+ *     as bare "floating" local date-times (YYYYMMDDTHHmmss, no TZID, no Z) and
+ *     the wall-clock is interpreted via strtotime() in the process default
+ *     timezone — byte-for-byte identical to the historical output.
+ *   - WITH an optional 'tz' field (an IANA timezone name, e.g. "Europe/London"
+ *     or "America/New_York"): the supplied wall-clock times are interpreted in
+ *     THAT zone, DTSTART/DTEND are tagged ";TZID=<tz>", and a minimal RFC 5545
+ *     VTIMEZONE component (a single STANDARD subcomponent carrying the zone's
+ *     UTC offset at the event instant) is emitted before the VEVENT so the
+ *     ";TZID=" reference resolves. An unknown IANA name throws.
+ *
+ * @param array $inputData Required: 'title', 'start_date';
+ *                         Optional: 'end_date', 'location', 'description', 'tz'
+ *                         ('timezone' is accepted as an alias for 'tz')
  *
  * @return string The iCalendar VEVENT payload string
  *
  * @see https://datatracker.ietf.org/doc/html/rfc5545 iCalendar specification
+ * @see https://datatracker.ietf.org/doc/html/rfc5545#section-3.6.5 VTIMEZONE
+ * @see https://www.php.net/manual/en/class.datetimezone.php
  * @see https://www.php.net/manual/en/function.date.php
  * @see https://www.php.net/manual/en/function.strtotime.php
  *
@@ -986,6 +1072,7 @@ function vcardEscape(string $value): string
  *       'end_date'    => '2026-03-15T11:00:00',
  *       'location'    => 'Conference Room A',
  *       'description' => 'Weekly team sync',
+ *       'tz'          => 'Europe/London',
  *   ]);
  */
 function buildPayload_calendar(array $inputData): string
@@ -1032,6 +1119,18 @@ function buildPayload_calendar(array $inputData): string
     }
     $description = trim($descriptionValue);
 
+    // 🕒 B-007: optional IANA timezone name. 'tz' is the canonical field name;
+    //    'timezone' is accepted as a friendly alias. Absent/empty → the historical
+    //    floating-local-time behaviour is preserved exactly (no TZID, no VTIMEZONE).
+    if (isset($inputData['tz'])) {
+        $tzValue = $inputData['tz'];
+    } elseif (isset($inputData['timezone'])) {
+        $tzValue = $inputData['timezone'];
+    } else {
+        $tzValue = '';
+    }
+    $tz = trim((string) $tzValue);
+
     // ❌ Validate required fields
     if ($title === '') {
         throw new \InvalidArgumentException('Event title is required for calendar-type QR codes.');
@@ -1041,6 +1140,97 @@ function buildPayload_calendar(array $inputData): string
         throw new \InvalidArgumentException('Start date is required for calendar-type QR codes.');
     }
 
+    // ==================================================================
+    // 🕒 B-007: timezone-aware path
+    // When a 'tz' is supplied, interpret the wall-clock start/end IN that zone,
+    // tag DTSTART/DTEND with ";TZID=<tz>", and emit a minimal VTIMEZONE so the
+    // reference resolves per RFC 5545. The default (no-tz) path below is left
+    // byte-for-byte unchanged for back-compat.
+    // @see https://www.php.net/manual/en/class.datetimezone.php
+    // @see https://datatracker.ietf.org/doc/html/rfc5545#section-3.6.5
+    // ==================================================================
+    if ($tz !== '') {
+        // ✅ Validate the IANA timezone name. DateTimeZone throws on an unknown
+        //    identifier; we re-wrap it as an InvalidArgumentException for parity
+        //    with the other validation failures in this builder.
+        try {
+            $timezone = new \DateTimeZone($tz);
+        } catch (\Exception $e) {
+            throw new \InvalidArgumentException(
+                'Invalid timezone: "' . $tz . '". Use an IANA timezone name (e.g., Europe/London).'
+            );
+        }
+
+        // 📌 Interpret the supplied wall-clock times AS LOCAL TIMES in $tz.
+        try {
+            $startDt = new \DateTime($startDate, $timezone);
+        } catch (\Exception $e) {
+            throw new \InvalidArgumentException(
+                'Invalid start date format: "' . $startDate . '". Use ISO 8601 format (e.g., 2026-03-15T10:00:00).'
+            );
+        }
+
+        if ($endDate !== '') {
+            try {
+                $endDt = new \DateTime($endDate, $timezone);
+            } catch (\Exception $e) {
+                throw new \InvalidArgumentException(
+                    'Invalid end date format: "' . $endDate . '". Use ISO 8601 format.'
+                );
+            }
+        } else {
+            // 📌 Default: event lasts 1 hour (clone so the start instant is intact).
+            $endDt = clone $startDt;
+            $endDt->modify('+1 hour');
+        }
+
+        // 📌 Local (zone-relative) iCalendar date-times — NO trailing 'Z': the
+        //    ";TZID=" parameter supplies the zone, per RFC 5545 §3.3.5.
+        $icalStart = $startDt->format('Ymd\THis');
+        $icalEnd   = $endDt->format('Ymd\THis');
+
+        // 📌 Build the minimal VTIMEZONE block for $tz using the UTC offset that
+        //    is effective at the event's start instant. A single STANDARD
+        //    subcomponent is the minimal RFC-5545-valid form: it carries the
+        //    offset the ";TZID=" reference needs to resolve.
+        $vtimezoneLines = buildICalVTimezone($timezone, $startDt);
+
+        // ==================================================================
+        // 📋 Assemble the iCalendar payload (timezone-aware)
+        // ==================================================================
+        $lines = [];
+        $lines[] = 'BEGIN:VCALENDAR';
+        $lines[] = 'VERSION:2.0';
+        $lines[] = 'PRODID:-//CueRCode//QR Code Generator//EN';
+
+        // 📌 VTIMEZONE precedes the VEVENT so the ";TZID=" reference resolves.
+        foreach ($vtimezoneLines as $vtzLine) {
+            $lines[] = $vtzLine;
+        }
+
+        $lines[] = 'BEGIN:VEVENT';
+        $lines[] = 'DTSTART;TZID=' . $tz . ':' . $icalStart;
+        $lines[] = 'DTEND;TZID=' . $tz . ':' . $icalEnd;
+        $lines[] = 'SUMMARY:' . icalEscape($title);
+
+        if ($location !== '') {
+            $lines[] = 'LOCATION:' . icalEscape($location);
+        }
+
+        if ($description !== '') {
+            $lines[] = 'DESCRIPTION:' . icalEscape($description);
+        }
+
+        $lines[] = 'END:VEVENT';
+        $lines[] = 'END:VCALENDAR';
+
+        // 📌 Join lines with CRLF (as required by RFC 5545)
+        return implode("\r\n", $lines);
+    }
+
+    // ==================================================================
+    // 🕒 Default (no-tz) path — UNCHANGED historical behaviour
+    // ==================================================================
     // 📌 Convert date strings to iCalendar format (YYYYMMDDTHHmmss)
     // @see https://www.php.net/manual/en/function.strtotime.php
     // @see https://www.php.net/manual/en/function.date.php
@@ -1099,6 +1289,88 @@ function buildPayload_calendar(array $inputData): string
 
     // 📌 Join lines with CRLF (as required by RFC 5545)
     return implode("\r\n", $lines);
+}
+
+// ==============================================================================
+// 🕒 buildICalVTimezone() - Minimal RFC 5545 VTIMEZONE component
+// ==============================================================================
+
+/**
+ * 🕒 Build a minimal RFC 5545 VTIMEZONE component for a given IANA timezone
+ *
+ * Produces a single-subcomponent VTIMEZONE block carrying the UTC offset that
+ * is effective at the supplied reference instant. This is the minimal valid
+ * form that lets a ";TZID=<tz>" date-time reference resolve in a scanning
+ * calendar app: it pins the named zone to a concrete offset.
+ *
+ * The subcomponent is labelled DAYLIGHT when the reference instant is in DST
+ * for the zone, otherwise STANDARD (RFC 5545 requires at least one STANDARD or
+ * DAYLIGHT subcomponent). TZOFFSETFROM/TZOFFSETTO are both set to the effective
+ * offset (no transition is modelled — this is a deliberately minimal block, not
+ * a full historical transition table).
+ *
+ * @param \DateTimeZone $timezone The validated IANA timezone
+ * @param \DateTime     $reference The instant whose offset/DST state to capture
+ *
+ * @return array<int,string> The VTIMEZONE component lines (BEGIN…END inclusive)
+ *
+ * @see https://datatracker.ietf.org/doc/html/rfc5545#section-3.6.5
+ * @see https://www.php.net/manual/en/datetimezone.gettransitions.php
+ * @see https://www.php.net/manual/en/datetime.format.php
+ */
+function buildICalVTimezone(\DateTimeZone $timezone, \DateTime $reference): array
+{
+    // 📌 UTC offset (seconds) effective at the reference instant.
+    $offsetSeconds = $timezone->getOffset($reference);
+
+    // 📌 Format the offset as the RFC 5545 ±HHMM(SS) UTC-offset value.
+    if ($offsetSeconds < 0) {
+        $sign = '-';
+    } else {
+        $sign = '+';
+    }
+    $absSeconds = abs($offsetSeconds);
+    $offHours   = intdiv($absSeconds, 3600);
+    $offMinutes = intdiv($absSeconds % 3600, 60);
+    $offSecs    = $absSeconds % 60;
+
+    $utcOffset = $sign
+        . str_pad((string) $offHours, 2, '0', STR_PAD_LEFT)
+        . str_pad((string) $offMinutes, 2, '0', STR_PAD_LEFT);
+    // 📌 Include seconds only when the zone's offset has a non-zero seconds part
+    //    (rare historical zones); keeps the common ±HHMM form otherwise.
+    if ($offSecs !== 0) {
+        $utcOffset .= str_pad((string) $offSecs, 2, '0', STR_PAD_LEFT);
+    }
+
+    // 📌 DST state at the reference instant decides STANDARD vs DAYLIGHT.
+    if ($reference->format('I') === '1') {
+        $subComponent = 'DAYLIGHT';
+    } else {
+        $subComponent = 'STANDARD';
+    }
+
+    // 📌 Human-readable abbreviation for the zone at the reference instant
+    //    (e.g. GMT, BST, EST). icalEscape() guards against any stray separators.
+    $tzName = icalEscape($reference->format('T'));
+
+    // 📌 DTSTART inside a VTIMEZONE subcomponent is a LOCAL date-time (no TZID,
+    //    no Z) marking when this offset rule begins to apply. For a minimal,
+    //    single-offset block we anchor it at the reference instant's local time.
+    $subDtStart = $reference->format('Ymd\THis');
+
+    $lines = [];
+    $lines[] = 'BEGIN:VTIMEZONE';
+    $lines[] = 'TZID:' . $timezone->getName();
+    $lines[] = 'BEGIN:' . $subComponent;
+    $lines[] = 'DTSTART:' . $subDtStart;
+    $lines[] = 'TZOFFSETFROM:' . $utcOffset;
+    $lines[] = 'TZOFFSETTO:' . $utcOffset;
+    $lines[] = 'TZNAME:' . $tzName;
+    $lines[] = 'END:' . $subComponent;
+    $lines[] = 'END:VTIMEZONE';
+
+    return $lines;
 }
 
 // ==============================================================================
@@ -1519,7 +1791,7 @@ function buildPayload_appstore(array $inputData): string
     if (isset($inputData['platform'])) {
         $platformValue = $inputData['platform'];
     } else {
-        $platformValue = 'ios';
+        $platformValue = 'apple';
     }
     $platform = strtolower(trim($platformValue));
 
@@ -1531,14 +1803,52 @@ function buildPayload_appstore(array $inputData): string
     }
 
     // 📌 Build platform-specific URL
-    if ($platform === 'android' || $platform === 'google') {
+    // A static QR code cannot auto-detect the device platform at scan time, so
+    // when building from an app_id the platform MUST be explicitly chosen.
+    // Validate it up front rather than silently emitting a malformed Apple URL.
+    if ($platform === 'apple' || $platform === 'ios') {
+        // ✅ Apple app IDs are numeric, optionally with a leading 'id' prefix
+        //    (e.g. '123456789' or 'id123456789'). Normalise to the bare digits
+        //    and reject anything non-numeric so we never emit a broken store URL
+        //    like https://apps.apple.com/app/idcom.example.app.
+        // @see https://www.php.net/manual/en/function.preg-match.php
+        $appleId = $appId;
+        if (preg_match('/^id(\d+)$/i', $appleId, $matches) === 1) {
+            // 🧹 Strip the optional leading 'id' prefix to avoid 'idid...'.
+            $appleId = $matches[1];
+        }
+        if (preg_match('/^\d+$/', $appleId) !== 1) {
+            throw new \InvalidArgumentException(
+                'Invalid Apple App Store app ID: "' . $appId . '". '
+                . 'Apple app IDs must be numeric (optionally prefixed with "id"), e.g. "123456789".'
+            );
+        }
+        // 📌 Apple App Store URL
+        // @see https://developer.apple.com/library/archive/qa/qa1633/_index.html
+        return 'https://apps.apple.com/app/id' . rawurlencode($appleId);
+    } elseif ($platform === 'google' || $platform === 'android') {
+        // ✅ Google Play app IDs are Android package names — reverse-DNS style:
+        //    at least two dot-separated segments, each starting with a letter
+        //    and containing only letters, digits and underscores
+        //    (e.g. 'com.example.app'). Reject anything malformed.
+        // @see https://developer.android.com/guide/topics/manifest/manifest-element#package
+        // @see https://www.php.net/manual/en/function.preg-match.php
+        if (preg_match('/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/', $appId) !== 1) {
+            throw new \InvalidArgumentException(
+                'Invalid Google Play app ID: "' . $appId . '". '
+                . 'Google Play app IDs must be a valid package name (reverse-DNS), e.g. "com.example.app".'
+            );
+        }
         // 📌 Google Play Store URL
         // @see https://developer.android.com/distribute/marketing-tools
         return 'https://play.google.com/store/apps/details?id=' . rawurlencode($appId);
     } else {
-        // 📌 Apple App Store URL (default)
-        // @see https://developer.apple.com/library/archive/qa/qa1633/_index.html
-        return 'https://apps.apple.com/app/id' . rawurlencode($appId);
+        // ❌ Anything else (e.g. the old 'auto' option) cannot be resolved to a
+        //    concrete store URL — reject it instead of building a broken link.
+        throw new \InvalidArgumentException(
+            'Invalid app store platform: "' . $platform . '". '
+            . 'Expected "apple" or "google" (a static QR code cannot auto-detect the platform).'
+        );
     }
 }
 
@@ -1841,4 +2151,542 @@ function buildPayload_linkedin(array $inputData): string
     }
 
     return 'https://www.linkedin.com/in/' . rawurlencode($username);
+}
+
+// ==============================================================================
+// 💬 buildPayload_facebook_messenger() - Facebook Messenger (m.me) payload
+// ==============================================================================
+
+/**
+ * 💬 Build a Facebook Messenger deep-link payload for QR code encoding
+ *
+ * Generates an m.me short link that opens a Messenger conversation with the
+ * given page/profile username. Accepts either a direct m.me/facebook.com URL
+ * or a bare username (a leading '@' is stripped). The username is validated
+ * against Facebook's permitted character set before the link is built.
+ *
+ * Format: https://m.me/{username}
+ *
+ * @param array $inputData Must contain 'username' or 'url'
+ *
+ * @return string The Messenger m.me URL
+ *
+ * @throws \InvalidArgumentException If no username/URL is given, or the
+ *         username contains characters Facebook does not permit.
+ *
+ * @see https://developers.facebook.com/docs/messenger-platform/discovery/m-me-links/
+ *
+ * @example
+ *   buildPayload_facebook_messenger(['username' => '@acme.support']);
+ *   // Returns: 'https://m.me/acme.support'
+ *
+ *   buildPayload_facebook_messenger(['url' => 'm.me/acme']);
+ *   // Returns: 'https://m.me/acme'
+ */
+function buildPayload_facebook_messenger(array $inputData): string
+{
+    // 📌 Check for a direct URL first (m.me/... or facebook.com/messages/...)
+    if (isset($inputData['url'])) {
+        $msgrUrlValue = $inputData['url'];
+    } else {
+        $msgrUrlValue = '';
+    }
+    $url = trim($msgrUrlValue);
+
+    if ($url !== '') {
+        // 🔍 Ensure the URL has a scheme
+        // @see https://www.php.net/manual/en/function.parse-url.php
+        $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+        if ($parsedScheme === null || $parsedScheme === false) {
+            $url = 'https://' . $url;
+        }
+        return $url;
+    }
+
+    // 📌 Build from a bare username
+    if (isset($inputData['username'])) {
+        $msgrUsernameValue = $inputData['username'];
+    } else {
+        $msgrUsernameValue = '';
+    }
+    $username = trim($msgrUsernameValue);
+
+    // 🧹 Strip a single leading '@' that users often include (e.g. "@acme")
+    // @see https://www.php.net/manual/en/function.ltrim.php
+    if ($username !== '' && $username[0] === '@') {
+        $username = ltrim($username, '@');
+    }
+
+    // ❌ Validate that at least a URL or username was provided
+    if ($username === '') {
+        throw new \InvalidArgumentException(
+            'A Messenger username or URL is required for Facebook Messenger-type QR codes.'
+        );
+    }
+
+    // ✅ Validate the username against Facebook's permitted characters.
+    // Facebook usernames allow letters, digits and full stops (5–50 chars),
+    // but we accept hyphens/underscores too for forward-compatibility while
+    // still rejecting anything that would corrupt the m.me path (slashes,
+    // spaces, query chars, etc.).
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    if (preg_match('/^[A-Za-z0-9._-]+$/', $username) !== 1) {
+        throw new \InvalidArgumentException(
+            'Invalid Messenger username: "' . $username . '". '
+            . 'Only letters, digits, dots, hyphens and underscores are allowed.'
+        );
+    }
+
+    // 📌 Build the m.me deep link (username already known-safe, but encode for
+    //    defence in depth so any future relaxation cannot inject path chars).
+    // @see https://www.php.net/manual/en/function.rawurlencode.php
+    return 'https://m.me/' . rawurlencode($username);
+}
+
+// ==============================================================================
+// 📸 buildPayload_instagram() - Instagram profile URL payload
+// ==============================================================================
+
+/**
+ * 📸 Build an Instagram profile URL payload for QR code encoding
+ *
+ * Generates an instagram.com profile link from a username (a leading '@' is
+ * stripped) or passes through a direct Instagram URL. The username is
+ * validated against Instagram's permitted character set (letters, digits,
+ * dots and underscores) before the link is built.
+ *
+ * Format: https://instagram.com/{username}
+ *
+ * @param array $inputData Must contain 'username' or 'url'
+ *
+ * @return string The Instagram profile URL
+ *
+ * @throws \InvalidArgumentException If no username/URL is given, or the
+ *         username contains characters Instagram does not permit.
+ *
+ * @see https://help.instagram.com/ Instagram username rules
+ *
+ * @example
+ *   buildPayload_instagram(['username' => '@natgeo']);
+ *   // Returns: 'https://instagram.com/natgeo'
+ *
+ *   buildPayload_instagram(['url' => 'instagram.com/natgeo']);
+ *   // Returns: 'https://instagram.com/natgeo'
+ */
+function buildPayload_instagram(array $inputData): string
+{
+    // 📌 Check for a direct URL first
+    if (isset($inputData['url'])) {
+        $igUrlValue = $inputData['url'];
+    } else {
+        $igUrlValue = '';
+    }
+    $url = trim($igUrlValue);
+
+    if ($url !== '') {
+        // 🔍 Ensure the URL has a scheme
+        // @see https://www.php.net/manual/en/function.parse-url.php
+        $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+        if ($parsedScheme === null || $parsedScheme === false) {
+            $url = 'https://' . $url;
+        }
+        return $url;
+    }
+
+    // 📌 Build from a bare username
+    if (isset($inputData['username'])) {
+        $igUsernameValue = $inputData['username'];
+    } else {
+        $igUsernameValue = '';
+    }
+    $username = trim($igUsernameValue);
+
+    // 🧹 Strip a single leading '@' that users often include (e.g. "@natgeo")
+    // @see https://www.php.net/manual/en/function.ltrim.php
+    if ($username !== '' && $username[0] === '@') {
+        $username = ltrim($username, '@');
+    }
+
+    // ❌ Validate that at least a URL or username was provided
+    if ($username === '') {
+        throw new \InvalidArgumentException(
+            'An Instagram username or URL is required for Instagram-type QR codes.'
+        );
+    }
+
+    // ✅ Validate the username against Instagram's permitted characters.
+    // Instagram handles allow letters, digits, dots and underscores only.
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    if (preg_match('/^[A-Za-z0-9._]+$/', $username) !== 1) {
+        throw new \InvalidArgumentException(
+            'Invalid Instagram username: "' . $username . '". '
+            . 'Only letters, digits, dots and underscores are allowed.'
+        );
+    }
+
+    // 📌 Build the profile URL (username already known-safe; encode defensively).
+    // @see https://www.php.net/manual/en/function.rawurlencode.php
+    return 'https://instagram.com/' . rawurlencode($username);
+}
+
+// ==============================================================================
+// ⭐ buildPayload_rating() - Review / rating URL payload
+// ==============================================================================
+
+/**
+ * ⭐ Build a review/rating URL payload for QR code encoding
+ *
+ * Directs a scanner to a place where they can leave a review or rating
+ * (e.g. a Google review link, a Trustpilot page, an App Store review URL).
+ * The supplied URL is validated as a real http(s) URL; a scheme is prepended
+ * when missing. Designed to be extensible — additional shorthand sources can
+ * be mapped to full review URLs here in future without changing the seed.
+ *
+ * Format: {validated review URL}
+ *
+ * @param array $inputData Must contain 'url' (the review/rating URL)
+ *
+ * @return string The validated review URL
+ *
+ * @throws \InvalidArgumentException If no URL is given or it is not a valid
+ *         http(s) URL.
+ *
+ * @see https://www.php.net/manual/en/filter.filters.validate.php
+ *
+ * @example
+ *   buildPayload_rating(['url' => 'https://g.page/r/CcExampleReview/review']);
+ *   // Returns: 'https://g.page/r/CcExampleReview/review'
+ *
+ *   buildPayload_rating(['url' => 'trustpilot.com/review/example.com']);
+ *   // Returns: 'https://trustpilot.com/review/example.com'
+ */
+function buildPayload_rating(array $inputData): string
+{
+    // 📌 Extract the review/rating URL (required)
+    if (isset($inputData['url'])) {
+        $ratingUrlValue = $inputData['url'];
+    } else {
+        $ratingUrlValue = '';
+    }
+    $url = trim($ratingUrlValue);
+
+    // ❌ Validate that a URL was provided
+    if ($url === '') {
+        throw new \InvalidArgumentException(
+            'A review/rating URL is required for rating-type QR codes.'
+        );
+    }
+
+    // 🔍 Ensure the URL has a scheme; default to https:// when bare.
+    // @see https://www.php.net/manual/en/function.parse-url.php
+    $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+    if ($parsedScheme === null || $parsedScheme === false) {
+        $url = 'https://' . $url;
+        $parsedScheme = 'https';
+    }
+
+    // ✅ Only http(s) review links make sense for a rating QR code.
+    $scheme = strtolower((string) $parsedScheme);
+    if ($scheme !== 'http' && $scheme !== 'https') {
+        throw new \InvalidArgumentException(
+            'Invalid review/rating URL scheme: "' . $scheme . '". '
+            . 'Only http and https review links are supported.'
+        );
+    }
+
+    // ✅ Validate the overall URL shape with the filter extension.
+    // @see https://www.php.net/manual/en/filter.filters.validate.php
+    if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+        throw new \InvalidArgumentException(
+            'Invalid review/rating URL: "' . $url . '".'
+        );
+    }
+
+    return $url;
+}
+
+// ==============================================================================
+// 🔗 buildPayload_deeplink() - App deep-linking payload (FG-007)
+// ==============================================================================
+
+/**
+ * 🔗 Build an app deep-linking payload for QR code encoding
+ *
+ * 🧭 Design choice — why a static QR can only encode a single https link:
+ *   A printed (static) QR code is just a fixed string; it has NO ability to
+ *   branch on the scanning device's OS or on whether an app is installed.
+ *   Encoding a raw custom scheme (e.g. myapp://path) only works for users who
+ *   already have the app, and fails to a "cannot open" error for everyone else.
+ *
+ *   The robust, future-proof approach is therefore to encode an https
+ *   Universal Link (iOS) / App Link (Android). The operating system itself
+ *   performs the routing: if the app that claims that domain is installed it
+ *   opens directly in-app; otherwise the SAME url opens in the browser (the
+ *   web fallback). The QR encodes only that one https link — the OS does the
+ *   "app if installed, else web" decision at scan time.
+ *
+ * The optional app_scheme and fallback_url fields are accepted for
+ * DOCUMENTATION / record-keeping only (so the QR's owner can note the custom
+ * scheme and an explicit web fallback). They are validated when present but
+ * are NOT part of the encoded payload — the encoded payload is always the
+ * single https Universal/App Link.
+ *
+ * @param array $inputData Required: 'url' (the https Universal/App Link).
+ *                         Optional: 'app_scheme' (e.g. 'myapp'), 'fallback_url'
+ *                         (an http(s) web fallback) — both documentation-only.
+ *
+ * @return string The https Universal/App Link to encode
+ *
+ * @throws \InvalidArgumentException If the link is missing, not http(s), or not
+ *         a valid URL; or if a supplied fallback_url is not a valid http(s) URL.
+ *
+ * @see https://developer.apple.com/ios/universal-links/ iOS Universal Links
+ * @see https://developer.android.com/training/app-links Android App Links
+ * @see https://www.php.net/manual/en/filter.filters.validate.php
+ *
+ * @example
+ *   buildPayload_deeplink(['url' => 'https://example.com/app/item/42']);
+ *   // Returns: 'https://example.com/app/item/42'
+ *
+ *   buildPayload_deeplink([
+ *       'url'          => 'example.com/open/thing',
+ *       'app_scheme'   => 'myapp',
+ *       'fallback_url' => 'https://example.com/get-the-app',
+ *   ]);
+ *   // Returns: 'https://example.com/open/thing'  (scheme prepended; app_scheme
+ *   //          and fallback_url documented but not encoded)
+ */
+function buildPayload_deeplink(array $inputData): string
+{
+    // 📌 Extract the primary Universal/App Link (required)
+    if (isset($inputData['url'])) {
+        $deeplinkUrlValue = $inputData['url'];
+    } else {
+        $deeplinkUrlValue = '';
+    }
+    $url = trim($deeplinkUrlValue);
+
+    // ❌ Validate that a link was provided
+    if ($url === '') {
+        throw new \InvalidArgumentException(
+            'A Universal/App Link (https URL) is required for deep link-type QR codes.'
+        );
+    }
+
+    // 🔍 Ensure the link has a scheme; default to https:// when bare so a user
+    //    can type 'example.com/path' and get a proper Universal Link.
+    // @see https://www.php.net/manual/en/function.parse-url.php
+    $parsedScheme = parse_url($url, PHP_URL_SCHEME);
+    if ($parsedScheme === null || $parsedScheme === false) {
+        $url = 'https://' . $url;
+        $parsedScheme = 'https';
+    }
+
+    // ✅ Universal/App Links MUST be http(s) — the whole point is that the OS
+    //    routes an https link to the app (if installed) or the browser (if not).
+    //    A custom-scheme link here would defeat the static-QR fallback design.
+    $scheme = strtolower((string) $parsedScheme);
+    if ($scheme !== 'http' && $scheme !== 'https') {
+        throw new \InvalidArgumentException(
+            'Invalid deep link scheme: "' . $scheme . '". '
+            . 'A Universal/App Link must be an http or https URL so the OS can '
+            . 'route it to the app if installed, else the web.'
+        );
+    }
+
+    // ✅ Validate the overall URL shape with the filter extension.
+    // @see https://www.php.net/manual/en/filter.filters.validate.php
+    if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+        throw new \InvalidArgumentException(
+            'Invalid deep link URL: "' . $url . '".'
+        );
+    }
+
+    // 📝 Optional fallback_url is documentation-only, but if the owner supplies
+    //    one we still validate it as a real http(s) URL so a typo is caught at
+    //    build time. It is intentionally NOT encoded into the payload.
+    if (isset($inputData['fallback_url'])) {
+        $fallbackValue = $inputData['fallback_url'];
+    } else {
+        $fallbackValue = '';
+    }
+    $fallbackUrl = trim($fallbackValue);
+    if ($fallbackUrl !== '') {
+        $fallbackScheme = parse_url($fallbackUrl, PHP_URL_SCHEME);
+        if ($fallbackScheme === null || $fallbackScheme === false) {
+            $fallbackUrl = 'https://' . $fallbackUrl;
+            $fallbackScheme = 'https';
+        }
+        $fallbackScheme = strtolower((string) $fallbackScheme);
+        if ($fallbackScheme !== 'http' && $fallbackScheme !== 'https') {
+            throw new \InvalidArgumentException(
+                'Invalid fallback URL scheme: "' . $fallbackScheme . '". '
+                . 'The web fallback must be an http or https URL.'
+            );
+        }
+        if (filter_var($fallbackUrl, FILTER_VALIDATE_URL) === false) {
+            throw new \InvalidArgumentException(
+                'Invalid fallback URL: "' . $fallbackUrl . '".'
+            );
+        }
+    }
+
+    // 📌 The encoded payload is ALWAYS the single https Universal/App Link.
+    //    app_scheme / fallback_url are documentation-only and never encoded —
+    //    the OS, not the QR string, performs the app-vs-web routing.
+    return $url;
+}
+
+// ==============================================================================
+// 🏷️ buildPayload_gs1_product() - GS1 Digital Link payload (FG-009)
+// ==============================================================================
+
+/**
+ * 🏷️ Build a GS1 Digital Link URI payload for QR code encoding
+ *
+ * Encodes product identity as a GS1 Digital Link — a web URI whose path carries
+ * GS1 Application Identifiers (AIs). A single QR can then resolve to product
+ * info, while remaining a scannable structured product code.
+ *
+ * URI shape (canonical AI order):
+ *   https://<resolver>/01/{GTIN}[/10/{batch}][/21/{serial}][?17={expiry}]
+ *     - AI 01 = GTIN          (Global Trade Item Number, required)
+ *     - AI 10 = batch / lot   (optional, key-qualifier path segment)
+ *     - AI 21 = serial number (optional, key-qualifier path segment)
+ *     - AI 17 = expiry        (optional, YYMMDD, carried as a query parameter)
+ *
+ * The resolver host is configurable (defaults to id.gs1.org, GS1's canonical
+ * resolver). Provide 'resolver' to point at your own GS1-conformant resolver.
+ *
+ * @param array $inputData Required: 'gtin' (8/12/13/14 digits).
+ *                         Optional: 'batch' (AI 10), 'serial' (AI 21),
+ *                         'expiry' (AI 17, YYMMDD), 'resolver' (host).
+ *
+ * @return string The GS1 Digital Link URI
+ *
+ * @throws \InvalidArgumentException If the GTIN is missing/invalid, or expiry
+ *         is not a valid YYMMDD date.
+ *
+ * @see https://www.gs1.org/standards/gs1-digital-link GS1 Digital Link standard
+ * @see https://ref.gs1.org/standards/digital-link/ GS1 Digital Link URI syntax
+ * @see https://www.gs1.org/standards/barcodes/application-identifiers GS1 AIs
+ * @see https://www.php.net/manual/en/function.preg-match.php
+ *
+ * @example
+ *   buildPayload_gs1_product(['gtin' => '09521234543213']);
+ *   // Returns: 'https://id.gs1.org/01/09521234543213'
+ *
+ *   buildPayload_gs1_product([
+ *       'gtin'   => '09521234543213',
+ *       'batch'  => 'LOT42',
+ *       'serial' => 'SN0001',
+ *       'expiry' => '261231',
+ *   ]);
+ *   // Returns: 'https://id.gs1.org/01/09521234543213/10/LOT42/21/SN0001?17=261231'
+ */
+function buildPayload_gs1_product(array $inputData): string
+{
+    // 📌 Extract the GTIN (AI 01, required)
+    if (isset($inputData['gtin'])) {
+        $gtinValue = $inputData['gtin'];
+    } else {
+        $gtinValue = '';
+    }
+    $gtin = trim((string) $gtinValue);
+
+    // ❌ Validate that a GTIN was provided
+    if ($gtin === '') {
+        throw new \InvalidArgumentException(
+            'A GTIN is required for GS1 product-type QR codes.'
+        );
+    }
+
+    // ✅ A GTIN is 8, 12, 13 or 14 numeric digits (GTIN-8/12/13/14).
+    //    Reject anything with non-digits or an unsupported length so we never
+    //    emit a malformed GS1 Digital Link.
+    // @see https://www.gs1.org/standards/id-keys/gtin
+    // @see https://www.php.net/manual/en/function.preg-match.php
+    if (preg_match('/^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/', $gtin) !== 1) {
+        throw new \InvalidArgumentException(
+            'Invalid GTIN: "' . $gtin . '". '
+            . 'A GTIN must be 8, 12, 13 or 14 digits.'
+        );
+    }
+
+    // 📌 Resolve the resolver host (configurable; default id.gs1.org).
+    //    Strip any scheme/path the user pasted so we only keep the host[:port].
+    // @see https://ref.gs1.org/standards/digital-link/
+    if (isset($inputData['resolver'])) {
+        $resolverValue = $inputData['resolver'];
+    } else {
+        $resolverValue = '';
+    }
+    $resolver = trim((string) $resolverValue);
+    if ($resolver === '') {
+        $resolver = 'id.gs1.org';
+    }
+    // 🧹 Drop any leading scheme (https://) and any trailing slash/path.
+    // @see https://www.php.net/manual/en/function.preg-replace.php
+    $resolver = preg_replace('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', '', $resolver);
+    $resolver = rtrim($resolver, '/');
+    // ✂️ Keep only the authority (host[:port]); discard any path the user added.
+    $slashPos = strpos($resolver, '/');
+    if ($slashPos !== false) {
+        $resolver = substr($resolver, 0, $slashPos);
+    }
+    if ($resolver === '') {
+        $resolver = 'id.gs1.org';
+    }
+
+    // 📌 Begin the GS1 Digital Link URI with the primary key (AI 01 / GTIN).
+    $payload = 'https://' . $resolver . '/01/' . rawurlencode($gtin);
+
+    // 📌 AI 10 — batch/lot (optional key qualifier, path segment).
+    if (isset($inputData['batch'])) {
+        $batchValue = $inputData['batch'];
+    } else {
+        $batchValue = '';
+    }
+    $batch = trim((string) $batchValue);
+    if ($batch !== '') {
+        // 🔒 Encode so any AI-significant characters ('/', '?', etc.) cannot
+        //    corrupt the Digital Link path structure.
+        // @see https://www.php.net/manual/en/function.rawurlencode.php
+        $payload .= '/10/' . rawurlencode($batch);
+    }
+
+    // 📌 AI 21 — serial number (optional key qualifier, path segment).
+    if (isset($inputData['serial'])) {
+        $serialValue = $inputData['serial'];
+    } else {
+        $serialValue = '';
+    }
+    $serial = trim((string) $serialValue);
+    if ($serial !== '') {
+        $payload .= '/21/' . rawurlencode($serial);
+    }
+
+    // 📌 AI 17 — expiry date (optional), carried as a query parameter.
+    //    GS1 AI 17 is a 6-digit YYMMDD date.
+    // @see https://www.gs1.org/standards/barcodes/application-identifiers
+    if (isset($inputData['expiry'])) {
+        $expiryValue = $inputData['expiry'];
+    } else {
+        $expiryValue = '';
+    }
+    $expiry = trim((string) $expiryValue);
+    if ($expiry !== '') {
+        // ✅ Validate the YYMMDD shape: 6 digits, MM 01-12, DD 00-31.
+        //    (GS1 permits DD = 00 to mean "end of month", so 00 is allowed.)
+        // @see https://www.php.net/manual/en/function.preg-match.php
+        if (preg_match('/^\d{2}(0[1-9]|1[0-2])(0[0-9]|[12]\d|3[01])$/', $expiry) !== 1) {
+            throw new \InvalidArgumentException(
+                'Invalid expiry date: "' . $expiry . '". '
+                . 'GS1 AI 17 expiry must be in YYMMDD format (e.g. 261231).'
+            );
+        }
+        $payload .= '?17=' . rawurlencode($expiry);
+    }
+
+    return $payload;
 }
