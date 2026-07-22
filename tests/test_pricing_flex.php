@@ -38,8 +38,11 @@
  * tblSubscriptionPlans/tblSubscriptions/tblPayments column lists and the 4
  * seeded plans' exact limitsJSON strings are still present byte-for-byte in
  * install.sql/seed_data.sql (the "pro" plan featuresJSON check below is
- * updated, not byte-for-byte, as of #69 - it now also asserts the additive
- * `barcode_generation` key seeded on every plan) - plus a DYNAMIC guard that
+ * updated, not byte-for-byte, as of #69 and again as of Epic E1a Stage S0
+ * (#27/#71, 2026-07-22) - it now also asserts the additive
+ * `barcode_generation` key seeded on every plan (#69) AND the additive
+ * `dynamic_qr`/`dual_function_qr` keys seeded on every plan (#27/#71)) -
+ * plus a DYNAMIC guard that
  * every OTHER test file that has already run by this point in the suite
  * (tests/run.php executes test_*.php files in sorted filename order, and
  * this file sorts after all but two of them) recorded zero failures, i.e.
@@ -380,10 +383,11 @@ foreach (['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_
 // are UNCHANGED (spot-checking pro/business - the two paid tiers most likely
 // to be touched by a careless pricing edit).
 assertContains(
-    '\'{"expiry_scheduling": true, "password_protected_qr": true, "sso": false, "organisations": false, "webhooks": true, "csv_export": true, "barcode_generation": true}\'',
+    '\'{"expiry_scheduling": true, "password_protected_qr": true, "sso": false, "organisations": false, "webhooks": true, "csv_export": true, "barcode_generation": true, "dynamic_qr": true, "dual_function_qr": false}\'',
     $seedDataSqlSource,
     'regression guard: seed_data.sql\'s "pro" plan featuresJSON is unchanged aside from the additive '
-    . '#69 barcode_generation key (seeded true)'
+    . '#69 barcode_generation key (seeded true) and the additive #27/#71 dynamic_qr (seeded true) / '
+    . 'dual_function_qr (seeded false - business+enterprise only) keys'
 );
 assertContains(
     '\'{"saved_codes": -1, "bulk_batch_size": 2000, "dynamic_codes": 1000, "api_keys": 20, "analytics_days": 1095, "api_rate_limit_per_min": 600, "api_rate_limit_per_day": 100000}\'',

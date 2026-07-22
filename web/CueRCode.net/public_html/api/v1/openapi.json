@@ -53,6 +53,10 @@
             "description": "Self-service API key create/list/rotate/revoke - own-scoped, CSRF/session-only (Epic E7 stage 1, #54). See the top-level description's \"Self-Service API Keys & Scopes\" section for the full model."
         },
         {
+            "name": "Dynamic Redirects",
+            "description": "Manage a dynamic redirect's destination - own-scoped, GET/PATCH only (Epic E1a Stage S1, #27). ⚠️ DARK: this destination-management API is real and reachable, but there is deliberately NO public /r/{uuid} redirect endpoint anywhere in this codebase yet - see the design doc referenced from LAUNCH_DECISIONS.md \"Dynamic + dual-function QR (gated)\". Stage S2 (the live redirect route) is gated on owner sign-off G-007."
+        },
+        {
             "name": "SSO",
             "description": "OIDC/OAuth2 single sign-on - Microsoft 365 and Google now, SIGNula behind a flag pending upstream OIDC support (Epic E2, #55/#19/#20/#28). These are BROWSER-REDIRECT routes (302s and HTML error pages, never JSON) documented here for completeness only - they are NOT part of the versioned /api/v1 JSON contract above; see each path's per-operation `servers` override."
         }
@@ -2473,6 +2477,213 @@
                     },
                     "500": {
                         "description": "The database delete failed unexpectedly (error_code DELETE_FAILED)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "$ref": "#/components/responses/ServiceUnavailable"
+                    }
+                }
+            }
+        },
+        "/qrcodes/{uuid}/destination": {
+            "get": {
+                "tags": [
+                    "Dynamic Redirects"
+                ],
+                "summary": "Fetch a dynamic redirect's destination (owner only)",
+                "description": "Own-scoped only - a redirect not owned by the caller is reported as 404 (never 403), identically to an unknown UUID (there is no \"is_public\" concept for a redirect destination). `{uuid}` here is the redirect resource's OWN UUID (`tblQRRedirects.redirectUUID`), distinct from a `tblQRCodes.qrUUID`. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited). ⚠️ Epic E1a Stage S1 (#27): this destination-management API is real and reachable, but there is deliberately NO public `/r/{uuid}` redirect endpoint anywhere in this codebase yet for a managed destination to ever be resolved against - that is Stage S2, gated on owner sign-off G-007 (see LAUNCH_DECISIONS.md).",
+                "operationId": "getRedirectDestination",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "required": true,
+                        "description": "The dynamic redirect's UUID v4 (redirectUUID)",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid",
+                            "example": "b2c3d4e5-f6a7-4901-bcde-f12345678901"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The redirect's destination (caller owns it)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RedirectDestinationResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
+                    "404": {
+                        "description": "Not found, or not owned by the caller (identical response for both)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "not_found": {
+                                        "summary": "Unknown or not-yours",
+                                        "value": {
+                                            "success": false,
+                                            "message": "QR code not found.",
+                                            "data": {},
+                                            "error_code": "NOT_FOUND",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "503": {
+                        "$ref": "#/components/responses/ServiceUnavailable"
+                    }
+                }
+            },
+            "patch": {
+                "tags": [
+                    "Dynamic Redirects"
+                ],
+                "summary": "Update a dynamic redirect's destination (owner only)",
+                "description": "Update the `destination_url` and/or `active` state of a dynamic redirect the caller OWNS. Ownership is checked BEFORE any other field is read - a non-owned redirect is reported as 404. A redirect suspended for abuse (`disabledReason='abuse'`) rejects the WHOLE patch with `409 REDIRECT_SUSPENDED`, even from the true owner - only an admin (not built this stage) may re-enable it. `destination_url` is re-validated by `validateRedirectDestination()` on every write (scheme allowlist, userinfo/private-IP/self-referential-loop rejection, IDN normalisation) and an audit-trail row (`tblActivityLog`, `activityType=redirect_destination_changed`) is written on every change. Feature gating is NOT re-checked here (editing an existing code is not a new allocation). requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "operationId": "patchRedirectDestination",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "CsrfAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "required": true,
+                        "description": "The dynamic redirect's UUID v4 (redirectUUID)",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid",
+                            "example": "b2c3d4e5-f6a7-4901-bcde-f12345678901"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchRedirectDestinationRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "The redirect's destination was updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RedirectDestinationResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request - missing both updatable fields (error_code NO_FIELDS), an invalid UUID shape, or destination_url failed validateRedirectDestination() (error_code INVALID_DESTINATION - e.g. a disallowed scheme, embedded credentials, a private/loopback/link-local IP literal, or a self-referential redirect loop)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "invalid_destination": {
+                                        "summary": "Destination failed validation",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Destination host resolves to a private, loopback, link-local, or reserved IP address, which is not allowed.",
+                                            "data": {},
+                                            "error_code": "INVALID_DESTINATION",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/InsufficientScope"
+                    },
+                    "404": {
+                        "description": "Not owned by the caller (or does not exist) - identical response either way",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The redirect is suspended for abuse and cannot be edited (error_code REDIRECT_SUSPENDED) - admin-only re-enable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "redirect_suspended": {
+                                        "summary": "Suspended for abuse",
+                                        "value": {
+                                            "success": false,
+                                            "message": "This redirect has been suspended for a policy violation and cannot be edited. Contact support if you believe this is in error.",
+                                            "data": {},
+                                            "error_code": "REDIRECT_SUSPENDED",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "description": "The database write failed unexpectedly (error_code UPDATE_FAILED)",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -4993,7 +5204,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, ERASE_FAILED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are the pay-as-you-go credit-consumption denial shapes returned by fn_features.php's consumeCreditsOr402() - #70, built but not yet wired to a live endpoint, and fully inert while the billing_payg_enabled kill-switch stays at its seeded 0). The full, exact, machine-readable set (kept in sync with the API's real emissions by a CI drift guard, tests/test_error_catalogue.php - #58) is the x-error-codes array on this schema.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, ERASE_FAILED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are the pay-as-you-go credit-consumption denial shapes returned by fn_features.php's consumeCreditsOr402() - #70, built but not yet wired to a live endpoint, and fully inert while the billing_payg_enabled kill-switch stays at its seeded 0), INVALID_DESTINATION, REDIRECT_SUSPENDED (Epic E1a Stage S1, #27 - the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates via validateRedirectDestination() and rejects an abuse-suspended row). The full, exact, machine-readable set (kept in sync with the API's real emissions by a CI drift guard, tests/test_error_catalogue.php - #58) is the x-error-codes array on this schema.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -5058,6 +5269,7 @@
                     "INVALID_CSRF_TOKEN",
                     "INVALID_CURRENT_PASSWORD",
                     "INVALID_CUSTOMIZATION",
+                    "INVALID_DESTINATION",
                     "INVALID_EMAIL",
                     "INVALID_JSON",
                     "INVALID_LABEL",
@@ -5076,6 +5288,7 @@
                     "NO_FIELDS",
                     "PAYLOAD_TOO_LARGE",
                     "RATE_LIMIT_EXCEEDED",
+                    "REDIRECT_SUSPENDED",
                     "REGENERATION_FAILED",
                     "RESET_FAILED",
                     "RESET_TOKEN_ALREADY_USED",
@@ -5477,6 +5690,87 @@
                     "timestamp": {
                         "type": "string",
                         "format": "date-time"
+                    }
+                }
+            },
+            "RedirectDestinationResponse": {
+                "type": "object",
+                "description": "Response envelope for GET/PATCH /qrcodes/{uuid}/destination (Epic E1a Stage S1, #27).",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Dynamic redirect destination retrieved successfully."
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "uuid": {
+                                "type": "string",
+                                "format": "uuid",
+                                "description": "The redirect resource's own UUID (tblQRRedirects.redirectUUID) - distinct from a tblQRCodes.qrUUID"
+                            },
+                            "destination_url": {
+                                "type": "string",
+                                "format": "uri",
+                                "maxLength": 2048
+                            },
+                            "previous_destination_url": {
+                                "type": "string",
+                                "format": "uri",
+                                "nullable": true,
+                                "description": "The destinationURL value immediately before the most recent PATCH (null if never changed)"
+                            },
+                            "destination_updated_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "nullable": true
+                            },
+                            "is_active": {
+                                "type": "boolean",
+                                "description": "0 would serve 410 Gone once the public /r/{uuid} route ships (Stage S2 - not built yet)"
+                            },
+                            "disabled_reason": {
+                                "type": "string",
+                                "enum": [
+                                    "owner",
+                                    "abuse",
+                                    "admin"
+                                ],
+                                "nullable": true
+                            },
+                            "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                            },
+                            "updated_at": {
+                                "type": "string",
+                                "format": "date-time"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "PatchRedirectDestinationRequest": {
+                "type": "object",
+                "description": "All fields optional, but at least one of destination_url/active must be present (else 400 NO_FIELDS). destination_url is re-validated by validateRedirectDestination() on every PATCH (scheme allowlist, userinfo/private-IP-literal/self-referential-loop rejection, IDN normalisation).",
+                "properties": {
+                    "destination_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "maxLength": 2048,
+                        "example": "https://example.com/new-landing-page"
+                    },
+                    "active": {
+                        "type": "boolean",
+                        "description": "false = owner-initiated disable (disabledReason becomes 'owner'); true = re-enable, clearing a prior 'owner' disable reason. A redirect already suspended for abuse (disabledReason='abuse') rejects the WHOLE PATCH with 409 REDIRECT_SUSPENDED before this field is ever read."
                     }
                 }
             },

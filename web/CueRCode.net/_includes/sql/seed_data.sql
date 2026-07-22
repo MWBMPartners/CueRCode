@@ -198,7 +198,42 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('sso', 'sso_signula_client_id', '', 'string', 1, 1, 'SIGNula.id OAuth client ID - ENCRYPTED, owner-set via admin only, never commit (not usable until SIGNula ships an OIDC IdP surface)'),
 ('sso', 'sso_signula_client_secret', '', 'string', 1, 1, 'SIGNula.id OAuth client secret - ENCRYPTED, owner-set via admin only, never commit (not usable until SIGNula ships an OIDC IdP surface)'),
 ('sso', 'sso_signula_discovery_url', '', 'url', 0, 1, 'OIDC discovery document URL - deliberately seeded EMPTY: SIGNula.id does not yet expose /.well-known/openid-configuration (credential-proxy API only, see PROJECT_ROADMAP.md Epic E2 and SIGNula issue #88). Fill in once upstream ships.'),
-('sso', 'sso_signula_scopes', 'openid email profile', 'string', 0, 1, 'Space-separated OIDC scopes to request from SIGNula once its OIDC IdP surface exists');
+('sso', 'sso_signula_scopes', 'openid email profile', 'string', 0, 1, 'Space-separated OIDC scopes to request from SIGNula once its OIDC IdP surface exists'),
+
+-- 🔗 Dynamic-redirect settings (E1a, #27/#71/#33) - BUILT BUT DARK/INERT
+-- ------------------------------------------------------------------------------
+-- ⚠️  INERT BY DEFAULT (mirrors the email_enabled/sso_enabled kill-switch
+--     pattern above): `dynamic_qr_enabled` is a MASTER switch (0 = the whole
+--     public /r/{uuid} route stays UNBUILT this stage regardless of this flag -
+--     it exists now purely so Stage S2 has a kill-switch to check on day one,
+--     the same "the switch ships before the feature it gates" convention as
+--     email_queue_autoprocess/billing_price_points_enabled above). The
+--     `dynamic_url` QR type (seed_data.sql below) additionally seeds
+--     `isActive=0`, so even a caller who somehow knew the type name could not
+--     select it via GET /api/v1/types today - TWO independent inert switches,
+--     not one.
+-- 🌐 `dynamic_redirect_base_url` is the domain PRINTED in every dynamic QR
+--     code (`{base}/r/{uuid}`, buildPayload_dynamic_url() in fn_qr_payloads.php)
+--     - seeded to the tertiary domain `https://QRmy.Link` per
+--     .dev-team/dynamic_dualfn_design.md owner-decision O-11 (a short,
+--     reputation-partitioned redirect domain, separate from the primary
+--     product domain cuercode.net - decisive because a Safe-Browsing
+--     blocklist event on the redirect domain must never take the main site
+--     down with it). Owner-confirmable before any code is printed for real -
+--     see LAUNCH_DECISIONS.md "Dynamic + dual-function QR (gated)" O-11.
+-- 🔓 `redirect_allow_http` backs validateRedirectDestination()'s scheme
+--     allowlist (fn_redirects.php) - seeded '0' (https-only, LAUNCH_DECISIONS.md
+--     O-2, the recommended default) - the pure validator itself never reads
+--     tblSettings directly (it stays DB-independent/unit-testable), so ANY
+--     future caller that wires this setting in must pass it through the
+--     validator's own `$opts['allow_http']` parameter.
+-- @see _includes/sql/install.sql      - Tables 27-29 (this dynamic-redirect delta)
+-- @see _functions/fn_redirects.php     - validateRedirectDestination()
+-- @see _functions/fn_qr_payloads.php   - buildPayload_dynamic_url()
+-- @see .dev-team/dynamic_dualfn_design.md - the full design spec, §9 owner decisions
+('redirects', 'dynamic_qr_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for the dynamic-redirect subsystem (E1a, #27) - 0 = the public /r/{uuid} route is not built this stage regardless of this flag; exists now so Stage S2 has a switch to check on day one'),
+('redirects', 'dynamic_redirect_base_url', 'https://QRmy.Link', 'url', 0, 1, 'Base URL prefixed to /r/{uuid} when building a dynamic QR payload (buildPayload_dynamic_url(), fn_qr_payloads.php) - owner-confirmable before any code is printed for real; see LAUNCH_DECISIONS.md O-11 (defaults to the tertiary domain QRmy.Link to partition redirect-abuse reputation away from the primary product domain)'),
+('redirects', 'redirect_allow_http', '0', 'boolean', 0, 1, 'O-2: whether http:// (in addition to https://) is an acceptable dynamic-redirect destination scheme - 0 = https-only (recommended default, LAUNCH_DECISIONS.md O-2); validateRedirectDestination() (fn_redirects.php) stays a pure/DB-independent function and only honours this via its own $opts[''allow_http''] parameter, never by reading tblSettings itself');
 
 -- ==============================================================================
 -- 📱 QR Code Type Definitions (tblQRCodeTypes)
@@ -480,6 +515,29 @@ INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescript
  37);
 
 -- ==============================================================================
+-- 🔗 Dynamic Redirect QR type (E1a, #27/#71/#33) - BUILT BUT INERT (Stage S0)
+-- ==============================================================================
+-- A SEPARATE INSERT statement (rather than another row in the 37-row VALUES
+-- list above) specifically so `isActive` can be set to 0 for THIS row alone -
+-- a single INSERT's column list applies to every row it inserts, and the
+-- block above never names `isActive` (it relies on the column's DEFAULT 1).
+-- Seeded isActive=0 so this type stays INVISIBLE to GET /api/v1/types and the
+-- web UI type picker until Stage S2 (the live /r/{uuid} redirect route) ships
+-- and an owner flips it live per G-007 sign-off (LAUNCH_DECISIONS.md).
+-- payloadTemplate is NULL - the dispatcher routes to buildPayload_dynamic_url()
+-- (fn_qr_payloads.php), which expects a `redirect_uuid` key in $inputData,
+-- minted by the (Stage S2) creation handler BEFORE payload build - never a
+-- caller-supplied form field, hence formFieldsJSON below only describes the
+-- OWNER-facing `destination_url` the create/PATCH API actually accepts.
+-- @see .dev-team/dynamic_dualfn_design.md §1.2
+-- ==============================================================================
+INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescription`, `typeCategory`, `payloadTemplate`, `formFieldsJSON`, `isActive`, `sortOrder`) VALUES
+('dynamic_url', 'Dynamic URL (Editable Redirect)', 'fa-solid fa-arrows-rotate', 'A QR code whose destination can be edited after printing, without reprinting (owner accounts only)', 'dynamic',
+ NULL,
+ '[{"name":"destination_url","label":"Destination URL","type":"url","required":true,"placeholder":"https://example.com","maxlength":2048,"validation":"url","hint":"Where this code redirects to — editable anytime via the owner API, no reprint needed"}]',
+ 0, 38);
+
+-- ==============================================================================
 -- 🖼️ Predefined Logos (tblPredefinedLogos)
 -- ==============================================================================
 -- These logos correspond to SVG/PNG files in public_html/assets/img/logos/
@@ -586,28 +644,28 @@ VALUES
 -- 👤 Anonymous - not logged in. Generous acquisition funnel: full static QR
 -- customisation, but no persistence/dynamism/volume/premium features.
 ('anonymous', 'Anonymous', 'Generate QR codes instantly with no account required.', 0.00, 0.00, 'GBP',
- '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false, "barcode_generation": true}',
+ '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false, "barcode_generation": true, "dynamic_qr": false, "dual_function_qr": false}',
  '{"saved_codes": 0, "bulk_batch_size": 25, "dynamic_codes": 0, "api_keys": 0, "analytics_days": 0, "api_rate_limit_per_min": 10, "api_rate_limit_per_day": 100}',
  1, 0),
 
 -- 🆓 Free - a registered, unpaid account. Adds persistence (saved codes),
 -- a small dynamic-QR allowance, and one API key, still no premium features.
 ('free', 'Free', 'Create a free account to save your codes and unlock a few extras.', 0.00, 0.00, 'GBP',
- '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false, "barcode_generation": true}',
+ '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false, "barcode_generation": true, "dynamic_qr": true, "dual_function_qr": false}',
  '{"saved_codes": 25, "bulk_batch_size": 50, "dynamic_codes": 3, "api_keys": 1, "analytics_days": 0, "api_rate_limit_per_min": 30, "api_rate_limit_per_day": 2000}',
  1, 1),
 
 -- 💎 Pro - paid individual tier. Unlocks expiry/scheduling, password
 -- protection, webhooks, and analytics export; SSO/organisations stay Business-only.
 ('pro', 'Pro', 'For individuals who need dynamic QR codes, analytics, and automation.', 4.99, 49.99, 'GBP',
- '{"expiry_scheduling": true, "password_protected_qr": true, "sso": false, "organisations": false, "webhooks": true, "csv_export": true, "barcode_generation": true}',
+ '{"expiry_scheduling": true, "password_protected_qr": true, "sso": false, "organisations": false, "webhooks": true, "csv_export": true, "barcode_generation": true, "dynamic_qr": true, "dual_function_qr": false}',
  '{"saved_codes": 500, "bulk_batch_size": 500, "dynamic_codes": 100, "api_keys": 5, "analytics_days": 90, "api_rate_limit_per_min": 120, "api_rate_limit_per_day": 20000}',
  1, 2),
 
 -- 🏢 Business - paid organisation tier. Every feature flag on, effectively
 -- unlimited saved codes (fair use), the largest bulk/API allowances.
 ('business', 'Business', 'For teams and organisations that need SSO, roles, and enterprise-scale volume.', 19.99, 199.99, 'GBP',
- '{"expiry_scheduling": true, "password_protected_qr": true, "sso": true, "organisations": true, "webhooks": true, "csv_export": true, "barcode_generation": true}',
+ '{"expiry_scheduling": true, "password_protected_qr": true, "sso": true, "organisations": true, "webhooks": true, "csv_export": true, "barcode_generation": true, "dynamic_qr": true, "dual_function_qr": true}',
  '{"saved_codes": -1, "bulk_batch_size": 2000, "dynamic_codes": 1000, "api_keys": 20, "analytics_days": 1095, "api_rate_limit_per_min": 600, "api_rate_limit_per_day": 100000}',
  1, 3);
 
@@ -615,24 +673,38 @@ VALUES
 -- ✅ Seed Data Complete
 -- ==============================================================================
 -- Inserted:
---   - 75 default settings across 8 groups (email group is Microsoft Graph -
+--   - 78 default settings across 9 groups (email group is Microsoft Graph -
 --     based settings, Epic E8/#29; billing group, Epic E4/#25/#26/#53 plus the
 --     3 flexible-pricing kill-switches added by #70 - billing_price_points_
 --     enabled/billing_discounts_enabled/billing_payg_enabled, all seeded 0/
 --     INERT; sso group - 16 settings, Epic E2/#55/#19/#20/#28 - every provider
 --     seeded INERT: sso_enabled=0, all sso_<provider>_enabled=0, all
---     client_id/client_secret empty)
+--     client_id/client_secret empty; NEW `redirects` group - 3 settings,
+--     E1a/#27/#71/#33 dynamic-redirect delta - dynamic_qr_enabled seeded '0'/
+--     INERT, dynamic_redirect_base_url seeded 'https://QRmy.Link', redirect_
+--     allow_http seeded '0'/https-only)
 --   - 26 QR code type definitions with form field schemas
 --   - 11 non-QR barcode symbology type definitions (typeCategory 'barcode',
 --     #69) - code128/code39/ean13/ean8/upca/upce/itf/codabar (1D) +
 --     datamatrix/pdf417/aztec (2D); dispatched by fn_barcode_generate.php,
 --     NOT buildQRPayload() (payloadTemplate is NULL for all 11)
+--   - 1 dynamic-redirect QR type definition (typeName 'dynamic_url', E1a/#27,
+--     Stage S0) - seeded `isActive=0` via its OWN separate INSERT statement
+--     (BUILT BUT DARK - invisible to GET /api/v1/types until Stage S2 ships
+--     and an owner flips it live, G-007 sign-off)
 --   - 25 predefined logo entries
 --   - 4 subscription plan tiers (anonymous/free/pro/business, Epic E4/#53) -
 --     each gained the additive `barcode_generation` featuresJSON key (#69),
 --     seeded TRUE on every plan (barcodes are a core, always-on offering this
 --     cycle - see DEV_NOTES.md for the future-tiering owner-decision note);
---     otherwise UNCHANGED by #70; the 5 new flexible-pricing tables
+--     each ALSO gained the additive `dynamic_qr`/`dual_function_qr`
+--     featuresJSON keys (E1a/#71, Stage S0) - `dynamic_qr` seeded true for
+--     free/pro/business (anonymous stays false, doubly excluded alongside its
+--     pre-existing `dynamic_codes: 0` limit), `dual_function_qr` seeded true
+--     for business ONLY (Pricing_Strategy.md tiers - no enterprise plan is
+--     seeded yet); the pre-existing `dynamic_codes` LIMIT key (anonymous 0 /
+--     free 3 / pro 100 / business 1000) already covered quota and needed no
+--     change; otherwise UNCHANGED by #70; the 5 new flexible-pricing tables
 --     (install.sql Tables 22-26) are seeded with ZERO rows here - they stay
 --     empty/no-op until an admin populates them AND flips the matching
 --     kill-switch above

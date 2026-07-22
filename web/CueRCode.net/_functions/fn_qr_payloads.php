@@ -2690,3 +2690,108 @@ function buildPayload_gs1_product(array $inputData): string
 
     return $payload;
 }
+
+// ==============================================================================
+// 🔗 buildPayload_dynamic_url() - Dynamic (editable) redirect payload (E1a, #27)
+// ==============================================================================
+
+/**
+ * 🔗 Build a dynamic-redirect payload for QR code encoding.
+ *
+ * ⚠️ DARK / INERT this stage (Epic E1a Stage S0): the `dynamic_url` QR type
+ * seeds with `isActive=0` (seed_data.sql) so it is invisible to GET
+ * /api/v1/types, and there is no `public_html/r/` endpoint anywhere in this
+ * codebase yet for the resulting URL to resolve against (Stage S2, gated on
+ * owner sign-off G-007 - see .dev-team/dynamic_dualfn_design.md). This
+ * function exists now purely so the payload-building half of the feature is
+ * built, tested, and ready before the route that would ever invoke it.
+ *
+ * Unlike every OTHER builder in this file, the encoded identifier is NOT
+ * user-supplied content - it is a `redirectUUID` MINTED by the (future)
+ * creation handler BEFORE payload build (createDynamicRedirectForOwner(),
+ * fn_api_redirects.php), then passed in here via `$inputData['redirect_uuid']`
+ * exactly like `buildPayload_gs1_product()`'s strict-reject GTIN check
+ * (fn_qr_payloads.php, above) validates its own required field. This builder
+ * stays PURE - it never touches the database itself, it only trusts (and
+ * strictly re-validates the SHAPE of) the UUID it is handed.
+ *
+ * The base host is READ FROM `tblSettings` (`dynamic_redirect_base_url`, seed
+ * default `https://QRmy.Link` - LAUNCH_DECISIONS.md owner-decision O-11) via
+ * getConfig() - domain-agnostic and zero-hard-coded, exactly like every other
+ * admin-editable-config value in this codebase (mirrors
+ * buildPayload_gs1_product()'s own `resolver` host default above).
+ *
+ * @param array $inputData Must contain 'redirect_uuid' - a UUID v4 string
+ *                          minted by the caller (never user-typed).
+ *
+ * @return string The payload string: "{base}/r/{redirect_uuid}".
+ *
+ * @throws \InvalidArgumentException If 'redirect_uuid' is missing or is not
+ *                                    a well-formed UUID v4 (strict-reject,
+ *                                    same posture as the GS1 GTIN check).
+ *
+ * @see _functions/fn_redirects.php     - isValidRedirectUuid()
+ * @see _functions/fn_api_redirects.php - createDynamicRedirectForOwner() (mints the UUID)
+ * @see _functions/fn_config.php        - getConfig()
+ * @see .dev-team/dynamic_dualfn_design.md §1.2
+ *
+ * @example
+ *   buildPayload_dynamic_url(['redirect_uuid' => 'a1b2c3d4-e5f6-4890-abcd-ef1234567890']);
+ *   // Returns: 'https://QRmy.Link/r/a1b2c3d4-e5f6-4890-abcd-ef1234567890'
+ */
+function buildPayload_dynamic_url(array $inputData): string
+{
+    // 📌 Extract the redirect UUID from input data.
+    if (isset($inputData['redirect_uuid'])) {
+        $redirectUuidValue = $inputData['redirect_uuid'];
+    } else {
+        $redirectUuidValue = '';
+    }
+    $redirectUuid = trim((string) $redirectUuidValue);
+
+    // ❌ Validate that a redirect UUID was provided.
+    if ($redirectUuid === '') {
+        throw new \InvalidArgumentException(
+            'A redirect UUID is required for dynamic-url-type QR codes.'
+        );
+    }
+
+    // ✅ Strict-reject: the UUID must match the v4 shape - same posture as
+    //    buildPayload_gs1_product()'s GTIN check above (an allowlist regex,
+    //    never a best-effort guess). Falls back to an inline copy of the same
+    //    pattern if fn_redirects.php has not been loaded in this request,
+    //    so this builder never hard-depends on load order.
+    if (function_exists('isValidRedirectUuid')) {
+        $redirectUuidIsValid = isValidRedirectUuid($redirectUuid);
+    } else {
+        $redirectUuidIsValid = preg_match(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i',
+            $redirectUuid
+        ) === 1;
+    }
+
+    if (!$redirectUuidIsValid) {
+        throw new \InvalidArgumentException(
+            'Invalid redirect UUID: "' . $redirectUuid . '". '
+            . 'Expected a well-formed UUID v4.'
+        );
+    }
+
+    // 📌 Resolve the base URL from tblSettings (owner-editable, zero-hard-
+    //    coded) - default 'https://QRmy.Link' when unset or the DB is
+    //    unavailable (matches this file's other getConfig()-backed defaults).
+    // @see LAUNCH_DECISIONS.md - O-11 (printed redirect domain)
+    $baseUrl = 'https://QRmy.Link';
+
+    if (function_exists('getConfig')) {
+        $configuredBaseUrl = getConfig('dynamic_redirect_base_url', 'https://QRmy.Link');
+        if (is_string($configuredBaseUrl) && trim($configuredBaseUrl) !== '') {
+            $baseUrl = trim($configuredBaseUrl);
+        }
+    }
+
+    // 🧹 Strip any trailing slash so concatenation never produces a doubled "//".
+    $baseUrl = rtrim($baseUrl, '/');
+
+    return $baseUrl . '/r/' . $redirectUuid;
+}
