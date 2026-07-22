@@ -6,6 +6,40 @@
 
 ---
 
+## 0. ⚡ LATEST — 2026-07-22 session (READ FIRST — supersedes the §1 snapshot below)
+
+**Big change: the launch-prep + autopilot work is now consolidated onto `alpha`.** The old "merge PR #46 first" hard-blocker (§1, HB-1) is **DONE/superseded**.
+
+- **Consolidation:** PR **#63** merged `#46`/`#62` (autopilot) + `#51` (launch-prep) into **`alpha`** in one clean, green PR (`alpha` @ merge `3500971`, then bot version-bump `f3c5bf5`). **#46/#62/#51 CLOSED** as superseded (no content lost). Green baseline on alpha: **1564/1564** tests, `php -l` clean, actionlint clean.
+- **New branch model in effect:** work now flows **alpha → beta → main**. Cut new topic branches from the updated `alpha`. `main` = old baseline `68370c0`; `beta` = `68370c0`; `alpha` is far ahead.
+- **Vendored libs:** `chillerlan/php-qrcode` 5.0.5 + `php-settings-container` 3.2.1 + FPDF are **gitignored** ("downloaded separately"). CI (`ci.yml`) fetches them at run time; locally, install them under `web/CueRCode.net/_libraries/` to run the suite.
+
+### Issues opened this session
+`#64` deps/security (multi-branch Dependabot + CodeQL/Semgrep/gitleaks) · `#65` predefined-logo runtime bug · `#66` user/org saved-logo library · `#67` native UTF emoji picker · `#68` scheduled emoji-ingest Action · `#69` all-barcode-types API (re-scopes FG-016/G-011) · `#70` extensible pricing model (price-points/discounts/lifetime/PAYG) · `#71` dual-function enterprise QR (ProjectEPass/GS1). Cross-repo: **ProjectEPass#18** (scan-to-check-in contract). Commented `#27` (Go2My.Link redirect-layer prerequisite).
+
+### Open PRs / branches (this session)
+- **#72** deps/security → **`main`** — **GREEN**, awaiting owner merge (Dependabot config must live on the default branch). Contains `dependabot.yml`, `codeql.yml`, `SECURITY.md`, `lint.yml`.
+- **#74** deps/security → **`alpha`** (`claude/alpha-deps-security-docs`) — **GREEN**. Adds `ci.yml` (php -l 8.4/8.5 + test suite + gitleaks **blocking** via `.gitleaks.toml` allowlist), `semgrep.yml`, `codeql.yml`, `dependabot.yml`, `SECURITY.md`, **this HANDOFF update + `LAUNCH_DECISIONS.md`**. Closes **#35** once `ci.yml` reaches main.
+- **#73** logo fix → **`alpha`** (`claude/fix-predefined-logos`) — fixes #65. Suite **1694/1694** (+130). Residual: PNG twins need generating in an Imagick env (`tools/render_logo_pngs.php`) or `php-imagick` on Dreamhost; SVG-output logos work today.
+- **`claude/pricing-model`** — `Pricing_Strategy.md` committed; the **#70 flexible-pricing schema** (Section C of the analysis) is being implemented on it; PR to alpha to follow.
+
+### Deps/security specifics (see #64)
+CodeQL has **no PHP** support + needs **GHAS** on this private repo → carries a transitional per-step `continue-on-error` until GHAS is enabled. **Semgrep** covers PHP+JS free. **gitleaks** history scan surfaced **12 findings, all false positives** (docs/OpenAPI/dev-portal examples/docblock examples/test fixture) — allowlisted in `.gitleaks.toml`; now a blocking check.
+
+### Model routing (owner directive)
+Deep analysis/planning → **Fable 5** sequential agents (see `/tmp/.../scratchpad/fable_analysis.md` — the grounded engineering brief driving all the above). Implementation → **Sonnet/Haiku**. Fall back to Opus only if needed.
+
+### ➡️ Pick up here (next actions)
+1. Finish the **#70 flexible-pricing schema** on `claude/pricing-model` → PR to alpha.
+2. **Owner** to work through **`LAUNCH_DECISIONS.md`** (merge #72, enable GHAS/Dependabot/secret-scanning, pricing sign-off, PayPal/SSO/email creds, legal, live tests, G-007 go/no-go).
+3. Replicate scanning workflows to **`beta`**.
+4. Continue the **dev-team enhancement loop**: implement ungated candidates (D-1..D-8 in `fable_analysis.md` §D), keep opening/updating issues + this HANDOFF per task.
+5. Feature builds behind gates: emoji picker (#67), barcodes (#69), user logos (#66), then G-007-gated dynamic/dual-function (#27/#71).
+
+*(The §1+ snapshot below is the 2026-07-18 pre-consolidation state, kept for history. Where it conflicts with §0, §0 wins.)*
+
+---
+
 ## 1. Current state (verified, not assumed)
 
 - **Branch:** `launch-prep/2026-07-10` (HEAD `41be60a`, in sync with origin, working tree clean). ⚡ **For the current snapshot + next actions, jump to §29 (pick-up pointer).** The launch-prep programme has continued far past the old `autopilot/2026-06-28` planning branch (§27–§29 cover the 2026-07-18 continuation). PR #46 (from `autopilot/2026-06-28`) remains open — see the next bullet.

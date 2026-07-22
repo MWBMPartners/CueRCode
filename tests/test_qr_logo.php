@@ -347,3 +347,400 @@ assertTrue(
         < strpos((string) $apiGenerateSource, 'validateCustomization($customization)'),
     'fn_api_generate.php\'s LOGO_SVG_REJECTED check runs BEFORE the first validateCustomization() call (handleGenerate())'
 );
+
+// ==============================================================================
+// 🖼️ PART 2 - Issue #65: "predefined centre-logos are dead at runtime"
+// ==============================================================================
+// Two independent bugs, both fixed WITHOUT any DB connection needed by the
+// tests below (mirroring this whole file's/harness's DB-independent
+// convention - dbQuery() is never defined anywhere in this test suite):
+//
+//   BUG 1 (path mismatch) - getLogoPathFromDatabase() only ever checked
+//   CUERCODE_UPLOADS_DIR . 'logos' for a predefined logo's stored filename,
+//   but every predefined logo (seed_data.sql's 26-row tblPredefinedLogos
+//   INSERT) actually ships as a static asset under
+//   public_html/assets/img/logos/ - so the containment guard rejected every
+//   lookup and the logo was silently dropped. FIXED by extracting the
+//   resolution algorithm into resolvePredefinedLogoPath() (fn_qr_logo.php)
+//   and adding the real assets directory as an allowed base. Because that
+//   extraction is a PURE, DB-free function, Section 6 below tests it
+//   directly - this IS the same exact logic getLogoPathFromDatabase() now
+//   delegates to (see that function's own doc comment), so this is a
+//   faithful, direct proof of the fix, not a workaround for the DB-free
+//   harness.
+//
+//   BUG 2 (GD cannot rasterise SVG) - loadLogoImage() only handled
+//   PNG/JPEG/GIF/WEBP; all 26 predefined logos are SVG, so raster
+//   (PNG/JPG/GIF/WEBP) QR output silently dropped every predefined logo even
+//   after bug 1 is fixed (the SVG-OUTPUT path, overlayLogoOnSVG(), was
+//   already working and is unaffected/unchanged by either fix). FIXED with a
+//   PNG-twin lookup + optional Imagick rasterisation + a NON-SILENT logged
+//   warning as the last resort (never a silent drop with no trace). Sections
+//   8-9 below cover this.
+// ==============================================================================
+
+// ==============================================================================
+// ✅ Section 6: resolvePredefinedLogoPath() - Issue #65 bug 1 fix (path resolution)
+// ==============================================================================
+
+// 📌 Every predefined logo filename actually seeded by
+// _includes/sql/seed_data.sql's tblPredefinedLogos INSERT (26 rows total -
+// kept as an explicit, literal list rather than re-parsing the SQL file, so
+// this test pins the REAL seeded set and a future edit to either list is
+// caught by a mismatch). Order does not matter for this assertion loop.
+$seededPredefinedLogoFilenames = [
+    'facebook.svg', 'instagram.svg', 'twitter.svg', 'youtube.svg', 'linkedin.svg',
+    'tiktok.svg', 'pinterest.svg', 'snapchat.svg',
+    'whatsapp.svg', 'telegram.svg', 'skype.svg',
+    'paypal.svg', 'bitcoin.svg',
+    'apple.svg', 'android.svg', 'appstore.svg', 'playstore.svg',
+    'globe.svg', 'email.svg', 'phone.svg', 'location.svg', 'calendar.svg',
+    'wifi.svg', 'document.svg', 'camera.svg', 'qrcode.svg',
+];
+
+assertEquals(
+    26,
+    count($seededPredefinedLogoFilenames),
+    'sanity check: exactly 26 predefined logo filenames are listed here, matching seed_data.sql'
+);
+
+// 📌 The real assets directory, resolved the SAME way resolvePredefinedLogoPath()
+// resolves it, so the assertions below compare against the actual expected
+// location rather than a hardcoded/duplicated path string.
+$predefinedLogosAssetsDir = realpath(
+    CUERCODE_SITE_ROOT . 'public_html' . DIRECTORY_SEPARATOR
+    . 'assets' . DIRECTORY_SEPARATOR . 'img' . DIRECTORY_SEPARATOR . 'logos'
+);
+
+assertTrue(
+    is_string($predefinedLogosAssetsDir) && is_dir($predefinedLogosAssetsDir),
+    'sanity check: the real public_html/assets/img/logos/ directory exists on disk'
+);
+
+// ✅ THE #65 BUG 1 FIX, PROVEN: every seeded predefined logo filename now
+// resolves to an existing, real file living under the assets directory
+// (not null - this was the exact silent failure #65 reported).
+foreach ($seededPredefinedLogoFilenames as $seededFilename) {
+    $resolved = resolvePredefinedLogoPath($seededFilename);
+
+    assertTrue(
+        is_string($resolved),
+        'resolvePredefinedLogoPath(\'' . $seededFilename . '\') resolves to a real path, not null (#65 fix)'
+    );
+
+    if (is_string($resolved)) {
+        assertTrue(
+            is_string($predefinedLogosAssetsDir) && str_starts_with($resolved, $predefinedLogosAssetsDir . DIRECTORY_SEPARATOR),
+            'resolvePredefinedLogoPath(\'' . $seededFilename . '\') resolves UNDER the real assets/img/logos directory'
+        );
+        assertTrue(
+            file_exists($resolved) && is_file($resolved),
+            'resolvePredefinedLogoPath(\'' . $seededFilename . '\') resolves to a file that genuinely exists on disk'
+        );
+        assertEquals(
+            $seededFilename,
+            basename($resolved),
+            'resolvePredefinedLogoPath(\'' . $seededFilename . '\') preserves the exact requested filename'
+        );
+    }
+}
+
+// ❌ Edge cases: still correctly return null (never a fatal, never an escape).
+assertEquals(
+    null,
+    resolvePredefinedLogoPath(''),
+    'resolvePredefinedLogoPath() returns null for an empty filename'
+);
+
+assertEquals(
+    null,
+    resolvePredefinedLogoPath('this-logo-does-not-exist.svg'),
+    'resolvePredefinedLogoPath() returns null for a well-formed but nonexistent filename'
+);
+
+// 🔒 Regression guard: the B-051/F-017 containment guard still fully applies
+// to the NEW assets-directory base too - a traversal payload must NOT be
+// able to escape it, even though the target it points at (/etc/passwd)
+// genuinely exists on disk. The '../' depth is computed dynamically from the
+// REAL resolved assets directory so this assertion is portable across
+// checkout locations rather than hardcoding a directory depth.
+if (is_string($predefinedLogosAssetsDir) && file_exists('/etc/passwd')) {
+    $traversalDepth   = substr_count(rtrim($predefinedLogosAssetsDir, DIRECTORY_SEPARATOR), DIRECTORY_SEPARATOR);
+    $traversalPayload = str_repeat('..' . DIRECTORY_SEPARATOR, $traversalDepth) . 'etc' . DIRECTORY_SEPARATOR . 'passwd';
+
+    assertEquals(
+        null,
+        resolvePredefinedLogoPath($traversalPayload),
+        'resolvePredefinedLogoPath() BLOCKS a path-traversal filename that would otherwise escape to an existing file outside every allowed base (B-051/F-017 containment preserved)'
+    );
+}
+
+// ==============================================================================
+// ✅ Section 7: getLogoPathFromDatabase() - DB-unavailable fail-safe (unchanged)
+// ==============================================================================
+// This test harness NEVER defines dbQuery() (mirrors test_auth.php/
+// test_features.php/test_pricing.php's own sanity checks) - proving the #65
+// fix did not accidentally introduce a fatal when the DB layer is absent.
+// The actual DB-lookup row-fetch itself remains DB-dependent and out of
+// scope for this harness, exactly like every other dbQuery()-touching
+// function in this suite; resolvePredefinedLogoPath() (Section 6, above) is
+// what proves the fix at the unit level.
+// ==============================================================================
+
+assertFalse(function_exists('dbQuery'), 'sanity check: dbQuery() is genuinely undefined in this harness');
+
+assertEquals(
+    null,
+    getLogoPathFromDatabase(1),
+    'getLogoPathFromDatabase() gracefully returns null (not a fatal) when dbQuery() is unavailable'
+);
+
+// ==============================================================================
+// ✅ Section 8: overlayLogoOnSVG() - Issue #65 fix proven end-to-end (SVG output)
+// ==============================================================================
+// This is "the path that works today" per the #65 brief: overlayLogoOnSVG()
+// never touches GD, so it is unaffected by bug 2 - it is PURELY bug 1 (path
+// resolution) standing between a predefined logo and a working SVG QR
+// output. Resolving via resolvePredefinedLogoPath() (the real #65 fix) and
+// feeding the result straight into overlayLogoOnSVG() proves the fix
+// end-to-end on this already-working overlay path.
+// ==============================================================================
+
+$facebookLogoPath = resolvePredefinedLogoPath('facebook.svg');
+
+assertTrue(
+    is_string($facebookLogoPath),
+    'precondition: facebook.svg resolves via resolvePredefinedLogoPath() for the Section 8 end-to-end proof'
+);
+
+if (is_string($facebookLogoPath)) {
+    // 📌 A minimal, self-contained fake "QR code" SVG - the real QR renderer
+    //    (chillerlan\QRCode) is not needed to prove the overlay step itself.
+    $baseQrSvg = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL
+        . '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">'
+        . '<rect width="200" height="200" fill="#ffffff"/>'
+        . '<rect x="10" y="10" width="20" height="20" fill="#000000"/>'
+        . '</svg>';
+
+    $svgWithPredefinedLogo = overlayLogoOnSVG($baseQrSvg, $facebookLogoPath, ['size_pct' => 20]);
+
+    // ✅ THE #65 FIX, PROVEN END-TO-END: the output actually CHANGED (the
+    // logo was embedded) rather than being silently dropped/unchanged.
+    assertTrue(
+        $svgWithPredefinedLogo !== $baseQrSvg,
+        'overlayLogoOnSVG() with a resolved predefined logo produces output that DIFFERS from the no-logo baseline (#65 fix, end-to-end)'
+    );
+
+    assertContains(
+        '<image',
+        $svgWithPredefinedLogo,
+        'overlayLogoOnSVG() output embeds an <image> element for the predefined logo'
+    );
+
+    assertContains(
+        'data:image/svg+xml',
+        $svgWithPredefinedLogo,
+        'overlayLogoOnSVG() output embeds the predefined logo as an image/svg+xml data URI (it is itself an SVG)'
+    );
+
+    // 📌 Round-trip proof: the embedded base64 payload decodes back to the
+    //    EXACT source SVG bytes on disk (no mangling in transit).
+    if (preg_match('/data:image\/svg\+xml;base64,([A-Za-z0-9+\/=]+)"/', $svgWithPredefinedLogo, $embeddedMatch) === 1) {
+        assertEquals(
+            file_get_contents($facebookLogoPath),
+            base64_decode($embeddedMatch[1], true),
+            'overlayLogoOnSVG() embeds the EXACT source logo bytes (byte-for-byte round trip)'
+        );
+    } else {
+        assertTrue(false, 'could not extract the embedded base64 SVG data URI from overlayLogoOnSVG() output for the round-trip check');
+    }
+}
+
+// ==============================================================================
+// ✅❌ Section 9: loadLogoImage() - Issue #65 bug 2 fix (raster SVG handling)
+// ==============================================================================
+// Uses SELF-CONTAINED fixtures written to the OS temp dir (never the real
+// repo assets tree) so these assertions are independent of whether PNG twins
+// have (or have not) been generated for the real predefined logos by
+// tools/render_logo_pngs.php on THIS machine.
+// ==============================================================================
+
+// 📌 A scratch fixture directory under the OS temp dir, cleaned up at the end
+//    of this section.
+$logoFixtureDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_logo_fixtures_' . uniqid('', true);
+$fixtureMkdirOk = mkdir($logoFixtureDir, 0755, true);
+
+assertTrue($fixtureMkdirOk, 'precondition: scratch fixture directory for Section 9 was created');
+
+if ($fixtureMkdirOk) {
+    // --------------------------------------------------------------------
+    // ✅ 9a. PNG-twin priority: an SVG WITH a same-basename PNG twin present
+    //     loads successfully via the twin, with ZERO Imagick dependency.
+    // --------------------------------------------------------------------
+    $twinSvgPath = $logoFixtureDir . DIRECTORY_SEPARATOR . 'icon-with-twin.svg';
+    $twinPngPath = $logoFixtureDir . DIRECTORY_SEPARATOR . 'icon-with-twin.png';
+
+    file_put_contents(
+        $twinSvgPath,
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+            . '<rect width="10" height="10" fill="#123456"/></svg>'
+    );
+
+    // 📌 A tiny, genuine 6x9 GD-rendered PNG (dimensions chosen to be easily
+    //    distinguishable from any other fixture size in this section).
+    $twinCanvas = imagecreatetruecolor(6, 9);
+    imagepng($twinCanvas, $twinPngPath);
+    imagedestroy($twinCanvas);
+
+    $loadedViaTwin = loadLogoImage($twinSvgPath);
+
+    assertTrue(
+        $loadedViaTwin instanceof \GdImage,
+        'loadLogoImage() on an SVG WITH a PNG twin present returns a loaded GdImage (PNG-twin fallback, #65 fix)'
+    );
+
+    if ($loadedViaTwin instanceof \GdImage) {
+        assertEquals(6, imagesx($loadedViaTwin), 'loadLogoImage() PNG-twin fallback loads the TWIN\'s pixel width (6px), proving the twin (not a broken SVG decode) was used');
+        assertEquals(9, imagesy($loadedViaTwin), 'loadLogoImage() PNG-twin fallback loads the TWIN\'s pixel height (9px)');
+        imagedestroy($loadedViaTwin);
+    }
+
+    // --------------------------------------------------------------------
+    // ❌✅ 9b. NO PNG twin + NO Imagick -> NON-SILENT null, never a broken
+    //     image and never a fatal. This is the exact "do not silently drop"
+    //     requirement from the #65 fix brief. Guarded so this environment's
+    //     genuine "no imagick installed" state is what is actually
+    //     exercised, while still degrading sensibly (not failing outright)
+    //     on some future machine that DOES have imagick loaded.
+    // --------------------------------------------------------------------
+    $noTwinSvgPath = $logoFixtureDir . DIRECTORY_SEPARATOR . 'icon-no-twin.svg';
+    file_put_contents(
+        $noTwinSvgPath,
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+            . '<circle cx="5" cy="5" r="5" fill="#abcdef"/></svg>'
+    );
+
+    if (!extension_loaded('imagick')) {
+        // ✅ This is the branch this repository's own dev/test sandbox
+        //    genuinely exercises (no rasteriser installed here by design).
+        assertEquals(
+            null,
+            loadLogoImage($noTwinSvgPath),
+            'loadLogoImage() returns null (NON-SILENT - a logged warning fires, not a broken image) for an SVG with no PNG twin and no Imagick extension (#65 fix)'
+        );
+    } else {
+        // 📌 Imagick IS loaded — but whether it can actually rasterise SVG
+        //    depends on the ImageMagick build + policy.xml. The SVG coder is
+        //    DISABLED by default on many distros (incl. GitHub's runners, for
+        //    security), so the branch legitimately yields EITHER a valid
+        //    GdImage (SVG supported) OR a NON-SILENT null (SVG blocked) — but
+        //    never a broken image, a bare false, or a fatal. Accept both real
+        //    outcomes and forbid anything else. (We deliberately do NOT assert
+        //    successful rasterisation, because a hardened Imagick policy makes
+        //    that environment-dependent — the #65 contract is only that the
+        //    logo path degrades gracefully, never silently or destructively.)
+        $imagickLogoResult = loadLogoImage($noTwinSvgPath);
+        assertTrue(
+            ($imagickLogoResult instanceof \GdImage) || ($imagickLogoResult === null),
+            'loadLogoImage() with Imagick loaded returns a valid GdImage (SVG supported) OR a NON-SILENT null (SVG blocked by build/policy) — never a broken image (#65 fix, Imagick branch)'
+        );
+        if ($imagickLogoResult instanceof \GdImage) {
+            imagedestroy($imagickLogoResult);
+        }
+    }
+
+    // --------------------------------------------------------------------
+    // ✅ 9c. The QR code itself STAYS VALID when the logo overlay is skipped
+    //     - overlayLogoOnRaster() must still return a well-formed, decodable
+    //     PNG, never a corrupted/partial image, when loadLogoImage()
+    //     returns null for the reason above.
+    // --------------------------------------------------------------------
+    if (!extension_loaded('imagick')) {
+        $fakeQrCanvas = imagecreatetruecolor(50, 50);
+        $qrWhite      = imagecolorallocate($fakeQrCanvas, 255, 255, 255);
+        imagefilledrectangle($fakeQrCanvas, 0, 0, 49, 49, $qrWhite);
+        ob_start();
+        imagepng($fakeQrCanvas);
+        $fakeQrPngBytes = ob_get_clean();
+        imagedestroy($fakeQrCanvas);
+
+        $qrResultWithSkippedLogo = overlayLogoOnRaster(
+            (string) $fakeQrPngBytes,
+            $noTwinSvgPath,
+            ['output_format' => 'png']
+        );
+
+        $decodedResultDimensions = getimagesizefromstring($qrResultWithSkippedLogo);
+
+        assertTrue(
+            $decodedResultDimensions !== false,
+            'overlayLogoOnRaster() still returns a valid, decodable PNG when the SVG logo overlay is skipped (QR stays valid, #65 fix)'
+        );
+
+        if ($decodedResultDimensions !== false) {
+            assertEquals(50, $decodedResultDimensions[0], 'the QR code\'s own dimensions are preserved unchanged when the logo overlay is skipped');
+            assertEquals(50, $decodedResultDimensions[1], 'the QR code\'s own dimensions are preserved unchanged when the logo overlay is skipped (height)');
+        }
+    }
+
+    // 🧹 Clean up every fixture file + the scratch directory this section created.
+    @unlink($twinSvgPath);
+    @unlink($twinPngPath);
+    @unlink($noTwinSvgPath);
+    @rmdir($logoFixtureDir);
+}
+
+// ==============================================================================
+// ✅ Section 10: Static regression guards (source-text, no execution) - #65
+// ==============================================================================
+// Mirrors Section 5's own convention - pins the exact wiring the #65 fix
+// depends on, so a future refactor cannot silently reintroduce either bug.
+// $qrLogoSource was already loaded + confirmed readable in Section 5, above.
+// ==============================================================================
+
+// 🔐 Bug 1 fix: the predefined-logo resolver must check the REAL assets
+// directory, not just uploads/logos. The production source spreads this
+// concatenation across several lines (house style), so the check tolerates
+// whitespace/newlines between each segment rather than requiring one exact
+// single-line string.
+assertMatches(
+    "/'public_html'\s*\.\s*DIRECTORY_SEPARATOR\s*.*?'assets'\s*\.\s*DIRECTORY_SEPARATOR\s*.*?'img'\s*\.\s*DIRECTORY_SEPARATOR\s*.*?'logos'/s",
+    (string) $qrLogoSource,
+    'resolvePredefinedLogoPath() (fn_qr_logo.php) resolves against the real public_html/assets/img/logos directory (#65 bug 1 fix wiring)'
+);
+
+assertContains(
+    'function getLogoPathFromDatabase(int $logoId): ?string',
+    (string) $qrLogoSource,
+    'getLogoPathFromDatabase() still exists with its original signature (no breaking API change)'
+);
+
+// 🔐 Bug 2 fix: loadLogoImage() must check for a PNG twin AND guard Imagick
+// behind extension_loaded(), AND must log (not silently swallow) the
+// no-fallback-available case.
+assertContains(
+    '.png',
+    (string) $qrLogoSource,
+    'loadLogoImage() (fn_qr_logo.php) references a .png PNG-twin path (#65 bug 2 fix wiring)'
+);
+
+assertContains(
+    "extension_loaded('imagick')",
+    (string) $qrLogoSource,
+    'loadLogoImage() (fn_qr_logo.php) guards its Imagick fallback behind extension_loaded(\'imagick\') (never a hard dependency)'
+);
+
+assertContains(
+    'Raster SVG logo overlay skipped: no PNG twin and no Imagick extension',
+    (string) $qrLogoSource,
+    'loadLogoImage() logs a clear, NON-SILENT warning when neither fallback is available (#65 bug 2 fix - no more silent drop)'
+);
+
+// 🔐 overlayLogoOnSVG() itself must remain completely untouched by either
+// fix (it never needed one) - confirms the SVG-output path's own function
+// signature is unchanged.
+assertContains(
+    'function overlayLogoOnSVG(string $svgContent, string $logoPath, array $config = []): string',
+    (string) $qrLogoSource,
+    'overlayLogoOnSVG() signature is unchanged by the #65 fix (it was already working, untouched)'
+);
