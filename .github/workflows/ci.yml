@@ -1,0 +1,132 @@
+# =============================================================================
+# ✅ CueRCode - Continuous Integration (PR quality gate)
+# =============================================================================
+# Runs on push/PR to all three tiers (alpha → beta → main). Provides the
+# per-PR quality signal the repo previously lacked (closes #35 / roadmap E12):
+#   1. php -l syntax lint on BOTH PHP 8.4 and 8.5 (target = 8.5, back-compat 8.4)
+#   2. The dependency-free test suite (php tests/run.php) with the vendored
+#      QR/PDF libraries installed at run time (they are gitignored — "downloaded
+#      separately, not committed" — so CI fetches them, mirroring the server).
+#   3. Secret scan via the gitleaks CLI (the org-licensed gitleaks *action*
+#      silently no-ops on private repos without a licence — the CLI does not).
+#
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+      - alpha
+  pull_request:
+    branches:
+      - main
+      - beta
+      - alpha
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 🔤 php -l syntax lint across the supported PHP versions
+  # ---------------------------------------------------------------------------
+  php-lint:
+    name: php -l (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.4'
+          - '8.5'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Lint every PHP file
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r file; do
+            if ! php -l "$file" > /dev/null 2>&1; then
+              echo "::error file=${file}::PHP syntax error"
+              php -l "$file" || true
+              fail=1
+            fi
+          done < <(find web tests -name '*.php' -type f)
+          if [ "${fail}" -ne 0 ]; then
+            echo "PHP syntax errors found."
+            exit 1
+          fi
+          echo "php -l clean across all tracked PHP files."
+
+  # ---------------------------------------------------------------------------
+  # 🧪 Dependency-free test suite (libraries vendored at run time)
+  # ---------------------------------------------------------------------------
+  tests:
+    name: Test suite (PHP 8.4)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: gd, mbstring, zip, fileinfo
+          coverage: none
+
+      - name: Install vendored libraries (no Composer, mirrors the server)
+        run: |
+          set -euo pipefail
+          LIB="web/CueRCode.net/_libraries"
+          git clone --depth 1 --branch 5.0.5 https://github.com/chillerlan/php-qrcode.git /tmp/php-qrcode
+          git clone --depth 1 --branch 3.2.1 https://github.com/chillerlan/php-settings-container.git /tmp/php-settings-container
+          git clone --depth 1 https://github.com/Setasign/FPDF.git /tmp/fpdf
+          mkdir -p "${LIB}/chillerlan/php-qrcode" "${LIB}/chillerlan/php-settings-container" "${LIB}/fpdf"
+          cp -r /tmp/php-qrcode/src "${LIB}/chillerlan/php-qrcode/src"
+          cp -r /tmp/php-settings-container/src "${LIB}/chillerlan/php-settings-container/src"
+          cp -r /tmp/fpdf/. "${LIB}/fpdf/"
+          echo "Vendored libraries installed."
+
+      - name: Run test suite
+        run: php tests/run.php
+
+  # ---------------------------------------------------------------------------
+  # 🔐 Secret scan (gitleaks CLI) — informational until a clean baseline is
+  #     confirmed on the runner, then flip to a required, blocking check.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks (latest release)
+        run: |
+          set -euo pipefail
+          VER="$(curl -sSfL https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+            | python3 -c 'import sys, json; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          echo "gitleaks version: ${VER}"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --no-banner --exit-code 1
