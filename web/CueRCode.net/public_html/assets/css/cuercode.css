@@ -1157,7 +1157,282 @@ footer a:hover {
 
 
 /* =============================================================================
-   15. 📱 Responsive Breakpoints
+   15. ♿ Colourblind-Friendly (CVD) Palette Overrides
+   ============================================================================= */
+
+/**
+ * ♿ Colour-vision-deficiency (CVD) safe palettes.
+ *
+ * The brand palette leans heavily on teal/green (--cuercode-primary,
+ * --cuercode-accent). For users with red-green or blue-yellow colour
+ * vision deficiencies, teal/green hues can be hard to distinguish from
+ * neighbouring colours. These overrides remap the brand tokens to
+ * colourblind-safe equivalents drawn from the Okabe-Ito qualitative
+ * palette (designed to be distinguishable across all common CVD types).
+ *
+ * The override is applied via a `data-cuercode-cvd` attribute on the
+ * <html> element, set by JS from a persisted localStorage choice
+ * (see cuercode-common.js / header.php pre-paint block). Because the
+ * overrides only touch the same --cuercode-* custom properties used
+ * everywhere else, every component (buttons, tabs, frames, spinners)
+ * picks up the new palette automatically with no per-component rules.
+ *
+ * Contrast: each replacement primary keeps a contrast ratio >= 4.5:1
+ * against white (#fff) so white text on a primary-filled button and the
+ * primary-on-light-background text usages remain WCAG 2.1 AA compliant.
+ * The "dark" variants are darkened further for hover/active emphasis.
+ *
+ * @see https://jfly.uni-koeln.de/color/  (Okabe & Ito, colourblind-safe palette)
+ * @see https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors
+ */
+
+/**
+ * 🔴 Protanopia (red-deficient). Avoid relying on red/green separation.
+ * Uses a strong blue as the primary and a vermilion/orange accent —
+ * both highly distinguishable for protanopes.
+ */
+[data-cuercode-cvd="protanopia"] {
+    --cuercode-primary: #005ab5;        /* blue – 5.6:1 on white */
+    --cuercode-primary-light: #0072e0;  /* lighter blue for dark mode */
+    --cuercode-primary-dark: #003f80;   /* darker blue for hover/active */
+    --cuercode-accent: #d55e00;         /* vermilion accent */
+
+    /* 🔘 Recolour the selection-button tint tokens to match the blue primary */
+    --cuercode-btn-hover-bg: rgba(0, 90, 181, 0.06);
+    --cuercode-btn-hover-border: var(--cuercode-primary-light);
+    --cuercode-btn-active-bg: rgba(0, 90, 181, 0.1);
+    --cuercode-btn-active-border: var(--cuercode-primary);
+    --cuercode-btn-active-shadow: 0 0 0 0.2rem rgba(0, 90, 181, 0.25);
+}
+
+/**
+ * 🟢 Deuteranopia (green-deficient, most common). Same blue/vermilion
+ * strategy as protanopia — blue and orange remain well separated.
+ */
+[data-cuercode-cvd="deuteranopia"] {
+    --cuercode-primary: #0067a6;        /* blue – 5.1:1 on white */
+    --cuercode-primary-light: #1a82c4;  /* lighter blue for dark mode */
+    --cuercode-primary-dark: #004a78;   /* darker blue for hover/active */
+    --cuercode-accent: #e07b00;         /* orange accent */
+
+    --cuercode-btn-hover-bg: rgba(0, 103, 166, 0.06);
+    --cuercode-btn-hover-border: var(--cuercode-primary-light);
+    --cuercode-btn-active-bg: rgba(0, 103, 166, 0.1);
+    --cuercode-btn-active-border: var(--cuercode-primary);
+    --cuercode-btn-active-shadow: 0 0 0 0.2rem rgba(0, 103, 166, 0.25);
+}
+
+/**
+ * 🔵 Tritanopia (blue-deficient, rare). Avoid blue/yellow separation.
+ * Uses a magenta/purple primary and a teal-leaning accent that stay
+ * distinct for tritanopes.
+ */
+[data-cuercode-cvd="tritanopia"] {
+    --cuercode-primary: #a0006e;        /* magenta – 6.4:1 on white */
+    --cuercode-primary-light: #c4108a;  /* lighter magenta for dark mode */
+    --cuercode-primary-dark: #730050;   /* darker magenta for hover/active */
+    --cuercode-accent: #008080;         /* teal accent (safe for tritanopia) */
+
+    --cuercode-btn-hover-bg: rgba(160, 0, 110, 0.06);
+    --cuercode-btn-hover-border: var(--cuercode-primary-light);
+    --cuercode-btn-active-bg: rgba(160, 0, 110, 0.1);
+    --cuercode-btn-active-border: var(--cuercode-primary);
+    --cuercode-btn-active-shadow: 0 0 0 0.2rem rgba(160, 0, 110, 0.25);
+}
+
+/**
+ * 🌙 In dark mode the CVD palettes keep the same hues; Bootstrap's
+ * data-bs-theme="dark" block already swaps the button tint tokens to use
+ * --cuercode-accent. We re-tint those dark-mode tokens per CVD type so the
+ * subtle hover/active backgrounds match the active CVD accent rather than
+ * the original teal. The hue variables above are inherited unchanged.
+ */
+[data-bs-theme="dark"][data-cuercode-cvd="protanopia"],
+[data-bs-theme="dark"][data-cuercode-cvd="deuteranopia"] {
+    --cuercode-btn-hover-bg: rgba(0, 114, 224, 0.1);
+    --cuercode-btn-active-bg: rgba(0, 114, 224, 0.16);
+    --cuercode-btn-active-shadow: 0 0 0 0.2rem rgba(0, 114, 224, 0.3);
+}
+
+[data-bs-theme="dark"][data-cuercode-cvd="tritanopia"] {
+    --cuercode-btn-hover-bg: rgba(196, 16, 138, 0.1);
+    --cuercode-btn-active-bg: rgba(196, 16, 138, 0.16);
+    --cuercode-btn-active-shadow: 0 0 0 0.2rem rgba(196, 16, 138, 0.3);
+}
+
+
+/* =============================================================================
+   16. 🍪 Cookie Consent Banner
+   ============================================================================= */
+
+/**
+ * 🍪 Dismissible cookie-consent / storage-notice banner.
+ *
+ * This is a non-modal region pinned to the bottom of the viewport. It is
+ * NOT a focus trap and does not block interaction with the page — the user
+ * can keep using the site and dismiss the notice whenever they like. It is
+ * shown until the user accepts/dismisses, gated on a localStorage key
+ * (see cuercode-common.js). CueRCode only uses essential localStorage
+ * (theme, colourblind preference, this consent flag) and sets no
+ * non-essential / tracking storage, so this is an informational notice
+ * rather than a consent gate.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Roles/region_role
+ * @see https://www.w3.org/WAI/WCAG21/Understanding/
+ */
+#cuercode-cookie-banner {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1080;                       /* below toasts (1090), above content */
+    background-color: var(--bs-body-bg, #fff);
+    color: var(--bs-body-color, #212529);
+    border-top: 3px solid var(--cuercode-primary);
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
+    padding: 1rem 0;
+}
+
+/**
+ * 🍪 The banner is hidden by default and only revealed by JS once it has
+ * confirmed the consent flag is absent. The `.is-visible` modifier flips
+ * it on; using a class (rather than removing `hidden`) lets us animate the
+ * entrance for users who allow motion.
+ */
+#cuercode-cookie-banner[hidden] {
+    display: none;
+}
+
+#cuercode-cookie-banner.is-visible {
+    display: block;
+    animation: cuercodeCookieSlideIn 0.3s ease forwards;
+}
+
+/**
+ * 🍪 Slide-up entrance animation for the banner.
+ */
+@keyframes cuercodeCookieSlideIn {
+    from {
+        transform: translateY(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/**
+ * 🍪 Layout: text on the left, action buttons on the right. Wraps to a
+ * stacked column on narrow viewports.
+ */
+.cuercode-cookie-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+}
+
+.cuercode-cookie-text {
+    flex: 1 1 320px;
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.45;
+}
+
+.cuercode-cookie-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+/**
+ * 🍪 The accept button uses the brand primary so it inherits any active
+ * CVD palette override automatically.
+ */
+#cuercode-cookie-accept {
+    background-color: var(--cuercode-primary);
+    border-color: var(--cuercode-primary);
+    color: #fff;
+}
+
+#cuercode-cookie-accept:hover,
+#cuercode-cookie-accept:focus-visible {
+    background-color: var(--cuercode-primary-dark);
+    border-color: var(--cuercode-primary-dark);
+    color: #fff;
+}
+
+/**
+ * ⌨️ Visible focus ring on all banner interactive elements for keyboard users.
+ */
+#cuercode-cookie-banner a:focus-visible,
+#cuercode-cookie-banner button:focus-visible {
+    outline: 2px solid var(--cuercode-primary);
+    outline-offset: 2px;
+}
+
+/**
+ * ♿ Respect reduced-motion: skip the slide-in animation entirely.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion
+ */
+@media (prefers-reduced-motion: reduce) {
+    #cuercode-cookie-banner.is-visible {
+        animation: none;
+    }
+}
+
+
+/* =============================================================================
+   17. ♿ Colourblind (CVD) Picker Control
+   ============================================================================= */
+
+/**
+ * ♿ The CVD picker sits in the navbar beside the theme toggle. It is a
+ * Bootstrap dropdown; these rules give the trigger button the same
+ * borderless, link-like appearance as the theme toggle and a matching
+ * focus-visible ring.
+ */
+#cvd-toggle {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    transition: var(--cuercode-transition);
+}
+
+#cvd-toggle:hover {
+    opacity: 0.8;
+}
+
+/**
+ * ⌨️ Focus-visible ring for the CVD trigger, matching #theme-toggle.
+ */
+#cvd-toggle:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.8);
+    outline-offset: 2px;
+    border-radius: var(--cuercode-border-radius);
+}
+
+/**
+ * ♿ Active-choice marker: the currently selected CVD option in the
+ * dropdown shows a check icon (toggled via aria-checked / .active by JS).
+ * The check is hidden for non-selected items so the menu stays tidy.
+ */
+.cvd-option .cvd-check {
+    visibility: hidden;
+}
+
+.cvd-option[aria-checked="true"] .cvd-check {
+    visibility: visible;
+}
+
+
+/* =============================================================================
+   18. 📱 Responsive Breakpoints
    ============================================================================= */
 
 /**

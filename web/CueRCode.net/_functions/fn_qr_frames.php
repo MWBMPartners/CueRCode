@@ -4,6 +4,8 @@
  * 🖼️ CueRCode - Frame Renderer for QR Codes
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_frames.php
+ *
  * Provides functions for adding decorative frames and labels around generated
  * QR codes. Supports both raster (GD-based) and vector (SVG) QR code outputs.
  *
@@ -23,6 +25,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/function.imagettftext.php

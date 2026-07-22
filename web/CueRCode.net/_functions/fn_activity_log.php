@@ -4,6 +4,8 @@
  * 📊 CueRCode - Activity Logging
  * ==============================================================================
  *
+ * Path: _functions/fn_activity_log.php
+ *
  * Provides functions for logging application activity events to the
  * tblActivityLog database table. This covers normal operational events
  * (not just errors), such as QR code generation, setting changes, API
@@ -14,6 +16,7 @@
  *
  * @package     CueRCode
  * @subpackage  Logging
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php
@@ -204,7 +207,25 @@ function logActivity(
             . "`userID`, `sessionID`, `requestIP`, `userAgent`, `requestURL`, "
             . "`additionalData`"
             . ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            'sssiiissss',
+            // 🔗 bind_param type string - one letter per bound parameter, in order.
+            // VERIFIED bind mapping (2026-06-28, B-020 fix):
+            //   pos  type  param           PHP type   column type
+            //   ---  ----  --------------  ---------  -------------------------
+            //    1    s    activityType    string     VARCHAR(100)
+            //    2    s    activityDetail  string     TEXT
+            //    3    s    entityType      string|null VARCHAR(50)
+            //    4    i    entityID        int|null   BIGINT UNSIGNED
+            //    5    i    userID          int|null   INT UNSIGNED
+            //    6    s    sessionID       string|null VARCHAR(128)  <-- was wrongly 'i'
+            //    7    s    requestIP       string     VARCHAR(45)
+            //    8    s    userAgent       string     VARCHAR(500)
+            //    9    s    requestURL      string     VARCHAR(2048)
+            //   10    s    additionalData  string|null JSON
+            // 🐛 B-020 fix: sessionID (pos 6) is a non-numeric session-id string
+            //    (e.g. from session_id()); the previous 'sssiiissss' bound it as an
+            //    integer, coercing it to 0 and corrupting the stored value. The
+            //    correct type string is 'sssiisssss'.
+            'sssiisssss',
             [
                 mb_substr($type, 0, 100),            // activityType (VARCHAR 100)
                 $detail,                              // activityDetail (TEXT)

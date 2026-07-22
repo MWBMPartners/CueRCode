@@ -208,3 +208,6 @@ venv/
 logs/
 *.log
 !web/**/CHANGE.log
+
+# dev-team autopilot transient lock
+.dev-team/loop.lock/

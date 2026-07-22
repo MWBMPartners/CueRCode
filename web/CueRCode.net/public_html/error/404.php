@@ -4,11 +4,14 @@
  * 🚫 CueRCode - 404 Not Found Error Page
  * ==============================================================================
  *
+ * Path: public_html/error/404.php
+ *
  * Displayed when a requested page or resource cannot be found.
  * Referenced in public_html/.htaccess as the custom ErrorDocument 404.
  *
  * @package     CueRCode
  * @subpackage  Error Pages
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404

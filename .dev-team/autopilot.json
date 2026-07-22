@@ -1,0 +1,61 @@
+{
+  "mission": "production-ready + feature-complete (aggressive in-scope; queue Bucket-3: auth/payments/SSO/external-email/WebAuthn)",
+  "aim": "CueRCode is a PHP 8.4/8.5 QR-code-generator SaaS for Dreamhost shared hosting: a responsive web UI + feature-parity REST API for generating, customising, and downloading QR codes, with the web frontend built on top of the API.",
+  "definition_of_done": [
+    "php -l clean on every PHP file + zero lint/standards/security warnings before each commit",
+    "core QR generation works end-to-end via Web UI AND REST API (feature parity)",
+    "automated coverage exists for core flows (payload builders, generate pipeline, API auth/rate-limit, response formatting) and passes",
+    "no unresolved Critical/High security finding; all Medium triaged with a decision",
+    "no High-severity correctness/UX backlog item open",
+    "docs current (PROJECT_STATUS.md, CHANGELOG.md, DEV_NOTES.md, README.md, OpenAPI)",
+    "every High-importance in-scope feature gap built (auto) or queued with a spec",
+    "live-server smoke tests (#13/#17/#18/#22) remain owner-run (hands-off) and are not part of the loop's terminal gate"
+  ],
+  "plan": [
+    {"phase": "DISCOVER",  "mode": "iterate-audit+featurefind", "exit": "work queue seeded", "status": "done"},
+    {"phase": "STABILIZE", "mode": "iterate",  "exit": "safety net exists; no High correctness/test gap", "status": "done"},
+    {"phase": "SECURE",    "mode": "security", "exit": "Phase-0 done; no unresolved Critical/High finding; all Medium triaged; rounds dry", "status": "done"},
+    {"phase": "COMPLETE",  "mode": "orchestrator(feature)", "exit": "every High in-scope auto-buildable gap built; Bucket-3 queued with specs", "status": "done"},
+    {"phase": "POLISH",    "mode": "iterate",  "exit": "no High UX/perf item; syntax/standards clean; remaining Med correctness cleared", "status": "done"},
+    {"phase": "VERIFY",    "mode": "review",   "exit": "complete review pass: overall PASS @ last_commit", "status": "done"}
+  ],
+  "phase_cursor": 6,
+  "state": "ACTIVE",
+  "cursor": "Launch-prep programme ACTIVE on branch launch-prep/2026-07-10. Green baseline: php tests/run.php 1442/1442, php -l clean across 154 web PHP files, openapi.json 27 paths/308 $refs valid JSON. Independent VERIFY = PASS-WITH-NOTES @ 3b919ef (LAUNCH_PREP_VERIFICATION.md). Shipped beyond the old autopilot terminal: E5 (accessible presets/Braille/Avery + bulk parity close-out #57), E6 (developer portal), E8 (Graph email, inert), E3 stages 1/2a/2b + GDPR export/erasure, E7 stage 1 (self-service API keys), E4 framework (data-driven tiers/gating) + public /pricing page #56, E2 OIDC client (M365/Google, inert). GitHub reconciled 2026-07-18: closed #2/#11/#12/#14/#15/#23/#24/#48/#49/#50/#56/#57 with evidence; progress-commented open epics/partials.",
+  "next_action": "Continue ungated launch-prep builds. Owner-gated residual: PR #46 merge + deploy + live tests (#13/#17/#18/#22), PayPal (#26/G-002), legal (#38), SSO IdP registration (#19/#20/#55), Graph email activation (#29/G-005), bot protection (F-012), F-004 CSP/SRI (live UI). Next ungated candidates: E7 stage 2 DB-light parts (error catalogue/versioning/pagination contract), CI PR-quality workflow (#35), JPEG XL disposition docs (#40). E3 orgs (#21) and E7 idempotency are DB-heavy (need MySQL).",
+  "queue": {
+    "backlog": "PROJECT.md#Backlog",
+    "feature_gaps": "FEATURES.md",
+    "findings": "SECURITY.md#Findings",
+    "auto_features": ["FG-025", "FG-023", "FG-024", "FG-026", "FG-027", "FG-018", "FG-003", "FG-007", "FG-009", "FG-031", "FG-005(after G-007)"],
+    "issue_close_recommendations": [1, 2, 3, 4, 5, 6, 9, 10, 41],
+    "issue_needs_live_test": [13, 17, 18, 22]
+  },
+  "gate_ledger": [
+    {"id": "G-001", "kind": "feature", "ref": "FG-019", "title": "User accounts (register/login/session/profile/saved-library) + /save + /manage API", "spec_ref": null, "status": "awaiting-user", "reason": "Bucket-3: auth system + Argon2id + email verification (depends on G-005) [E3 stages 1/2a/2b + GDPR BUILT 2026-07-10; orgs/WebAuthn/admin remain]"},
+    {"id": "G-002", "kind": "feature", "ref": "FG-021", "title": "Payments: PayPal / Apple Pay / Google Pay", "spec_ref": null, "status": "awaiting-user", "reason": "Bucket-3: external payment provider + PCI scope (route via dev-team-stripe)"},
+    {"id": "G-003", "kind": "feature", "ref": "FG-020", "title": "Subscription tiers + premium feature gating", "spec_ref": null, "status": "awaiting-user", "reason": "Bucket-3: billing model + auth [FRAMEWORK BUILT 2026-07-10; public /pricing page shipped #56 2026-07-18]"},
+    {"id": "G-004", "kind": "feature", "ref": "FG-022", "title": "OAuth SSO (M365/Google/Apple/Facebook) + SIGNula", "spec_ref": null, "status": "awaiting-user", "reason": "Bucket-3: external IdP secrets + redirect URIs [M365/Google OIDC client BUILT-inert 2026-07-10, #55]"},
+    {"id": "G-005", "kind": "feature", "ref": "FG-028", "title": "Email via Microsoft Graph (Google Workspace future)", "spec_ref": null, "status": "awaiting-user", "reason": "Bucket-3: external M365/Graph creds + DKIM/DMARC; blocks email verification [Graph subsystem BUILT-inert 2026-07-10, #29; activation owner-gated]"},
+    {"id": "G-006", "kind": "feature", "ref": "FG-029", "title": "WebAuthn / Passkeys", "spec_ref": null, "status": "awaiting-user", "reason": "Bucket-3: credential ceremony + auth system"},
+    {"id": "G-007", "kind": "feature", "ref": "FG-001", "title": "Dynamic QR codes (editable destination via redirect layer)", "spec_ref": null, "status": "awaiting-user", "reason": "Med-risk architectural shift: app becomes a redirect host (phishing/abuse/uptime surface). Foundational for FG-002/004/005/006/013. When-in-doubt-ask."},
+    {"id": "G-008", "kind": "feature", "ref": "FG-002", "title": "Scan analytics & tracking dashboard", "spec_ref": null, "status": "awaiting-user", "reason": "Depends on G-007 (scan events only exist with dynamic redirect)"},
+    {"id": "G-009", "kind": "feature", "ref": "FG-032", "title": "Admin dashboard (Global Admin control panel)", "spec_ref": null, "status": "awaiting-user", "reason": "Depends on auth (G-001) + RBAC"},
+    {"id": "G-010", "kind": "schema-change", "ref": "B-019/F-006", "title": "Per-record encryption salt (schema change to tblSettings)", "spec_ref": null, "status": "resolved", "reason": "Bucket-3-adjacent: schema migration on encrypted column; owner decision"},
+    {"id": "G-011", "kind": "out-of-scope", "ref": "FG-010/FG-012/FG-014/FG-015/FG-016/FG-017", "title": "Out-of-scope differentiators (anomaly detection, lead-capture, white-label, RBAC, barcodes, public gallery)", "spec_ref": null, "status": "awaiting-user", "reason": "featurefind judged out-of-Phase-1-scope; logged for owner decision"},
+    {"id": "G-012", "kind": "feature", "ref": "FG-018", "title": "Multi-language UI (i18n) scaffold + EN baseline + language selector", "spec_ref": null, "status": "awaiting-user", "reason": "Differentiator, Low importance; broad UI string-extraction blast-radius across header/footer/index that can't be visually verified without a live browser — queued for owner go-ahead rather than auto-built. Approve to build (t() fn + JSON locale files + selector + EN baseline)."}
+  ],
+  "blocked": {"is": false, "reason": null, "since": null},
+  "cycle": 11,
+  "cap": 45,
+  "verify": {"commit": "3b919ef", "overall": "PASS-WITH-NOTES", "claim_groups": ["correctness+schema PASS", "security PASS", "features PASS", "api+polish PASS", "integration PASS"], "integration": "pass", "completeness_critic": "done (only honest nuances; no defects)", "owner_gated": ["#13", "#17", "#18", "#22"], "verification_doc": "LAUNCH_PREP_VERIFICATION.md"},
+  "verified_at_commit": "3b919ef",
+  "lock": {"holder": null, "ts": null, "stale_after_min": 90},
+  "branch": "launch-prep/2026-07-10",
+  "last_commit": "7d5af98",
+  "trajectory_ref": "PROJECT.md#Trajectory-ledger",
+  "github_policy": "comment + close-with-evidence only; no destructive ops",
+  "hands_off": ["git push", "deploy", "live-server testing", "git config/remote edits", "_auth_keys secrets (never commit)"],
+  "terminal": false,
+  "updated": "2026-07-18T00:00:00Z"
+}

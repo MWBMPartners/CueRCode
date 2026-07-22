@@ -4,6 +4,8 @@
  * 📥 CueRCode - API Download Handler
  * ==============================================================================
  *
+ * Path: _functions/fn_api_download.php
+ *
  * Provides the handler function for downloading previously generated QR codes
  * via their UUID. Looks up the QR code record in tblQRCodes, locates the
  * file on the filesystem, and streams it to the client with the correct
@@ -17,6 +19,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/function.readfile.php
@@ -59,7 +62,28 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx) to prevent path traversal
  * or injection attacks.
  *
+ * 🔐 OWNERSHIP HARDENING (Epic E3 stage 2a, #52/#24): this route already
+ * required SOME authenticated identity ('auth' => true in the router table)
+ * before this stage, but performed no ownership check at all - ANY
+ * authenticated caller could download ANY UUID's file. Now that saved codes
+ * carry real ownership (userID set via POST /api/v1/save), a code that HAS
+ * been claimed by a specific user is only downloadable by that owner or by
+ * anyone (when it is marked isPublic=1) - see qrCodeIsDownloadableBy()
+ * (fn_api_qrcodes.php) for the exact rule, including why an UNCLAIMED code
+ * (userID IS NULL - the pre-existing anonymous generate -> download flow)
+ * deliberately remains downloadable by any authenticated caller: nobody's
+ * saved-library privacy is at stake for a code nobody has claimed yet. A
+ * non-public, claimed code requested by a non-owner is reported as 404 (the
+ * same code as a genuinely unknown UUID) - never 403 - to avoid confirming
+ * the UUID exists and belongs to someone else.
+ *
  * @param string $uuid The UUID v4 identifier of the QR code to download
+ * @param array  $auth The router's authentication context (fn_api_auth.php) -
+ *                     used to resolve the caller's identity for the
+ *                     ownership check above. Defaults to an empty array so
+ *                     any (hypothetical) other caller of this function
+ *                     without an $auth context still degrades to "no
+ *                     resolved identity" rather than a fatal argument error.
  *
  * @return void (streams file to client and exits, or sends error response)
  *
@@ -67,12 +91,13 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * @see https://www.php.net/manual/en/function.filesize.php
  * @see https://www.php.net/manual/en/function.header.php
  * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
+ * @see fn_api_qrcodes.php - qrCodeIsDownloadableBy(), resolveUserIdFromAuth()
  *
  * @example
  *   // Called from the API router:
- *   handleDownload('a1b2c3d4-e5f6-4890-abcd-ef1234567890');
+ *   handleDownload('a1b2c3d4-e5f6-4890-abcd-ef1234567890', $auth);
  */
-function handleDownload(string $uuid): void
+function handleDownload(string $uuid, array $auth = []): void
 {
     // ==================================================================
     // 📌 Step 1: Validate UUID format
@@ -106,10 +131,19 @@ function handleDownload(string $uuid): void
     }
 
     try {
+        // 📌 typeName lives in tblQRCodeTypes; tblQRCodes only holds the
+        //    qrTypeID FK, so we JOIN to retrieve the human/machine type name.
+        //    🔐 Epic E3 stage 2a: userID/isPublic/deletedAt added so the
+        //    ownership check below (ONE query, re-derived every request - no
+        //    cached/trusted prior lookup) has everything it needs.
+        // @see install.sql tblQRCodes.qrTypeID -> tblQRCodeTypes.typeID
         $stmt = dbQuery(
-            "SELECT `qrCodeID`, `qrUUID`, `typeName`, `qrFormat`, `filePath` "
-            . "FROM `tblQRCodes` "
-            . "WHERE `qrUUID` = ? "
+            "SELECT `q`.`qrID`, `q`.`qrUUID`, `t`.`typeName`, "
+            . "`q`.`qrOutputFormat`, `q`.`qrFilePath`, "
+            . "`q`.`userID`, `q`.`isPublic`, `q`.`deletedAt` "
+            . "FROM `tblQRCodes` AS `q` "
+            . "LEFT JOIN `tblQRCodeTypes` AS `t` ON `q`.`qrTypeID` = `t`.`typeID` "
+            . "WHERE `q`.`qrUUID` = ? "
             . "LIMIT 1",
             's',
             [$uuid]
@@ -135,8 +169,9 @@ function handleDownload(string $uuid): void
         return;
     }
 
-    // ❌ QR code record not found
-    if ($row === null) {
+    // ❌ QR code record not found, OR soft-deleted (Epic E3 stage 2a) - a
+    // deleted code is reported identically to a never-existing one.
+    if ($row === null || $row['deletedAt'] !== null) {
         errorResponse(
             'QR code not found. The identifier may be invalid or the code may have been deleted.',
             404,
@@ -146,15 +181,40 @@ function handleDownload(string $uuid): void
     }
 
     // ==================================================================
+    // 🔐 Step 2a: Ownership check (Epic E3 stage 2a, #52/#24) - re-derived
+    // from THIS row, right here, before any file access below. A non-public
+    // code already CLAIMED by a specific user (userID IS NOT NULL) is only
+    // downloadable by that owner; an UNCLAIMED code (userID IS NULL) remains
+    // downloadable by any authenticated caller (see qrCodeIsDownloadableBy()'s
+    // docblock for the full rationale). Never 403 - identical 404 either way.
+    // @see fn_api_qrcodes.php - qrCodeIsDownloadableBy(), resolveUserIdFromAuth()
+    // ==================================================================
+    $downloadOwnerId = $row['userID'] !== null ? (int) $row['userID'] : null;
+    $downloadIsPublic = (bool) $row['isPublic'];
+
+    if (function_exists('qrCodeIsDownloadableBy')) {
+        $currentDownloaderId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+
+        if (!qrCodeIsDownloadableBy($downloadOwnerId, $downloadIsPublic, $currentDownloaderId)) {
+            errorResponse(
+                'QR code not found. The identifier may be invalid or the code may have been deleted.',
+                404,
+                'NOT_FOUND'
+            );
+            return;
+        }
+    }
+
+    // ==================================================================
     // 📌 Step 3: Locate the file on the filesystem
     // ==================================================================
-    if (isset($row['filePath'])) {
-        $filePath = $row['filePath'];
+    if (isset($row['qrFilePath'])) {
+        $filePath = $row['qrFilePath'];
     } else {
         $filePath = '';
     }
-    if (isset($row['qrFormat'])) {
-        $format = strtolower(trim($row['qrFormat']));
+    if (isset($row['qrOutputFormat'])) {
+        $format = strtolower(trim($row['qrOutputFormat']));
     } else {
         $format = 'png';
     }
@@ -301,6 +361,14 @@ function handleDownload(string $uuid): void
         header('Content-Type: ' . $mimeType);
 
         // 📌 Content-Disposition: attachment triggers browser download dialog
+        // 🛡️ SECURITY REVIEW (Epic E3, #52): this handler ALWAYS serves
+        // attachment, never inline - unlike public_html/account/qr-preview/
+        // index.php, there is no code path here that renders SVG inline in
+        // the browser, so an image/svg+xml response from this endpoint is
+        // downloaded (inert) rather than executed and does NOT need the
+        // inline-SVG Content-Security-Policy sandbox hardening added there.
+        // Confirmed during the #52 audit; keep this header as attachment if
+        // this handler is ever extended to support an inline preview mode.
         // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
         header(
             'Content-Disposition: attachment; filename="'
@@ -346,7 +414,7 @@ function handleDownload(string $uuid): void
             'api_download',
             'API: Downloaded QR code: ' . $uuid . ' (' . strtoupper($format) . ')',
             'qr_code',
-            (int) $row['qrCodeID'],
+            (int) $row['qrID'],
             [
                 'uuid'     => $uuid,
                 'format'   => $format,

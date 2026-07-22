@@ -4,11 +4,14 @@
  * 💥 CueRCode - 500 Internal Server Error Page
  * ==============================================================================
  *
+ * Path: public_html/error/500.php
+ *
  * Displayed when an unhandled server error occurs.
  * Referenced in public_html/.htaccess as the custom ErrorDocument 500.
  *
  * @package     CueRCode
  * @subpackage  Error Pages
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500

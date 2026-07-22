@@ -27,6 +27,212 @@ if (window.CueRCode) {
 }
 
 // ==============================================================================
+// 💾 Safe localStorage Helpers
+// ==============================================================================
+
+/**
+ * 💾 localStorage keys used by CueRCode (single source of truth).
+ *
+ * These are the ONLY browser-storage keys the site writes, and all three
+ * are "essential" (functional preferences + a consent flag) — no analytics
+ * or tracking storage is used. Keeping the names here avoids typos and makes
+ * the cookie-notice copy honest about exactly what is stored.
+ */
+CueRCode.storageKeys = {
+    theme: 'cuercode-theme',          /* 🌙 'dark' | 'light' (set by theme toggle) */
+    cvd: 'cuercode-cvd',              /* ♿ colourblind palette choice (FG-023) */
+    consent: 'cuercode-consent'       /* 🍪 cookie-notice acknowledgement (FG-026) */
+};
+
+/**
+ * 💾 Read a value from localStorage, guarding against environments where
+ * storage is unavailable or throws (private mode, disabled storage, quota).
+ *
+ * @param {string} key - The storage key to read
+ * @returns {string|null} The stored string value, or null if absent/unavailable
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage
+ */
+CueRCode.storageGet = function (key) {
+    try {
+        return window.localStorage.getItem(key);
+    } catch (e) {
+        /* 📌 Storage unavailable (e.g. blocked) - behave as "no value" */
+        return null;
+    }
+};
+
+/**
+ * 💾 Write a value to localStorage, swallowing any error so a storage
+ * failure never breaks the page.
+ *
+ * @param {string} key - The storage key to write
+ * @param {string} value - The string value to store
+ * @returns {boolean} True if the write succeeded, false otherwise
+ */
+CueRCode.storageSet = function (key, value) {
+    try {
+        window.localStorage.setItem(key, value);
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
+// ==============================================================================
+// ♿ Colourblind (CVD) Palette Toggle — FG-023
+// ==============================================================================
+
+/**
+ * ♿ The set of valid colourblind palette choices. 'none' (or any
+ * unrecognised value) clears the override and restores the brand palette.
+ * These strings must match the CSS attribute selectors in cuercode.css
+ * (`[data-cuercode-cvd="..."]`) and the pre-paint block in header.php.
+ */
+CueRCode.cvdModes = ['none', 'protanopia', 'deuteranopia', 'tritanopia'];
+
+/**
+ * ♿ Apply a colourblind palette by setting (or removing) the
+ * `data-cuercode-cvd` attribute on the <html> element. The CSS does the
+ * rest by overriding the --cuercode-* custom properties.
+ *
+ * @param {string} mode - One of CueRCode.cvdModes; anything else => 'none'
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/setAttribute
+ */
+CueRCode.applyCVD = function (mode) {
+    var root = document.documentElement;
+
+    if (CueRCode.cvdModes.indexOf(mode) === -1 || mode === 'none') {
+        /* 📌 No (valid) override requested - remove the attribute entirely */
+        root.removeAttribute('data-cuercode-cvd');
+    } else {
+        root.setAttribute('data-cuercode-cvd', mode);
+    }
+};
+
+/**
+ * ♿ Persist and apply a colourblind palette choice, then update the
+ * dropdown UI (checkmarks + trigger aria state) to reflect it.
+ *
+ * @param {string} mode - One of CueRCode.cvdModes
+ */
+CueRCode.setCVD = function (mode) {
+    if (CueRCode.cvdModes.indexOf(mode) === -1) {
+        mode = 'none';
+    }
+
+    CueRCode.applyCVD(mode);
+    CueRCode.storageSet(CueRCode.storageKeys.cvd, mode);
+    CueRCode.updateCVDMenu(mode);
+};
+
+/**
+ * ♿ Sync the CVD dropdown menu UI to the active mode: mark the chosen
+ * option with aria-checked="true" (and .active) and clear the others.
+ *
+ * @param {string} activeMode - The currently active CVD mode
+ */
+CueRCode.updateCVDMenu = function (activeMode) {
+    var options = document.querySelectorAll('.cvd-option');
+    var i;
+    for (i = 0; i < options.length; i = i + 1) {
+        var optMode = options[i].getAttribute('data-cvd');
+        if (optMode === activeMode) {
+            options[i].setAttribute('aria-checked', 'true');
+            options[i].classList.add('active');
+        } else {
+            options[i].setAttribute('aria-checked', 'false');
+            options[i].classList.remove('active');
+        }
+    }
+};
+
+/**
+ * ♿ Initialise the colourblind palette control: read the persisted choice,
+ * apply it (header.php already applied it pre-paint, but this keeps the
+ * runtime in sync and updates the menu), and wire up the dropdown options.
+ *
+ * Each option behaves as a menuitemradio: clicking it (mouse, Enter, or
+ * Space via the native <button>) selects that palette. Bootstrap's dropdown
+ * handles open/close and arrow-key roving focus.
+ */
+CueRCode.initCVDToggle = function () {
+    var stored = CueRCode.storageGet(CueRCode.storageKeys.cvd);
+    var current;
+    if (CueRCode.cvdModes.indexOf(stored) !== -1) {
+        current = stored;
+    } else {
+        current = 'none';
+    }
+
+    /* 📌 Ensure attribute + menu reflect the persisted value */
+    CueRCode.applyCVD(current);
+    CueRCode.updateCVDMenu(current);
+
+    /* 📌 Wire up each menu option to select its palette on activation */
+    var options = document.querySelectorAll('.cvd-option');
+    var i;
+    for (i = 0; i < options.length; i = i + 1) {
+        options[i].addEventListener('click', function () {
+            var mode = this.getAttribute('data-cvd');
+            CueRCode.setCVD(mode);
+        });
+    }
+};
+
+// ==============================================================================
+// 🍪 Cookie / Storage Consent Banner — FG-026
+// ==============================================================================
+
+/**
+ * 🍪 Initialise the cookie-consent notice banner.
+ *
+ * The banner markup lives in footer.php and starts with the `hidden`
+ * attribute set. If the user has NOT yet acknowledged the notice (no
+ * consent flag in localStorage), we reveal it. Accepting/dismissing writes
+ * the flag and hides the banner. The banner is a non-modal region and never
+ * traps focus, so the rest of the page stays fully usable while it shows.
+ */
+CueRCode.initCookieBanner = function () {
+    var banner = document.getElementById('cuercode-cookie-banner');
+    if (!banner) {
+        return;
+    }
+
+    /* 📌 Already acknowledged? Leave the banner hidden and do nothing more. */
+    if (CueRCode.storageGet(CueRCode.storageKeys.consent)) {
+        return;
+    }
+
+    /* 📌 Reveal the banner (drop the hidden attribute, add the visible class
+       that triggers the optional slide-in animation). */
+    var reveal = function () {
+        banner.removeAttribute('hidden');
+        banner.classList.add('is-visible');
+    };
+
+    /* 📌 Dismiss handler: persist the acknowledgement and hide the banner. */
+    var dismiss = function () {
+        CueRCode.storageSet(CueRCode.storageKeys.consent, 'acknowledged');
+        banner.classList.remove('is-visible');
+        banner.setAttribute('hidden', '');
+    };
+
+    var acceptBtn = document.getElementById('cuercode-cookie-accept');
+    if (acceptBtn) {
+        acceptBtn.addEventListener('click', dismiss);
+    }
+
+    var closeBtn = document.getElementById('cuercode-cookie-close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', dismiss);
+    }
+
+    reveal();
+};
+
+// ==============================================================================
 // 🛡️ CSRF Token Management
 // ==============================================================================
 
@@ -181,12 +387,18 @@ CueRCode.notify = function (message, type, duration) {
     } else {
         durationAttr = ' data-bs-autohide="false"';
     }
+    /* 🛡️ HTML-escape the message before building the toast markup so any
+       HTML/script characters in the text are rendered as literal text
+       rather than parsed into the DOM (closes the latent DOM-XSS sink
+       documented in SECURITY.md F-018). escapeHtml() returns '' for
+       non-string input, preserving the existing behaviour for plain text. */
+    var safeMessage = CueRCode.escapeHtml(String(message));
     var toastHtml =
         '<div id="' + toastId + '" class="toast align-items-center text-bg-' + type + ' border-0" '
         + roleAttr + ' aria-atomic="true"'
         + durationAttr + '>'
         + '<div class="d-flex">'
-        + '<div class="toast-body"><i class="' + icon + ' me-2"></i>' + message + '</div>'
+        + '<div class="toast-body"><i class="' + icon + ' me-2"></i>' + safeMessage + '</div>'
         + '<button type="button" class="btn-close btn-close-white me-2 m-auto" '
         + 'data-bs-dismiss="toast" aria-label="Close"></button>'
         + '</div></div>';
@@ -439,6 +651,12 @@ jQuery(document).ready(function ($) {
             'X-CSRF-Token': CueRCode.getCSRFToken()
         }
     });
+
+    /* ♿ Wire up the colourblind palette dropdown (FG-023) */
+    CueRCode.initCVDToggle();
+
+    /* 🍪 Wire up the cookie/storage consent banner (FG-026) */
+    CueRCode.initCookieBanner();
 
     /* 📌 Sync colour picker inputs with hex text inputs */
     /* When colour picker changes, update the text input */

@@ -21,8 +21,13 @@
     # 📌 Set the RewriteBase (adjust if installed in a subdirectory)
     RewriteBase /
 
-    # 🔒 Force HTTPS (uncomment for production)
-    # RewriteCond %{HTTPS} !=on
+    # 🔒 Force HTTPS — HTTP→HTTPS 301 redirect (F-002)
+    # ⚠️ ASSUMES THE SITE IS HTTPS-READY. A valid TLS certificate must already
+    #    be installed and serving on https:// for this host, otherwise visitors
+    #    arriving over HTTP get permanently (301) redirected to a broken HTTPS
+    #    endpoint. Uncomment ONLY at production go-live once HTTPS is confirmed
+    #    working. Left commented so local HTTP dev is unaffected.
+    # RewriteCond %{HTTPS} off
     # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
     # 🚫 Block access to hidden files and directories (except .well-known for SSL)
@@ -45,6 +50,26 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^api/v1/(.+)$ api/v1/index.php?route=$1 [QSA,L]
+
+    # 🔐 SSO / OIDC clean-URL routing (Epic E2, #55/#19/#20/#28)
+    # These are BROWSER-REDIRECT routes (not the JSON API above) - each maps
+    # a per-provider path segment to a single thin dispatcher file so the
+    # exact redirect_uri registered with each IdP
+    # (https://cuercode.net/auth/callback/<provider>) resolves to a real
+    # request path without needing a physical directory per provider.
+    # The callback rule is listed FIRST (more specific: 2 segments after
+    # auth/) so it is matched before the single-segment initiation rule below
+    # ever gets a chance to (Apache still evaluates both in order regardless,
+    # but the patterns are mutually exclusive by segment count anyway).
+    # @see public_html/auth/callback/index.php - completeAuth() + account linking
+    # @see public_html/auth/index.php          - beginAuth() (initiation)
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^auth/callback/([a-z0-9_-]+)/?$ auth/callback/index.php?provider=$1 [QSA,L]
+
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^auth/([a-z0-9_-]+)/?$ auth/index.php?provider=$1 [QSA,L]
 
     # 📄 Default directory index
     DirectoryIndex index.php index.html
@@ -80,11 +105,24 @@
     # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy
     Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self';"
 
-    # 🛡️ HSTS - Force HTTPS for 1 year
-    # ⚠️ PRODUCTION ONLY: Uncomment AFTER confirming HTTPS works correctly.
-    #    Once enabled, browsers will refuse HTTP connections for the max-age period.
+    # 🛡️ HSTS - Strict-Transport-Security (F-002)
+    #    Conservative posture: 6 months (15768000s), includeSubDomains, NO preload.
+    #    The 'env=HTTPS' condition makes the header meaningful only on HTTPS
+    #    responses — Apache sets the HTTPS env var when the request is served over
+    #    TLS, so over plain HTTP the directive is a no-op and cannot accidentally
+    #    poison a browser's HSTS cache before the site is TLS-ready. 'always'
+    #    ensures the header is emitted on error responses too.
     # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
-    # Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set Strict-Transport-Security "max-age=15768000; includeSubDomains" env=HTTPS
+    #
+    # ⚠️ PRELOAD VARIANT — HARD TO REVERSE, OWNER DECISION REQUIRED.
+    #    Submitting to the browser preload list (hstspreload.org) hardcodes the
+    #    domain + ALL subdomains as HTTPS-only into shipped browsers. Removal can
+    #    take months to propagate and requires a long max-age first. Do NOT enable
+    #    until the owner has confirmed every current and future subdomain will
+    #    always serve valid HTTPS. To adopt preload, comment out the line above
+    #    and uncomment the one below (note the longer max-age preload mandates):
+    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" env=HTTPS
 
     # 🚫 Remove server version information
     Header unset X-Powered-By
@@ -128,8 +166,13 @@ Options -Indexes -ExecCGI +FollowSymLinks
     # 🍪 Session security settings
     # @see https://www.php.net/manual/en/session.security.ini.php
     php_value session.cookie_httponly 1
-    # ⚠️ Set to 1 in production (requires HTTPS). Set to 0 only for local HTTP dev.
-    php_value session.cookie_secure 0
+    # 🔒 session.cookie_secure is intentionally NOT set here (F-003).
+    #    bootstrap.php (_includes/bootstrap.php ~L210-223) computes the 'secure'
+    #    flag dynamically from %{HTTPS} via session_set_cookie_params() on every
+    #    request. A hardcoded 'php_value session.cookie_secure 0' would override
+    #    the INI default and contradict that detection — sending Secure=off even
+    #    when the request arrives over HTTPS. Removing it lets bootstrap.php own
+    #    the decision (secure cookies over HTTPS, plain over local HTTP dev).
     php_value session.use_only_cookies 1
     php_value session.use_strict_mode 1
     php_value session.cookie_samesite "Lax"

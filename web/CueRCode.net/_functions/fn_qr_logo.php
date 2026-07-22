@@ -4,6 +4,8 @@
  * 🖼️ CueRCode - Logo Overlay for QR Codes
  * ==============================================================================
  *
+ * Path: _functions/fn_qr_logo.php
+ *
  * Provides functions for overlaying logos (brand marks, icons, images) onto
  * generated QR codes. Supports both raster (PNG, JPG, GIF, WEBP) and vector
  * (SVG) QR code outputs.
@@ -19,6 +21,7 @@
  *
  * @package     CueRCode
  * @subpackage  QR Generation
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2
  * @see         https://www.php.net/manual/en/book.image.php GD library documentation
@@ -38,6 +41,32 @@ if (isset($_SERVER['SCRIPT_FILENAME'])) {
 if (basename($scriptFilenameValue) === basename(__FILE__)) {
     header('HTTP/1.1 403 Forbidden');
     exit('Access denied.');
+}
+
+// ==============================================================================
+// 🛡️ Resource limits for logo decode/processing (F-005)
+// ==============================================================================
+// Caps applied BEFORE any heavy image work (base64 decode -> disk -> GD) to
+// prevent decompression / pixel "bombs": a small upload that decodes to a huge
+// byte blob, or a tiny file that declares enormous pixel dimensions and would
+// blow up memory when GD allocates the canvas. These are conservative, defensive
+// caps that comfortably accommodate any real brand logo. Each is overridable via
+// a define() set earlier (e.g. in bootstrap/config) so the owner can tune them
+// without editing this file. Values follow this workstream's brief (2 MB decoded,
+// 4096×4096 px); the SECURITY register's looser suggestion (8 MB / 8000²) can be
+// adopted by defining the constants below.
+// @see https://www.php.net/manual/en/function.getimagesize.php
+if (!defined('CUERCODE_LOGO_MAX_DECODED_BYTES')) {
+    // 📏 Max decoded image size in bytes (2 MB).
+    define('CUERCODE_LOGO_MAX_DECODED_BYTES', 2 * 1024 * 1024);
+}
+if (!defined('CUERCODE_LOGO_MAX_WIDTH')) {
+    // 📐 Max image width in pixels.
+    define('CUERCODE_LOGO_MAX_WIDTH', 4096);
+}
+if (!defined('CUERCODE_LOGO_MAX_HEIGHT')) {
+    // 📐 Max image height in pixels.
+    define('CUERCODE_LOGO_MAX_HEIGHT', 4096);
 }
 
 // ==============================================================================
@@ -496,25 +525,91 @@ function getLogoPath(mixed $logoInput): ?string
     }
 
     // ==================================================================
-    // 📁 Case 3: File path - validate existence
+    // 📁 Case 3: File path - validate existence WITH base-directory containment
+    //
+    // 🔒 SECURITY (F-017): the 'logo' value here is REQUEST-supplied
+    //    (customization.logo flows straight from the API/form into this
+    //    function — see buildCustomizationFromRequest()). A bare realpath()
+    //    with no base check would happily resolve an attacker-controlled
+    //    absolute or traversal path (e.g. '/etc/passwd', '../../config.php')
+    //    and hand it to the GD/SVG overlay, leaking file contents (bounded to
+    //    image-parseable files by GD, but still a least-privilege defect).
+    //
+    //    Containment: the resolved real path MUST live inside the allowed
+    //    uploads/logos directory. We mirror the traversal guard used by the
+    //    download handler (fn_api_download.php): realpath() the candidate,
+    //    realpath() the base, and reject anything that does not begin with
+    //    "<base>/". The system temp dir is ALSO allowed so that base64 logo
+    //    temp files (written by saveBase64LogoToTemp() under sys_get_temp_dir())
+    //    remain usable if their path is ever round-tripped through Case 3.
     // @see https://www.php.net/manual/en/function.realpath.php
     // @see https://www.php.net/manual/en/function.file-exists.php
+    // @see fn_api_download.php - identical realpath-under-base containment guard
     // ==================================================================
     if (is_string($logoInput) && strlen($logoInput) > 0) {
-        // 📌 Resolve the real path to prevent directory traversal attacks
-        // @see https://www.php.net/manual/en/function.realpath.php
-        $realPath = realpath($logoInput);
+        // 📌 Build the set of allowed base directories the logo MUST resolve
+        //    under. Each entry is realpath()-resolved so symlinks in the base
+        //    itself are normalised before comparison.
+        $allowedBases = [];
 
-        if ($realPath !== false && file_exists($realPath) && is_file($realPath)) {
-            return $realPath;
+        // 🗂️ Primary allowed base: the uploads/logos directory.
+        if (defined('CUERCODE_UPLOADS_DIR')) {
+            $logosBase = realpath(CUERCODE_UPLOADS_DIR . 'logos');
+            if ($logosBase !== false) {
+                $allowedBases[] = $logosBase;
+            }
         }
 
-        // 📌 Try relative to uploads directory
+        // 🌡️ Secondary allowed base: the system temp dir (base64 temp logos).
+        //    saveBase64LogoToTemp() writes decoded uploads here; allowing it
+        //    keeps that legitimate path working without widening exposure to
+        //    arbitrary server locations.
+        $tempBase = realpath(sys_get_temp_dir());
+        if ($tempBase !== false) {
+            $allowedBases[] = $tempBase;
+        }
+
+        // 📌 Candidate 1: the raw input, resolved as-is. (An absolute path or a
+        //    path relative to CWD; only accepted if it lands inside a base.)
+        // 📌 Candidate 2: the input resolved relative to uploads/logos, which
+        //    is how predefined logo FILENAMES (e.g. 'brand-mark.png') resolve.
+        $candidates = [];
+
+        $rawReal = realpath($logoInput);
+        if ($rawReal !== false) {
+            $candidates[] = $rawReal;
+        }
+
         if (defined('CUERCODE_UPLOADS_DIR')) {
-            $uploadsPath = realpath(CUERCODE_UPLOADS_DIR . 'logos' . DIRECTORY_SEPARATOR . $logoInput);
-            if ($uploadsPath !== false && file_exists($uploadsPath) && is_file($uploadsPath)) {
-                return $uploadsPath;
+            $uploadsReal = realpath(
+                CUERCODE_UPLOADS_DIR . 'logos' . DIRECTORY_SEPARATOR . $logoInput
+            );
+            if ($uploadsReal !== false) {
+                $candidates[] = $uploadsReal;
             }
+        }
+
+        // 🔒 Accept the FIRST candidate that (a) is a real existing file and
+        //    (b) is contained within one of the allowed base directories.
+        foreach ($candidates as $candidatePath) {
+            if (!file_exists($candidatePath) || !is_file($candidatePath)) {
+                continue;
+            }
+
+            if (isPathWithinAllowedBase($candidatePath, $allowedBases)) {
+                return $candidatePath;
+            }
+        }
+
+        // ❌ A non-empty path was supplied but resolved OUTSIDE every allowed
+        //    base (or did not exist). Treat this as a blocked traversal /
+        //    containment failure and fall through to the null return + log.
+        if (function_exists('logError')) {
+            logError(
+                'error',
+                'Logo file-path containment check failed (F-017 guard)',
+                'Input: ' . mb_substr($logoInput, 0, 200)
+            );
         }
     }
 
@@ -533,6 +628,51 @@ function getLogoPath(mixed $logoInput): ?string
     }
 
     return null;
+}
+
+// ==============================================================================
+// 🔒 isPathWithinAllowedBase() - Base-directory containment check (F-017)
+// ==============================================================================
+
+/**
+ * 🔒 Determine whether an ALREADY-RESOLVED real path sits inside one of the
+ *    allowed base directories.
+ *
+ * This is the containment primitive behind the F-017 logo-path guard. It does
+ * NOT resolve the candidate itself — callers must pass a realpath()-resolved,
+ * existing path (so symlinks/.. are already normalised). Each base is compared
+ * with a trailing directory separator appended, so that a sibling directory
+ * sharing a name PREFIX (e.g. '/uploads/logos-evil' vs base '/uploads/logos')
+ * cannot satisfy the check. An exact match of the base directory itself is not
+ * accepted (we only allow files strictly *under* a base).
+ *
+ * @param string   $resolvedPath  A realpath()-resolved, existing file path.
+ * @param string[] $allowedBases  realpath()-resolved base directories.
+ *
+ * @return bool True if $resolvedPath is contained within any allowed base.
+ *
+ * @see https://www.php.net/manual/en/function.str-starts-with.php
+ * @see fn_api_download.php - the original strpos()-based traversal guard
+ */
+function isPathWithinAllowedBase(string $resolvedPath, array $allowedBases): bool
+{
+    foreach ($allowedBases as $base) {
+        // 📌 Skip empty/false bases (a base whose realpath() failed).
+        if (!is_string($base) || $base === '') {
+            continue;
+        }
+
+        // 📌 Anchor the comparison to "<base>/" so prefix-collision siblings
+        //    are rejected and only true descendants match.
+        // @see https://www.php.net/manual/en/function.str-starts-with.php
+        $prefix = rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+
+        if (str_starts_with($resolvedPath, $prefix)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // ==============================================================================
@@ -559,8 +699,11 @@ function getLogoPathFromDatabase(int $logoId): ?string
     }
 
     try {
+        // 📌 NOTE: tblPredefinedLogos stores only the filename (logoFileName);
+        //     there is no stored absolute-path column. The path is constructed
+        //     at runtime from the predefined logos directory + logoFileName.
         $stmt = dbQuery(
-            "SELECT `logoFileName`, `logoFilePath` "
+            "SELECT `logoFileName` "
             . "FROM `tblPredefinedLogos` "
             . "WHERE `logoID` = ? "
             . "AND `isActive` = 1 "
@@ -577,29 +720,59 @@ function getLogoPathFromDatabase(int $logoId): ?string
             return null;
         }
 
-        // 📌 Build the absolute path from the stored file path
-        if (isset($row['logoFilePath'])) {
-            $logoFilePath = $row['logoFilePath'];
-        } else {
-            $logoFilePath = '';
-        }
-
+        // 📌 Build the absolute path from the stored filename. The schema only
+        //     stores logoFileName; the directory is resolved at runtime.
         if (isset($row['logoFileName'])) {
             $logoFileName = $row['logoFileName'];
         } else {
             $logoFileName = '';
         }
 
-        // 📌 Try the stored path first
-        if ($logoFilePath !== '' && file_exists($logoFilePath)) {
-            return $logoFilePath;
+        if ($logoFileName === '') {
+            return null;
         }
 
-        // 📌 Try relative to the uploads/logos directory
-        if (defined('CUERCODE_UPLOADS_DIR') && $logoFileName !== '') {
-            $fullPath = CUERCODE_UPLOADS_DIR . 'logos' . DIRECTORY_SEPARATOR . $logoFileName;
-            if (file_exists($fullPath)) {
-                return $fullPath;
+        // 📌 Try relative to the uploads/logos directory.
+        // 🔒 B-051 (defence-in-depth): even though logoFileName comes from a DB
+        //    row (admin-controlled, not request-supplied), an admin could set a
+        //    malformed value containing traversal segments ('../../config.php')
+        //    or an absolute path. Run the resolved path through the SAME
+        //    realpath-under-base containment guard added in cycle 5 for the
+        //    request-supplied logo path (Case 3 of getLogoPath()), so a stored
+        //    value can never escape the uploads/logos base directory either.
+        // @see getLogoPath() - Case 3 containment guard (F-017)
+        // @see isPathWithinAllowedBase()
+        if (defined('CUERCODE_UPLOADS_DIR')) {
+            $logosBaseDir = CUERCODE_UPLOADS_DIR . 'logos';
+
+            // 📌 Resolve the allowed base once (normalises symlinks/.. in the base).
+            $allowedBase = realpath($logosBaseDir);
+            if ($allowedBase === false) {
+                // ⚠️ Base directory missing/unresolvable — cannot contain anything.
+                return null;
+            }
+
+            // 📌 Resolve the candidate file (uploads/logos + stored filename).
+            $fullPath     = $logosBaseDir . DIRECTORY_SEPARATOR . $logoFileName;
+            $resolvedReal = realpath($fullPath);
+
+            if ($resolvedReal !== false
+                && file_exists($resolvedReal)
+                && is_file($resolvedReal)
+                && isPathWithinAllowedBase($resolvedReal, [$allowedBase])
+            ) {
+                return $resolvedReal;
+            }
+
+            // ❌ Stored filename resolved outside the base (or did not exist):
+            //    block it and log, rather than returning an escaping path.
+            if (function_exists('logError')) {
+                logError(
+                    'error',
+                    'Predefined logo path containment check failed (B-051 guard)',
+                    'Logo ID: ' . $logoId . ' | Stored filename: '
+                    . mb_substr((string) $logoFileName, 0, 200)
+                );
             }
         }
 
@@ -675,6 +848,75 @@ function saveBase64LogoToTemp(string $dataUri): ?string
         return null;
     }
 
+    // 🛡️ F-005: enforce the decoded-byte cap BEFORE touching the disk or GD.
+    //    A small base64 payload can decode to a large blob; rejecting here
+    //    (in-memory, pre-write) avoids spending I/O on an over-size logo.
+    // @see CUERCODE_LOGO_MAX_DECODED_BYTES (defined at the top of this file)
+    if (strlen($imageData) > CUERCODE_LOGO_MAX_DECODED_BYTES) {
+        if (function_exists('logError')) {
+            logError(
+                'warning',
+                'Base64 logo rejected: decoded size exceeds limit (F-005)',
+                'Decoded bytes: ' . strlen($imageData)
+                . ' | Limit: ' . CUERCODE_LOGO_MAX_DECODED_BYTES
+            );
+        }
+        return null;
+    }
+
+    // 🛡️ F-024 (#52): screen SVG content for active/script vectors using the
+    //    SAME shared screener the multipart $_FILES upload path uses
+    //    (screenSvgLogoContent(), fn_validation.php). BEFORE this fix, the
+    //    base64 data-URI path enforced ONLY the F-005 size/pixel caps above,
+    //    so an unscreened malicious SVG logo could reach the QR's own SVG
+    //    output verbatim via overlayLogoOnSVG() (which embeds the RAW logo
+    //    bytes as a nested <image href="data:image/svg+xml;base64,...">).
+    //
+    //    Runs whenever the declared extension is 'svg' (from the data URI's
+    //    MIME sub-type) OR — defensively — whenever the decoded bytes sniff
+    //    as SVG regardless of the declared MIME (a mislabelled sub-type must
+    //    not bypass the screen). Deliberately placed BEFORE any disk I/O
+    //    (tempnam()/file_put_contents() below) so a rejected payload never
+    //    touches the filesystem at all.
+    //
+    //    Raster logos (PNG/JPG/GIF/WEBP) are entirely unaffected — this
+    //    block is a no-op for them, and the existing F-005 byte/pixel caps
+    //    above still apply to every format exactly as before.
+    // @see screenSvgLogoContent() (fn_validation.php) - the shared screener
+    // @see overlayLogoOnSVG() (this file) - where unscreened bytes would land
+    // @see rejectUnsafeBase64SvgLogo() (this file) - the API-facing 422 pre-check
+    $looksLikeSvg = ($extension === 'svg') || (stripos($imageData, '<svg') !== false);
+
+    if ($looksLikeSvg) {
+        if (function_exists('screenSvgLogoContent')) {
+            $svgScreen = screenSvgLogoContent($imageData);
+
+            if ($svgScreen['valid'] === false) {
+                if (function_exists('logError')) {
+                    logError(
+                        'warning',
+                        'Base64 logo rejected: unsafe SVG content (F-024)',
+                        (string) $svgScreen['error']
+                    );
+                }
+                return null;
+            }
+        } else {
+            // ⚠️ fn_validation.php is not loaded, so the screener is
+            //    unavailable. FAIL CLOSED for SVG rather than silently
+            //    accepting unscreened active content — raster logos are
+            //    unaffected by this else-branch entirely.
+            if (function_exists('logError')) {
+                logError(
+                    'error',
+                    'Base64 SVG logo rejected: screenSvgLogoContent() unavailable (fail-closed, F-024)',
+                    ''
+                );
+            }
+            return null;
+        }
+    }
+
     // 📌 Create a temporary file with the appropriate extension
     // @see https://www.php.net/manual/en/function.tempnam.php
     // @see https://www.php.net/manual/en/function.sys-get-temp-dir.php
@@ -706,7 +948,197 @@ function saveBase64LogoToTemp(string $dataUri): ?string
         return null;
     }
 
+    // 🛡️ F-005: enforce the pixel-dimension cap BEFORE the image is handed to
+    //    GD (loadLogoImage / overlayLogoOnRaster). getimagesize() reads only the
+    //    header to learn declared width/height, so a tiny file claiming enormous
+    //    dimensions (a "pixel bomb") is caught here without GD ever allocating a
+    //    multi-gigabyte canvas. SVG is XML-based and not measurable by
+    //    getimagesize() (it returns false), so the pixel check is skipped for
+    //    SVG — its size is already bounded by the decoded-byte cap above.
+    // @see https://www.php.net/manual/en/function.getimagesize.php
+    // @see CUERCODE_LOGO_MAX_WIDTH / CUERCODE_LOGO_MAX_HEIGHT (top of this file)
+    if ($extension !== 'svg') {
+        $dimensions = @getimagesize($tempFileWithExt);
+
+        if ($dimensions === false) {
+            // ⚠️ Not a parseable raster image (corrupt or spoofed). Reject and
+            //    clean up rather than let GD attempt to load garbage.
+            @unlink($tempFileWithExt);
+
+            if (function_exists('logError')) {
+                logError(
+                    'warning',
+                    'Base64 logo rejected: not a valid image (getimagesize failed) (F-005)',
+                    'Path: ' . $tempFileWithExt
+                );
+            }
+            return null;
+        }
+
+        $logoWidth  = (int) $dimensions[0];
+        $logoHeight = (int) $dimensions[1];
+
+        if ($logoWidth > CUERCODE_LOGO_MAX_WIDTH
+            || $logoHeight > CUERCODE_LOGO_MAX_HEIGHT
+        ) {
+            // 🧹 Over-size pixel dimensions — discard the temp file and reject.
+            @unlink($tempFileWithExt);
+
+            if (function_exists('logError')) {
+                logError(
+                    'warning',
+                    'Base64 logo rejected: pixel dimensions exceed limit (F-005)',
+                    'Dimensions: ' . $logoWidth . 'x' . $logoHeight
+                    . ' | Limit: ' . CUERCODE_LOGO_MAX_WIDTH . 'x' . CUERCODE_LOGO_MAX_HEIGHT
+                );
+            }
+            return null;
+        }
+    }
+
     return $tempFileWithExt;
+}
+
+// ==============================================================================
+// 🔍 screenBase64LogoDataUri() - Pure pre-check: is this a malicious SVG? (F-024)
+// ==============================================================================
+
+/**
+ * 🔍 Pre-screen a base64 logo data URI for malicious SVG content, WITHOUT
+ *    writing anything to disk
+ *
+ * A pure, read-only companion to saveBase64LogoToTemp()'s in-line SVG screen
+ * (above): it decodes the data URI in memory only and, if the content is SVG
+ * (declared MIME `image/svg+xml` OR sniffed `<svg` content regardless of the
+ * declared MIME), runs it through the SAME shared screenSvgLogoContent()
+ * screener (fn_validation.php) used by both logo intake paths.
+ *
+ * This exists so the JSON API handlers (fn_api_generate.php, fn_api_qrcodes.php)
+ * can reject a malicious SVG logo EARLY, with a distinct, actionable HTTP 422
+ * `LOGO_SVG_REJECTED` error — rather than the request silently succeeding
+ * with the logo quietly dropped (which is what happens further downstream if
+ * saveBase64LogoToTemp() alone returns null: the generation pipeline's logo
+ * overlay step treats a null logo path as "no logo" and continues).
+ *
+ * Non-SVG data URIs, and anything that is not a well-formed
+ * `data:image/...;base64,...` string, are left alone here (returns null) —
+ * saveBase64LogoToTemp() handles the normal decode-failure / size-cap paths
+ * for those on its own.
+ *
+ * @param string $dataUri Candidate `data:image/...;base64,...` string (or any
+ *                         other string — non-matching input returns null).
+ *
+ * @return string|null A human-readable rejection reason if unsafe SVG content
+ *                      was found, or null if the input is safe / not an SVG
+ *                      data URI / not decodable here.
+ *
+ * @see screenSvgLogoContent() (fn_validation.php) - the shared screener
+ * @see saveBase64LogoToTemp() (this file) - the actual write-path enforcement
+ * @see rejectUnsafeBase64SvgLogo() (this file) - the customization-shaped wrapper
+ */
+function screenBase64LogoDataUri(string $dataUri): ?string
+{
+    // 📌 Same data-URI shape saveBase64LogoToTemp() expects.
+    if (preg_match('/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/s', trim($dataUri), $matches) !== 1) {
+        return null;
+    }
+
+    $subtype = strtolower($matches[1]);
+
+    // 📌 Decode in memory only - no filesystem I/O for this pre-check.
+    // @see https://www.php.net/manual/en/function.base64-decode.php
+    $decoded = base64_decode($matches[2], true);
+
+    if ($decoded === false) {
+        // ❌ Not decodable here; saveBase64LogoToTemp() rejects invalid base64
+        //    itself when the real decode is attempted.
+        return null;
+    }
+
+    // 📌 Treat as SVG if the declared MIME sub-type says so, OR the decoded
+    //    bytes sniff as SVG regardless of what the MIME sub-type claims (a
+    //    mislabelled sub-type must not bypass the screen).
+    $looksLikeSvg = ($subtype === 'svg+xml') || (stripos($decoded, '<svg') !== false);
+
+    if (!$looksLikeSvg) {
+        return null;
+    }
+
+    if (!function_exists('screenSvgLogoContent')) {
+        // ⚠️ fn_validation.php not loaded — fail closed for SVG rather than
+        //    silently accept unscreened active content.
+        return 'SVG safety screening is unavailable; SVG logo rejected as a precaution.';
+    }
+
+    $screen = screenSvgLogoContent($decoded);
+
+    if ($screen['valid'] === false) {
+        return (string) $screen['error'];
+    }
+
+    return null;
+}
+
+// ==============================================================================
+// 🚫 rejectUnsafeBase64SvgLogo() - API-facing customization pre-check (F-024)
+// ==============================================================================
+
+/**
+ * 🚫 Check a built customization array for a malicious base64 SVG logo
+ *
+ * Thin wrapper around screenBase64LogoDataUri() that knows the SHAPE of the
+ * customization array produced by fn_api_generate.php's
+ * buildCustomizationFromRequest(): a logo can arrive as EITHER
+ * `customization['logo_data']` (the companion field sent alongside
+ * `logo === 'upload'`) OR directly as `customization['logo']` (a client MAY
+ * supply a `data:image/...;base64,...` string there directly — getLogoPath()
+ * Case 2 accepts that shape too). Both are checked so neither entry point
+ * can bypass the screen.
+ *
+ * Intended to be called by every JSON API handler that reaches
+ * validateCustomization() — handleGenerate()/handlePreview()
+ * (fn_api_generate.php) and the PATCH /qrcodes/{uuid} handler
+ * (fn_api_qrcodes.php) — immediately BEFORE that call, so a malicious SVG
+ * logo is rejected with a clear, distinct HTTP 422 `LOGO_SVG_REJECTED`
+ * instead of falling through to a generic 400 `INVALID_CUSTOMIZATION` or
+ * (worse) silently generating a logo-less QR code.
+ *
+ * @param array $customization The built customization array (post
+ *                              buildCustomizationFromRequest()).
+ *
+ * @return string|null A ready-to-display rejection message, or null if no
+ *                      unsafe SVG logo was found.
+ *
+ * @see screenBase64LogoDataUri() (this file) - the actual decode + screen
+ * @see fn_api_generate.php - handleGenerate(), handlePreview()
+ * @see fn_api_qrcodes.php  - the PATCH /qrcodes/{uuid} handler
+ */
+function rejectUnsafeBase64SvgLogo(array $customization): ?string
+{
+    $candidates = [];
+
+    if (isset($customization['logo_data']) && is_string($customization['logo_data'])) {
+        $candidates[] = $customization['logo_data'];
+    }
+
+    if (isset($customization['logo']) && is_string($customization['logo'])) {
+        $candidates[] = $customization['logo'];
+    }
+
+    foreach ($candidates as $candidate) {
+        if (!function_exists('screenBase64LogoDataUri')) {
+            break;
+        }
+
+        $reason = screenBase64LogoDataUri($candidate);
+
+        if ($reason !== null) {
+            return 'Logo rejected: the SVG logo contains disallowed active content ('
+                . $reason . ') Use a clean SVG or a raster image (PNG/JPG/GIF/WEBP) instead.';
+        }
+    }
+
+    return null;
 }
 
 // ==============================================================================

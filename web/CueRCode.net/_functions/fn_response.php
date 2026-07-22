@@ -4,6 +4,8 @@
  * 📤 CueRCode - Response Formatting
  * ==============================================================================
  *
+ * Path: _functions/fn_response.php
+ *
  * Provides standardised functions for sending HTTP responses in JSON and
  * XML formats. Used by both the REST API and internal AJAX endpoints to
  * ensure consistent response structure and proper HTTP headers.
@@ -22,6 +24,7 @@
  *
  * @package     CueRCode
  * @subpackage  API
+ * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 1
  * @see         https://www.php.net/manual/en/function.json-encode.php
@@ -41,6 +44,112 @@ if (isset($_SERVER['SCRIPT_FILENAME'])) {
 if (basename($scriptFilename) === basename(__FILE__)) {
     header('HTTP/1.1 403 Forbidden');
     exit('Access denied.');
+}
+
+// ==============================================================================
+// 🌐 emitCorsHeaders() - Emit a safe, allowlisted CORS Access-Control-Allow-Origin
+// ==============================================================================
+
+/**
+ * 🌐 Emit the Access-Control-Allow-Origin header using a strict origin allowlist
+ *
+ * 🔐 F-001 hardening: the previous behaviour echoed a configurable value
+ * verbatim (defaulting to the wildcard '*') into Access-Control-Allow-Origin.
+ * A wildcard ACAO lets any website on the internet read API responses from a
+ * user's browser session. This helper replaces that with a strict allowlist:
+ *
+ *   1. The allowlist is read from the 'api_cors_allowed_origins' setting
+ *      (comma-separated list of exact origins, e.g.
+ *      "https://cuercode.net,https://www.cuercode.net"). The DEFAULT is an
+ *      EMPTY allowlist (NO wildcard) so a missing/unset config fails closed.
+ *   2. If the request carries an Origin header AND that exact origin is on the
+ *      allowlist, we reflect that single origin back in
+ *      Access-Control-Allow-Origin and add 'Vary: Origin' (so caches do not
+ *      serve one origin's ACAO to another). We also allow credentials in that
+ *      case, which is only safe BECAUSE we never reflect '*'.
+ *   3. If the literal '*' is present in the allowlist, that is treated as an
+ *      explicit opt-in to the wildcard (for fully public deployments). It is
+ *      NOT the default and must be configured deliberately.
+ *   4. Otherwise (no Origin header, or origin not allowed) NO
+ *      Access-Control-Allow-Origin header is emitted at all. Same-origin web
+ *      UI requests do not send an Origin that needs reflecting for simple
+ *      reads, and browsers simply block disallowed cross-origin reads — the
+ *      request still reaches the server and same-origin XHR keeps working.
+ *
+ * Defining this helper HERE (in fn_response.php) keeps it available everywhere
+ * the response functions are loaded — including the API router (which loads
+ * fn_response.php via bootstrap) and the standalone characterization-test
+ * subprocess (which requireFn()s fn_response.php directly). It must therefore
+ * never call a function that is not guaranteed to exist; getConfig() is guarded
+ * with function_exists() exactly as the rest of this file does.
+ *
+ * @return void
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Origin
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Vary
+ */
+function emitCorsHeaders(): void
+{
+    // 📌 Never attempt to send headers once the body has begun.
+    if (headers_sent()) {
+        return;
+    }
+
+    // 📌 Read the configured allowlist. Default is an EMPTY string (no origins,
+    //    no wildcard) so an unconfigured deployment fails closed rather than
+    //    open. getConfig() is optional (not loaded in the test subprocess).
+    $allowedRaw = '';
+    if (function_exists('getConfig')) {
+        $configValue = getConfig('api_cors_allowed_origins', '');
+        if (is_string($configValue)) {
+            $allowedRaw = $configValue;
+        }
+    }
+
+    // 📌 Parse the comma-separated allowlist into an array of trimmed origins.
+    //    Empty entries are discarded.
+    $allowedOrigins = [];
+    if ($allowedRaw !== '') {
+        foreach (explode(',', $allowedRaw) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate !== '') {
+                $allowedOrigins[] = $candidate;
+            }
+        }
+    }
+
+    // 📌 Determine the request's Origin (browsers set this on cross-origin and
+    //    on some same-origin requests). Absent on most direct/server-to-server
+    //    calls, in which case there is nothing to reflect.
+    if (isset($_SERVER['HTTP_ORIGIN'])) {
+        $requestOrigin = $_SERVER['HTTP_ORIGIN'];
+    } else {
+        $requestOrigin = '';
+    }
+
+    // 📌 Explicit wildcard opt-in: only when '*' is deliberately configured.
+    //    A wildcard cannot be combined with credentials per the CORS spec, so
+    //    we do NOT send Allow-Credentials in this branch.
+    if (in_array('*', $allowedOrigins, true)) {
+        header('Access-Control-Allow-Origin: *');
+        return;
+    }
+
+    // 📌 Reflect the request origin ONLY when it exactly matches the allowlist.
+    if ($requestOrigin !== '' && in_array($requestOrigin, $allowedOrigins, true)) {
+        header('Access-Control-Allow-Origin: ' . $requestOrigin);
+        // 🔐 Vary on Origin so shared caches never reuse one origin's ACAO
+        //    response for a different origin.
+        header('Vary: Origin');
+        // 🔐 Safe to allow credentials because we reflect a single, vetted
+        //    origin (never '*').
+        header('Access-Control-Allow-Credentials: true');
+        return;
+    }
+
+    // 📌 No match and no wildcard: emit NO Access-Control-Allow-Origin header.
+    //    The browser blocks the cross-origin read; same-origin use is unaffected.
 }
 
 // ==============================================================================
@@ -137,13 +246,10 @@ function jsonResponse(array $data, int $httpCode = 200): void
         // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
         header('X-Content-Type-Options: nosniff');
 
-        // 📌 CORS headers (configurable via settings)
+        // 📌 CORS headers (strict origin allowlist - see emitCorsHeaders())
+        // 🔐 F-001: no wildcard default; reflects only allowlisted origins.
         // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-        $allowedOrigins = '*';
-        if (function_exists('getConfig')) {
-            $allowedOrigins = getConfig('api_cors_allowed_origins', '*');
-        }
-        header('Access-Control-Allow-Origin: ' . $allowedOrigins);
+        emitCorsHeaders();
     }
 
     // 📤 Output the JSON body and terminate
@@ -213,12 +319,9 @@ function xmlResponse(array $data, int $httpCode = 200): void
         // 📌 Security headers
         header('X-Content-Type-Options: nosniff');
 
-        // 📌 CORS headers
-        $allowedOrigins = '*';
-        if (function_exists('getConfig')) {
-            $allowedOrigins = getConfig('api_cors_allowed_origins', '*');
-        }
-        header('Access-Control-Allow-Origin: ' . $allowedOrigins);
+        // 📌 CORS headers (strict origin allowlist - see emitCorsHeaders())
+        // 🔐 F-001: no wildcard default; reflects only allowlisted origins.
+        emitCorsHeaders();
     }
 
     // 📤 Output the XML and terminate
@@ -250,6 +353,12 @@ function xmlResponse(array $data, int $httpCode = 200): void
  * @param string $message   Human-readable error message
  * @param int    $httpCode  HTTP status code (default: 400)
  * @param string $errorCode Machine-readable error code for programmatic handling (default: '')
+ * @param array  $extraData Additive optional top-level fields to merge into the response
+ *                          payload alongside 'error_code' (Epic E4, #53) - e.g.
+ *                          ['upgrade_url' => '/pricing', 'feature' => 'webhooks'] for a
+ *                          plan-gating denial. Keys here never overwrite 'success'/
+ *                          'message'/'data' (existing callers are completely unaffected
+ *                          by this additive parameter).
  *
  * @return void (script execution terminates via exit)
  *
@@ -260,8 +369,9 @@ function xmlResponse(array $data, int $httpCode = 200): void
  *   errorResponse('Invalid API key', 401, 'AUTH_FAILED');
  *   errorResponse('QR code not found', 404, 'NOT_FOUND');
  *   errorResponse('Rate limit exceeded', 429, 'RATE_LIMIT');
+ *   errorResponse('Too many items.', 413, 'BULK_TOO_MANY_ITEMS', ['upgrade_url' => '/pricing']);
  */
-function errorResponse(string $message, int $httpCode = 400, string $errorCode = ''): void
+function errorResponse(string $message, int $httpCode = 400, string $errorCode = '', array $extraData = []): void
 {
     // 📋 Build the error response payload
     $payload = [
@@ -273,6 +383,16 @@ function errorResponse(string $message, int $httpCode = 400, string $errorCode =
     // 📌 Include error_code only if provided
     if ($errorCode !== '') {
         $payload['error_code'] = $errorCode;
+    }
+
+    // 📌 Merge in any additive extra top-level fields (Epic E4, #53) - e.g. an
+    // 'upgrade_url'/'feature' hint on a plan-gating denial. Never allowed to
+    // clobber the core response shape.
+    foreach ($extraData as $extraKey => $extraValue) {
+        if ($extraKey === 'success' || $extraKey === 'message' || $extraKey === 'data') {
+            continue;
+        }
+        $payload[$extraKey] = $extraValue;
     }
 
     // 📝 Log errors with severity >= 400 to the error log
@@ -319,8 +439,12 @@ function errorResponse(string $message, int $httpCode = 400, string $errorCode =
  *       "timestamp": "..."
  *   }
  *
- * @param array  $data    The response data payload
- * @param string $message Human-readable success message (default: 'Success')
+ * @param array  $data     The response data payload
+ * @param string $message  Human-readable success message (default: 'Success')
+ * @param int    $httpCode HTTP status code for a successful response (default: 200).
+ *                          Additive parameter (Epic E3) - e.g. 201 for a resource-creating
+ *                          endpoint such as POST /api/v1/auth/register. Existing two-argument
+ *                          call sites are unaffected.
  *
  * @return void (script execution terminates via exit)
  *
@@ -331,8 +455,10 @@ function errorResponse(string $message, int $httpCode = 400, string $errorCode =
  *   );
  *
  *   successResponse(['settings' => $allSettings]);
+ *
+ *   successResponse([], 'Account created.', 201);
  */
-function successResponse(array $data, string $message = 'Success'): void
+function successResponse(array $data, string $message = 'Success', int $httpCode = 200): void
 {
     // 📋 Build the success response payload
     $payload = [
@@ -345,9 +471,9 @@ function successResponse(array $data, string $message = 'Success'): void
     $format = determineResponseFormat();
 
     if ($format === 'xml') {
-        xmlResponse($payload, 200);
+        xmlResponse($payload, $httpCode);
     } else {
-        jsonResponse($payload, 200);
+        jsonResponse($payload, $httpCode);
     }
 }
 
