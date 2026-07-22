@@ -676,6 +676,122 @@ function isPathWithinAllowedBase(string $resolvedPath, array $allowedBases): boo
 }
 
 // ==============================================================================
+// 🗂️ resolvePredefinedLogoPath() - Resolve a predefined logo filename to a
+//     contained, absolute file path (Issue #65 fix)
+// ==============================================================================
+
+/**
+ * 🗂️ Resolve a predefined logo's stored filename to an absolute, base-contained
+ *    file path
+ *
+ * Extracted out of getLogoPathFromDatabase() as its own small, pure(ish)
+ * function so the CORE "which directory actually holds predefined logo
+ * files, and how do we safely resolve a stored filename into it" logic is
+ * independently unit-testable WITHOUT a database connection (see
+ * tests/test_qr_logo.php - this is the function that proves Issue #65's fix,
+ * since getLogoPathFromDatabase() itself needs a live/mocked dbQuery() the
+ * DB-independent test harness deliberately never provides).
+ *
+ * 🐛 ISSUE #65 (predefined centre-logos are dead at runtime): predefined
+ *    logos (tblPredefinedLogos, seeded by _includes/sql/seed_data.sql, see
+ *    the comment directly above that INSERT: "These logos correspond to
+ *    SVG/PNG files in public_html/assets/img/logos/") ship as STATIC SITE
+ *    ASSETS under public_html/assets/img/logos/ - they are NOT user uploads
+ *    and were NEVER written under the uploads/logos tree. Before this fix,
+ *    ONLY CUERCODE_UPLOADS_DIR . 'logos' was checked, so EVERY predefined
+ *    logo lookup resolved to a path outside the (only) allowed base and was
+ *    silently rejected by the containment guard -> getLogoPathFromDatabase()
+ *    always returned null -> the logo was silently dropped from every QR
+ *    code that referenced one, with no visible error to the end user.
+ *
+ *    Fix: the real assets/img/logos directory is now tried FIRST (that is
+ *    where every predefined logo actually lives), then uploads/logos as a
+ *    secondary base (kept for defence-in-depth / forward-compatibility, in
+ *    case a future predefined entry is ever placed there instead).
+ *
+ * 🔒 SECURITY - the B-051/F-017 containment guard is preserved UNCHANGED and
+ *    applied to BOTH candidate bases: every candidate is realpath()-resolved
+ *    and MUST land inside one of the allowed base directories
+ *    (isPathWithinAllowedBase()) before being returned. logoFileName is
+ *    admin-curated (tblPredefinedLogos is not writable via any public API),
+ *    not request-supplied, but a malformed stored value (e.g. containing
+ *    '../../' traversal segments) still cannot escape either base - this
+ *    function does not weaken that guard in any way, it only widens WHERE
+ *    (which base directories) a legitimately-contained file may be found.
+ *
+ * @param string $logoFileName The stored `logoFileName` value from
+ *                              tblPredefinedLogos (e.g. 'facebook.svg').
+ *
+ * @return string|null Absolute, base-contained file path, or null if the
+ *                      filename is empty, does not exist under either
+ *                      allowed base, or resolves outside containment.
+ *
+ * @see getLogoPathFromDatabase() - the DB-lookup caller of this function
+ * @see isPathWithinAllowedBase() - the shared realpath-under-base primitive
+ * @see https://www.php.net/manual/en/function.realpath.php
+ *
+ * @example
+ *   $path = resolvePredefinedLogoPath('facebook.svg');
+ *   // Returns: '/.../web/CueRCode.net/public_html/assets/img/logos/facebook.svg'
+ */
+function resolvePredefinedLogoPath(string $logoFileName): ?string
+{
+    // ❌ Nothing to resolve.
+    if ($logoFileName === '') {
+        return null;
+    }
+
+    // 📌 Ordered list of candidate base directories to try, FIRST match wins.
+    //    Each entry is the UN-resolved base path; it is realpath()-resolved
+    //    per-candidate below so a missing directory on a given deployment is
+    //    simply skipped rather than raising an error.
+    $candidateBaseDirs = [];
+
+    // 🖼️ Issue #65 fix: the REAL home of predefined logo files.
+    if (defined('CUERCODE_SITE_ROOT')) {
+        $candidateBaseDirs[] = CUERCODE_SITE_ROOT
+            . 'public_html' . DIRECTORY_SEPARATOR
+            . 'assets' . DIRECTORY_SEPARATOR
+            . 'img' . DIRECTORY_SEPARATOR
+            . 'logos';
+    }
+
+    // 🗂️ Secondary/legacy base: the user-uploads logos directory.
+    if (defined('CUERCODE_UPLOADS_DIR')) {
+        $candidateBaseDirs[] = CUERCODE_UPLOADS_DIR . 'logos';
+    }
+
+    // 🔎 Try each candidate base in order; return the FIRST resolved,
+    //    existing, base-contained file.
+    foreach ($candidateBaseDirs as $baseDir) {
+        // 📌 Resolve the allowed base once (normalises symlinks/.. in the
+        //    base itself). A base that does not exist on this deployment
+        //    (realpath() returns false) is simply skipped, not fatal.
+        $allowedBase = realpath($baseDir);
+
+        if ($allowedBase === false) {
+            continue;
+        }
+
+        // 📌 Resolve the candidate file (base directory + stored filename).
+        $fullPath     = $baseDir . DIRECTORY_SEPARATOR . $logoFileName;
+        $resolvedReal = realpath($fullPath);
+
+        if ($resolvedReal !== false
+            && file_exists($resolvedReal)
+            && is_file($resolvedReal)
+            && isPathWithinAllowedBase($resolvedReal, [$allowedBase])
+        ) {
+            return $resolvedReal;
+        }
+    }
+
+    // ❌ The stored filename did not resolve to an existing, contained file
+    //    under ANY candidate base.
+    return null;
+}
+
+// ==============================================================================
 // 🗄️ getLogoPathFromDatabase() - Look up predefined logo by ID
 // ==============================================================================
 
@@ -690,6 +806,7 @@ function isPathWithinAllowedBase(string $resolvedPath, array $allowedBases): boo
  * @return string|null Absolute file path, or null if not found
  *
  * @see https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php
+ * @see resolvePredefinedLogoPath() - the (Issue #65-fixed) resolution logic
  */
 function getLogoPathFromDatabase(int $logoId): ?string
 {
@@ -732,48 +849,38 @@ function getLogoPathFromDatabase(int $logoId): ?string
             return null;
         }
 
-        // 📌 Try relative to the uploads/logos directory.
+        // 📌 Resolve the stored filename against the allowed predefined-logo
+        //    base directories (assets/img/logos FIRST, then uploads/logos as
+        //    a secondary/legacy base). See resolvePredefinedLogoPath()'s own
+        //    doc block for the full Issue #65 fix rationale.
+        //
         // 🔒 B-051 (defence-in-depth): even though logoFileName comes from a DB
         //    row (admin-controlled, not request-supplied), an admin could set a
         //    malformed value containing traversal segments ('../../config.php')
-        //    or an absolute path. Run the resolved path through the SAME
+        //    or an absolute path. resolvePredefinedLogoPath() runs the SAME
         //    realpath-under-base containment guard added in cycle 5 for the
-        //    request-supplied logo path (Case 3 of getLogoPath()), so a stored
-        //    value can never escape the uploads/logos base directory either.
+        //    request-supplied logo path (Case 3 of getLogoPath()) against EVERY
+        //    candidate base, so a stored value can never escape either
+        //    directory.
+        // @see resolvePredefinedLogoPath() - the extracted, unit-tested resolver
         // @see getLogoPath() - Case 3 containment guard (F-017)
         // @see isPathWithinAllowedBase()
-        if (defined('CUERCODE_UPLOADS_DIR')) {
-            $logosBaseDir = CUERCODE_UPLOADS_DIR . 'logos';
+        $resolvedPath = resolvePredefinedLogoPath($logoFileName);
 
-            // 📌 Resolve the allowed base once (normalises symlinks/.. in the base).
-            $allowedBase = realpath($logosBaseDir);
-            if ($allowedBase === false) {
-                // ⚠️ Base directory missing/unresolvable — cannot contain anything.
-                return null;
-            }
+        if ($resolvedPath !== null) {
+            return $resolvedPath;
+        }
 
-            // 📌 Resolve the candidate file (uploads/logos + stored filename).
-            $fullPath     = $logosBaseDir . DIRECTORY_SEPARATOR . $logoFileName;
-            $resolvedReal = realpath($fullPath);
-
-            if ($resolvedReal !== false
-                && file_exists($resolvedReal)
-                && is_file($resolvedReal)
-                && isPathWithinAllowedBase($resolvedReal, [$allowedBase])
-            ) {
-                return $resolvedReal;
-            }
-
-            // ❌ Stored filename resolved outside the base (or did not exist):
-            //    block it and log, rather than returning an escaping path.
-            if (function_exists('logError')) {
-                logError(
-                    'error',
-                    'Predefined logo path containment check failed (B-051 guard)',
-                    'Logo ID: ' . $logoId . ' | Stored filename: '
-                    . mb_substr((string) $logoFileName, 0, 200)
-                );
-            }
+        // ❌ Stored filename resolved outside every allowed base (or did not
+        //    exist under any of them): block it and log, rather than
+        //    returning an escaping path or failing silently.
+        if (function_exists('logError')) {
+            logError(
+                'error',
+                'Predefined logo path containment check failed (B-051 guard / #65)',
+                'Logo ID: ' . $logoId . ' | Stored filename: '
+                . mb_substr((string) $logoFileName, 0, 200)
+            );
         }
 
         return null;
@@ -1149,10 +1256,51 @@ function rejectUnsafeBase64SvgLogo(array $customization): ?string
  * 📷 Load a logo image file into a GD image resource
  *
  * Detects the image type and uses the appropriate GD function to load it.
- * Supports PNG, JPEG, GIF, WEBP, and SVG (rasterised via external tool if available).
+ * Supports PNG, JPEG, GIF, and WEBP directly via GD. SVG is handled by the
+ * dedicated SVG fallback chain below - GD itself has NO vector renderer and
+ * cannot rasterise SVG under any circumstances.
  *
  * For all loaded images, alpha blending and save-alpha are configured
  * for proper transparency compositing.
+ *
+ * ------------------------------------------------------------------------
+ * 🐛 ISSUE #65 - the "PNG twin" convention for raster SVG logo overlay
+ * ------------------------------------------------------------------------
+ * All 26 predefined logos (public_html/assets/img/logos/*.svg) are vector
+ * SVG files. GD (imagecreatefromstring() and every imagecreatefromXXX()
+ * sibling) can only decode RASTER formats - there is no SVG parser or
+ * rasteriser anywhere inside GD - so handing GD an SVG file has always
+ * silently failed here, and the overlay step (overlayLogoOnRaster(),
+ * governed by $logoImage === null at its call site) silently dropped the
+ * logo from every PNG/JPEG/GIF/WEBP QR code output. The SVG-output path
+ * (overlayLogoOnSVG()) is UNAFFECTED - it embeds the raw SVG bytes as a
+ * nested <image> element and never touches GD - and remains the fully
+ * working path for predefined logos today.
+ *
+ * To make RASTER output work too, without a mandatory native-code
+ * dependency, this function now tries, IN ORDER, whenever the resolved
+ * logo path ends in '.svg':
+ *
+ *   1. A "PNG twin" file - a PNG with the SAME basename living in the SAME
+ *      directory (e.g. 'facebook.svg' -> 'facebook.png'). This is the
+ *      PREFERRED, ZERO-RUNTIME-DEPENDENCY mechanism: run the bundled CLI
+ *      tool `tools/render_logo_pngs.php` ONCE, on any machine that has an
+ *      SVG rasteriser (Imagick, rsvg-convert, Inkscape, etc. - this
+ *      environment has none of those), to generate a PNG twin for every
+ *      predefined logo. From then on raster QR output "just works" with no
+ *      runtime SVG rasterisation cost or dependency at all.
+ *   2. The PHP `imagick` extension, IF loaded at request time
+ *      (extension_loaded('imagick')) - rasterises the SVG on the fly via
+ *      Imagick's librsvg-backed SVG delegate. This is a graceful bonus for
+ *      hosts that happen to have Imagick installed; it is NEVER required.
+ *   3. Otherwise: this is a NON-SILENT failure. A clear, actionable warning
+ *      is logged via logError() explaining exactly what is missing (a PNG
+ *      twin or the imagick extension) and null is returned, so the caller
+ *      (overlayLogoOnRaster()) falls back to returning the QR code
+ *      completely unmodified - the QR code itself STAYS FULLY VALID and
+ *      SCANNABLE, it simply renders without the logo overlay, and the
+ *      reason is now discoverable in the error log instead of being an
+ *      invisible no-op.
  *
  * @param string $logoPath Absolute path to the logo image file
  *
@@ -1163,11 +1311,126 @@ function rejectUnsafeBase64SvgLogo(array $customization): ?string
  * @see https://www.php.net/manual/en/function.imagecreatefromgif.php
  * @see https://www.php.net/manual/en/function.imagecreatefromwebp.php
  * @see https://www.php.net/manual/en/function.exif-imagetype.php
+ * @see https://www.php.net/manual/en/book.imagick.php
+ * @see tools/render_logo_pngs.php - the PNG-twin generator CLI tool
+ * @see overlayLogoOnSVG() - the unaffected, already-working SVG-output path
  */
 function loadLogoImage(string $logoPath): ?\GdImage
 {
     // ❌ Verify the file exists
     if (!file_exists($logoPath) || !is_file($logoPath)) {
+        return null;
+    }
+
+    // ==================================================================
+    // 🖼️ SVG handling (Issue #65) - GD cannot rasterise SVG at all, so any
+    //     '.svg' path is routed through the PNG-twin / Imagick fallback
+    //     chain documented in this function's doc block ABOVE, rather than
+    //     being handed to GD (which would just fail).
+    //
+    //     Detection is by FILE EXTENSION (not MIME sniffing): every logo
+    //     path reaching this function has already been through either
+    //     resolvePredefinedLogoPath() (predefined logos - filenames are
+    //     admin-curated) or getLogoPath()'s Case 3 containment guard
+    //     (uploaded logos), both of which resolve real, existing files by
+    //     their actual on-disk name, so the extension is trustworthy here.
+    // ==================================================================
+    $pathExtension = strtolower((string) pathinfo($logoPath, PATHINFO_EXTENSION));
+
+    if ($pathExtension === 'svg') {
+        // ------------------------------------------------------------
+        // 1️⃣ Fallback 1: a same-basename PNG twin in the SAME directory.
+        // ------------------------------------------------------------
+        $pngTwinPath = pathinfo($logoPath, PATHINFO_DIRNAME)
+            . DIRECTORY_SEPARATOR
+            . pathinfo($logoPath, PATHINFO_FILENAME)
+            . '.png';
+
+        if (file_exists($pngTwinPath) && is_file($pngTwinPath)) {
+            // ✅ Re-enter this SAME function with the PNG twin's path so the
+            //    normal PNG-detection/GD-load logic below handles it exactly
+            //    like any other raster logo (single code path, no duplication).
+            return loadLogoImage($pngTwinPath);
+        }
+
+        // ------------------------------------------------------------
+        // 2️⃣ Fallback 2: rasterise on the fly via the Imagick extension,
+        //    ONLY if it is actually loaded in this PHP build/config.
+        // ------------------------------------------------------------
+        if (extension_loaded('imagick')) {
+            try {
+                // @see https://www.php.net/manual/en/imagick.readimageblob.php
+                $svgBytes = @file_get_contents($logoPath);
+
+                if ($svgBytes !== false) {
+                    $imagickInstance = new \Imagick();
+
+                    // 📌 Explicitly declare the source format as SVG so
+                    //     Imagick's librsvg delegate is used even though we
+                    //     are reading raw bytes rather than a '.svg' file
+                    //     path directly.
+                    // @see https://www.php.net/manual/en/imagick.setformat.php
+                    $imagickInstance->setFormat('svg');
+                    $imagickInstance->readImageBlob($svgBytes);
+
+                    // 📌 Rasterise to 32-bit PNG (preserves alpha transparency)
+                    //     before handing the bytes to GD.
+                    // @see https://www.php.net/manual/en/imagick.setimageformat.php
+                    $imagickInstance->setImageFormat('png32');
+                    $rasterisedPngBytes = $imagickInstance->getImageBlob();
+
+                    // 🧹 Free the Imagick object's native resources.
+                    $imagickInstance->clear();
+                    $imagickInstance->destroy();
+
+                    // @see https://www.php.net/manual/en/function.imagecreatefromstring.php
+                    $imagickResult = @imagecreatefromstring($rasterisedPngBytes);
+
+                    if ($imagickResult instanceof \GdImage) {
+                        // 📌 Configure alpha blending exactly as the normal
+                        //     raster path does below, then return directly
+                        //     (this bypasses the exif/mime detection block,
+                        //     which is irrelevant to an in-memory blob).
+                        imagealphablending($imagickResult, true);
+                        imagesavealpha($imagickResult, true);
+                        return $imagickResult;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ⚠️ Imagick rasterisation failed (malformed SVG, missing
+                //    librsvg delegate, etc.) - fall through to the
+                //    non-silent warning + null return below rather than
+                //    throwing out of this function.
+                if (function_exists('logError')) {
+                    logError(
+                        'warning',
+                        'Imagick SVG rasterisation failed for logo overlay',
+                        'Path: ' . $logoPath . ' | ' . $e->getMessage()
+                    );
+                }
+            }
+        }
+
+        // ------------------------------------------------------------
+        // 3️⃣ NEITHER fallback is available: do NOT silently drop the logo.
+        //    Log a clear, actionable warning and return null so the caller
+        //    (overlayLogoOnRaster()) skips the overlay and returns the QR
+        //    code UNCHANGED (still fully valid/scannable) - the difference
+        //    from before this fix is that the reason is now DISCOVERABLE.
+        // ------------------------------------------------------------
+        if (function_exists('logError')) {
+            logError(
+                'warning',
+                'Raster SVG logo overlay skipped: no PNG twin and no Imagick extension (#65)',
+                'Path: ' . $logoPath . ' | Generate a PNG twin via '
+                . '`php tools/render_logo_pngs.php` (in an environment with an '
+                . 'SVG rasteriser) or enable the php-imagick extension so SVG '
+                . 'logos can be rasterised for raster (PNG/JPG/GIF/WEBP) QR '
+                . 'output. SVG-output QR codes are unaffected - they already '
+                . 'embed the logo via overlayLogoOnSVG().'
+            );
+        }
+
         return null;
     }
 
