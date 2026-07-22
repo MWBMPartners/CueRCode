@@ -1,0 +1,70 @@
+# =============================================================================
+# 🔎 CueRCode - Semgrep SAST (PHP + JavaScript)
+# =============================================================================
+# Static application security testing that — unlike CodeQL — supports PHP AND
+# runs on a private repo WITHOUT GitHub Advanced Security. It complements
+# CodeQL (JS → Security tab, needs GHAS) by covering the PHP codebase and by
+# providing a code-scan signal on every branch at zero cost.
+#
+# Findings are printed to the job log. The job is currently INFORMATIONAL
+# (continue-on-error) so a first-run finding does not block PRs; once a clean
+# baseline is confirmed, remove `continue-on-error` and add `--error` to make
+# it a blocking gate.
+#
+# @see https://semgrep.dev/docs/
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: Semgrep SAST
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+      - alpha
+  pull_request:
+    branches:
+      - main
+      - beta
+      - alpha
+  schedule:
+    - cron: '23 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: Semgrep (PHP + JS)
+    runs-on: ubuntu-latest
+    # ℹ️ Informational until a clean baseline is confirmed on the runner.
+    #    Then: remove this line AND add `--error` below to make it blocking.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep
+        run: pip install --disable-pip-version-check semgrep
+
+      - name: Run Semgrep (PHP + JavaScript + security-audit rulesets)
+        run: |
+          set -euo pipefail
+          semgrep scan \
+            --config p/php \
+            --config p/javascript \
+            --config p/security-audit \
+            --metrics=off \
+            --exclude 'web/**/assets/vendor/**' \
+            --exclude 'web/**/_libraries/**'
