@@ -490,12 +490,16 @@ assertEquals(
 );
 
 assertEquals(
-    83,
+    91,
     count($xErrorCodes),
-    'ErrorResponse.x-error-codes has exactly 83 entries (the 76 pre-existing codes '
-    . 'plus the 7 newly-documented codes: HANDLER_NOT_FOUND, UNKNOWN_HANDLER, '
-    . 'FEATURE_NOT_AVAILABLE, BULK_AVERY_ALL_FAILED, BULK_PARSE_ERROR, '
-    . 'BULK_VALIDATION_ERROR, JSON_ENCODE_ERROR)'
+    'ErrorResponse.x-error-codes has exactly 91 entries (the 83 pre-existing codes '
+    . '(76 original + HANDLER_NOT_FOUND, UNKNOWN_HANDLER, FEATURE_NOT_AVAILABLE, '
+    . 'BULK_AVERY_ALL_FAILED, BULK_PARSE_ERROR, BULK_VALIDATION_ERROR, JSON_ENCODE_ERROR) '
+    . 'plus the 8 newly-documented #70 PAYG credit codes: CREDIT_INSUFFICIENT_BALANCE, '
+    . 'CREDIT_INVALID_REQUEST, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, '
+    . 'CREDIT_PAYG_DISABLED, CREDIT_SERVICE_ERROR, CREDIT_SPEND_CAP_EXCEEDED, '
+    . 'CREDIT_UNAVAILABLE - fn_features.php consumeCreditsOr402(), built but not yet '
+    . 'wired to a live endpoint)'
 );
 
 // ==============================================================================

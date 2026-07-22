@@ -127,6 +127,15 @@ function listPublicPlansForDisplay(): array
 
         $planRows = [];
         while (($row = $result->fetch_assoc()) !== null) {
+            // 📌 Every plan starts with an EMPTY price-point list - the
+            // additive query below (#70, Table 22 tblPlanPricePoints) fills
+            // this in ONLY when billing_price_points_enabled=1 AND at least
+            // one row exists for this plan. pricingDisplayRowsFromPlans()
+            // falls back to the legacy priceMonthly/priceYearly columns
+            // whenever a plan's 'pricePoints' stays empty - so a fresh
+            // install (kill-switch off, table empty) renders BYTE-IDENTICAL
+            // to before this key existed.
+            $row['pricePoints'] = [];
             $planRows[] = $row;
         }
 
@@ -136,6 +145,68 @@ function listPublicPlansForDisplay(): array
             logError('error', 'Public pricing plan list failed', $e->getMessage());
         }
         return [];
+    }
+
+    // ==========================================================================
+    // 💷 Additive query (#70): PREFER tblPlanPricePoints rows when present.
+    // ==========================================================================
+    // This file is deliberately NOT bootstrap-loaded (see this file's header
+    // comment) and does not require fn_features.php, so the kill-switch
+    // check and the read-only SELECT below are duplicated here rather than
+    // calling that file's pricePointsForPlan() - the SAME
+    // `billing_price_points_enabled` setting gates both, so the two stay in
+    // lock-step without a cross-file dependency. This is the ONE additive
+    // query the #70 spec calls for: a single STATIC statement (no dynamic
+    // `IN (...)` list, no identifier interpolation) fetches every currently
+    // -valid, ACTIVE price point across EVERY plan in one round trip, and the
+    // rows are bucketed by planID in PHP - the pricing page only ever shows a
+    // handful of plans, so this stays cheap. Skipped entirely (zero extra
+    // query) when there are no plans to attach to, or the DB layer/config
+    // subsystem is unavailable.
+    // ==========================================================================
+    if (!empty($planRows) && function_exists('getConfig') && ((bool) getConfig('billing_price_points_enabled', false))) {
+        try {
+            $pricePointStmt = dbQuery(
+                'SELECT `pricePointID`, `planID`, `priceKey`, `billingInterval`, `intervalCount`, '
+                . '`amount`, `currency`, `grantsJSON`, `validFrom`, `validUntil`, `isDefault` '
+                . 'FROM `tblPlanPricePoints` '
+                . 'WHERE `isActive` = 1 '
+                . 'AND (`validFrom` IS NULL OR `validFrom` <= NOW()) '
+                . 'AND (`validUntil` IS NULL OR `validUntil` >= NOW()) '
+                . 'ORDER BY `planID` ASC, `sortOrder` ASC, `pricePointID` ASC'
+            );
+
+            $pricePointResult    = $pricePointStmt->get_result();
+            $pricePointsByPlanID = [];
+
+            while (($pricePointRow = $pricePointResult->fetch_assoc()) !== null) {
+                $ownerPlanID = (int) $pricePointRow['planID'];
+                if (!isset($pricePointsByPlanID[$ownerPlanID])) {
+                    $pricePointsByPlanID[$ownerPlanID] = [];
+                }
+                $pricePointsByPlanID[$ownerPlanID][] = $pricePointRow;
+            }
+
+            $pricePointStmt->close();
+
+            foreach ($planRows as &$planRowRef) {
+                $thisPlanID = (int) $planRowRef['planID'];
+                if (isset($pricePointsByPlanID[$thisPlanID])) {
+                    $planRowRef['pricePoints'] = $pricePointsByPlanID[$thisPlanID];
+                }
+            }
+            // 🧹 Break the by-reference alias now that the loop above is done
+            // - leaving a dangling reference bound to the last array element
+            // is a classic PHP foreach-by-reference footgun.
+            unset($planRowRef);
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'Public pricing price-point list failed', $e->getMessage());
+            }
+            // 🛡️ Fail safe: every plan row's 'pricePoints' stays the [] set
+            // above (the legacy-column fallback) - a failure in this SECOND,
+            // purely-additive query must never break the whole pricing page.
+        }
     }
 
     return $planRows;
@@ -256,6 +327,67 @@ function pricingFormatPrice(float|int|string $amount, string $currency): string
 }
 
 // ==============================================================================
+// 🎟️ pricingApplyDiscount() - PURE: apply a tblDiscounts row to an amount (#70)
+// ==============================================================================
+
+/**
+ * 🎟️ Apply a `tblDiscounts`-shaped percent/fixed discount to a price amount.
+ *
+ * PURE function - no database access, no I/O - deliberately the smallest
+ * possible bridge between install.sql's `tblDiscounts.discountType`/`value`
+ * columns (Table 23, #70) and a displayable discounted price, proving that
+ * ANY discount - a one-off code, a limited-time sitewide promotion, or a
+ * lifetime/forever edu rate - is representable and computable purely from
+ * those two columns, with no per-discount code branch anywhere in this
+ * codebase. Validity-window checks (`validFrom`/`validUntil`) and redemption
+ * caps are `resolveDiscountForCheckout()`'s job (fn_features.php) - this
+ * function only does the ARITHMETIC once a discount is already known to
+ * apply.
+ *
+ * @param float  $amount       The pre-discount price (e.g. a price point's `amount`).
+ * @param string $discountType `tblDiscounts.discountType` - 'percent' or 'fixed'.
+ * @param float  $value        `tblDiscounts.value` - a percentage (0-100) for
+ *                               'percent', or a flat amount in the same
+ *                               currency for 'fixed'.
+ *
+ * @return float The discounted amount, floored at 0.00 and rounded to 2
+ *               decimal places (never negative, never more precise than a
+ *               real currency amount). An unrecognised $discountType, or a
+ *               non-positive $amount/$value, returns $amount unchanged
+ *               (clamped to 0.0 floor) - fails safe to "no discount applied"
+ *               rather than guessing.
+ */
+function pricingApplyDiscount(float $amount, string $discountType, float $value): float
+{
+    // 🛡️ Fail-safe floor: a non-positive amount or a non-positive discount
+    // value has nothing meaningful to compute - return the (floored) amount
+    // unchanged rather than guessing.
+    if ($amount <= 0.0 || $value <= 0.0) {
+        return max($amount, 0.0);
+    }
+
+    if ($discountType === 'percent') {
+        // 💯 Clamp an admin-entered percentage to a sane 0-100 range - a
+        // value above 100 would otherwise produce a negative price.
+        $clampedPercent = min($value, 100.0);
+        $discountedAmount = $amount - ($amount * ($clampedPercent / 100.0));
+    } elseif ($discountType === 'fixed') {
+        $discountedAmount = $amount - $value;
+    } else {
+        // 📌 Unrecognised discountType - fail safe to "no discount applied"
+        // rather than guessing at an unknown discount shape.
+        return $amount;
+    }
+
+    if ($discountedAmount < 0.0) {
+        // 🛡️ A fixed discount larger than the price itself never goes negative.
+        $discountedAmount = 0.0;
+    }
+
+    return round($discountedAmount, 2);
+}
+
+// ==============================================================================
 // 🔢 pricingFormatLimit() - Format a numeric plan limit for display
 // ==============================================================================
 
@@ -294,6 +426,52 @@ function pricingFormatLimit(int|null $v): string
 }
 
 // ==============================================================================
+// 💷 pricingFindPricePointByInterval() - PURE: pick the display price point
+//    for one billingInterval (#70)
+// ==============================================================================
+
+/**
+ * 💷 Pick the price point to SHOW for a given billing interval, if any.
+ *
+ * PURE function - no I/O. Prefers the row explicitly marked `isDefault` for
+ * that interval (an admin's "this is the recommended/canonical monthly row"
+ * choice, e.g. when several currencies share the same billingInterval); when
+ * none is marked default, falls back to the FIRST matching row in the given
+ * (already sortOrder-ordered) list - never throws, never warns, simply
+ * returns null when no price point matches the requested interval at all
+ * (e.g. a lifetime-only plan has no 'monthly' row - the caller then falls
+ * back to the legacy priceMonthly column, see pricingDisplayRowsFromPlans()).
+ *
+ * @param array  $pricePoints     Decoded price-point rows (see
+ *                                 pricingDisplayRowsFromPlans()'s Pass 1 shape).
+ * @param string $billingInterval 'monthly'|'yearly'|'lifetime'|'one_off'|'metered'.
+ *
+ * @return array|null The matching price point, or null when none matches.
+ */
+function pricingFindPricePointByInterval(array $pricePoints, string $billingInterval): ?array
+{
+    $firstMatch = null;
+
+    foreach ($pricePoints as $pricePoint) {
+        if (!isset($pricePoint['billingInterval']) || $pricePoint['billingInterval'] !== $billingInterval) {
+            continue;
+        }
+
+        if ($firstMatch === null) {
+            $firstMatch = $pricePoint;
+        }
+
+        if (!empty($pricePoint['isDefault'])) {
+            // ⭐ An explicit default for this interval wins outright, even if
+            // it was not the first matching row in sortOrder.
+            return $pricePoint;
+        }
+    }
+
+    return $firstMatch;
+}
+
+// ==============================================================================
 // 🧮 pricingDisplayRowsFromPlans() - PURE transform: raw plan rows -> display rows
 // ==============================================================================
 
@@ -314,8 +492,24 @@ function pricingFormatLimit(int|null $v): string
  * the correct comparison-table behaviour and matches featureEnabled()'s /
  * limitFor()'s own fail-closed semantics for an absent key.
  *
+ * #70 flexible-pricing branch: when a plan row carries a non-empty
+ * 'pricePoints' array (listPublicPlansForDisplay()'s additive query, ONLY
+ * populated when billing_price_points_enabled=1 and rows exist),
+ * priceMonthlyFormatted/priceYearlyFormatted PREFER the matching
+ * `billingInterval='monthly'`/`'yearly'` price point over the legacy
+ * priceMonthly/priceYearly columns (via pricingFindPricePointByInterval()),
+ * and every decoded price point is additionally exposed on the output row's
+ * new 'pricePoints' key (grantsJSON decoded, amount pre-formatted) - useful
+ * for a lifetime/PAYG-pack card that has no 'monthly'/'yearly' row at all. A
+ * plan with NO 'pricePoints' input (or an absent key entirely - the exact
+ * shape every existing caller/test already passes) behaves byte-for-byte as
+ * before this branch existed: legacy priceMonthly/priceYearly, and an empty
+ * 'pricePoints' output array.
+ *
  * @param array $plans Raw plan rows as returned by listPublicPlansForDisplay()
- *                      (each with string featuresJSON/limitsJSON columns).
+ *                      (each with string featuresJSON/limitsJSON columns, and
+ *                      optionally a 'pricePoints' array of raw tblPlanPricePoints
+ *                      rows - #70, absent/empty = legacy-only behaviour).
  *
  * @return array One display row per input plan, each shaped:
  *   [
@@ -329,10 +523,14 @@ function pricingFormatLimit(int|null $v): string
  *       'isZeroPrice'           => bool,
  *       'features' => [ ['key'=>string,'label'=>string,'enabled'=>bool], ... ],
  *       'limits'   => [ ['key'=>string,'label'=>string,'value'=>string], ... ],
+ *       'pricePoints' => [ ['priceKey'=>string,'billingInterval'=>string,
+ *                            'intervalCount'=>int,'amountFormatted'=>string,
+ *                            'currency'=>string,'grants'=>array,
+ *                            'isDefault'=>bool], ... ],  // #70, [] when none
  *   ]
  *   Empty array when given an empty (or non-plan-shaped) input.
  *
- * @see pricingHumanizeKey(), pricingFormatPrice(), pricingFormatLimit()
+ * @see pricingHumanizeKey(), pricingFormatPrice(), pricingFormatLimit(), pricingFindPricePointByInterval()
  */
 function pricingDisplayRowsFromPlans(array $plans): array
 {
@@ -375,6 +573,40 @@ function pricingDisplayRowsFromPlans(array $plans): array
             $limitsDecoded = [];
         }
 
+        // 💷 #70: decode this plan's price points, if any were attached by
+        // listPublicPlansForDisplay()'s additive query - absent/non-array
+        // input (every pre-#70 caller, including every existing test fixture)
+        // fails safe to an empty list, which is exactly the "no price points"
+        // legacy-fallback state Pass 2 below already knows how to render.
+        $pricePointsRaw     = (isset($planRow['pricePoints']) && is_array($planRow['pricePoints'])) ? $planRow['pricePoints'] : [];
+        $pricePointsDecoded = [];
+
+        foreach ($pricePointsRaw as $pricePointRow) {
+            $grantsRaw = (isset($pricePointRow['grantsJSON']) && $pricePointRow['grantsJSON'] !== null)
+                ? (string) $pricePointRow['grantsJSON']
+                : '';
+
+            $grantsDecoded = json_decode($grantsRaw, true);
+            if (!is_array($grantsDecoded)) {
+                // 🚨 Same fail-safe convention as featuresJSON/limitsJSON
+                // above - NULL/malformed grantsJSON is a normal, expected
+                // state for an ordinary (non-PAYG) price point.
+                $grantsDecoded = [];
+            }
+
+            $pricePointsDecoded[] = [
+                'priceKey'        => isset($pricePointRow['priceKey']) ? (string) $pricePointRow['priceKey'] : '',
+                'billingInterval' => isset($pricePointRow['billingInterval']) ? (string) $pricePointRow['billingInterval'] : '',
+                'intervalCount'   => isset($pricePointRow['intervalCount']) ? (int) $pricePointRow['intervalCount'] : 1,
+                'amount'          => isset($pricePointRow['amount']) ? (float) $pricePointRow['amount'] : 0.0,
+                'currency'        => (isset($pricePointRow['currency']) && $pricePointRow['currency'] !== '')
+                    ? (string) $pricePointRow['currency']
+                    : 'GBP',
+                'grants'          => $grantsDecoded,
+                'isDefault'       => isset($pricePointRow['isDefault']) && ((int) $pricePointRow['isDefault']) === 1,
+            ];
+        }
+
         $decodedPlans[] = [
             'planKey'      => isset($planRow['planKey']) ? (string) $planRow['planKey'] : '',
             'planName'     => isset($planRow['planName']) ? (string) $planRow['planName'] : '',
@@ -386,6 +618,7 @@ function pricingDisplayRowsFromPlans(array $plans): array
                 : 'GBP',
             'features'     => $featuresDecoded,
             'limits'       => $limitsDecoded,
+            'pricePoints'  => $pricePointsDecoded,
         ];
 
         foreach (array_keys($featuresDecoded) as $featureKey) {
@@ -440,17 +673,58 @@ function pricingDisplayRowsFromPlans(array $plans): array
             ];
         }
 
+        // ------------------------------------------------------------
+        // 💷 #70 branch: PREFER tblPlanPricePoints rows when present for
+        // this plan, else fall back to the legacy priceMonthly/priceYearly
+        // columns - EXACTLY the existing pricingFormatPrice() calls below,
+        // unchanged, whenever a plan carries no price points (the universal
+        // case until an admin populates Table 22 AND flips
+        // billing_price_points_enabled=1).
+        // ------------------------------------------------------------
+        $monthlyPricePoint = pricingFindPricePointByInterval($decodedPlan['pricePoints'], 'monthly');
+        $yearlyPricePoint  = pricingFindPricePointByInterval($decodedPlan['pricePoints'], 'yearly');
+
+        if ($monthlyPricePoint !== null) {
+            $priceMonthlyFormatted = pricingFormatPrice($monthlyPricePoint['amount'], $monthlyPricePoint['currency']);
+        } else {
+            $priceMonthlyFormatted = pricingFormatPrice($decodedPlan['priceMonthly'], $decodedPlan['currency']);
+        }
+
+        if ($yearlyPricePoint !== null) {
+            $priceYearlyFormatted = pricingFormatPrice($yearlyPricePoint['amount'], $yearlyPricePoint['currency']);
+        } else {
+            $priceYearlyFormatted = pricingFormatPrice($decodedPlan['priceYearly'], $decodedPlan['currency']);
+        }
+
+        // 📋 Every decoded price point, pre-formatted for direct rendering -
+        // e.g. a lifetime-only or PAYG-pack plan's 'one_off'/'lifetime' rows,
+        // which the monthly/yearly preference above never picks up. Stays []
+        // for every plan with no price points (the legacy-only case).
+        $pricePointRows = [];
+        foreach ($decodedPlan['pricePoints'] as $pricePoint) {
+            $pricePointRows[] = [
+                'priceKey'        => $pricePoint['priceKey'],
+                'billingInterval' => $pricePoint['billingInterval'],
+                'intervalCount'   => $pricePoint['intervalCount'],
+                'amountFormatted' => pricingFormatPrice($pricePoint['amount'], $pricePoint['currency']),
+                'currency'        => $pricePoint['currency'],
+                'grants'          => $pricePoint['grants'],
+                'isDefault'       => $pricePoint['isDefault'],
+            ];
+        }
+
         $displayRows[] = [
             'planKey'               => $decodedPlan['planKey'],
             'planName'              => $decodedPlan['planName'],
             'description'           => $decodedPlan['description'],
             'priceMonthly'          => $decodedPlan['priceMonthly'],
-            'priceMonthlyFormatted' => pricingFormatPrice($decodedPlan['priceMonthly'], $decodedPlan['currency']),
-            'priceYearlyFormatted'  => pricingFormatPrice($decodedPlan['priceYearly'], $decodedPlan['currency']),
+            'priceMonthlyFormatted' => $priceMonthlyFormatted,
+            'priceYearlyFormatted'  => $priceYearlyFormatted,
             'currency'              => $decodedPlan['currency'],
             'isZeroPrice'           => ($decodedPlan['priceMonthly'] <= 0.0),
             'features'              => $featureRows,
             'limits'                => $limitRows,
+            'pricePoints'           => $pricePointRows,
         ];
     }
 

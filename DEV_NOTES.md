@@ -377,6 +377,43 @@ UPDATE `tblSubscriptionPlans`
 
 **No checkout flow.** CTA logic is purely price-driven (zero-price plans link to `/register/`; any paid plan shows a disabled "Coming soon" control) - checkout is owner-gated behind the deferred PayPal webhook above, so this page never invents one.
 
+### Flexible pricing (#70, 2026-07-22) - BUILT BUT DISABLED
+
+Implements the additive schema/helper delta specified in `Pricing_Strategy.md` §5 on top of the tier-gating engine above, proving five pricing STRUCTURES are representable **by data alone** - zero code change to add a real instance of any of them. Everything is **inert by default**, mirroring this codebase's existing `email_enabled`/`sso_enabled` kill-switch pattern exactly.
+
+**Kill-switches (`tblSettings`, `billing` group - all seeded `0`):**
+
+| Setting | Gates |
+| --- | --- |
+| `billing_price_points_enabled` | `pricePointsForPlan()` and `fn_pricing.php`'s price-point-preferring query - `0` = every plan renders its legacy `priceMonthly`/`priceYearly` columns exactly as before this delta shipped |
+| `billing_discounts_enabled` | `resolveDiscountForCheckout()` - `0` = never resolves a discount, regardless of what rows exist in `tblDiscounts` |
+| `billing_payg_enabled` | `creditBalanceFor()`/`consumeCreditsOr402()` - `0` = balance always reads `0`, consumption always denies |
+
+Flip a switch to `1` (plus populate the matching new table) to bring a structure live - **no deploy needed**, the same "config, not code" discipline the tier engine already established.
+
+**New tables (`install.sql`, Tables 22-26):**
+
+- **`tblPlanPricePoints`** - kills the "exactly two fixed price columns, one currency" limitation. `priceKey` unique PER PLAN (not globally); `billingInterval` ENUM `monthly`/`yearly`/`lifetime`/`one_off`/`metered`; `grantsJSON` names what a one-off purchase grants (PAYG packs); `validFrom`/`validUntil` for launch-offer windows. `fn_pricing.php` PREFERS these rows over the legacy columns when present for a plan.
+- **`tblDiscounts` + `tblDiscountRedemptions`** - `code` NULL = automatic/sitewide (no voucher entry needed); `discountType` `percent`/`fixed`; `durationType` `once`/`repeating`/`forever` covers one-off through lifetime discounts with the SAME shape; redemptions are one-per-user-per-discount via a UNIQUE key.
+- **`tblOneOffPurchases`** - a sibling to `tblPayments` for lifetime-deal/PAYG-pack purchases NOT tied to a recurring subscription - kept as its own table specifically so `tblPayments`' `NOT NULL subscriptionID` + `ON DELETE RESTRICT` audit posture never had to weaken.
+- **`tblCreditLedger`** - append-only PAYG credit ledger; balance = `SUM(delta)` per (subject, meterKey), never stored directly.
+- **Additive columns** - `tblSubscriptions.pricePointID`/`discountID` (snapshot which offer was bought) and `tblPayments.pricePointID`, both added via `ALTER TABLE` blocks placed AFTER all five new tables so the original two `CREATE TABLE` blocks stay byte-for-byte the schema already shipped/tested.
+
+**Helpers (`fn_features.php`) - all fail-closed, all no-op when the table is empty or the kill-switch is off:**
+
+- `pricePointsForPlan($planID)` - request-cached like `planByKey()`.
+- `resolveDiscountForCheckout($code, $planID, $priceKey, $userID)` - two static queries (code-supplied vs. automatic lookup, never one dynamic SQL fragment), scope/redemption-cap/one-per-user checks, all fail closed on any error.
+- `creditBalanceFor($subjectType, $subjectId, $meterKey)` / `creditSpentThisMonth(...)` - `$subjectType` is `'user'`/`'org'`, mirroring the XOR convention `tblSubscriptions` already established.
+- `consumeCreditsOr402($meterKey, $qty, $subjectType, $subjectId, ...)` - advisory-lock-wrapped EXACTLY like SECURITY.md F-023's `acquireSaveLimitLock()`/`releaseSaveLimitLock()` TOCTOU fix (new `acquireCreditLock()`/`releaseCreditLock()`, `CUERCODE_CREDIT_LOCK_NAME_PREFIX` + an `md5()`-hashed lock name so the lock name stays short regardless of `meterKey` length). Enforces `credit_spend_cap_monthly` via the EXISTING, unmodified `limitFor()` (a plan that has never seeded that key resolves to `0` - "PAYG not permitted on this plan at all", distinct from "cap reached this month"). The pure decision core, `evaluateCreditSpend($qty, $currentBalance, $spendCapMonthly, $spentThisMonth)`, has NO I/O at all - unit-tested in complete isolation.
+- **Error codes**: `consumeCreditsOr402()`'s 8 denial codes are all fully-literal `'errorCode' => 'X'` shapes inside a `match()` block, deliberately NEVER built via string concatenation - the #58 error-catalogue drift guard (`tests/test_error_catalogue.php`) statically scans for exactly that literal shape, and a concatenated value would either confuse the scanner or hide a real code from the documented catalogue. `openapi.json`'s `x-error-codes` grew 83 → 91 entries accordingly.
+- `resolveCreditLimitForSubject()` deliberately does NOT add an org parameter to the public `limitFor()` - it is a pure pass-through to `limitFor()` for a `'user'` subject, and only duplicates `limitFor()`'s own two-line fail-closed lookup (against `effectivePlanForGating(null, $orgID)`) for the `'org'` case that function does not support. `limitFor()`/`featureEnabled()`/`effectivePlanForGating()`/`planByKey()` themselves are UNCHANGED - proven by every pre-existing `test_features.php` assertion (Sections 1-8) still passing byte-for-byte.
+
+**Pricing display (`fn_pricing.php`):** `listPublicPlansForDisplay()` gained ONE additive, fully-static query (no dynamic `IN (...)` list - the pricing page only ever shows a handful of plans, so fetching every active price point across every plan in one round trip and bucketing by `planID` in PHP stays cheap) gated behind the SAME `billing_price_points_enabled` switch. `pricingDisplayRowsFromPlans()` gained a pure-transform branch (`pricingFindPricePointByInterval()`) that prefers a plan's `monthly`/`yearly` price point over the legacy columns when present, and exposes every price point (grants decoded) on a new `pricePoints` output key. `pricingApplyDiscount($amount, $discountType, $value)` (new, pure) does the percent/fixed discount arithmetic. **No behaviour change whatsoever when the switch is off or the table is empty** - every existing `test_pricing.php` assertion passes byte-for-byte unmodified.
+
+**What deliberately does NOT change:** `featuresJSON`/`limitsJSON` semantics, `effectivePlanForGating()`'s past_due model, the 4 seeded plans, `/pricing`'s fail-safe rendering. `credit_balance_cap` (also mentioned in Pricing_Strategy.md §4) is resolvable via `resolveCreditLimitForSubject()` but not yet actively enforced anywhere - that is a GRANT-time concern (capping how large a purchased-credits balance may reach) belonging to the future credit-grant/purchase-webhook code, which this delta does not build; only the SPEND side (`consumeCreditsOr402()`) ships this stage.
+
+**Verification caveat:** no local MySQL server was available in the implementing session (`apt-get install mariadb-server` failed - the sandboxed proxy could not fetch `libmysqlclient21`/`rsync`/`iproute2`), so `install.sql` was NOT loaded into a live scratch database this session. Verification relied on `php -l`, a JSON-validity check on `openapi.json`, and structural sanity checks (balanced parentheses/backticks, exact `CREATE TABLE`/`ALTER TABLE` counts). Load `install.sql`/`seed_data.sql` into a real MySQL/MariaDB instance before relying on this schema in production.
+
 ### Self-Service API Keys & Scope Enforcement (Epic E7 stage 1, #54, 2026-07-10)
 
 `_functions/fn_api_keys.php` is the FIRST code in this codebase that can actually CREATE a `tblAPIKeys` row - `validateAPIKey()` (`fn_api_auth.php`) has read-validated keys since Phase 1, but nothing ever minted one outside a direct `INSERT`. Read that new file's own docblock first (it documents the engine/handler split, the IDOR posture, and the "owner/design decision" below in full); this section records the OWNER-FACING rationale.

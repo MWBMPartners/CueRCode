@@ -951,3 +951,919 @@ function onSubscriptionPlanChanged(int $subscriptionID): bool
 
     return true;
 }
+
+// ==============================================================================
+// 💷 Flexible-pricing helpers (Epic E4 flexible-pricing delta, #70) - BUILT
+//    BUT DISABLED, additive-only
+// ==============================================================================
+//
+// Everything below is NEW surface added on top of the existing tier-gating
+// engine above - not one line above this point was touched. Every helper
+// here is FAIL-CLOSED and a complete NO-OP (matching this file's own
+// featureEnabled()/limitFor() fail-closed philosophy) whenever:
+//   (a) the matching `billing_price_points_enabled` / `billing_discounts_
+//       enabled` / `billing_payg_enabled` kill-switch (seed_data.sql
+//       `billing` group) is 0 (the seeded default), OR
+//   (b) the database/config layer is unavailable (function_exists() guards,
+//       exactly like every function above), OR
+//   (c) the matching new table (tblPlanPricePoints/tblDiscounts+
+//       tblDiscountRedemptions/tblCreditLedger - install.sql Tables 22-26)
+//       is simply empty.
+// None of the existing functions above (planByKey(), resolveActiveSubscription(),
+// effectivePlanForGating(), featureEnabled(), limitFor(), ...) are called
+// with different arguments or altered in any way by this section - the new
+// helpers only ADD calls to them (resolveCreditLimitForSubject() below reuses
+// limitFor()'s own user-subject path verbatim, and only duplicates its two-
+// line fail-closed lookup for the org-subject case that limitFor() itself
+// does not support).
+//
+// @see install.sql - Tables 22-26 (#70 schema delta)
+// @see seed_data.sql - the three billing_* kill-switches, all seeded 0
+// @see fn_pricing.php - listPublicPlansForDisplay() prefers tblPlanPricePoints
+//      rows over the legacy priceMonthly/priceYearly columns when present
+// @see Pricing_Strategy.md §5 - worked examples of every structure below
+// ==============================================================================
+
+/**
+ * @var string Prefix for the per-subject-per-meter MySQL advisory lock name
+ * used to serialise consumeCreditsOr402()'s balance/spend-cap check + ledger
+ * insert (mirrors SECURITY.md F-023's `acquireSaveLimitLock()` pattern in
+ * fn_api_qrcodes.php - see that function's docblock for the full TOCTOU
+ * rationale, which applies identically here: N concurrent consumption calls
+ * for the SAME subject+meterKey must not all read the same pre-consumption
+ * balance/spend total and independently decide they can afford $qty). The
+ * full lock name is this prefix concatenated with an md5() hash of
+ * "<subjectType>:<subjectId>:<meterKey>" - hashed (rather than the raw
+ * string, as CUERCODE_SAVE_LOCK_NAME_PREFIX does for a bare userID) purely so
+ * the total lock name has a fixed, small length regardless of how long an
+ * admin-chosen meterKey happens to be, comfortably under MySQL's
+ * 64-character GET_LOCK() name limit.
+ */
+if (!defined('CUERCODE_CREDIT_LOCK_NAME_PREFIX')) {
+    define('CUERCODE_CREDIT_LOCK_NAME_PREFIX', 'cuercode_credit:');
+}
+
+/**
+ * @var int Seconds GET_LOCK() will wait for the per-subject-per-meter credit
+ * lock before giving up (returning 0) - kept short, mirroring
+ * CUERCODE_SAVE_LOCK_TIMEOUT_SECONDS, since the critical section it guards is
+ * a handful of fast, indexed queries plus one INSERT.
+ */
+if (!defined('CUERCODE_CREDIT_LOCK_TIMEOUT_SECONDS')) {
+    define('CUERCODE_CREDIT_LOCK_TIMEOUT_SECONDS', 5);
+}
+
+// ------------------------------------------------------------------------
+// 💷 pricePointsForPlan() - Fetch a plan's active, currently-valid price points
+// ------------------------------------------------------------------------
+
+/**
+ * 💷 Fetch every currently-valid, active price point for one plan.
+ *
+ * FAIL-CLOSED / NO-OP: returns `[]` immediately (no query at all) when the
+ * `billing_price_points_enabled` kill-switch is off (the seeded default) or
+ * `getConfig()`/`dbQuery()` are unavailable - identical posture to
+ * `planByKey()`'s DB-unavailable fallback above, plus the additional
+ * kill-switch gate this new subsystem requires. Cached per request under a
+ * `pricepoints:<planID>` key, mirroring `planByKey()`'s `plan:<planKey>`
+ * cache exactly (same store, same has/get/set op contract).
+ *
+ * "Currently-valid" filters `validFrom`/`validUntil` at the SQL level (NULL
+ * on either side means no restriction on that side) so a launch-offer price
+ * point that has not started yet, or has already expired, is silently
+ * excluded - the caller never has to re-check those two columns itself.
+ *
+ * @param int $planID The `tblSubscriptionPlans.planID` to fetch price points for.
+ *
+ * @return array A list of price points, each shaped:
+ *   [
+ *       'pricePointID'    => int,
+ *       'planID'          => int,
+ *       'priceKey'        => string,
+ *       'billingInterval' => string,  // 'monthly'|'yearly'|'lifetime'|'one_off'|'metered'
+ *       'intervalCount'   => int,
+ *       'amount'          => float,
+ *       'currency'        => string,
+ *       'grants'          => array,   // decoded grantsJSON, [] when NULL/malformed
+ *       'validFrom'       => string|null,
+ *       'validUntil'      => string|null,
+ *       'isDefault'       => bool,
+ *   ]
+ *   Empty array when the kill-switch is off, the table is empty for this
+ *   plan, or the DB is unavailable.
+ *
+ * @see https://www.php.net/manual/en/function.json-decode.php
+ */
+function pricePointsForPlan(int $planID): array
+{
+    if ($planID <= 0) {
+        return [];
+    }
+
+    $cacheKey = 'pricepoints:' . $planID;
+
+    if (featuresCacheStore('has', $cacheKey)) {
+        return featuresCacheStore('get', $cacheKey);
+    }
+
+    // 🚦 Master kill-switch - inert regardless of what rows exist until an
+    // admin explicitly opts in (mirrors email_enabled/sso_enabled).
+    if (!function_exists('getConfig') || !((bool) getConfig('billing_price_points_enabled', false))) {
+        featuresCacheStore('set', $cacheKey, []);
+        return [];
+    }
+
+    if (!function_exists('dbQuery')) {
+        return [];
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT `pricePointID`, `planID`, `priceKey`, `billingInterval`, `intervalCount`, '
+            . '`amount`, `currency`, `grantsJSON`, `validFrom`, `validUntil`, `isDefault` '
+            . 'FROM `tblPlanPricePoints` '
+            . 'WHERE `planID` = ? AND `isActive` = 1 '
+            . 'AND (`validFrom` IS NULL OR `validFrom` <= NOW()) '
+            . 'AND (`validUntil` IS NULL OR `validUntil` >= NOW()) '
+            . 'ORDER BY `sortOrder` ASC, `pricePointID` ASC',
+            'i',
+            [$planID]
+        );
+
+        $result = $stmt->get_result();
+        $pricePoints = [];
+
+        while (($row = $result->fetch_assoc()) !== null) {
+            // 🔄 Same fail-closed JSON-decode convention as planByKey()'s
+            // featuresJSON/limitsJSON handling - malformed/absent JSON
+            // decodes to an empty array, never a warning or null.
+            $grantsDecoded = json_decode((string) $row['grantsJSON'], true);
+            if (!is_array($grantsDecoded)) {
+                $grantsDecoded = [];
+            }
+
+            $pricePoints[] = [
+                'pricePointID'    => (int) $row['pricePointID'],
+                'planID'          => (int) $row['planID'],
+                'priceKey'        => (string) $row['priceKey'],
+                'billingInterval' => (string) $row['billingInterval'],
+                'intervalCount'   => (int) $row['intervalCount'],
+                'amount'          => (float) $row['amount'],
+                'currency'        => (string) $row['currency'],
+                'grants'          => $grantsDecoded,
+                'validFrom'       => $row['validFrom'],
+                'validUntil'      => $row['validUntil'],
+                'isDefault'       => ((int) $row['isDefault']) === 1,
+            ];
+        }
+
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Plan price-point lookup failed', 'planID: ' . $planID . ' | ' . $e->getMessage());
+        }
+        return [];
+    }
+
+    featuresCacheStore('set', $cacheKey, $pricePoints);
+
+    return $pricePoints;
+}
+
+// ------------------------------------------------------------------------
+// 🎟️ resolveDiscountForCheckout() - Resolve the applicable discount, if any
+// ------------------------------------------------------------------------
+
+/**
+ * 🎟️ Resolve the single discount that applies to a checkout attempt, if any.
+ *
+ * FAIL-CLOSED / NO-OP: returns `null` (no discount applied) immediately when
+ * the `billing_discounts_enabled` kill-switch is off, `dbQuery()` is
+ * unavailable, no matching row exists, the matching row's scope
+ * (appliesPlanID/appliesPriceKey) does not cover this checkout, its
+ * redemption cap is already reached, or (when a $userID is supplied) that
+ * user has already redeemed it (tblDiscountRedemptions'
+ * `UNIQUE(discountID,userID)` one-per-user default).
+ *
+ * Two lookup modes, selected purely by whether $code is supplied:
+ *   - $code given   -> looks up that EXACT coupon code (`code = ?`), then
+ *     verifies it scopes to $planID/$priceKey.
+ *   - $code null/''  -> looks up an AUTOMATIC/sitewide discount (`code IS
+ *     NULL`), scoped to $planID (or sitewide, appliesPlanID IS NULL),
+ *     preferring the more specific (plan-scoped) match first.
+ * Both branches are separate, fully-static prepared statements (no shared
+ * dynamic SQL fragment) - the same "no identifier interpolation, only VALUE
+ * placeholders" discipline `resolveActiveSubscription()` documents above.
+ *
+ * @param string|null $code    A caller-supplied coupon code, or null/'' to
+ *                              look for an automatic/sitewide discount instead.
+ * @param int         $planID  The `tblSubscriptionPlans.planID` being checked out.
+ * @param string|null $priceKey The `tblPlanPricePoints.priceKey` being
+ *                                purchased, or null if not price-point-scoped.
+ * @param int|null    $userID  The redeeming user's ID, or null to skip the
+ *                              one-per-user redemption check (e.g. a pre-auth
+ *                              price preview).
+ *
+ * @return array|null The resolved discount, or null when none applies. Shape:
+ *   [
+ *       'discountID'      => int,
+ *       'code'            => string|null,
+ *       'name'            => string,
+ *       'discountType'    => string,   // 'percent'|'fixed'
+ *       'value'           => float,
+ *       'appliesPlanID'   => int|null,
+ *       'appliesPriceKey' => string|null,
+ *       'durationType'    => string,   // 'once'|'repeating'|'forever'
+ *       'durationMonths'  => int|null,
+ *   ]
+ */
+function resolveDiscountForCheckout(?string $code, int $planID, ?string $priceKey, ?int $userID): ?array
+{
+    // 🚦 Master kill-switch - inert regardless of what rows exist.
+    if (!function_exists('getConfig') || !((bool) getConfig('billing_discounts_enabled', false))) {
+        return null;
+    }
+
+    if (!function_exists('dbQuery')) {
+        return null;
+    }
+
+    $hasCode = ($code !== null && $code !== '');
+
+    try {
+        if ($hasCode) {
+            // 🎟️ Explicit coupon-code lookup.
+            $stmt = dbQuery(
+                'SELECT `discountID`, `code`, `name`, `discountType`, `value`, `appliesPlanID`, '
+                . '`appliesPriceKey`, `durationType`, `durationMonths`, `maxRedemptions`, `redemptionCount` '
+                . 'FROM `tblDiscounts` '
+                . 'WHERE `code` = ? AND `isActive` = 1 '
+                . 'AND (`validFrom` IS NULL OR `validFrom` <= NOW()) '
+                . 'AND (`validUntil` IS NULL OR `validUntil` >= NOW()) '
+                . 'LIMIT 1',
+                's',
+                [$code]
+            );
+        } else {
+            // 🤖 Automatic/sitewide discount lookup - most-specific match
+            // first (a plan-scoped row before a fully-sitewide one).
+            $stmt = dbQuery(
+                'SELECT `discountID`, `code`, `name`, `discountType`, `value`, `appliesPlanID`, '
+                . '`appliesPriceKey`, `durationType`, `durationMonths`, `maxRedemptions`, `redemptionCount` '
+                . 'FROM `tblDiscounts` '
+                . 'WHERE `code` IS NULL AND `isActive` = 1 '
+                . 'AND (`appliesPlanID` IS NULL OR `appliesPlanID` = ?) '
+                . 'AND (`validFrom` IS NULL OR `validFrom` <= NOW()) '
+                . 'AND (`validUntil` IS NULL OR `validUntil` >= NOW()) '
+                . 'ORDER BY (`appliesPlanID` IS NOT NULL) DESC, `discountID` ASC '
+                . 'LIMIT 1',
+                'i',
+                [$planID]
+            );
+        }
+
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Discount lookup failed', 'planID: ' . $planID . ' | ' . $e->getMessage());
+        }
+        return null;
+    }
+
+    if ($row === null) {
+        return null;
+    }
+
+    // 🔒 Scope check - appliesPlanID (if set) must match this checkout's
+    // plan; appliesPriceKey (if set) must match the requested priceKey. The
+    // automatic-lookup branch above already filtered appliesPlanID at the
+    // SQL level, but a CODE-supplied row's scope is not yet verified, and
+    // appliesPriceKey is never filtered at the SQL level by either branch.
+    if ($row['appliesPlanID'] !== null && (int) $row['appliesPlanID'] !== $planID) {
+        return null;
+    }
+    if ($row['appliesPriceKey'] !== null && $priceKey !== null && (string) $row['appliesPriceKey'] !== $priceKey) {
+        return null;
+    }
+
+    // 🎯 Sitewide redemption cap.
+    if ($row['maxRedemptions'] !== null && (int) $row['redemptionCount'] >= (int) $row['maxRedemptions']) {
+        return null;
+    }
+
+    // 👤 One-per-user check (tblDiscountRedemptions.UNIQUE(discountID,userID)) -
+    // skipped entirely when no $userID was supplied (a pre-auth price preview).
+    if ($userID !== null) {
+        try {
+            $redemptionStmt = dbQuery(
+                'SELECT `redemptionID` FROM `tblDiscountRedemptions` WHERE `discountID` = ? AND `userID` = ? LIMIT 1',
+                'ii',
+                [(int) $row['discountID'], $userID]
+            );
+            $redemptionRow = $redemptionStmt->get_result()->fetch_assoc();
+            $redemptionStmt->close();
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'Discount redemption check failed', 'discountID: ' . $row['discountID'] . ' | ' . $e->getMessage());
+            }
+            // 🛡️ FAIL CLOSED - a redemption-check failure must never grant a
+            // discount it could not actually verify was still available.
+            return null;
+        }
+
+        if ($redemptionRow !== null) {
+            // 📌 Already redeemed by this user - not available again.
+            return null;
+        }
+    }
+
+    return [
+        'discountID'      => (int) $row['discountID'],
+        'code'            => $row['code'] !== null ? (string) $row['code'] : null,
+        'name'            => (string) $row['name'],
+        'discountType'    => (string) $row['discountType'],
+        'value'           => (float) $row['value'],
+        'appliesPlanID'   => $row['appliesPlanID'] !== null ? (int) $row['appliesPlanID'] : null,
+        'appliesPriceKey' => $row['appliesPriceKey'] !== null ? (string) $row['appliesPriceKey'] : null,
+        'durationType'    => (string) $row['durationType'],
+        'durationMonths'  => $row['durationMonths'] !== null ? (int) $row['durationMonths'] : null,
+    ];
+}
+
+// ------------------------------------------------------------------------
+// 💰 creditBalanceFor() - PAYG credit balance lookup (SUM(delta))
+// ------------------------------------------------------------------------
+
+/**
+ * 💰 Resolve a subject's current PAYG credit balance for one meter key.
+ *
+ * The balance is ALWAYS derived, never stored: `SUM(delta)` across every
+ * `tblCreditLedger` row matching this subject+meterKey (see that table's
+ * header comment in install.sql for the append-only-ledger rationale).
+ * Cached per request under a `credit:<type>:<id>:<meterKey>` key, mirroring
+ * `planByKey()`'s cache exactly.
+ *
+ * FAIL-CLOSED / NO-OP: returns `0` when the `billing_payg_enabled`
+ * kill-switch is off, `dbQuery()` is unavailable, the arguments are
+ * malformed, or the ledger has no rows for this subject+meterKey - `0` is
+ * the correct "no credits" answer in every one of those cases, so callers
+ * never need to distinguish "genuinely zero" from "subsystem unavailable".
+ *
+ * Written as two separate, fully-static prepared statements (one per
+ * subject type) rather than interpolating a column name - the same
+ * discipline `resolveActiveSubscription()` documents above.
+ *
+ * @param string $subjectType Either 'user' or 'org' - any other value fails closed to 0.
+ * @param int    $subjectId   The `tblUsers.userID` or `tblOrganisations.orgID` to look up.
+ * @param string $meterKey    The credit meter to sum (e.g. 'qr_generations').
+ *
+ * @return int The current balance (may be negative only if credits were
+ *             consumed faster than granted, which consumeCreditsOr402()'s own
+ *             balance check is designed to prevent under normal operation).
+ */
+function creditBalanceFor(string $subjectType, int $subjectId, string $meterKey): int
+{
+    if (!in_array($subjectType, ['user', 'org'], true) || $subjectId <= 0 || $meterKey === '') {
+        return 0;
+    }
+
+    $cacheKey = 'credit:' . $subjectType . ':' . $subjectId . ':' . $meterKey;
+
+    if (featuresCacheStore('has', $cacheKey)) {
+        return featuresCacheStore('get', $cacheKey);
+    }
+
+    // 🚦 Master kill-switch - a subject's ledger history becomes invisible
+    // (reads as a flat 0 balance) the moment PAYG is turned off, exactly
+    // like every other billing_* switch in this file.
+    if (!function_exists('getConfig') || !((bool) getConfig('billing_payg_enabled', false))) {
+        featuresCacheStore('set', $cacheKey, 0);
+        return 0;
+    }
+
+    if (!function_exists('dbQuery')) {
+        return 0;
+    }
+
+    try {
+        if ($subjectType === 'user') {
+            $stmt = dbQuery(
+                'SELECT COALESCE(SUM(`delta`), 0) AS `balance` FROM `tblCreditLedger` '
+                . 'WHERE `userID` = ? AND `meterKey` = ?',
+                'is',
+                [$subjectId, $meterKey]
+            );
+        } else {
+            $stmt = dbQuery(
+                'SELECT COALESCE(SUM(`delta`), 0) AS `balance` FROM `tblCreditLedger` '
+                . 'WHERE `orgID` = ? AND `meterKey` = ?',
+                'is',
+                [$subjectId, $meterKey]
+            );
+        }
+
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError(
+                'error',
+                'Credit balance lookup failed',
+                $subjectType . 'ID: ' . $subjectId . ' | meterKey: ' . $meterKey . ' | ' . $e->getMessage()
+            );
+        }
+        return 0;
+    }
+
+    $balance = ($row !== null && isset($row['balance'])) ? (int) $row['balance'] : 0;
+
+    featuresCacheStore('set', $cacheKey, $balance);
+
+    return $balance;
+}
+
+// ------------------------------------------------------------------------
+// 🗓️ creditSpentThisMonth() - Month-to-date consumption for the spend cap
+// ------------------------------------------------------------------------
+
+/**
+ * 🗓️ Sum this calendar month's CONSUMPTION (negative deltas) for a subject+meterKey.
+ *
+ * Backs `consumeCreditsOr402()`'s `credit_spend_cap_monthly` enforcement -
+ * kept as its own small function (rather than inlined) so it is independently
+ * testable and so `creditBalanceFor()` above stays a pure "all-time balance"
+ * lookup, not conflated with a calendar-window one. NOT request-cached (unlike
+ * `creditBalanceFor()`) because it is only ever called from inside
+ * `consumeCreditsOr402()`'s advisory-lock-protected critical section, where a
+ * stale cached value would be exactly the kind of TOCTOU risk that lock
+ * exists to prevent.
+ *
+ * @param string $subjectType Either 'user' or 'org' - any other value fails closed to 0.
+ * @param int    $subjectId   The `tblUsers.userID` or `tblOrganisations.orgID` to look up.
+ * @param string $meterKey    The credit meter to sum (e.g. 'qr_generations').
+ *
+ * @return int Total units consumed so far this calendar month (always >= 0).
+ */
+function creditSpentThisMonth(string $subjectType, int $subjectId, string $meterKey): int
+{
+    if (!in_array($subjectType, ['user', 'org'], true) || $subjectId <= 0 || $meterKey === '') {
+        return 0;
+    }
+
+    if (!function_exists('dbQuery')) {
+        return 0;
+    }
+
+    try {
+        if ($subjectType === 'user') {
+            $stmt = dbQuery(
+                'SELECT COALESCE(SUM(-`delta`), 0) AS `spent` FROM `tblCreditLedger` '
+                . "WHERE `userID` = ? AND `meterKey` = ? AND `delta` < 0 AND `createdAt` >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')",
+                'is',
+                [$subjectId, $meterKey]
+            );
+        } else {
+            $stmt = dbQuery(
+                'SELECT COALESCE(SUM(-`delta`), 0) AS `spent` FROM `tblCreditLedger` '
+                . "WHERE `orgID` = ? AND `meterKey` = ? AND `delta` < 0 AND `createdAt` >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')",
+                'is',
+                [$subjectId, $meterKey]
+            );
+        }
+
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError(
+                'error',
+                'Credit month-to-date spend lookup failed',
+                $subjectType . 'ID: ' . $subjectId . ' | meterKey: ' . $meterKey . ' | ' . $e->getMessage()
+            );
+        }
+        return 0;
+    }
+
+    return ($row !== null && isset($row['spent'])) ? (int) $row['spent'] : 0;
+}
+
+// ------------------------------------------------------------------------
+// 🔢 resolveCreditLimitForSubject() - limitFor() for a user OR an org subject
+// ------------------------------------------------------------------------
+
+/**
+ * 🔢 Look up a numeric plan limit for either a user or an org subject.
+ *
+ * `limitFor()` above only accepts a userID - this file's public gating
+ * primitive is NOT being changed to add an org parameter (out of scope for
+ * #70 and not requested). For the 'user' case this function is a pure
+ * pass-through to the REAL `limitFor()` (same cache, same result, zero
+ * duplicated logic). For the 'org' case it duplicates ONLY `limitFor()`'s own
+ * two-line fail-closed array lookup against `effectivePlanForGating(null,
+ * $subjectId)` - not a new gating code path, just the org-resolution half
+ * that already exists in `effectivePlanForGating()` above, finished off with
+ * the identical fail-closed convention.
+ *
+ * @param string $limitKey    The limitsJSON key to look up (e.g. 'credit_spend_cap_monthly').
+ * @param string $subjectType Either 'user' or 'org'.
+ * @param int    $subjectId   The subject's userID or orgID.
+ *
+ * @return int The limit value (-1 = unlimited), or 0 if absent/unrecognised
+ *             (the same fail-closed default `limitFor()` documents).
+ */
+function resolveCreditLimitForSubject(string $limitKey, string $subjectType, int $subjectId): int
+{
+    if ($subjectType === 'user') {
+        return limitFor($limitKey, $subjectId);
+    }
+
+    if ($subjectType !== 'org') {
+        return 0;
+    }
+
+    $plan = effectivePlanForGating(null, $subjectId);
+
+    if (!array_key_exists($limitKey, $plan['limits'])) {
+        return 0;
+    }
+
+    return (int) $plan['limits'][$limitKey];
+}
+
+// ------------------------------------------------------------------------
+// 🧮 evaluateCreditSpend() - PURE PAYG-with-a-cap decision (no I/O)
+// ------------------------------------------------------------------------
+
+/**
+ * 🧮 PURE decision: given already-known balance/cap/spend figures, decide
+ * whether consuming $qty credits is ALLOWED.
+ *
+ * No database access, no config lookups - unit-testable in complete
+ * isolation. This is deliberately the ONLY place the PAYG-with-a-cap business
+ * rule is expressed, so it can be proven correct from DATA ALONE (the four
+ * plain integers below), exactly the #70 acceptance criterion: feed this
+ * function fixture numbers derived from a hypothetical plan's limitsJSON +
+ * ledger history and assert the derived allow/deny decision, with zero
+ * database involved.
+ *
+ * @param int $qty             Units requested for this single consumption.
+ * @param int $currentBalance  The subject's current balance for this meterKey (creditBalanceFor()).
+ * @param int $spendCapMonthly limitFor()-style value for 'credit_spend_cap_monthly' -
+ *                              -1 = unlimited, 0 = PAYG not permitted at all on this plan
+ *                              (the fail-closed default for a plan that has never opted in).
+ * @param int $spentThisMonth  Units already consumed this calendar month (creditSpentThisMonth()).
+ *
+ * @return array ['allowed' => bool, 'reason' => string|null]. `reason` is one
+ *   of 'invalid_quantity' | 'not_permitted' | 'insufficient_balance' |
+ *   'spend_cap_exceeded' when denied, or null when allowed.
+ */
+function evaluateCreditSpend(int $qty, int $currentBalance, int $spendCapMonthly, int $spentThisMonth): array
+{
+    if ($qty <= 0) {
+        return ['allowed' => false, 'reason' => 'invalid_quantity'];
+    }
+
+    // 🚫 Fail-closed default: a plan that has never had
+    // `credit_spend_cap_monthly` seeded into its limitsJSON resolves to 0 via
+    // limitFor()'s own fail-closed convention - here that means "PAYG is not
+    // permitted on this plan at all" (distinct from "no spend budget LEFT
+    // this month", the spend_cap_exceeded case below).
+    if ($spendCapMonthly === 0) {
+        return ['allowed' => false, 'reason' => 'not_permitted'];
+    }
+
+    if ($currentBalance < $qty) {
+        return ['allowed' => false, 'reason' => 'insufficient_balance'];
+    }
+
+    // ♾️ -1 = unlimited (the limitFor() convention) - no monthly ceiling to check.
+    if ($spendCapMonthly !== -1 && ($spentThisMonth + $qty) > $spendCapMonthly) {
+        return ['allowed' => false, 'reason' => 'spend_cap_exceeded'];
+    }
+
+    return ['allowed' => true, 'reason' => null];
+}
+
+// ------------------------------------------------------------------------
+// 📝 creditDenialMessage() - PURE reason-code -> human message mapping
+// ------------------------------------------------------------------------
+
+/**
+ * 📝 Map an `evaluateCreditSpend()`/`consumeCreditsOr402()` denial reason to
+ * a human-readable message.
+ *
+ * @param string $reason   One of evaluateCreditSpend()'s reason codes, or
+ *                          'not_configured'/'service_error' for
+ *                          consumeCreditsOr402()'s own gate failures.
+ * @param string $meterKey The meter key the denial concerns (named in the message).
+ *
+ * @return string A human-readable denial message.
+ */
+function creditDenialMessage(string $reason, string $meterKey): string
+{
+    switch ($reason) {
+        case 'invalid_quantity':
+            return 'The requested credit quantity is invalid.';
+
+        case 'not_permitted':
+            return 'Pay-as-you-go credits ("' . $meterKey . '") are not available on your current plan.';
+
+        case 'insufficient_balance':
+            return 'Insufficient credit balance for "' . $meterKey . '".';
+
+        case 'spend_cap_exceeded':
+            return 'This would exceed your monthly credit spend cap for "' . $meterKey . '".';
+
+        case 'service_error':
+            return 'The credit service encountered an error. Please try again.';
+
+        default:
+            return 'Credit consumption denied.';
+    }
+}
+
+// ------------------------------------------------------------------------
+// 🔒 acquireCreditLock() / releaseCreditLock() - Per-subject-per-meter
+//    MySQL advisory lock (mirrors SECURITY.md F-023's pattern)
+// ------------------------------------------------------------------------
+
+/**
+ * 🔒 Acquire the advisory lock guarding one subject+meterKey's credit
+ * consumption critical section.
+ *
+ * Identical mechanics to `fn_api_qrcodes.php`'s `acquireSaveLimitLock()`
+ * (SECURITY.md F-023) - see that function's docblock for the full
+ * phantom-row/TOCTOU rationale, which applies unchanged here.
+ * `GET_LOCK()`/`RELEASE_LOCK()` are SESSION-scoped, and `dbQuery()` ->
+ * `getDB()` returns the same cached `mysqli` connection for the lifetime of
+ * one PHP request, so the lock acquired here is guaranteed to be released by
+ * `releaseCreditLock()` on the SAME connection later in the SAME request.
+ *
+ * @param string $lockKey The full lock name (CUERCODE_CREDIT_LOCK_NAME_PREFIX + a hash).
+ *
+ * @return bool True if acquired within CUERCODE_CREDIT_LOCK_TIMEOUT_SECONDS;
+ *              false on timeout or any DB error - FAIL SAFE: the caller must
+ *              NOT proceed unserialised when this returns false.
+ *
+ * @see https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_get-lock
+ */
+function acquireCreditLock(string $lockKey): bool
+{
+    if (!function_exists('dbQuery')) {
+        return false;
+    }
+
+    try {
+        $lockStmt = dbQuery(
+            'SELECT GET_LOCK(?, ?) AS `lockResult`',
+            'si',
+            [$lockKey, CUERCODE_CREDIT_LOCK_TIMEOUT_SECONDS]
+        );
+        $lockRow = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Credit advisory lock acquisition failed', 'lockKey: ' . $lockKey . ' | ' . $e->getMessage());
+        }
+        return false;
+    }
+
+    // 📌 GET_LOCK() returns 1 (acquired), 0 (timeout), or NULL (error) -
+    // ANYTHING other than a genuine 1 is treated as "not acquired."
+    return $lockRow !== null && isset($lockRow['lockResult']) && (int) $lockRow['lockResult'] === 1;
+}
+
+/**
+ * 🔓 Release the advisory lock acquired by acquireCreditLock().
+ *
+ * Best-effort by design, exactly like `releaseSaveLimitLock()` - a failure to
+ * release is logged but never thrown, and the lock is connection-scoped, so
+ * MySQL releases it automatically at the end of this PHP request regardless.
+ *
+ * @param string $lockKey The SAME lock name passed to acquireCreditLock().
+ *
+ * @return void
+ */
+function releaseCreditLock(string $lockKey): void
+{
+    if (!function_exists('dbQuery')) {
+        return;
+    }
+
+    try {
+        $releaseStmt = dbQuery('SELECT RELEASE_LOCK(?) AS `releaseResult`', 's', [$lockKey]);
+        $releaseStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('warning', 'Credit advisory lock release failed', 'lockKey: ' . $lockKey . ' | ' . $e->getMessage());
+        }
+    }
+}
+
+// ------------------------------------------------------------------------
+// 💸 consumeCreditsOr402() - Check + atomically consume PAYG credits
+// ------------------------------------------------------------------------
+
+/**
+ * 💸 Attempt to consume `$qty` PAYG credits for a subject+meterKey, or deny.
+ *
+ * Mirrors `requireFeatureOr402()`'s contract exactly: returns `null` when the
+ * consumption SUCCEEDED (a ledger row was written), or a structured denial
+ * array when it did not - the caller decides how to surface that (an
+ * `errorResponse()` call in an API handler, or a unit-test assertion on the
+ * returned shape directly).
+ *
+ * FAIL-CLOSED / NO-OP at every gate, in order:
+ *   1. Malformed request shape (empty meterKey, qty <= 0, an unrecognised
+ *      subjectType, or subjectId <= 0)      -> denied, CREDIT_INVALID_REQUEST.
+ *   2. `billing_payg_enabled` = 0 (the
+ *      seeded default - kill-switch off)     -> denied, CREDIT_PAYG_DISABLED.
+ *   3. `dbQuery()` unavailable               -> denied, CREDIT_UNAVAILABLE.
+ *   4. The advisory lock cannot be acquired
+ *      (another consumption call for this
+ *      SAME subject+meterKey is mid-flight)  -> denied, CREDIT_LOCK_BUSY (429).
+ *   5. `evaluateCreditSpend()`'s pure decision (not_permitted /
+ *      insufficient_balance / spend_cap_exceeded) -> denied, matching errorCode.
+ * Only once ALL five gates pass does this function INSERT the negative-delta
+ * ledger row (Table 26 tblCreditLedger) and return null.
+ *
+ * Concurrency posture - identical TOCTOU closure to SECURITY.md F-023: the
+ * balance/spend-cap CHECK and the ledger INSERT happen inside the SAME
+ * `acquireCreditLock()`/`releaseCreditLock()`-guarded critical section, so N
+ * concurrent consumption calls for the SAME subject+meterKey cannot each read
+ * a stale pre-consumption balance and all independently decide they can
+ * afford `$qty`.
+ *
+ * @param string   $meterKey      The credit meter to consume (e.g. 'qr_generations').
+ * @param int      $qty           How many units to consume (must be > 0).
+ * @param string   $subjectType   Either 'user' or 'org'.
+ * @param int      $subjectId     The subject's userID or orgID.
+ * @param string   $reason        Free-text ledger audit reason (default 'consume').
+ * @param int|null $refPurchaseID Optional FK tblOneOffPurchases (NULL for a
+ *                                 plain consumption row).
+ * @param int|null $refQrID       Optional FK tblQRCodes - the QR-related act
+ *                                 this consumption paid for (NULL if not applicable).
+ *
+ * @return array|null Null when the consumption succeeded. Otherwise:
+ *   [
+ *       'httpCode'   => int,     // 402 (denied) or 429 (lock busy, retry)
+ *       'errorCode'  => string,  // e.g. 'CREDIT_INSUFFICIENT_BALANCE'
+ *       'message'    => string,
+ *       'meterKey'   => string,
+ *       'upgradeUrl' => string,  // present on every denial except the
+ *                                 // request-shape/lock-busy/service-error ones
+ *   ]
+ */
+function consumeCreditsOr402(
+    string $meterKey,
+    int $qty,
+    string $subjectType,
+    int $subjectId,
+    string $reason = 'consume',
+    ?int $refPurchaseID = null,
+    ?int $refQrID = null
+): ?array {
+    // 🧹 Gate 1: request-shape validation.
+    if ($meterKey === '' || $qty <= 0 || !in_array($subjectType, ['user', 'org'], true) || $subjectId <= 0) {
+        return [
+            'httpCode'  => 402,
+            'errorCode' => 'CREDIT_INVALID_REQUEST',
+            'message'   => 'Invalid credit consumption request.',
+            'meterKey'  => $meterKey,
+        ];
+    }
+
+    // 🚦 Gate 2: master kill-switch - PAYG stays entirely inert until an
+    // admin turns it on, regardless of any rows already in tblCreditLedger.
+    if (!function_exists('getConfig') || !((bool) getConfig('billing_payg_enabled', false))) {
+        return [
+            'httpCode'   => 402,
+            'errorCode'  => 'CREDIT_PAYG_DISABLED',
+            'message'    => 'Pay-as-you-go credits are not available.',
+            'meterKey'   => $meterKey,
+            'upgradeUrl' => resolveUpgradeUrl(),
+        ];
+    }
+
+    // 🚦 Gate 3: database availability.
+    if (!function_exists('dbQuery')) {
+        return [
+            'httpCode'  => 402,
+            'errorCode' => 'CREDIT_UNAVAILABLE',
+            'message'   => 'The credit service is temporarily unavailable.',
+            'meterKey'  => $meterKey,
+        ];
+    }
+
+    // 🔢 Resolve the plan-driven monthly spend cap BEFORE acquiring the lock
+    // - a read-only, already-cached-by-limitFor() lookup, no need to hold the
+    // lock for it.
+    $spendCapMonthly = resolveCreditLimitForSubject('credit_spend_cap_monthly', $subjectType, $subjectId);
+
+    // 🔒 Gate 4: per-subject-per-meter advisory lock (SECURITY.md F-023 pattern).
+    $lockKey      = CUERCODE_CREDIT_LOCK_NAME_PREFIX . md5($subjectType . ':' . $subjectId . ':' . $meterKey);
+    $lockAcquired = acquireCreditLock($lockKey);
+
+    if (!$lockAcquired) {
+        return [
+            'httpCode'  => 429,
+            'errorCode' => 'CREDIT_LOCK_BUSY',
+            'message'   => 'The credit service is busy processing another request for this account. Please try again shortly.',
+            'meterKey'  => $meterKey,
+        ];
+    }
+
+    // 📌 Populated only inside the try, consumed only after the lock is
+    // released in `finally` - mirrors fn_api_qrcodes.php's handleSaveQRCode()
+    // $outcome pattern (SECURITY.md F-023).
+    $denialReason = null;
+
+    try {
+        $currentBalance = creditBalanceFor($subjectType, $subjectId, $meterKey);
+        $spentThisMonth = creditSpentThisMonth($subjectType, $subjectId, $meterKey);
+
+        $decision = evaluateCreditSpend($qty, $currentBalance, $spendCapMonthly, $spentThisMonth);
+
+        if (!$decision['allowed']) {
+            $denialReason = $decision['reason'];
+        } else {
+            // ✍️ Append-only: INSERT a negative-delta consumption row, NEVER
+            // an UPDATE/DELETE against an existing row (install.sql Table 26).
+            if ($subjectType === 'user') {
+                $insertStmt = dbQuery(
+                    'INSERT INTO `tblCreditLedger` (`userID`, `meterKey`, `delta`, `reason`, `refPurchaseID`, `refQrID`) '
+                    . 'VALUES (?, ?, ?, ?, ?, ?)',
+                    'isisii',
+                    [$subjectId, $meterKey, -$qty, $reason, $refPurchaseID, $refQrID]
+                );
+            } else {
+                $insertStmt = dbQuery(
+                    'INSERT INTO `tblCreditLedger` (`orgID`, `meterKey`, `delta`, `reason`, `refPurchaseID`, `refQrID`) '
+                    . 'VALUES (?, ?, ?, ?, ?, ?)',
+                    'isisii',
+                    [$subjectId, $meterKey, -$qty, $reason, $refPurchaseID, $refQrID]
+                );
+            }
+            $insertStmt->close();
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError(
+                'error',
+                'Credit consumption failed',
+                $subjectType . 'ID: ' . $subjectId . ' | meterKey: ' . $meterKey . ' | ' . $e->getMessage()
+            );
+        }
+        $denialReason = 'service_error';
+    } finally {
+        releaseCreditLock($lockKey);
+    }
+
+    if ($denialReason === null) {
+        // ✅ Consumed successfully.
+        return null;
+    }
+
+    // 📌 Fully LITERAL 'errorCode' => 'X' per denial reason - deliberately
+    // NOT built via a string-concatenation/strtoupper() prefix trick.
+    // SECURITY.md/#58's error-code catalogue drift guard
+    // (tests/test_error_catalogue.php) statically scans fn_features.php for
+    // the EXACT `'errorCode' => 'LITERAL_CODE'` shape to keep openapi.json's
+    // ErrorResponse.x-error-codes catalogue honest - a concatenated value is
+    // invisible to (and actively confuses) that scanner, so every code this
+    // function can return is spelled out here as its own complete literal.
+    return match ($denialReason) {
+        'not_permitted' => [
+            'httpCode'   => 402,
+            'errorCode'  => 'CREDIT_NOT_PERMITTED',
+            'message'    => creditDenialMessage($denialReason, $meterKey),
+            'meterKey'   => $meterKey,
+            'upgradeUrl' => resolveUpgradeUrl(),
+        ],
+        'insufficient_balance' => [
+            'httpCode'   => 402,
+            'errorCode'  => 'CREDIT_INSUFFICIENT_BALANCE',
+            'message'    => creditDenialMessage($denialReason, $meterKey),
+            'meterKey'   => $meterKey,
+            'upgradeUrl' => resolveUpgradeUrl(),
+        ],
+        'spend_cap_exceeded' => [
+            'httpCode'   => 402,
+            'errorCode'  => 'CREDIT_SPEND_CAP_EXCEEDED',
+            'message'    => creditDenialMessage($denialReason, $meterKey),
+            'meterKey'   => $meterKey,
+            'upgradeUrl' => resolveUpgradeUrl(),
+        ],
+        // 📌 Covers 'service_error' (the catch{} branch) AND, defensively,
+        // any future evaluateCreditSpend() reason this switch does not yet
+        // know about - never an uncaught/unmapped denial reason.
+        default => [
+            'httpCode'   => 402,
+            'errorCode'  => 'CREDIT_SERVICE_ERROR',
+            'message'    => creditDenialMessage('service_error', $meterKey),
+            'meterKey'   => $meterKey,
+            'upgradeUrl' => resolveUpgradeUrl(),
+        ],
+    };
+}
