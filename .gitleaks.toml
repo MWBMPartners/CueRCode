@@ -1,0 +1,56 @@
+# =============================================================================
+# 🔐 CueRCode - gitleaks configuration
+# =============================================================================
+# Extends gitleaks' default ruleset and allowlists a small, reviewed set of
+# FALSE POSITIVES — documentation prose, developer-portal example `curl`
+# commands, OpenAPI description text, docblock example tokens, and a test
+# fixture. None are real credentials: real secrets live only in the gitignored
+# web/**/_auth_keys/ tree (never committed) and encrypted in the database.
+#
+# Every allowlisted location below was individually verified during the
+# 2026-07-22 security-CI rollout (issue #64). Keep this list tight — the goal
+# is a clean baseline so gitleaks can run as a BLOCKING check that catches a
+# genuinely leaked secret.
+#
+# @see https://github.com/gitleaks/gitleaks#configuration
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+title = "CueRCode gitleaks configuration"
+
+[extend]
+# Start from gitleaks' built-in rules, then narrow with the allowlists below.
+useDefault = true
+
+# -----------------------------------------------------------------------------
+# 1) Documentation, developer-portal API-usage examples, OpenAPI spec, and the
+#    test bootstrap — example/placeholder values only.
+# -----------------------------------------------------------------------------
+[[allowlists]]
+description = "Docs, dev-portal examples, OpenAPI spec, test fixtures (no real secrets)"
+targets = ["path"]
+paths = [
+  '''(^|/)CHANGELOG\.md$''',
+  '''(^|/)CHANGELOG_v[0-9].*\.md$''',
+  '''(^|/)LAUNCH_PREP_VERIFICATION\.md$''',
+  '''(^|/)VERIFICATION\.md$''',
+  '''(^|/)PROJECT\.md$''',
+  '''(^|/)PROJECT_ROADMAP\.md$''',
+  '''(^|/)DEV_NOTES\.md$''',
+  '''(^|/)SECURITY\.md$''',
+  '''public_html/api/v1/openapi\.json$''',
+  '''public_html/developers/''',
+  '''(^|/)tests/bootstrap\.php$''',
+]
+
+# -----------------------------------------------------------------------------
+# 2) Example tokens shown inside code-comment docblocks of real source files
+#    (matched on the whole line so the surrounding source is still scanned).
+# -----------------------------------------------------------------------------
+[[allowlists]]
+description = "Docblock example tokens in fn_csrf.php / fn_config.php"
+regexTarget = "line"
+regexes = [
+  '''\$token is something like''',
+  '''setConfig\(\s*'third_party_api_key'\s*,''',
+]

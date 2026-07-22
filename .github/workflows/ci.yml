@@ -108,13 +108,14 @@ jobs:
         run: php tests/run.php
 
   # ---------------------------------------------------------------------------
-  # 🔐 Secret scan (gitleaks CLI) — informational until a clean baseline is
-  #     confirmed on the runner, then flip to a required, blocking check.
+  # 🔐 Secret scan (gitleaks CLI) — BLOCKING. The baseline is clean under
+  #     .gitleaks.toml (which allowlists reviewed false positives: docs prose,
+  #     dev-portal example curl commands, OpenAPI text, docblock example tokens,
+  #     the test fixture). A genuinely leaked secret will now fail the build.
   # ---------------------------------------------------------------------------
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -129,4 +130,4 @@ jobs:
           echo "gitleaks version: ${VER}"
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
-          /tmp/gitleaks detect --source . --redact --no-banner --exit-code 1
+          /tmp/gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --exit-code 1
