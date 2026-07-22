@@ -1,0 +1,101 @@
+# =============================================================================
+# 🤖 CueRCode - Dependabot configuration (multi-branch)
+# =============================================================================
+# Keeps dependencies patched across our three-tier branch model
+# (alpha → beta → main) instead of only the default branch.
+#
+# ⚠️ IMPORTANT — how Dependabot reads this file:
+#   Dependabot ONLY loads `.github/dependabot.yml` from the repository's
+#   DEFAULT branch (`main`). A copy on `alpha`/`beta` alone is ignored.
+#   To open update PRs against non-default branches we therefore declare
+#   one update block per branch using `target-branch:`. This whole file
+#   must live on `main` to take effect.
+#
+# 📦 Ecosystem coverage:
+#   - github-actions: fully covered (workflow files are always tracked).
+#   - Vendored PHP libs (chillerlan/php-qrcode, php-settings-container,
+#     setasign/fpdf) and CDN-fallback JS libs (Bootstrap/FontAwesome/jQuery)
+#     are gitignored + manually vendored (no committed manifest), so
+#     Dependabot cannot see them natively. Closing that gap is an explicit
+#     owner decision tracked in issue #64 (metadata-only composer.json/
+#     package.json vs. a custom scheduled version-check Action). Until then
+#     those libraries are NOT covered here.
+#
+# @see https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # 🟢 GitHub Actions — main (production / default branch)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "security"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # 🧪 GitHub Actions — alpha (leading dev/testing branch)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "alpha"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "security"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # 🧫 GitHub Actions — beta (pre-production testing branch)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "beta"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "security"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
