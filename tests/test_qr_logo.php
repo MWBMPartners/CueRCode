@@ -629,16 +629,24 @@ if ($fixtureMkdirOk) {
             'loadLogoImage() returns null (NON-SILENT - a logged warning fires, not a broken image) for an SVG with no PNG twin and no Imagick extension (#65 fix)'
         );
     } else {
-        // 📌 A future/different environment WITH imagick loaded would take
-        //    the rasterisation branch instead - still a successful, valid
-        //    GdImage, never a broken image either way. (Not asserted on
-        //    pixel content here - that is Imagick's own well-tested
-        //    behaviour, not this fix's responsibility - only that it
-        //    degrades to a real, usable GdImage rather than anything worse.)
+        // 📌 Imagick IS loaded — but whether it can actually rasterise SVG
+        //    depends on the ImageMagick build + policy.xml. The SVG coder is
+        //    DISABLED by default on many distros (incl. GitHub's runners, for
+        //    security), so the branch legitimately yields EITHER a valid
+        //    GdImage (SVG supported) OR a NON-SILENT null (SVG blocked) — but
+        //    never a broken image, a bare false, or a fatal. Accept both real
+        //    outcomes and forbid anything else. (We deliberately do NOT assert
+        //    successful rasterisation, because a hardened Imagick policy makes
+        //    that environment-dependent — the #65 contract is only that the
+        //    logo path degrades gracefully, never silently or destructively.)
+        $imagickLogoResult = loadLogoImage($noTwinSvgPath);
         assertTrue(
-            loadLogoImage($noTwinSvgPath) instanceof \GdImage,
-            'loadLogoImage() rasterises via Imagick when the extension IS loaded and no PNG twin exists (this environment has imagick - #65 fix, Imagick branch)'
+            ($imagickLogoResult instanceof \GdImage) || ($imagickLogoResult === null),
+            'loadLogoImage() with Imagick loaded returns a valid GdImage (SVG supported) OR a NON-SILENT null (SVG blocked by build/policy) — never a broken image (#65 fix, Imagick branch)'
         );
+        if ($imagickLogoResult instanceof \GdImage) {
+            imagedestroy($imagickLogoResult);
+        }
     }
 
     // --------------------------------------------------------------------
