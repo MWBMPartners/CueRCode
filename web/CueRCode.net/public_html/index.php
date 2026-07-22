@@ -104,6 +104,58 @@ try {
 }
 
 // ==============================================================================
+// 🙂 Load the Emoji Centre-Icon Index (Issue #67)
+// ==============================================================================
+// Filesystem-indexed, NOT database-backed (see tools/emoji_index.php's own
+// doc block for the full rationale) - a small, curated STARTER set (~400
+// emoji) vendored under public_html/assets/img/emoji/. Read directly rather
+// than via an internal HTTP round-trip, mirroring how $predefinedLogos above
+// is fetched once, server-side, for this same page render.
+// @see https://www.php.net/manual/en/function.json-decode.php
+// ==============================================================================
+
+$emojiIndex  = [];
+$emojiGroups = [];
+
+$emojiIndexPath = CUERCODE_SITE_ROOT
+    . 'public_html' . DIRECTORY_SEPARATOR
+    . 'assets' . DIRECTORY_SEPARATOR
+    . 'img' . DIRECTORY_SEPARATOR
+    . 'emoji' . DIRECTORY_SEPARATOR
+    . 'emoji-index.json';
+
+if (is_file($emojiIndexPath)) {
+    try {
+        $emojiIndexRaw = file_get_contents($emojiIndexPath);
+
+        if ($emojiIndexRaw !== false) {
+            $emojiIndexData = json_decode($emojiIndexRaw, true);
+
+            if (is_array($emojiIndexData)
+                && isset($emojiIndexData['emoji'])
+                && is_array($emojiIndexData['emoji'])
+            ) {
+                $emojiIndex = $emojiIndexData['emoji'];
+            }
+
+            if (is_array($emojiIndexData)
+                && isset($emojiIndexData['groups'])
+                && is_array($emojiIndexData['groups'])
+            ) {
+                $emojiGroups = $emojiIndexData['groups'];
+            }
+        }
+    } catch (\Throwable $e) {
+        // ⚠️ Failed to load/parse the emoji index - fail-soft: the picker
+        //    simply renders empty (Logo tab still fully usable via upload
+        //    or a predefined logo), never a fatal page error.
+        if (function_exists('logError')) {
+            logError('warning', 'Failed to load emoji index', $e->getMessage());
+        }
+    }
+}
+
+// ==============================================================================
 // ⚙️ Load Default Settings
 // ==============================================================================
 
@@ -750,6 +802,96 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </button>
                                         <?php } ?>
                                     </div>
+
+                                    <!-- ========================================
+                                         🙂 Emoji Centre-Icon Picker (Issue #67)
+                                         A native, vector-first emoji picker built
+                                         from the curated Twemoji starter set
+                                         (public_html/assets/img/emoji/). Shares
+                                         the SAME #opt-logo hidden input as the
+                                         predefined logo grid above, via the
+                                         'emoji:<codepoint-seq>' discriminator
+                                         getLogoPath() resolves server-side.
+                                         ======================================== -->
+                                    <hr>
+                                    <span class="form-label d-block fw-semibold mb-2" id="emoji-picker-label">
+                                        <i class="fa-solid fa-face-smile me-1" aria-hidden="true"></i> Or Pick an Emoji
+                                    </span>
+
+                                    <!-- ⛔ No-JS fallback: every emoji button below is a REAL, working
+                                         button even without JavaScript (a standard form POST submits the
+                                         page-load value of #opt-logo) - search/category filtering is the
+                                         only JS-enhanced convenience, so this note simply explains that. -->
+                                    <noscript>
+                                        <div class="alert alert-info py-2 px-3 small" role="note">
+                                            <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
+                                            Search and category filtering need JavaScript. Every emoji
+                                            below still works - scroll to find one, then submit the form.
+                                        </div>
+                                    </noscript>
+
+                                    <?php if (count($emojiIndex) > 0) { ?>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-sm-7">
+                                            <label for="emoji-search" class="visually-hidden">Search emoji by name or keyword</label>
+                                            <input type="search" class="form-control form-control-sm" id="emoji-search"
+                                                   placeholder="Search emoji&hellip;" aria-describedby="emoji-search-help"
+                                                   autocomplete="off">
+                                        </div>
+                                        <div class="col-sm-5">
+                                            <label for="emoji-category" class="visually-hidden">Filter by emoji category</label>
+                                            <select class="form-select form-select-sm" id="emoji-category">
+                                                <option value="">All categories</option>
+                                                <?php foreach ($emojiGroups as $emojiGroup) { ?>
+                                                <option value="<?php echo htmlspecialchars($emojiGroup, ENT_QUOTES, 'UTF-8'); ?>">
+                                                    <?php echo htmlspecialchars($emojiGroup, ENT_QUOTES, 'UTF-8'); ?>
+                                                </option>
+                                                <?php } ?>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div id="emoji-search-help" class="form-text small mb-2">
+                                        Type a name or keyword, e.g. &ldquo;phone&rdquo; or &ldquo;heart&rdquo;.
+                                    </div>
+                                    <div id="emoji-no-results" class="text-body-secondary small mb-2 d-none" role="status" aria-live="polite">
+                                        No emoji match your search.
+                                    </div>
+
+                                    <!-- Emoji Grid (keyboard-accessible: native <button> elements, Tab/Enter/Space work with no extra script) -->
+                                    <div class="logo-grid emoji-grid" id="emoji-logo-grid" role="group" aria-labelledby="emoji-picker-label">
+                                        <?php foreach ($emojiIndex as $emojiEntry) {
+                                            $emojiSeq      = isset($emojiEntry['seq']) ? (string) $emojiEntry['seq'] : '';
+                                            $emojiName     = isset($emojiEntry['name']) ? (string) $emojiEntry['name'] : $emojiSeq;
+                                            $emojiGroupVal = isset($emojiEntry['group']) ? (string) $emojiEntry['group'] : '';
+                                            $emojiKeywords = isset($emojiEntry['keywords']) && is_array($emojiEntry['keywords'])
+                                                ? implode(' ', $emojiEntry['keywords'])
+                                                : '';
+                                            if ($emojiSeq === '') {
+                                                continue;
+                                            }
+                                            // 📌 Search haystack: name + keywords, lowercased once server-side.
+                                            $emojiSearchText = strtolower($emojiName . ' ' . $emojiKeywords);
+                                        ?>
+                                        <button type="button" class="logo-btn emoji-btn"
+                                                data-logo="emoji:<?php echo htmlspecialchars($emojiSeq, ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-group="<?php echo htmlspecialchars($emojiGroupVal, ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-search="<?php echo htmlspecialchars($emojiSearchText, ENT_QUOTES, 'UTF-8'); ?>"
+                                                title="<?php echo htmlspecialchars($emojiName, ENT_QUOTES, 'UTF-8'); ?>"
+                                                aria-pressed="false">
+                                            <img src="/assets/img/emoji/<?php echo htmlspecialchars($emojiSeq, ENT_QUOTES, 'UTF-8'); ?>.svg"
+                                                 alt="<?php echo htmlspecialchars($emojiName, ENT_QUOTES, 'UTF-8'); ?>"
+                                                 loading="lazy" width="28" height="28">
+                                        </button>
+                                        <?php } ?>
+                                    </div>
+                                    <p class="form-text small mt-2">
+                                        Emoji graphics by
+                                        <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noopener noreferrer">Twemoji</a>,
+                                        licensed under
+                                        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC-BY&nbsp;4.0</a>.
+                                    </p>
+                                    <?php } ?>
+
                                     <input type="hidden" name="logo" id="opt-logo" value="">
                                 </div>
 

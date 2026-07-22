@@ -55,6 +55,7 @@ These instructions MUST be followed for EVERY prompt/action:
 - Bootstrap 5.3.3, FontAwesome 6.5.1, jQuery 3.7.1
 - PHP: chillerlan/php-qrcode v5.0.5, php-settings-container v3.2.1, FPDF v1.86
 - PHP: tecnickcom/tc-lib-barcode v2.12.0 + tc-lib-color v2.13.1 (non-QR 1D/2D barcode generation, #69) - LGPL-3.0-or-later; PDF417's numeric-compaction encode mode requires the `bcmath` PHP extension (verify present on the production host)
+- Assets: Twemoji (jdecked/twemoji) v17.0.3 (emoji centre-icon picker, #67) - CC-BY-4.0, attribution REQUIRED (`/attributions` page, footer-linked); curated ~400-emoji starter set committed under `public_html/assets/img/emoji/`, NOT gitignored (unlike the QR/barcode PHP libraries above)
 - Graphics: SVG-first with PNG/APNG fallback
 - No Composer dependency - all PHP libraries manually downloaded/hosted
 

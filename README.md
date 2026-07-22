@@ -18,6 +18,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 - 📏 **Non-QR barcodes** (#69): `POST /api/v1/barcode` generates 11 additional 1D/2D symbologies - Code 128, Code 39, EAN-13, EAN-8, UPC-A, UPC-E, ITF, Codabar, Data Matrix, PDF417, Aztec Code - with strict server-side check-digit/charset validation
 - 🎨 **7 output formats**: PNG, JPG, GIF, SVG, WEBP, PDF, JPEG XL
 - 🖌️ **Full customisation**: colours, patterns, marker shapes, centre logos, frames with labels, gradients, transparency
+- 🙂 **Native emoji centre-icons** (#67): a searchable, categorised picker offering ~400 curated Twemoji (CC-BY-4.0) emoji as a QR-centre logo source (`logo: "emoji:1f600"`), alongside file-upload and predefined-brand logos
 - 🔌 **RESTful API**: JSON and XML responses, API key authentication (self-service key create/rotate/revoke + per-key scope enforcement), rate limiting, Swagger/OpenAPI documentation
 - 📱 **Responsive Web UI**: Bootstrap 5, dark/light mode, AJAX live preview, WCAG accessibility
 - 💷 **Public pricing page** (`/pricing/`): a data-driven plan-comparison grid sourced entirely from `tblSubscriptionPlans` - no account needed to generate, free-tier registration, Pro/Business tiers shown ahead of checkout (#56)
@@ -30,6 +31,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 | 🗄️ Database | MySQL via MySQLi (prepared statements only) |
 | 📦 QR Library | [chillerlan/php-qrcode](https://github.com/chillerlan/php-qrcode) v5.x |
 | 📊 Barcode Library | [tecnickcom/tc-lib-barcode](https://github.com/tecnickcom/tc-lib-barcode) v2.12.0 (#69) |
+| 🙂 Emoji Assets | [Twemoji](https://github.com/jdecked/twemoji) v17.0.3, CC-BY-4.0 (#67) |
 | 🎨 Frontend | HTML5, CSS3, Bootstrap 5.3, FontAwesome, jQuery |
 | 📖 API Docs | Swagger/OpenAPI 3.0 |
 
@@ -173,6 +175,11 @@ This project is maintained by MWBM Partners Ltd. See [DEV_NOTES.md](DEV_NOTES.md
 ## 📄 License
 
 Copyright &copy; 2026 MWBM Partners Ltd. All rights reserved.
+
+Third-party assets and libraries are used under their own licences - see the
+[`/attributions`](web/CueRCode.net/public_html/attributions/index.php) page
+(also linked from every page's footer) for the full list, including the
+Twemoji (CC-BY-4.0) emoji graphics used by the centre-icon picker.
 
 ---
 

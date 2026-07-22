@@ -1,0 +1,4032 @@
+{
+    "generatedAt": "2026-07-22T21:37:28Z",
+    "source": "tools/emoji_curated_map.php (fallback - emoji-test.txt unreachable)",
+    "assetSet": "Twemoji (jdecked/twemoji), CC-BY-4.0",
+    "count": 400,
+    "groups": [
+        "Smileys & Emotion",
+        "People & Body",
+        "Animals & Nature",
+        "Food & Drink",
+        "Travel & Places",
+        "Activities",
+        "Objects",
+        "Symbols",
+        "Flags"
+    ],
+    "emoji": [
+        {
+            "seq": "1f47d",
+            "name": "alien",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "alien",
+                "ufo",
+                "space"
+            ]
+        },
+        {
+            "seq": "1f601",
+            "name": "beaming face with smiling eyes",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "smile",
+                "happy",
+                "grin",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f5a4",
+            "name": "black heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "black"
+            ]
+        },
+        {
+            "seq": "1f499",
+            "name": "blue heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "blue"
+            ]
+        },
+        {
+            "seq": "1f494",
+            "name": "broken heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "heartbreak",
+                "sad",
+                "breakup"
+            ]
+        },
+        {
+            "seq": "1f921",
+            "name": "clown face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "clown",
+                "joke",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f615",
+            "name": "confused face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "confused",
+                "unsure",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f622",
+            "name": "crying face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "cry",
+                "sad",
+                "tear",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f635",
+            "name": "dizzy face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "dizzy",
+                "confused",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f92f",
+            "name": "exploding head",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "mind",
+                "blown",
+                "shock",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f618",
+            "name": "face blowing a kiss",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "kiss",
+                "love",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f60b",
+            "name": "face savoring food",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "yum",
+                "tasty",
+                "food",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f631",
+            "name": "face screaming in fear",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "scream",
+                "shock",
+                "fear",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f637",
+            "name": "face with medical mask",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "sick",
+                "mask",
+                "health",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f644",
+            "name": "face with rolling eyes",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "eyeroll",
+                "annoyed",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f602",
+            "name": "face with tears of joy",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "lol",
+                "laugh",
+                "cry",
+                "funny"
+            ]
+        },
+        {
+            "seq": "1f47b",
+            "name": "ghost",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "ghost",
+                "spooky",
+                "halloween"
+            ]
+        },
+        {
+            "seq": "1f49a",
+            "name": "green heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "green"
+            ]
+        },
+        {
+            "seq": "1f600",
+            "name": "grinning face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "smile",
+                "happy",
+                "grin",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f603",
+            "name": "grinning face with big eyes",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "smile",
+                "happy",
+                "joy",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f604",
+            "name": "grinning face with smiling eyes",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "smile",
+                "happy",
+                "joy",
+                "face",
+                "laugh"
+            ]
+        },
+        {
+            "seq": "1f605",
+            "name": "grinning face with sweat",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "nervous",
+                "relief",
+                "sweat",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f606",
+            "name": "grinning squinting face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "laugh",
+                "happy",
+                "haha",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f497",
+            "name": "growing heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "pulse"
+            ]
+        },
+        {
+            "seq": "1f498",
+            "name": "heart with arrow",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "cupid",
+                "arrow"
+            ]
+        },
+        {
+            "seq": "1f49d",
+            "name": "heart with ribbon",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "gift",
+                "heart"
+            ]
+        },
+        {
+            "seq": "1f917",
+            "name": "hugging face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "hug",
+                "embrace",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f62d",
+            "name": "loudly crying face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "sob",
+                "cry",
+                "sad",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f911",
+            "name": "money-mouth face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "money",
+                "rich",
+                "cash",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f913",
+            "name": "nerd face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "nerd",
+                "geek",
+                "glasses",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f610",
+            "name": "neutral face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "meh",
+                "blank",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f9e1",
+            "name": "orange heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "orange"
+            ]
+        },
+        {
+            "seq": "1f973",
+            "name": "partying face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "party",
+                "celebrate",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f614",
+            "name": "pensive face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "sad",
+                "down",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f621",
+            "name": "pouting face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "angry",
+                "mad",
+                "rage",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f49c",
+            "name": "purple heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "purple"
+            ]
+        },
+        {
+            "seq": "2764",
+            "name": "red heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "red"
+            ]
+        },
+        {
+            "seq": "1f60c",
+            "name": "relieved face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "calm",
+                "content",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f916",
+            "name": "robot",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "robot",
+                "bot",
+                "ai",
+                "tech"
+            ]
+        },
+        {
+            "seq": "1f923",
+            "name": "rolling on the floor laughing",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "lol",
+                "rofl",
+                "laugh",
+                "funny"
+            ]
+        },
+        {
+            "seq": "1f480",
+            "name": "skull",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "skull",
+                "death",
+                "dead"
+            ]
+        },
+        {
+            "seq": "1f634",
+            "name": "sleeping face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "sleep",
+                "zzz",
+                "tired",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f642",
+            "name": "slightly smiling face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "smile",
+                "face",
+                "ok"
+            ]
+        },
+        {
+            "seq": "1f607",
+            "name": "smiling face with halo",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "angel",
+                "innocent",
+                "halo",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f60d",
+            "name": "smiling face with heart-eyes",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "crush",
+                "heart",
+                "eyes",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f608",
+            "name": "smiling face with horns",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "devil",
+                "mischief",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f60a",
+            "name": "smiling face with smiling eyes",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "smile",
+                "happy",
+                "blush",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f60e",
+            "name": "smiling face with sunglasses",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "cool",
+                "sunglasses",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f60f",
+            "name": "smirking face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "smirk",
+                "sly",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f496",
+            "name": "sparkling heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "sparkle"
+            ]
+        },
+        {
+            "seq": "1f929",
+            "name": "star-struck",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "starstruck",
+                "excited",
+                "wow",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f914",
+            "name": "thinking face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "think",
+                "hmm",
+                "ponder",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f495",
+            "name": "two hearts",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "hearts",
+                "pair"
+            ]
+        },
+        {
+            "seq": "1f612",
+            "name": "unamused face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "annoyed",
+                "meh",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f643",
+            "name": "upside-down face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "silly",
+                "face",
+                "sarcasm"
+            ]
+        },
+        {
+            "seq": "1f90d",
+            "name": "white heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "white"
+            ]
+        },
+        {
+            "seq": "1f609",
+            "name": "winking face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "wink",
+                "flirt",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f61c",
+            "name": "winking face with tongue",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "silly",
+                "tongue",
+                "wink",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f61f",
+            "name": "worried face",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "worried",
+                "concerned",
+                "face"
+            ]
+        },
+        {
+            "seq": "1f49b",
+            "name": "yellow heart",
+            "group": "Smileys & Emotion",
+            "keywords": [
+                "love",
+                "heart",
+                "yellow"
+            ]
+        },
+        {
+            "seq": "1f44c",
+            "name": "OK hand",
+            "group": "People & Body",
+            "keywords": [
+                "ok",
+                "perfect",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f447",
+            "name": "backhand index pointing down",
+            "group": "People & Body",
+            "keywords": [
+                "point",
+                "down",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f448",
+            "name": "backhand index pointing left",
+            "group": "People & Body",
+            "keywords": [
+                "point",
+                "left",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f449",
+            "name": "backhand index pointing right",
+            "group": "People & Body",
+            "keywords": [
+                "point",
+                "right",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f446",
+            "name": "backhand index pointing up",
+            "group": "People & Body",
+            "keywords": [
+                "point",
+                "up",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f919",
+            "name": "call me hand",
+            "group": "People & Body",
+            "keywords": [
+                "callme",
+                "shaka",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f44f",
+            "name": "clapping hands",
+            "group": "People & Body",
+            "keywords": [
+                "applause",
+                "clap",
+                "hands"
+            ]
+        },
+        {
+            "seq": "1f91e",
+            "name": "crossed fingers",
+            "group": "People & Body",
+            "keywords": [
+                "luck",
+                "hope",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f440",
+            "name": "eyes",
+            "group": "People & Body",
+            "keywords": [
+                "look",
+                "eyes",
+                "see",
+                "watch"
+            ]
+        },
+        {
+            "seq": "1f4aa",
+            "name": "flexed biceps",
+            "group": "People & Body",
+            "keywords": [
+                "strong",
+                "muscle",
+                "arm"
+            ]
+        },
+        {
+            "seq": "1f64f",
+            "name": "folded hands",
+            "group": "People & Body",
+            "keywords": [
+                "please",
+                "thanks",
+                "pray",
+                "hands"
+            ]
+        },
+        {
+            "seq": "1f91d",
+            "name": "handshake",
+            "group": "People & Body",
+            "keywords": [
+                "deal",
+                "agreement",
+                "shake",
+                "hands"
+            ]
+        },
+        {
+            "seq": "261d",
+            "name": "index pointing up",
+            "group": "People & Body",
+            "keywords": [
+                "point",
+                "up",
+                "hand",
+                "one"
+            ]
+        },
+        {
+            "seq": "1f48b",
+            "name": "kiss mark",
+            "group": "People & Body",
+            "keywords": [
+                "kiss",
+                "lips",
+                "love"
+            ]
+        },
+        {
+            "seq": "1f91f",
+            "name": "love-you gesture",
+            "group": "People & Body",
+            "keywords": [
+                "love",
+                "hand",
+                "sign"
+            ]
+        },
+        {
+            "seq": "1f44a",
+            "name": "oncoming fist",
+            "group": "People & Body",
+            "keywords": [
+                "punch",
+                "bump",
+                "fist",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f90f",
+            "name": "pinching hand",
+            "group": "People & Body",
+            "keywords": [
+                "small",
+                "tiny",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f91a",
+            "name": "raised back of hand",
+            "group": "People & Body",
+            "keywords": [
+                "stop",
+                "hand",
+                "palm"
+            ]
+        },
+        {
+            "seq": "270a",
+            "name": "raised fist",
+            "group": "People & Body",
+            "keywords": [
+                "fist",
+                "power",
+                "hand"
+            ]
+        },
+        {
+            "seq": "270b",
+            "name": "raised hand",
+            "group": "People & Body",
+            "keywords": [
+                "stop",
+                "hand",
+                "high",
+                "five"
+            ]
+        },
+        {
+            "seq": "1f64c",
+            "name": "raising hands",
+            "group": "People & Body",
+            "keywords": [
+                "celebrate",
+                "praise",
+                "hands"
+            ]
+        },
+        {
+            "seq": "1f918",
+            "name": "sign of the horns",
+            "group": "People & Body",
+            "keywords": [
+                "rock",
+                "metal",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f44e",
+            "name": "thumbs down",
+            "group": "People & Body",
+            "keywords": [
+                "dislike",
+                "no",
+                "bad",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f44d",
+            "name": "thumbs up",
+            "group": "People & Body",
+            "keywords": [
+                "like",
+                "approve",
+                "yes",
+                "good",
+                "hand"
+            ]
+        },
+        {
+            "seq": "270c",
+            "name": "victory hand",
+            "group": "People & Body",
+            "keywords": [
+                "peace",
+                "victory",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f596",
+            "name": "vulcan salute",
+            "group": "People & Body",
+            "keywords": [
+                "spock",
+                "startrek",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f44b",
+            "name": "waving hand",
+            "group": "People & Body",
+            "keywords": [
+                "wave",
+                "hello",
+                "bye",
+                "hand"
+            ]
+        },
+        {
+            "seq": "1f43b",
+            "name": "bear",
+            "group": "Animals & Nature",
+            "keywords": [
+                "bear",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f426",
+            "name": "bird",
+            "group": "Animals & Nature",
+            "keywords": [
+                "bird",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f98b",
+            "name": "butterfly",
+            "group": "Animals & Nature",
+            "keywords": [
+                "butterfly",
+                "insect"
+            ]
+        },
+        {
+            "seq": "1f335",
+            "name": "cactus",
+            "group": "Animals & Nature",
+            "keywords": [
+                "cactus",
+                "plant",
+                "desert"
+            ]
+        },
+        {
+            "seq": "1f431",
+            "name": "cat face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "cat",
+                "pet",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f338",
+            "name": "cherry blossom",
+            "group": "Animals & Nature",
+            "keywords": [
+                "flower",
+                "blossom",
+                "spring"
+            ]
+        },
+        {
+            "seq": "1f414",
+            "name": "chicken",
+            "group": "Animals & Nature",
+            "keywords": [
+                "chicken",
+                "bird",
+                "animal"
+            ]
+        },
+        {
+            "seq": "2601",
+            "name": "cloud",
+            "group": "Animals & Nature",
+            "keywords": [
+                "cloud",
+                "weather",
+                "sky"
+            ]
+        },
+        {
+            "seq": "1f42e",
+            "name": "cow face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "cow",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f980",
+            "name": "crab",
+            "group": "Animals & Nature",
+            "keywords": [
+                "crab",
+                "sea",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f319",
+            "name": "crescent moon",
+            "group": "Animals & Nature",
+            "keywords": [
+                "moon",
+                "night",
+                "sky"
+            ]
+        },
+        {
+            "seq": "1f436",
+            "name": "dog face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "dog",
+                "pet",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f42c",
+            "name": "dolphin",
+            "group": "Animals & Nature",
+            "keywords": [
+                "dolphin",
+                "sea",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f986",
+            "name": "duck",
+            "group": "Animals & Nature",
+            "keywords": [
+                "duck",
+                "bird",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f418",
+            "name": "elephant",
+            "group": "Animals & Nature",
+            "keywords": [
+                "elephant",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f332",
+            "name": "evergreen tree",
+            "group": "Animals & Nature",
+            "keywords": [
+                "tree",
+                "pine",
+                "nature"
+            ]
+        },
+        {
+            "seq": "1f340",
+            "name": "four leaf clover",
+            "group": "Animals & Nature",
+            "keywords": [
+                "luck",
+                "clover",
+                "plant"
+            ]
+        },
+        {
+            "seq": "1f98a",
+            "name": "fox",
+            "group": "Animals & Nature",
+            "keywords": [
+                "fox",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f438",
+            "name": "frog",
+            "group": "Animals & Nature",
+            "keywords": [
+                "frog",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f30d",
+            "name": "globe showing Europe-Africa",
+            "group": "Animals & Nature",
+            "keywords": [
+                "earth",
+                "world",
+                "globe",
+                "planet"
+            ]
+        },
+        {
+            "seq": "1f439",
+            "name": "hamster",
+            "group": "Animals & Nature",
+            "keywords": [
+                "hamster",
+                "pet",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f41d",
+            "name": "honeybee",
+            "group": "Animals & Nature",
+            "keywords": [
+                "bee",
+                "insect",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f434",
+            "name": "horse face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "horse",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f428",
+            "name": "koala",
+            "group": "Animals & Nature",
+            "keywords": [
+                "koala",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f981",
+            "name": "lion",
+            "group": "Animals & Nature",
+            "keywords": [
+                "lion",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f435",
+            "name": "monkey face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "monkey",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f42d",
+            "name": "mouse face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "mouse",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f419",
+            "name": "octopus",
+            "group": "Animals & Nature",
+            "keywords": [
+                "octopus",
+                "sea",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f989",
+            "name": "owl",
+            "group": "Animals & Nature",
+            "keywords": [
+                "owl",
+                "bird",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f334",
+            "name": "palm tree",
+            "group": "Animals & Nature",
+            "keywords": [
+                "palm",
+                "tropical",
+                "tree"
+            ]
+        },
+        {
+            "seq": "1f43c",
+            "name": "panda",
+            "group": "Animals & Nature",
+            "keywords": [
+                "panda",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f427",
+            "name": "penguin",
+            "group": "Animals & Nature",
+            "keywords": [
+                "penguin",
+                "bird",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f437",
+            "name": "pig face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "pig",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f430",
+            "name": "rabbit face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "rabbit",
+                "bunny",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f308",
+            "name": "rainbow",
+            "group": "Animals & Nature",
+            "keywords": [
+                "rainbow",
+                "pride",
+                "weather"
+            ]
+        },
+        {
+            "seq": "1f339",
+            "name": "rose",
+            "group": "Animals & Nature",
+            "keywords": [
+                "flower",
+                "rose",
+                "love"
+            ]
+        },
+        {
+            "seq": "2744",
+            "name": "snowflake",
+            "group": "Animals & Nature",
+            "keywords": [
+                "snow",
+                "winter",
+                "weather"
+            ]
+        },
+        {
+            "seq": "1f433",
+            "name": "spouting whale",
+            "group": "Animals & Nature",
+            "keywords": [
+                "whale",
+                "sea",
+                "animal"
+            ]
+        },
+        {
+            "seq": "2600",
+            "name": "sun",
+            "group": "Animals & Nature",
+            "keywords": [
+                "sun",
+                "sunny",
+                "weather"
+            ]
+        },
+        {
+            "seq": "1f33b",
+            "name": "sunflower",
+            "group": "Animals & Nature",
+            "keywords": [
+                "flower",
+                "sunflower",
+                "plant"
+            ]
+        },
+        {
+            "seq": "1f42f",
+            "name": "tiger face",
+            "group": "Animals & Nature",
+            "keywords": [
+                "tiger",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f420",
+            "name": "tropical fish",
+            "group": "Animals & Nature",
+            "keywords": [
+                "fish",
+                "sea",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f337",
+            "name": "tulip",
+            "group": "Animals & Nature",
+            "keywords": [
+                "flower",
+                "tulip",
+                "plant"
+            ]
+        },
+        {
+            "seq": "1f422",
+            "name": "turtle",
+            "group": "Animals & Nature",
+            "keywords": [
+                "turtle",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f984",
+            "name": "unicorn",
+            "group": "Animals & Nature",
+            "keywords": [
+                "unicorn",
+                "fantasy",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f30a",
+            "name": "water wave",
+            "group": "Animals & Nature",
+            "keywords": [
+                "wave",
+                "ocean",
+                "sea",
+                "water"
+            ]
+        },
+        {
+            "seq": "1f43a",
+            "name": "wolf",
+            "group": "Animals & Nature",
+            "keywords": [
+                "wolf",
+                "animal"
+            ]
+        },
+        {
+            "seq": "1f951",
+            "name": "avocado",
+            "group": "Food & Drink",
+            "keywords": [
+                "avocado",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f953",
+            "name": "bacon",
+            "group": "Food & Drink",
+            "keywords": [
+                "bacon",
+                "meat",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f34c",
+            "name": "banana",
+            "group": "Food & Drink",
+            "keywords": [
+                "banana",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f37a",
+            "name": "beer mug",
+            "group": "Food & Drink",
+            "keywords": [
+                "beer",
+                "drink",
+                "bar"
+            ]
+        },
+        {
+            "seq": "1f382",
+            "name": "birthday cake",
+            "group": "Food & Drink",
+            "keywords": [
+                "cake",
+                "birthday",
+                "dessert",
+                "party"
+            ]
+        },
+        {
+            "seq": "1f35e",
+            "name": "bread",
+            "group": "Food & Drink",
+            "keywords": [
+                "bread",
+                "bakery",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f955",
+            "name": "carrot",
+            "group": "Food & Drink",
+            "keywords": [
+                "carrot",
+                "vegetable",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f9c0",
+            "name": "cheese wedge",
+            "group": "Food & Drink",
+            "keywords": [
+                "cheese",
+                "dairy",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f36b",
+            "name": "chocolate bar",
+            "group": "Food & Drink",
+            "keywords": [
+                "chocolate",
+                "candy",
+                "dessert"
+            ]
+        },
+        {
+            "seq": "1f36a",
+            "name": "cookie",
+            "group": "Food & Drink",
+            "keywords": [
+                "cookie",
+                "dessert",
+                "bakery"
+            ]
+        },
+        {
+            "seq": "1f373",
+            "name": "cooking",
+            "group": "Food & Drink",
+            "keywords": [
+                "egg",
+                "fried",
+                "cooking",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f950",
+            "name": "croissant",
+            "group": "Food & Drink",
+            "keywords": [
+                "croissant",
+                "bakery",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f964",
+            "name": "cup with straw",
+            "group": "Food & Drink",
+            "keywords": [
+                "soda",
+                "drink",
+                "cup"
+            ]
+        },
+        {
+            "seq": "1f9c1",
+            "name": "cupcake",
+            "group": "Food & Drink",
+            "keywords": [
+                "cupcake",
+                "dessert",
+                "bakery"
+            ]
+        },
+        {
+            "seq": "1f369",
+            "name": "doughnut",
+            "group": "Food & Drink",
+            "keywords": [
+                "donut",
+                "dessert",
+                "bakery"
+            ]
+        },
+        {
+            "seq": "1f33d",
+            "name": "ear of corn",
+            "group": "Food & Drink",
+            "keywords": [
+                "corn",
+                "vegetable",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f35f",
+            "name": "french fries",
+            "group": "Food & Drink",
+            "keywords": [
+                "fries",
+                "chips",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f347",
+            "name": "grapes",
+            "group": "Food & Drink",
+            "keywords": [
+                "grape",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f34f",
+            "name": "green apple",
+            "group": "Food & Drink",
+            "keywords": [
+                "apple",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f957",
+            "name": "green salad",
+            "group": "Food & Drink",
+            "keywords": [
+                "salad",
+                "healthy",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f354",
+            "name": "hamburger",
+            "group": "Food & Drink",
+            "keywords": [
+                "burger",
+                "fast",
+                "food"
+            ]
+        },
+        {
+            "seq": "2615",
+            "name": "hot beverage",
+            "group": "Food & Drink",
+            "keywords": [
+                "coffee",
+                "tea",
+                "drink"
+            ]
+        },
+        {
+            "seq": "1f32d",
+            "name": "hot dog",
+            "group": "Food & Drink",
+            "keywords": [
+                "hotdog",
+                "fast",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f34b",
+            "name": "lemon",
+            "group": "Food & Drink",
+            "keywords": [
+                "lemon",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f351",
+            "name": "peach",
+            "group": "Food & Drink",
+            "keywords": [
+                "peach",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f34d",
+            "name": "pineapple",
+            "group": "Food & Drink",
+            "keywords": [
+                "pineapple",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f355",
+            "name": "pizza",
+            "group": "Food & Drink",
+            "keywords": [
+                "pizza",
+                "fast",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f37f",
+            "name": "popcorn",
+            "group": "Food & Drink",
+            "keywords": [
+                "popcorn",
+                "movie",
+                "snack"
+            ]
+        },
+        {
+            "seq": "1f34e",
+            "name": "red apple",
+            "group": "Food & Drink",
+            "keywords": [
+                "apple",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f366",
+            "name": "soft ice cream",
+            "group": "Food & Drink",
+            "keywords": [
+                "icecream",
+                "dessert",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f35d",
+            "name": "spaghetti",
+            "group": "Food & Drink",
+            "keywords": [
+                "pasta",
+                "italian",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f353",
+            "name": "strawberry",
+            "group": "Food & Drink",
+            "keywords": [
+                "berry",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f363",
+            "name": "sushi",
+            "group": "Food & Drink",
+            "keywords": [
+                "sushi",
+                "japanese",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f32e",
+            "name": "taco",
+            "group": "Food & Drink",
+            "keywords": [
+                "taco",
+                "mexican",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f34a",
+            "name": "tangerine",
+            "group": "Food & Drink",
+            "keywords": [
+                "orange",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f375",
+            "name": "teacup without handle",
+            "group": "Food & Drink",
+            "keywords": [
+                "tea",
+                "drink"
+            ]
+        },
+        {
+            "seq": "1f379",
+            "name": "tropical drink",
+            "group": "Food & Drink",
+            "keywords": [
+                "cocktail",
+                "drink",
+                "bar"
+            ]
+        },
+        {
+            "seq": "1f349",
+            "name": "watermelon",
+            "group": "Food & Drink",
+            "keywords": [
+                "melon",
+                "fruit",
+                "food"
+            ]
+        },
+        {
+            "seq": "1f377",
+            "name": "wine glass",
+            "group": "Food & Drink",
+            "keywords": [
+                "wine",
+                "drink",
+                "bar"
+            ]
+        },
+        {
+            "seq": "2708",
+            "name": "airplane",
+            "group": "Travel & Places",
+            "keywords": [
+                "plane",
+                "flight",
+                "travel"
+            ]
+        },
+        {
+            "seq": "1f691",
+            "name": "ambulance",
+            "group": "Travel & Places",
+            "keywords": [
+                "ambulance",
+                "emergency",
+                "vehicle"
+            ]
+        },
+        {
+            "seq": "2693",
+            "name": "anchor",
+            "group": "Travel & Places",
+            "keywords": [
+                "anchor",
+                "ship",
+                "boat"
+            ]
+        },
+        {
+            "seq": "1f697",
+            "name": "automobile",
+            "group": "Travel & Places",
+            "keywords": [
+                "car",
+                "vehicle",
+                "drive"
+            ]
+        },
+        {
+            "seq": "1f3e6",
+            "name": "bank",
+            "group": "Travel & Places",
+            "keywords": [
+                "bank",
+                "money",
+                "finance"
+            ]
+        },
+        {
+            "seq": "1f3d6",
+            "name": "beach with umbrella",
+            "group": "Travel & Places",
+            "keywords": [
+                "beach",
+                "vacation",
+                "travel"
+            ]
+        },
+        {
+            "seq": "1f6b2",
+            "name": "bicycle",
+            "group": "Travel & Places",
+            "keywords": [
+                "bike",
+                "cycle",
+                "vehicle"
+            ]
+        },
+        {
+            "seq": "1f68c",
+            "name": "bus",
+            "group": "Travel & Places",
+            "keywords": [
+                "bus",
+                "vehicle",
+                "transport"
+            ]
+        },
+        {
+            "seq": "26ea",
+            "name": "church",
+            "group": "Travel & Places",
+            "keywords": [
+                "church",
+                "religion",
+                "building"
+            ]
+        },
+        {
+            "seq": "1f3d9",
+            "name": "cityscape",
+            "group": "Travel & Places",
+            "keywords": [
+                "city",
+                "skyline",
+                "urban"
+            ]
+        },
+        {
+            "seq": "1f3db",
+            "name": "classical building",
+            "group": "Travel & Places",
+            "keywords": [
+                "building",
+                "museum",
+                "bank"
+            ]
+        },
+        {
+            "seq": "1f9ed",
+            "name": "compass",
+            "group": "Travel & Places",
+            "keywords": [
+                "compass",
+                "navigate",
+                "direction"
+            ]
+        },
+        {
+            "seq": "1f69a",
+            "name": "delivery truck",
+            "group": "Travel & Places",
+            "keywords": [
+                "truck",
+                "delivery",
+                "vehicle"
+            ]
+        },
+        {
+            "seq": "1f3ed",
+            "name": "factory",
+            "group": "Travel & Places",
+            "keywords": [
+                "factory",
+                "industry",
+                "building"
+            ]
+        },
+        {
+            "seq": "1f692",
+            "name": "fire engine",
+            "group": "Travel & Places",
+            "keywords": [
+                "firetruck",
+                "emergency",
+                "vehicle"
+            ]
+        },
+        {
+            "seq": "1f681",
+            "name": "helicopter",
+            "group": "Travel & Places",
+            "keywords": [
+                "helicopter",
+                "flight",
+                "vehicle"
+            ]
+        },
+        {
+            "seq": "1f3e5",
+            "name": "hospital",
+            "group": "Travel & Places",
+            "keywords": [
+                "hospital",
+                "medical",
+                "health"
+            ]
+        },
+        {
+            "seq": "1f3e8",
+            "name": "hotel",
+            "group": "Travel & Places",
+            "keywords": [
+                "hotel",
+                "travel",
+                "stay"
+            ]
+        },
+        {
+            "seq": "1f3e0",
+            "name": "house",
+            "group": "Travel & Places",
+            "keywords": [
+                "home",
+                "house",
+                "building"
+            ]
+        },
+        {
+            "seq": "1f54c",
+            "name": "mosque",
+            "group": "Travel & Places",
+            "keywords": [
+                "mosque",
+                "religion",
+                "building"
+            ]
+        },
+        {
+            "seq": "1f3e2",
+            "name": "office building",
+            "group": "Travel & Places",
+            "keywords": [
+                "office",
+                "building",
+                "work"
+            ]
+        },
+        {
+            "seq": "1f4cc",
+            "name": "pushpin",
+            "group": "Travel & Places",
+            "keywords": [
+                "pin",
+                "location",
+                "marker"
+            ]
+        },
+        {
+            "seq": "1f680",
+            "name": "rocket",
+            "group": "Travel & Places",
+            "keywords": [
+                "rocket",
+                "space",
+                "launch"
+            ]
+        },
+        {
+            "seq": "1f4cd",
+            "name": "round pushpin",
+            "group": "Travel & Places",
+            "keywords": [
+                "location",
+                "pin",
+                "map",
+                "marker",
+                "place"
+            ]
+        },
+        {
+            "seq": "26f5",
+            "name": "sailboat",
+            "group": "Travel & Places",
+            "keywords": [
+                "boat",
+                "sail",
+                "sea"
+            ]
+        },
+        {
+            "seq": "1f3eb",
+            "name": "school",
+            "group": "Travel & Places",
+            "keywords": [
+                "school",
+                "education",
+                "building"
+            ]
+        },
+        {
+            "seq": "1f6a2",
+            "name": "ship",
+            "group": "Travel & Places",
+            "keywords": [
+                "ship",
+                "boat",
+                "sea"
+            ]
+        },
+        {
+            "seq": "1f3d4",
+            "name": "snow-capped mountain",
+            "group": "Travel & Places",
+            "keywords": [
+                "mountain",
+                "nature",
+                "travel"
+            ]
+        },
+        {
+            "seq": "1f3df",
+            "name": "stadium",
+            "group": "Travel & Places",
+            "keywords": [
+                "stadium",
+                "sports",
+                "venue"
+            ]
+        },
+        {
+            "seq": "1f305",
+            "name": "sunrise",
+            "group": "Travel & Places",
+            "keywords": [
+                "sunrise",
+                "morning",
+                "sky"
+            ]
+        },
+        {
+            "seq": "1f695",
+            "name": "taxi",
+            "group": "Travel & Places",
+            "keywords": [
+                "taxi",
+                "cab",
+                "vehicle"
+            ]
+        },
+        {
+            "seq": "1f686",
+            "name": "train",
+            "group": "Travel & Places",
+            "keywords": [
+                "train",
+                "rail",
+                "transport"
+            ]
+        },
+        {
+            "seq": "1f6a6",
+            "name": "vertical traffic light",
+            "group": "Travel & Places",
+            "keywords": [
+                "traffic",
+                "light",
+                "signal"
+            ]
+        },
+        {
+            "seq": "1f30b",
+            "name": "volcano",
+            "group": "Travel & Places",
+            "keywords": [
+                "volcano",
+                "nature",
+                "travel"
+            ]
+        },
+        {
+            "seq": "1f5fa",
+            "name": "world map",
+            "group": "Travel & Places",
+            "keywords": [
+                "map",
+                "travel",
+                "world"
+            ]
+        },
+        {
+            "seq": "1f947",
+            "name": "1st place medal",
+            "group": "Activities",
+            "keywords": [
+                "gold",
+                "medal",
+                "first",
+                "winner"
+            ]
+        },
+        {
+            "seq": "1f3c8",
+            "name": "american football",
+            "group": "Activities",
+            "keywords": [
+                "football",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f3a8",
+            "name": "artist palette",
+            "group": "Activities",
+            "keywords": [
+                "art",
+                "paint",
+                "palette"
+            ]
+        },
+        {
+            "seq": "1f3f8",
+            "name": "badminton",
+            "group": "Activities",
+            "keywords": [
+                "badminton",
+                "sport"
+            ]
+        },
+        {
+            "seq": "26be",
+            "name": "baseball",
+            "group": "Activities",
+            "keywords": [
+                "baseball",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f3c0",
+            "name": "basketball",
+            "group": "Activities",
+            "keywords": [
+                "basketball",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f3b3",
+            "name": "bowling",
+            "group": "Activities",
+            "keywords": [
+                "bowling",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f94a",
+            "name": "boxing glove",
+            "group": "Activities",
+            "keywords": [
+                "boxing",
+                "sport",
+                "fight"
+            ]
+        },
+        {
+            "seq": "1f3aa",
+            "name": "circus tent",
+            "group": "Activities",
+            "keywords": [
+                "circus",
+                "carnival"
+            ]
+        },
+        {
+            "seq": "1f3ac",
+            "name": "clapper board",
+            "group": "Activities",
+            "keywords": [
+                "movie",
+                "film",
+                "director"
+            ]
+        },
+        {
+            "seq": "1f3af",
+            "name": "direct hit",
+            "group": "Activities",
+            "keywords": [
+                "target",
+                "dart",
+                "bullseye",
+                "goal"
+            ]
+        },
+        {
+            "seq": "1f941",
+            "name": "drum",
+            "group": "Activities",
+            "keywords": [
+                "drum",
+                "music",
+                "instrument"
+            ]
+        },
+        {
+            "seq": "1f3a3",
+            "name": "fishing pole",
+            "group": "Activities",
+            "keywords": [
+                "fishing",
+                "hobby"
+            ]
+        },
+        {
+            "seq": "26f3",
+            "name": "flag in hole",
+            "group": "Activities",
+            "keywords": [
+                "golf",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f3b2",
+            "name": "game die",
+            "group": "Activities",
+            "keywords": [
+                "dice",
+                "game"
+            ]
+        },
+        {
+            "seq": "1f3b8",
+            "name": "guitar",
+            "group": "Activities",
+            "keywords": [
+                "guitar",
+                "music",
+                "instrument"
+            ]
+        },
+        {
+            "seq": "1f3a7",
+            "name": "headphone",
+            "group": "Activities",
+            "keywords": [
+                "headphones",
+                "music",
+                "audio"
+            ]
+        },
+        {
+            "seq": "1f3a4",
+            "name": "microphone",
+            "group": "Activities",
+            "keywords": [
+                "mic",
+                "sing",
+                "karaoke"
+            ]
+        },
+        {
+            "seq": "1f3b9",
+            "name": "musical keyboard",
+            "group": "Activities",
+            "keywords": [
+                "piano",
+                "keyboard",
+                "music"
+            ]
+        },
+        {
+            "seq": "1f3ad",
+            "name": "performing arts",
+            "group": "Activities",
+            "keywords": [
+                "theatre",
+                "drama",
+                "masks"
+            ]
+        },
+        {
+            "seq": "1f3d3",
+            "name": "ping pong",
+            "group": "Activities",
+            "keywords": [
+                "tabletennis",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f3b1",
+            "name": "pool 8 ball",
+            "group": "Activities",
+            "keywords": [
+                "billiards",
+                "pool",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f9e9",
+            "name": "puzzle piece",
+            "group": "Activities",
+            "keywords": [
+                "puzzle",
+                "jigsaw",
+                "game"
+            ]
+        },
+        {
+            "seq": "1f3b7",
+            "name": "saxophone",
+            "group": "Activities",
+            "keywords": [
+                "sax",
+                "music",
+                "instrument"
+            ]
+        },
+        {
+            "seq": "1f3b0",
+            "name": "slot machine",
+            "group": "Activities",
+            "keywords": [
+                "casino",
+                "gambling"
+            ]
+        },
+        {
+            "seq": "26bd",
+            "name": "soccer ball",
+            "group": "Activities",
+            "keywords": [
+                "football",
+                "soccer",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f3be",
+            "name": "tennis",
+            "group": "Activities",
+            "keywords": [
+                "tennis",
+                "sport"
+            ]
+        },
+        {
+            "seq": "1f3c6",
+            "name": "trophy",
+            "group": "Activities",
+            "keywords": [
+                "trophy",
+                "award",
+                "win"
+            ]
+        },
+        {
+            "seq": "1f3ba",
+            "name": "trumpet",
+            "group": "Activities",
+            "keywords": [
+                "trumpet",
+                "music",
+                "instrument"
+            ]
+        },
+        {
+            "seq": "1f3ae",
+            "name": "video game",
+            "group": "Activities",
+            "keywords": [
+                "gaming",
+                "controller"
+            ]
+        },
+        {
+            "seq": "1f3bb",
+            "name": "violin",
+            "group": "Activities",
+            "keywords": [
+                "violin",
+                "music",
+                "instrument"
+            ]
+        },
+        {
+            "seq": "1f3d0",
+            "name": "volleyball",
+            "group": "Activities",
+            "keywords": [
+                "volleyball",
+                "sport"
+            ]
+        },
+        {
+            "seq": "23f0",
+            "name": "alarm clock",
+            "group": "Objects",
+            "keywords": [
+                "clock",
+                "alarm",
+                "time"
+            ]
+        },
+        {
+            "seq": "1f4ca",
+            "name": "bar chart",
+            "group": "Objects",
+            "keywords": [
+                "chart",
+                "graph",
+                "stats",
+                "data"
+            ]
+        },
+        {
+            "seq": "1f50b",
+            "name": "battery",
+            "group": "Objects",
+            "keywords": [
+                "battery",
+                "power",
+                "charge"
+            ]
+        },
+        {
+            "seq": "1f6cf",
+            "name": "bed",
+            "group": "Objects",
+            "keywords": [
+                "bed",
+                "sleep",
+                "furniture"
+            ]
+        },
+        {
+            "seq": "1f514",
+            "name": "bell",
+            "group": "Objects",
+            "keywords": [
+                "bell",
+                "notification",
+                "alert"
+            ]
+        },
+        {
+            "seq": "1f4da",
+            "name": "books",
+            "group": "Objects",
+            "keywords": [
+                "books",
+                "library",
+                "read"
+            ]
+        },
+        {
+            "seq": "1f4bc",
+            "name": "briefcase",
+            "group": "Objects",
+            "keywords": [
+                "business",
+                "work",
+                "briefcase"
+            ]
+        },
+        {
+            "seq": "1f4c5",
+            "name": "calendar",
+            "group": "Objects",
+            "keywords": [
+                "calendar",
+                "date",
+                "schedule",
+                "event"
+            ]
+        },
+        {
+            "seq": "1f4f7",
+            "name": "camera",
+            "group": "Objects",
+            "keywords": [
+                "camera",
+                "photo",
+                "picture"
+            ]
+        },
+        {
+            "seq": "1f4f8",
+            "name": "camera with flash",
+            "group": "Objects",
+            "keywords": [
+                "camera",
+                "photo",
+                "flash"
+            ]
+        },
+        {
+            "seq": "1f56f",
+            "name": "candle",
+            "group": "Objects",
+            "keywords": [
+                "candle",
+                "light",
+                "flame"
+            ]
+        },
+        {
+            "seq": "1f4c8",
+            "name": "chart increasing",
+            "group": "Objects",
+            "keywords": [
+                "chart",
+                "graph",
+                "growth",
+                "stats"
+            ]
+        },
+        {
+            "seq": "1f4cb",
+            "name": "clipboard",
+            "group": "Objects",
+            "keywords": [
+                "clipboard",
+                "notes",
+                "list"
+            ]
+        },
+        {
+            "seq": "1f5b1",
+            "name": "computer mouse",
+            "group": "Objects",
+            "keywords": [
+                "mouse",
+                "tech"
+            ]
+        },
+        {
+            "seq": "1f4b3",
+            "name": "credit card",
+            "group": "Objects",
+            "keywords": [
+                "card",
+                "payment",
+                "money"
+            ]
+        },
+        {
+            "seq": "1f5a5",
+            "name": "desktop computer",
+            "group": "Objects",
+            "keywords": [
+                "computer",
+                "desktop",
+                "tech"
+            ]
+        },
+        {
+            "seq": "1f4b5",
+            "name": "dollar banknote",
+            "group": "Objects",
+            "keywords": [
+                "money",
+                "cash",
+                "dollar"
+            ]
+        },
+        {
+            "seq": "1f6aa",
+            "name": "door",
+            "group": "Objects",
+            "keywords": [
+                "door",
+                "entrance",
+                "exit"
+            ]
+        },
+        {
+            "seq": "1f4e7",
+            "name": "e-mail",
+            "group": "Objects",
+            "keywords": [
+                "email",
+                "mail",
+                "message"
+            ]
+        },
+        {
+            "seq": "1f50c",
+            "name": "electric plug",
+            "group": "Objects",
+            "keywords": [
+                "plug",
+                "power",
+                "electric"
+            ]
+        },
+        {
+            "seq": "2709",
+            "name": "envelope",
+            "group": "Objects",
+            "keywords": [
+                "email",
+                "mail",
+                "envelope",
+                "message"
+            ]
+        },
+        {
+            "seq": "1f4e0",
+            "name": "fax machine",
+            "group": "Objects",
+            "keywords": [
+                "fax",
+                "office",
+                "machine"
+            ]
+        },
+        {
+            "seq": "1f4c1",
+            "name": "file folder",
+            "group": "Objects",
+            "keywords": [
+                "folder",
+                "file",
+                "office"
+            ]
+        },
+        {
+            "seq": "1f526",
+            "name": "flashlight",
+            "group": "Objects",
+            "keywords": [
+                "torch",
+                "light",
+                "flashlight"
+            ]
+        },
+        {
+            "seq": "1f4be",
+            "name": "floppy disk",
+            "group": "Objects",
+            "keywords": [
+                "save",
+                "disk",
+                "storage"
+            ]
+        },
+        {
+            "seq": "2699",
+            "name": "gear",
+            "group": "Objects",
+            "keywords": [
+                "settings",
+                "gear",
+                "cog",
+                "config"
+            ]
+        },
+        {
+            "seq": "1f48e",
+            "name": "gem stone",
+            "group": "Objects",
+            "keywords": [
+                "diamond",
+                "gem",
+                "jewel"
+            ]
+        },
+        {
+            "seq": "1f528",
+            "name": "hammer",
+            "group": "Objects",
+            "keywords": [
+                "hammer",
+                "tool",
+                "repair",
+                "build"
+            ]
+        },
+        {
+            "seq": "23f3",
+            "name": "hourglass not done",
+            "group": "Objects",
+            "keywords": [
+                "time",
+                "hourglass",
+                "wait"
+            ]
+        },
+        {
+            "seq": "1f511",
+            "name": "key",
+            "group": "Objects",
+            "keywords": [
+                "key",
+                "unlock",
+                "access"
+            ]
+        },
+        {
+            "seq": "2328",
+            "name": "keyboard",
+            "group": "Objects",
+            "keywords": [
+                "keyboard",
+                "type",
+                "tech"
+            ]
+        },
+        {
+            "seq": "1f4bb",
+            "name": "laptop",
+            "group": "Objects",
+            "keywords": [
+                "computer",
+                "laptop",
+                "tech"
+            ]
+        },
+        {
+            "seq": "1f4a1",
+            "name": "light bulb",
+            "group": "Objects",
+            "keywords": [
+                "idea",
+                "light",
+                "bulb"
+            ]
+        },
+        {
+            "seq": "1f517",
+            "name": "link",
+            "group": "Objects",
+            "keywords": [
+                "link",
+                "chain",
+                "url",
+                "website"
+            ]
+        },
+        {
+            "seq": "1f512",
+            "name": "locked",
+            "group": "Objects",
+            "keywords": [
+                "lock",
+                "secure",
+                "locked"
+            ]
+        },
+        {
+            "seq": "1f4e2",
+            "name": "loudspeaker",
+            "group": "Objects",
+            "keywords": [
+                "announcement",
+                "speaker",
+                "loud"
+            ]
+        },
+        {
+            "seq": "1f50d",
+            "name": "magnifying glass tilted left",
+            "group": "Objects",
+            "keywords": [
+                "search",
+                "find",
+                "magnify",
+                "look"
+            ]
+        },
+        {
+            "seq": "1f4e3",
+            "name": "megaphone",
+            "group": "Objects",
+            "keywords": [
+                "announcement",
+                "megaphone",
+                "loud"
+            ]
+        },
+        {
+            "seq": "1f4dd",
+            "name": "memo",
+            "group": "Objects",
+            "keywords": [
+                "note",
+                "write",
+                "memo"
+            ]
+        },
+        {
+            "seq": "1f52c",
+            "name": "microscope",
+            "group": "Objects",
+            "keywords": [
+                "microscope",
+                "science",
+                "lab"
+            ]
+        },
+        {
+            "seq": "1f4f1",
+            "name": "mobile phone",
+            "group": "Objects",
+            "keywords": [
+                "phone",
+                "mobile",
+                "cell"
+            ]
+        },
+        {
+            "seq": "1f4b0",
+            "name": "money bag",
+            "group": "Objects",
+            "keywords": [
+                "money",
+                "cash",
+                "bag",
+                "rich"
+            ]
+        },
+        {
+            "seq": "1f3a5",
+            "name": "movie camera",
+            "group": "Objects",
+            "keywords": [
+                "movie",
+                "film",
+                "camera"
+            ]
+        },
+        {
+            "seq": "1f3b5",
+            "name": "musical note",
+            "group": "Objects",
+            "keywords": [
+                "music",
+                "note",
+                "song",
+                "audio"
+            ]
+        },
+        {
+            "seq": "1f3b6",
+            "name": "musical notes",
+            "group": "Objects",
+            "keywords": [
+                "music",
+                "notes",
+                "song",
+                "audio"
+            ]
+        },
+        {
+            "seq": "1f4d6",
+            "name": "open book",
+            "group": "Objects",
+            "keywords": [
+                "book",
+                "read",
+                "open"
+            ]
+        },
+        {
+            "seq": "1f4bf",
+            "name": "optical disk",
+            "group": "Objects",
+            "keywords": [
+                "cd",
+                "disc",
+                "storage"
+            ]
+        },
+        {
+            "seq": "1f4e6",
+            "name": "package",
+            "group": "Objects",
+            "keywords": [
+                "box",
+                "package",
+                "delivery"
+            ]
+        },
+        {
+            "seq": "1f4ce",
+            "name": "paperclip",
+            "group": "Objects",
+            "keywords": [
+                "paperclip",
+                "attach",
+                "office"
+            ]
+        },
+        {
+            "seq": "1f58a",
+            "name": "pen",
+            "group": "Objects",
+            "keywords": [
+                "pen",
+                "write"
+            ]
+        },
+        {
+            "seq": "270f",
+            "name": "pencil",
+            "group": "Objects",
+            "keywords": [
+                "pencil",
+                "write",
+                "edit"
+            ]
+        },
+        {
+            "seq": "1f48a",
+            "name": "pill",
+            "group": "Objects",
+            "keywords": [
+                "medicine",
+                "pill",
+                "health"
+            ]
+        },
+        {
+            "seq": "1f5a8",
+            "name": "printer",
+            "group": "Objects",
+            "keywords": [
+                "printer",
+                "print",
+                "tech"
+            ]
+        },
+        {
+            "seq": "1f4fb",
+            "name": "radio",
+            "group": "Objects",
+            "keywords": [
+                "radio",
+                "music",
+                "audio"
+            ]
+        },
+        {
+            "seq": "2702",
+            "name": "scissors",
+            "group": "Objects",
+            "keywords": [
+                "scissors",
+                "cut",
+                "office"
+            ]
+        },
+        {
+            "seq": "1f6e1",
+            "name": "shield",
+            "group": "Objects",
+            "keywords": [
+                "shield",
+                "protect",
+                "security"
+            ]
+        },
+        {
+            "seq": "1f6d2",
+            "name": "shopping cart",
+            "group": "Objects",
+            "keywords": [
+                "cart",
+                "shopping",
+                "store"
+            ]
+        },
+        {
+            "seq": "1f50a",
+            "name": "speaker high volume",
+            "group": "Objects",
+            "keywords": [
+                "sound",
+                "volume",
+                "speaker"
+            ]
+        },
+        {
+            "seq": "1f4ac",
+            "name": "speech balloon",
+            "group": "Objects",
+            "keywords": [
+                "chat",
+                "message",
+                "speech",
+                "comment"
+            ]
+        },
+        {
+            "seq": "1fa7a",
+            "name": "stethoscope",
+            "group": "Objects",
+            "keywords": [
+                "doctor",
+                "medical",
+                "health"
+            ]
+        },
+        {
+            "seq": "1f4cf",
+            "name": "straight ruler",
+            "group": "Objects",
+            "keywords": [
+                "ruler",
+                "measure"
+            ]
+        },
+        {
+            "seq": "1f489",
+            "name": "syringe",
+            "group": "Objects",
+            "keywords": [
+                "syringe",
+                "medical",
+                "injection"
+            ]
+        },
+        {
+            "seq": "1f4c6",
+            "name": "tear-off calendar",
+            "group": "Objects",
+            "keywords": [
+                "calendar",
+                "date",
+                "schedule"
+            ]
+        },
+        {
+            "seq": "260e",
+            "name": "telephone",
+            "group": "Objects",
+            "keywords": [
+                "phone",
+                "call",
+                "telephone",
+                "landline"
+            ]
+        },
+        {
+            "seq": "1f4de",
+            "name": "telephone receiver",
+            "group": "Objects",
+            "keywords": [
+                "phone",
+                "call",
+                "telephone"
+            ]
+        },
+        {
+            "seq": "1f52d",
+            "name": "telescope",
+            "group": "Objects",
+            "keywords": [
+                "telescope",
+                "space",
+                "science"
+            ]
+        },
+        {
+            "seq": "1f4fa",
+            "name": "television",
+            "group": "Objects",
+            "keywords": [
+                "tv",
+                "television",
+                "screen"
+            ]
+        },
+        {
+            "seq": "1f4ad",
+            "name": "thought balloon",
+            "group": "Objects",
+            "keywords": [
+                "thought",
+                "think",
+                "bubble"
+            ]
+        },
+        {
+            "seq": "1f9f0",
+            "name": "toolbox",
+            "group": "Objects",
+            "keywords": [
+                "tools",
+                "toolbox",
+                "repair"
+            ]
+        },
+        {
+            "seq": "1f513",
+            "name": "unlocked",
+            "group": "Objects",
+            "keywords": [
+                "unlock",
+                "open",
+                "unlocked"
+            ]
+        },
+        {
+            "seq": "1f4f9",
+            "name": "video camera",
+            "group": "Objects",
+            "keywords": [
+                "video",
+                "camera",
+                "film"
+            ]
+        },
+        {
+            "seq": "231a",
+            "name": "watch",
+            "group": "Objects",
+            "keywords": [
+                "watch",
+                "time",
+                "wrist"
+            ]
+        },
+        {
+            "seq": "1f527",
+            "name": "wrench",
+            "group": "Objects",
+            "keywords": [
+                "wrench",
+                "tool",
+                "repair"
+            ]
+        },
+        {
+            "seq": "26ab",
+            "name": "black circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "black"
+            ]
+        },
+        {
+            "seq": "2b1b",
+            "name": "black large square",
+            "group": "Symbols",
+            "keywords": [
+                "square",
+                "shape",
+                "black"
+            ]
+        },
+        {
+            "seq": "25fc",
+            "name": "black medium square",
+            "group": "Symbols",
+            "keywords": [
+                "square",
+                "shape",
+                "black"
+            ]
+        },
+        {
+            "seq": "1f535",
+            "name": "blue circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "blue",
+                "dot"
+            ]
+        },
+        {
+            "seq": "1f537",
+            "name": "blue diamond",
+            "group": "Symbols",
+            "keywords": [
+                "diamond",
+                "shape",
+                "blue"
+            ]
+        },
+        {
+            "seq": "2611",
+            "name": "check box with check",
+            "group": "Symbols",
+            "keywords": [
+                "checkbox",
+                "done",
+                "tick"
+            ]
+        },
+        {
+            "seq": "2714",
+            "name": "check mark",
+            "group": "Symbols",
+            "keywords": [
+                "check",
+                "done",
+                "yes",
+                "correct"
+            ]
+        },
+        {
+            "seq": "2705",
+            "name": "check mark button",
+            "group": "Symbols",
+            "keywords": [
+                "check",
+                "done",
+                "yes",
+                "correct"
+            ]
+        },
+        {
+            "seq": "a9",
+            "name": "copyright",
+            "group": "Symbols",
+            "keywords": [
+                "copyright",
+                "legal"
+            ]
+        },
+        {
+            "seq": "1f504",
+            "name": "counterclockwise arrows button",
+            "group": "Symbols",
+            "keywords": [
+                "refresh",
+                "reload",
+                "sync"
+            ]
+        },
+        {
+            "seq": "274c",
+            "name": "cross mark",
+            "group": "Symbols",
+            "keywords": [
+                "no",
+                "wrong",
+                "cancel",
+                "cross"
+            ]
+        },
+        {
+            "seq": "1f4b1",
+            "name": "currency exchange",
+            "group": "Symbols",
+            "keywords": [
+                "currency",
+                "exchange",
+                "money"
+            ]
+        },
+        {
+            "seq": "2797",
+            "name": "divide",
+            "group": "Symbols",
+            "keywords": [
+                "divide",
+                "math"
+            ]
+        },
+        {
+            "seq": "1f4ab",
+            "name": "dizzy",
+            "group": "Symbols",
+            "keywords": [
+                "dizzy",
+                "star",
+                "swirl"
+            ]
+        },
+        {
+            "seq": "2b07",
+            "name": "down arrow",
+            "group": "Symbols",
+            "keywords": [
+                "arrow",
+                "down",
+                "direction"
+            ]
+        },
+        {
+            "seq": "2733",
+            "name": "eight-spoked asterisk",
+            "group": "Symbols",
+            "keywords": [
+                "asterisk",
+                "star",
+                "symbol"
+            ]
+        },
+        {
+            "seq": "1f525",
+            "name": "fire",
+            "group": "Symbols",
+            "keywords": [
+                "fire",
+                "hot",
+                "flame",
+                "trending"
+            ]
+        },
+        {
+            "seq": "1f31f",
+            "name": "glowing star",
+            "group": "Symbols",
+            "keywords": [
+                "star",
+                "sparkle",
+                "shine"
+            ]
+        },
+        {
+            "seq": "1f7e2",
+            "name": "green circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "green",
+                "dot"
+            ]
+        },
+        {
+            "seq": "1f4b2",
+            "name": "heavy dollar sign",
+            "group": "Symbols",
+            "keywords": [
+                "dollar",
+                "money",
+                "price"
+            ]
+        },
+        {
+            "seq": "2b55",
+            "name": "hollow red circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "ring",
+                "outline"
+            ]
+        },
+        {
+            "seq": "1f4af",
+            "name": "hundred points",
+            "group": "Symbols",
+            "keywords": [
+                "hundred",
+                "perfect",
+                "score"
+            ]
+        },
+        {
+            "seq": "267e",
+            "name": "infinity",
+            "group": "Symbols",
+            "keywords": [
+                "infinity",
+                "forever",
+                "unlimited"
+            ]
+        },
+        {
+            "seq": "2139",
+            "name": "information",
+            "group": "Symbols",
+            "keywords": [
+                "info",
+                "information",
+                "help"
+            ]
+        },
+        {
+            "seq": "2b05",
+            "name": "left arrow",
+            "group": "Symbols",
+            "keywords": [
+                "arrow",
+                "left",
+                "direction"
+            ]
+        },
+        {
+            "seq": "2695",
+            "name": "medical symbol",
+            "group": "Symbols",
+            "keywords": [
+                "medical",
+                "health",
+                "hospital"
+            ]
+        },
+        {
+            "seq": "2796",
+            "name": "minus",
+            "group": "Symbols",
+            "keywords": [
+                "minus",
+                "subtract",
+                "math"
+            ]
+        },
+        {
+            "seq": "2716",
+            "name": "multiply",
+            "group": "Symbols",
+            "keywords": [
+                "multiply",
+                "times",
+                "math"
+            ]
+        },
+        {
+            "seq": "1f4db",
+            "name": "name badge",
+            "group": "Symbols",
+            "keywords": [
+                "badge",
+                "name",
+                "id"
+            ]
+        },
+        {
+            "seq": "1f195",
+            "name": "new button",
+            "group": "Symbols",
+            "keywords": [
+                "new",
+                "button",
+                "label"
+            ]
+        },
+        {
+            "seq": "26d4",
+            "name": "no entry",
+            "group": "Symbols",
+            "keywords": [
+                "stop",
+                "forbidden",
+                "no",
+                "entry"
+            ]
+        },
+        {
+            "seq": "1f197",
+            "name": "ok button",
+            "group": "Symbols",
+            "keywords": [
+                "ok",
+                "button",
+                "confirm"
+            ]
+        },
+        {
+            "seq": "1f7e0",
+            "name": "orange circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "orange",
+                "dot"
+            ]
+        },
+        {
+            "seq": "1f536",
+            "name": "orange diamond",
+            "group": "Symbols",
+            "keywords": [
+                "diamond",
+                "shape",
+                "orange"
+            ]
+        },
+        {
+            "seq": "2795",
+            "name": "plus",
+            "group": "Symbols",
+            "keywords": [
+                "plus",
+                "add",
+                "math"
+            ]
+        },
+        {
+            "seq": "1f6ab",
+            "name": "prohibited",
+            "group": "Symbols",
+            "keywords": [
+                "forbidden",
+                "banned",
+                "no"
+            ]
+        },
+        {
+            "seq": "1f7e3",
+            "name": "purple circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "purple",
+                "dot"
+            ]
+        },
+        {
+            "seq": "1f518",
+            "name": "radio button",
+            "group": "Symbols",
+            "keywords": [
+                "radio",
+                "button",
+                "select"
+            ]
+        },
+        {
+            "seq": "267b",
+            "name": "recycling symbol",
+            "group": "Symbols",
+            "keywords": [
+                "recycle",
+                "eco",
+                "green"
+            ]
+        },
+        {
+            "seq": "1f534",
+            "name": "red circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "red",
+                "dot"
+            ]
+        },
+        {
+            "seq": "2757",
+            "name": "red exclamation mark",
+            "group": "Symbols",
+            "keywords": [
+                "exclamation",
+                "important",
+                "alert"
+            ]
+        },
+        {
+            "seq": "2753",
+            "name": "red question mark",
+            "group": "Symbols",
+            "keywords": [
+                "question",
+                "help",
+                "unknown"
+            ]
+        },
+        {
+            "seq": "1f53a",
+            "name": "red triangle pointed up",
+            "group": "Symbols",
+            "keywords": [
+                "triangle",
+                "shape",
+                "red"
+            ]
+        },
+        {
+            "seq": "ae",
+            "name": "registered",
+            "group": "Symbols",
+            "keywords": [
+                "registered",
+                "trademark",
+                "legal"
+            ]
+        },
+        {
+            "seq": "27a1",
+            "name": "right arrow",
+            "group": "Symbols",
+            "keywords": [
+                "arrow",
+                "right",
+                "direction"
+            ]
+        },
+        {
+            "seq": "1f198",
+            "name": "sos button",
+            "group": "Symbols",
+            "keywords": [
+                "sos",
+                "help",
+                "emergency"
+            ]
+        },
+        {
+            "seq": "2747",
+            "name": "sparkle",
+            "group": "Symbols",
+            "keywords": [
+                "sparkle",
+                "shine",
+                "highlight"
+            ]
+        },
+        {
+            "seq": "2728",
+            "name": "sparkles",
+            "group": "Symbols",
+            "keywords": [
+                "sparkle",
+                "shine",
+                "magic"
+            ]
+        },
+        {
+            "seq": "2b50",
+            "name": "star",
+            "group": "Symbols",
+            "keywords": [
+                "star",
+                "rating",
+                "favorite"
+            ]
+        },
+        {
+            "seq": "2122",
+            "name": "trademark",
+            "group": "Symbols",
+            "keywords": [
+                "trademark",
+                "brand",
+                "legal"
+            ]
+        },
+        {
+            "seq": "2b06",
+            "name": "up arrow",
+            "group": "Symbols",
+            "keywords": [
+                "arrow",
+                "up",
+                "direction"
+            ]
+        },
+        {
+            "seq": "1f199",
+            "name": "up button",
+            "group": "Symbols",
+            "keywords": [
+                "up",
+                "button",
+                "level"
+            ]
+        },
+        {
+            "seq": "26a0",
+            "name": "warning",
+            "group": "Symbols",
+            "keywords": [
+                "warning",
+                "caution",
+                "alert"
+            ]
+        },
+        {
+            "seq": "26aa",
+            "name": "white circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "white"
+            ]
+        },
+        {
+            "seq": "2b1c",
+            "name": "white large square",
+            "group": "Symbols",
+            "keywords": [
+                "square",
+                "shape",
+                "white"
+            ]
+        },
+        {
+            "seq": "1f7e1",
+            "name": "yellow circle",
+            "group": "Symbols",
+            "keywords": [
+                "circle",
+                "shape",
+                "yellow",
+                "dot"
+            ]
+        },
+        {
+            "seq": "1f4a4",
+            "name": "zzz",
+            "group": "Symbols",
+            "keywords": [
+                "sleep",
+                "zzz",
+                "tired"
+            ]
+        },
+        {
+            "seq": "1f3c1",
+            "name": "chequered flag",
+            "group": "Flags",
+            "keywords": [
+                "race",
+                "finish",
+                "checkered",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e6-1f1fa",
+            "name": "flag: Australia",
+            "group": "Flags",
+            "keywords": [
+                "australia",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e6-1f1f9",
+            "name": "flag: Austria",
+            "group": "Flags",
+            "keywords": [
+                "austria",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e7-1f1ea",
+            "name": "flag: Belgium",
+            "group": "Flags",
+            "keywords": [
+                "belgium",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e7-1f1f7",
+            "name": "flag: Brazil",
+            "group": "Flags",
+            "keywords": [
+                "brazil",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e8-1f1e6",
+            "name": "flag: Canada",
+            "group": "Flags",
+            "keywords": [
+                "canada",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e8-1f1f3",
+            "name": "flag: China",
+            "group": "Flags",
+            "keywords": [
+                "china",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e9-1f1f0",
+            "name": "flag: Denmark",
+            "group": "Flags",
+            "keywords": [
+                "denmark",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1eb-1f1ee",
+            "name": "flag: Finland",
+            "group": "Flags",
+            "keywords": [
+                "finland",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1eb-1f1f7",
+            "name": "flag: France",
+            "group": "Flags",
+            "keywords": [
+                "france",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e9-1f1ea",
+            "name": "flag: Germany",
+            "group": "Flags",
+            "keywords": [
+                "germany",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ec-1f1f7",
+            "name": "flag: Greece",
+            "group": "Flags",
+            "keywords": [
+                "greece",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ee-1f1f3",
+            "name": "flag: India",
+            "group": "Flags",
+            "keywords": [
+                "india",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ee-1f1ea",
+            "name": "flag: Ireland",
+            "group": "Flags",
+            "keywords": [
+                "ireland",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ee-1f1f9",
+            "name": "flag: Italy",
+            "group": "Flags",
+            "keywords": [
+                "italy",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ef-1f1f5",
+            "name": "flag: Japan",
+            "group": "Flags",
+            "keywords": [
+                "japan",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f2-1f1fd",
+            "name": "flag: Mexico",
+            "group": "Flags",
+            "keywords": [
+                "mexico",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f3-1f1f1",
+            "name": "flag: Netherlands",
+            "group": "Flags",
+            "keywords": [
+                "netherlands",
+                "holland",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f3-1f1ff",
+            "name": "flag: New Zealand",
+            "group": "Flags",
+            "keywords": [
+                "new",
+                "zealand",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f3-1f1f4",
+            "name": "flag: Norway",
+            "group": "Flags",
+            "keywords": [
+                "norway",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f5-1f1f1",
+            "name": "flag: Poland",
+            "group": "Flags",
+            "keywords": [
+                "poland",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f5-1f1f9",
+            "name": "flag: Portugal",
+            "group": "Flags",
+            "keywords": [
+                "portugal",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ff-1f1e6",
+            "name": "flag: South Africa",
+            "group": "Flags",
+            "keywords": [
+                "south",
+                "africa",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f0-1f1f7",
+            "name": "flag: South Korea",
+            "group": "Flags",
+            "keywords": [
+                "korea",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ea-1f1f8",
+            "name": "flag: Spain",
+            "group": "Flags",
+            "keywords": [
+                "spain",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1f8-1f1ea",
+            "name": "flag: Sweden",
+            "group": "Flags",
+            "keywords": [
+                "sweden",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1e8-1f1ed",
+            "name": "flag: Switzerland",
+            "group": "Flags",
+            "keywords": [
+                "switzerland",
+                "flag"
+            ]
+        },
+        {
+            "seq": "1f1ec-1f1e7",
+            "name": "flag: United Kingdom",
+            "group": "Flags",
+            "keywords": [
+                "uk",
+                "britain",
+                "flag",
+                "united",
+                "kingdom"
+            ]
+        },
+        {
+            "seq": "1f1fa-1f1f8",
+            "name": "flag: United States",
+            "group": "Flags",
+            "keywords": [
+                "usa",
+                "america",
+                "flag",
+                "united",
+                "states"
+            ]
+        },
+        {
+            "seq": "1f3f3",
+            "name": "white flag",
+            "group": "Flags",
+            "keywords": [
+                "white",
+                "flag",
+                "surrender"
+            ]
+        }
+    ]
+}

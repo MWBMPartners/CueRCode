@@ -1201,6 +1201,9 @@
             $('#predefined-logo-grid .logo-btn').removeClass('active');
             /* 📌 Re-activate "None" button is not appropriate here - we have an upload */
 
+            /* 📌 Deselect any emoji centre-icon too (Issue #67 - shares #opt-logo) */
+            $('#emoji-logo-grid .emoji-btn').removeClass('active').attr('aria-pressed', 'false');
+
             /* 📌 Set the hidden logo input to indicate an uploaded logo */
             $('#opt-logo').val('upload');
 
@@ -1239,6 +1242,9 @@
         $('#predefined-logo-grid .logo-btn').removeClass('active');
         $('#predefined-logo-grid .logo-btn[data-logo=""]').addClass('active');
 
+        /* 📌 Deselect any emoji centre-icon too (Issue #67 - shares #opt-logo) */
+        $('#emoji-logo-grid .emoji-btn').removeClass('active').attr('aria-pressed', 'false');
+
         /* 📌 Trigger preview update */
         triggerPreview();
     }
@@ -1263,8 +1269,81 @@
             uploadedLogoMimeType = null;
         }
 
+        /* 📌 The predefined-logo-grid and the emoji-logo-grid (Issue #67)
+           share ONE hidden #opt-logo input - deselect any active emoji
+           button so only one source is ever visually "selected" at a time. */
+        $('#emoji-logo-grid .emoji-btn').removeClass('active').attr('aria-pressed', 'false');
+
         /* 📌 The hidden input and active state are handled by setupSelectionGrid */
         /* No additional action needed here beyond clearing the upload */
+    }
+
+    /**
+     * 🙂 Handle emoji centre-icon selection (Issue #67)
+     *
+     * When an emoji button is clicked, clears any uploaded logo and any
+     * active predefined-logo selection (the two grids share ONE hidden
+     * #opt-logo input, set by setupSelectionGrid() to 'emoji:<seq>').
+     *
+     * @param {string} logoValue - The selected 'emoji:<codepoint-seq>' value
+     * @param {jQuery}  $btn     - The clicked button element
+     */
+    function handleEmojiLogoSelect(logoValue, $btn) {
+        /* 📌 Clear any uploaded logo when selecting an emoji */
+        if (uploadedLogoBase64) {
+            $('#opt-logo-upload').val('');
+            $('#logo-upload-preview').addClass('d-none');
+            $('#logo-upload-img').attr('src', '');
+            uploadedLogoBase64 = null;
+            uploadedLogoMimeType = null;
+        }
+
+        /* 📌 Deselect any active predefined-logo button (shared hidden input) */
+        $('#predefined-logo-grid .logo-btn').removeClass('active').attr('aria-pressed', 'false');
+    }
+
+    /**
+     * 🔎 Filter the emoji grid (Issue #67) by search text AND/OR category
+     *
+     * Pure client-side, progressive-enhancement filtering: every emoji
+     * button already exists in the server-rendered markup (the no-JS
+     * fallback), this only toggles the native `hidden` attribute on the
+     * buttons that do not match. Matching is a simple case-insensitive
+     * substring test against each button's pre-lowercased `data-search`
+     * attribute (name + keywords, rendered server-side).
+     *
+     * @see https://developer.mozilla.org/en-US/docs/Web/HTML/Global_attributes/hidden
+     */
+    function filterEmojiGrid() {
+        var $grid = $('#emoji-logo-grid');
+        if ($grid.length === 0) {
+            return;
+        }
+
+        var searchTerm = $.trim($('#emoji-search').val() || '').toLowerCase();
+        var category = $('#emoji-category').val() || '';
+        var visibleCount = 0;
+
+        $grid.find('.emoji-btn').each(function () {
+            var $btn = $(this);
+            var matchesSearch = searchTerm === '' || (($btn.data('search') || '') + '').indexOf(searchTerm) !== -1;
+            var matchesCategory = category === '' || $btn.data('group') === category;
+
+            if (matchesSearch && matchesCategory) {
+                $btn.prop('hidden', false);
+                visibleCount++;
+            } else {
+                $btn.prop('hidden', true);
+            }
+        });
+
+        /* 📌 Toggle the "no results" status message (aria-live, announced
+           to assistive tech when the filtered set becomes empty). */
+        if (visibleCount === 0) {
+            $('#emoji-no-results').removeClass('d-none');
+        } else {
+            $('#emoji-no-results').addClass('d-none');
+        }
     }
 
     // ==========================================================================
@@ -1901,6 +1980,28 @@
             '#opt-logo',
             handlePredefinedLogoSelect
         );
+
+        // ======================================================================
+        // 🙂 Logo Tab: Emoji Centre-Icon Picker (Issue #67)
+        // ======================================================================
+
+        /* 📌 Set up the emoji selection grid - SAME shared #opt-logo hidden
+           input as the predefined logo grid above (setupSelectionGrid()
+           reads each button's data-logo attribute, which server-side already
+           renders as 'emoji:<seq>' for these buttons). */
+        setupSelectionGrid(
+            '#emoji-logo-grid',
+            '.emoji-btn',
+            'logo',
+            '#opt-logo',
+            handleEmojiLogoSelect
+        );
+
+        /* 📌 Search box: filter the emoji grid as the user types */
+        $('#emoji-search').on('input', filterEmojiGrid);
+
+        /* 📌 Category dropdown: filter the emoji grid by group */
+        $('#emoji-category').on('change', filterEmojiGrid);
 
         // ======================================================================
         // 📐 Frame Tab: Frame Style Grid
