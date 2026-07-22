@@ -1,0 +1,95 @@
+# =============================================================================
+# 🛡️ CueRCode - CodeQL code scanning (multi-branch)
+# =============================================================================
+# Static security analysis via GitHub CodeQL, running on all three tiers
+# (alpha → beta → main) so a code-level vulnerability is caught on every
+# branch, not just the default one.
+#
+# ⚠️ Language coverage: CodeQL does NOT support PHP. This repo's analysable
+#    CodeQL surface is the browser JavaScript under public_html*/assets/js/
+#    (+ the service worker). PHP static analysis is handled by Semgrep
+#    (.github/workflows/semgrep.yml) + the php -l matrix / test suite in
+#    .github/workflows/ci.yml. Secret scanning is covered by the gitleaks CI
+#    job and (once enabled) GitHub-native secret scanning.
+#
+# ⏳ CodeQL result upload requires GitHub Advanced Security / "Code Security"
+#    on this PRIVATE repo. Until it is enabled, the analyse step's upload fails
+#    with a configuration error, so the init + analyse STEPS carry
+#    continue-on-error to keep the PR check from failing (job-level
+#    continue-on-error does NOT change a job's own check-run conclusion, so it
+#    must be set per-step). The analysis still runs; once GHAS is enabled,
+#    results appear in the Security tab — then REMOVE the two continue-on-error
+#    lines so CodeQL failures block again.
+#
+# A workflow file must physically exist on a branch for push/PR scans of that
+# branch to run; the scheduled scan runs from the default branch.
+#
+# @see https://docs.github.com/en/code-security/code-scanning
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+      - alpha
+  pull_request:
+    branches:
+      - main
+      - beta
+      - alpha
+  schedule:
+    # Weekly, Monday 04:17 UTC (off the hour to avoid the scheduler rush).
+    - cron: '17 4 * * 1'
+
+# Least-privilege default; the analyse job elevates only what it needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyse (${{ matrix.language }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Required to upload the SARIF results to the Security tab.
+      security-events: write
+      # Required by CodeQL to read the Actions run metadata.
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # PHP is unsupported by CodeQL; JavaScript/TypeScript is our surface.
+        language:
+          - javascript-typescript
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Initialise CodeQL
+        # ⏳ TRANSITIONAL — see header note; remove once GHAS is enabled.
+        continue-on-error: true
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # 'security-extended' widens the query set beyond the default.
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        # ⏳ TRANSITIONAL — result upload needs GitHub Advanced Security on this
+        #    private repo; keeps the PR check from failing until GHAS is on.
+        #    Remove once GHAS is enabled so CodeQL failures block again.
+        continue-on-error: true
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
