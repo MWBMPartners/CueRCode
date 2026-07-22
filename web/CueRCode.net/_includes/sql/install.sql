@@ -891,9 +891,394 @@ CREATE TABLE IF NOT EXISTS `tblPayments` (
   COMMENT='💳 Payment/transaction log per subscription (schema only this stage - populated by the deferred PayPal webhook listener)';
 
 -- ==============================================================================
+-- 💷 Flexible-pricing schema delta (Epic E4, GitHub issue #70) - BUILT BUT
+--    DISABLED, additive-only, inert by default
+-- ==============================================================================
+-- Everything in Tables 22-26 below plus the two ALTER TABLE blocks that follow
+-- them is ADDITIVE - no existing column on tblSubscriptionPlans/
+-- tblSubscriptions/tblPayments is touched, no seeded plan row changes, and no
+-- existing gating semantics change. Each new table/column is USELESS until:
+--   (a) an admin inserts rows into it, AND
+--   (b) the matching master kill-switch in the `billing` tblSettings group is
+--       flipped from its seeded 0 to 1 - see seed_data.sql's
+--       `billing_price_points_enabled` / `billing_discounts_enabled` /
+--       `billing_payg_enabled` rows.
+-- This mirrors the INERT-BY-DEFAULT house pattern already used for the email
+-- subsystem (`email_enabled`) and SSO (`sso_enabled`) - see this file's own
+-- header docs on tblSubscriptionPlans (Table 19) for the "zero-code-change
+-- extensible" philosophy this delta extends to PRICE and DISCOUNT shape, not
+-- just features/limits.
+--
+-- The five structures this delta makes representable BY DATA ALONE (zero
+-- future code changes to add a real instance of any of these):
+--   1. Multiple price points per tier (monthly/yearly/lifetime/launch promo/
+--      per-currency) - tblPlanPricePoints.
+--   2. One-off / limited-time / lifetime (forever) discounts, coupon-code or
+--      automatic/sitewide - tblDiscounts + tblDiscountRedemptions.
+--   3. Lifetime tiers - a plan whose only price point has
+--      billingInterval='lifetime', paired with a tblSubscriptions row whose
+--      currentPeriodEnd stays NULL (already-nullable column, Table 20).
+--   4. Pay-as-you-go (PAYG) credit packs - a `one_off` price point with a
+--      grantsJSON credit grant, consumed via tblCreditLedger.
+--   5. PAYG WITH A CAP - the same credit packs, capped by new
+--      `credit_spend_cap_monthly`/`credit_balance_cap` limitsJSON keys read
+--      by the EXISTING, unmodified generic limitFor() (fn_features.php) -
+--      zero engine change, exactly like every other ★ limit key.
+--
+-- @see fable_analysis.md §C (this delta's authoring spec)
+-- @see Pricing_Strategy.md §5 (worked examples of every structure above)
+-- @see _functions/fn_features.php - pricePointsForPlan(), resolveDiscountForCheckout(),
+--      creditBalanceFor(), consumeCreditsOr402() (all fail-closed + kill-switch-gated)
+-- @see _functions/fn_pricing.php - listPublicPlansForDisplay() prefers these
+--      price-point rows over the legacy priceMonthly/priceYearly columns when
+--      present for a plan
+-- ==============================================================================
+
+-- ==============================================================================
+-- 📋 Table 22: tblPlanPricePoints (#70)
+-- ==============================================================================
+-- Kills the "exactly two fixed price columns, one currency" limitation of
+-- tblSubscriptionPlans.priceMonthly/priceYearly/currency (Table 19). A plan
+-- may have ZERO price points (the legacy two columns keep working exactly as
+-- today - this is the "no rows yet" no-op state), or any number of them: a
+-- monthly row, a yearly row, several currencies of the same interval, a
+-- time-boxed launch-offer row (validFrom/validUntil), a `lifetime` one-off
+-- row (Founder Lifetime deal), or a `one_off` PAYG credit-pack row whose
+-- grantsJSON describes what buying it grants (see Table 26 tblCreditLedger).
+--
+-- grantsJSON shape (NULL for ordinary subscription price points) - a flat
+-- JSON object naming what a successful one-off purchase of this price point
+-- grants, e.g. for a PAYG credit pack:
+--   {"credits": {"qr_generations": 100}}
+--
+-- `priceKey` is UNIQUE PER PLAN (not globally) - 'monthly'/'yearly' are the
+-- conventional defaults `fn_pricing.php` looks for when preferring price
+-- points over the legacy columns, but any admin-chosen key works
+-- (`launch_monthly_2026`, `credits_100`, `lifetime_founder`, ...).
+--
+-- @see fn_features.php - pricePointsForPlan() (fail-closed on
+--      billing_price_points_enabled=0 or an empty table)
+-- @see fn_pricing.php   - the additive query that prefers these rows
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblPlanPricePoints` (
+    `pricePointID`     INT UNSIGNED   NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing price-point identifier',
+    `planID`           INT UNSIGNED   NOT NULL                 COMMENT '🔗 FK tblSubscriptionPlans - the tier this price point belongs to',
+    `priceKey`         VARCHAR(48)    NOT NULL                 COMMENT '🏷️ Machine key, UNIQUE per plan (monthly, yearly, lifetime, launch_monthly_2026, credits_100, ...) - never guessed/hardcoded by PHP, purely admin-chosen config',
+    `billingInterval`  ENUM(
+                            'monthly',
+                            'yearly',
+                            'lifetime',
+                            'one_off',
+                            'metered'
+                        )              NOT NULL                 COMMENT '📅 What kind of charge this is - monthly/yearly recurring, lifetime (pay once, never expires), one_off (a single non-recurring charge, e.g. a PAYG credit pack), metered (reserved for future usage-billed intervals)',
+    `intervalCount`    INT UNSIGNED   NOT NULL DEFAULT 1       COMMENT '🔢 Multiplier on billingInterval, e.g. intervalCount=3 with billingInterval=monthly means quarterly billing - avoids needing a dedicated quarterly/biennial enum value',
+    `amount`           DECIMAL(10,2)  NOT NULL                 COMMENT '💷 Price in `currency` for this specific price point',
+    `currency`         CHAR(3)        NOT NULL DEFAULT 'GBP'   COMMENT '💱 ISO 4217 currency code - PER-ROW (unlike tblSubscriptionPlans'' one currency per plan), so USD/EUR price points can sit alongside a GBP one on the same plan with zero schema change',
+    `grantsJSON`       JSON           NULL                     COMMENT '🎁 What a successful ONE-OFF purchase of this price point grants (e.g. {"credits":{"qr_generations":100}} for a PAYG pack) - NULL for an ordinary recurring subscription price point',
+    `validFrom`        DATETIME       NULL                     COMMENT '⏰ Price point becomes selectable from this timestamp (NULL = no start restriction) - launch-offer windows',
+    `validUntil`       DATETIME       NULL                     COMMENT '⏰ Price point stops being selectable after this timestamp (NULL = no end restriction) - limited-time pricing',
+    `isDefault`        TINYINT(1)     NOT NULL DEFAULT 0       COMMENT '⭐ 1 = the preferred/highlighted row for its billingInterval on the pricing page (e.g. the yearly row that should read "recommended")',
+    `isActive`         TINYINT(1)     NOT NULL DEFAULT 1       COMMENT '✅ 1 = selectable, 0 = retired (existing purchases/subscriptions keep their FK, just hidden from new selection)',
+    `sortOrder`        INT            NOT NULL DEFAULT 0       COMMENT '📊 Display order among a plan''s price points',
+    `createdAt`        DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Record creation timestamp',
+    `updatedAt`        DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+
+    PRIMARY KEY (`pricePointID`),
+    UNIQUE KEY `idx_pricepoint_plan_key` (`planID`, `priceKey`),
+    INDEX `idx_pricepoint_plan_active_sort` (`planID`, `isActive`, `sortOrder`),
+
+    CONSTRAINT `fk_pricepoint_plan` FOREIGN KEY (`planID`)
+        REFERENCES `tblSubscriptionPlans` (`planID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💷 Per-plan price points (#70) - multi-price-point/multi-currency/lifetime/PAYG-pack pricing, additive to the legacy priceMonthly/priceYearly columns, inert until billing_price_points_enabled=1';
+
+-- ==============================================================================
+-- 📋 Table 23: tblDiscounts (#70)
+-- ==============================================================================
+-- One-off, limited-time, or lifetime (forever) discounts - either a
+-- caller-entered coupon `code`, or an automatic/sitewide offer (code IS NULL,
+-- applied without the caller typing anything, e.g. a launch-week 25% off
+-- promotion). A discount can be scoped to one plan/price-key or apply
+-- everywhere (appliesPlanID/appliesPriceKey both NULL).
+--
+-- "Lifetime discount" = durationType='forever' (applies for as long as the
+-- subscription lives, e.g. a permanent edu/non-profit rate).
+-- "Limited-time discount" = a validFrom/validUntil window (e.g. a launch
+-- promotion that expires on a fixed date) - independent of durationType,
+-- which governs how long the discount applies to an ALREADY-REDEEMED
+-- subscription, not how long the offer itself is available to redeem.
+-- "One-off discount" = durationType='once' (a single billing cycle) and/or
+-- maxRedemptions=1 (a single redeemer, e.g. a Founder Lifetime cap).
+--
+-- `appliesPriceKey` intentionally has NO foreign key - a priceKey is only
+-- unique SCOPED to its plan (see tblPlanPricePoints' UNIQUE(planID,priceKey)
+-- above), so this column is a plain matching string interpreted alongside
+-- appliesPlanID by fn_features.php's resolveDiscountForCheckout(), exactly
+-- like every other identifier-shaped-but-not-FK-enforced column in this
+-- schema (mirrors tblQRCodeTypes.typeName's own unique-but-unenforced
+-- convention).
+--
+-- @see fn_features.php - resolveDiscountForCheckout() (fail-closed on
+--      billing_discounts_enabled=0 or an empty table)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblDiscounts` (
+    `discountID`       INT UNSIGNED   NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing discount identifier',
+    `code`             VARCHAR(64)    NULL                     COMMENT '🎟️ Caller-entered coupon code (case-sensitive as stored - the application layer decides normalisation) - NULL means AUTOMATIC/sitewide, applied without any code entry',
+    `name`             VARCHAR(150)   NOT NULL                 COMMENT '📝 Human-readable name shown in admin/checkout UI (e.g. "Launch offer - 25% off for 12 months")',
+    `discountType`     ENUM('percent', 'fixed') NOT NULL       COMMENT '➗ percent = value is a percentage (0-100), fixed = value is a flat amount in the price point''s own currency',
+    `value`            DECIMAL(10,2)  NOT NULL                 COMMENT '🔢 The percentage (e.g. 25.00) or fixed amount this discount removes, per `discountType`',
+    `appliesPlanID`    INT UNSIGNED   NULL                     COMMENT '🔗 FK tblSubscriptionPlans - NULL = applies to every plan',
+    `appliesPriceKey`  VARCHAR(48)    NULL                     COMMENT '🏷️ Matches tblPlanPricePoints.priceKey (NOT FK-enforced - see header comment) - NULL = applies to every price point on the scoped plan',
+    `durationType`     ENUM('once', 'repeating', 'forever') NOT NULL DEFAULT 'once' COMMENT '⏳ How long the discount applies to an already-redeemed subscription - once = first billing cycle only, repeating = `durationMonths` cycles, forever = the "lifetime discount" case',
+    `durationMonths`   INT UNSIGNED   NULL                     COMMENT '🔢 Number of months the discount repeats for when durationType=repeating (NULL/ignored otherwise)',
+    `maxRedemptions`   INT UNSIGNED   NULL                     COMMENT '🎯 Total redemption cap across ALL callers (NULL = uncapped) - e.g. a 500-redemption Founder Lifetime cap',
+    `redemptionCount`  INT UNSIGNED   NOT NULL DEFAULT 0       COMMENT '🔢 Running total of successful redemptions - incremented ATOMICALLY under the same per-discount MySQL advisory-lock pattern that closed the saved_codes TOCTOU race (SECURITY.md F-023), never via a bare UPDATE ... SET redemptionCount = redemptionCount + 1 with no serialisation',
+    `validFrom`        DATETIME       NULL                     COMMENT '⏰ Discount becomes redeemable from this timestamp (NULL = no start restriction)',
+    `validUntil`       DATETIME       NULL                     COMMENT '⏰ Discount stops being redeemable after this timestamp (NULL = no end restriction) - the "limited-time" case',
+    `isActive`         TINYINT(1)     NOT NULL DEFAULT 1       COMMENT '✅ 1 = redeemable (subject to the validity window/cap above too), 0 = administratively disabled',
+    `createdAt`        DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Record creation timestamp',
+    `updatedAt`        DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
+
+    PRIMARY KEY (`discountID`),
+    UNIQUE KEY `idx_discount_code` (`code`),
+    INDEX `idx_discount_plan` (`appliesPlanID`),
+    INDEX `idx_discount_active_valid` (`isActive`, `validFrom`, `validUntil`),
+
+    CONSTRAINT `fk_discount_plan` FOREIGN KEY (`appliesPlanID`)
+        REFERENCES `tblSubscriptionPlans` (`planID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🎟️ One-off/limited-time/lifetime discounts (#70), coupon-code or automatic/sitewide, inert until billing_discounts_enabled=1';
+
+-- ==============================================================================
+-- 📋 Table 24: tblOneOffPurchases (#70)
+-- ==============================================================================
+-- A standalone one-off purchase (a lifetime-deal purchase or a PAYG credit
+-- pack) that is NOT tied to a recurring tblSubscriptions row the way
+-- tblPayments (Table 21) is. Kept as its OWN table - rather than weakening
+-- tblPayments.subscriptionID to NULLable - specifically so tblPayments' audit
+-- posture (NOT NULL, ON DELETE RESTRICT, "a payment must always trace back to
+-- a real subscription") stays completely untouched (see Table 21's header
+-- comment). `providerTxnRef` is UNIQUE for the exact same webhook-idempotency
+-- reason as tblPayments.providerTxnRef.
+--
+-- A "lifetime tier" purchase (Pricing_Strategy.md §5.3) inserts BOTH a row
+-- here (the payment record) AND a tblSubscriptions row with
+-- `currentPeriodEnd = NULL`, `status = 'active'` (that column is already
+-- nullable - Table 20 - so no schema change was needed there for the
+-- "never expires" property itself, only for the pricePointID/discountID
+-- snapshot columns added by the ALTER TABLE block below).
+--
+-- @see Table 21 tblPayments - the recurring-subscription payment ledger this
+--      table deliberately does NOT merge into
+-- @see Table 26 tblCreditLedger - a PAYG credit-pack purchase here triggers a
+--      matching ledger grant row there
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblOneOffPurchases` (
+    `purchaseID`       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing one-off purchase identifier',
+    `userID`           INT UNSIGNED    NULL                     COMMENT '👤 FK tblUsers - the purchasing individual (NULL when this is an org-level purchase instead - exactly one of userID/orgID expected non-NULL, mirroring tblSubscriptions'' XOR convention)',
+    `orgID`            INT UNSIGNED    NULL                     COMMENT '🏢 FK tblOrganisations - the purchasing organisation (NULL when this is an individual purchase instead)',
+    `pricePointID`     INT UNSIGNED    NOT NULL                 COMMENT '🔗 FK tblPlanPricePoints - the one_off/lifetime price point that was purchased',
+    `discountID`       INT UNSIGNED    NULL                     COMMENT '🔗 FK tblDiscounts - snapshot of which discount (if any) was applied to this purchase, mirroring tblSubscriptions.discountID below',
+    `provider`         VARCHAR(32)     NOT NULL                 COMMENT '🏦 Payment provider identifier (paypal, ...)',
+    `providerTxnRef`   VARCHAR(255)    NOT NULL                 COMMENT '🆔 Provider transaction/event identifier - UNIQUE so a re-delivered webhook is idempotent, exactly like tblPayments.providerTxnRef',
+    `amount`           DECIMAL(10,2)   NOT NULL                 COMMENT '💷 Amount captured/refunded, denominated in `currency`',
+    `currency`         CHAR(3)         NOT NULL DEFAULT 'GBP'   COMMENT '💱 ISO 4217 currency code for `amount`',
+    `status`           VARCHAR(32)     NOT NULL DEFAULT 'completed' COMMENT '📊 Provider-reported payment status - deliberately free text, mirrors tblPayments.status'' own reasoning',
+    `rawWebhookJSON`   JSON            NULL                     COMMENT '📦 Full raw webhook payload for audit/debugging/replay - schema-only this stage, mirrors tblPayments.rawWebhookJSON',
+    `createdAt`        DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Purchase record creation timestamp',
+
+    PRIMARY KEY (`purchaseID`),
+    UNIQUE KEY `idx_oneoff_provider_txn` (`providerTxnRef`),
+    INDEX `idx_oneoff_user` (`userID`),
+    INDEX `idx_oneoff_org` (`orgID`),
+    INDEX `idx_oneoff_pricepoint` (`pricePointID`),
+    INDEX `idx_oneoff_created` (`createdAt`),
+
+    CONSTRAINT `fk_oneoff_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_oneoff_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_oneoff_pricepoint` FOREIGN KEY (`pricePointID`)
+        REFERENCES `tblPlanPricePoints` (`pricePointID`)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_oneoff_discount` FOREIGN KEY (`discountID`)
+        REFERENCES `tblDiscounts` (`discountID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💷 Standalone one-off purchases (#70) - lifetime-deal/PAYG-credit-pack payments not tied to a recurring subscription, sibling to tblPayments';
+
+-- ==============================================================================
+-- 📋 Table 25: tblDiscountRedemptions (#70)
+-- ==============================================================================
+-- One row per successful discount redemption. UNIQUE per (discountID,userID)
+-- AND per (discountID,orgID) enforces the schema-level "one redemption per
+-- subject, per discount" default (MySQL treats each NULL in a UNIQUE index as
+-- distinct, so many org-redemptions with userID NULL - or many
+-- user-redemptions with orgID NULL - coexist freely; only a genuine repeat by
+-- the SAME user or SAME org for the SAME discount is rejected).
+-- `subscriptionID` is NULL for a redemption attached to a tblOneOffPurchases
+-- row instead (a discount applied to a lifetime/PAYG purchase rather than a
+-- recurring subscription).
+--
+-- redemptionCount on tblDiscounts (Table 23) MUST be incremented in the SAME
+-- serialised critical section that inserts a row here, using the identical
+-- per-subject MySQL advisory-lock pattern (`GET_LOCK`/`RELEASE_LOCK`) that
+-- closed the saved_codes TOCTOU race (SECURITY.md F-023) - see
+-- fn_features.php's resolveDiscountForCheckout() docblock.
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblDiscountRedemptions` (
+    `redemptionID`     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing redemption identifier',
+    `discountID`       INT UNSIGNED    NOT NULL                 COMMENT '🔗 FK tblDiscounts - the discount that was redeemed',
+    `userID`           INT UNSIGNED    NULL                     COMMENT '👤 FK tblUsers - the redeeming individual (NULL when this is an org-level redemption instead)',
+    `orgID`            INT UNSIGNED    NULL                     COMMENT '🏢 FK tblOrganisations - the redeeming organisation (NULL when this is an individual redemption instead)',
+    `subscriptionID`   BIGINT UNSIGNED NULL                     COMMENT '🔗 FK tblSubscriptions - the subscription this redemption applied to (NULL for a one-off/lifetime purchase redemption - see tblOneOffPurchases.discountID instead)',
+    `redeemedAt`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Redemption timestamp',
+
+    PRIMARY KEY (`redemptionID`),
+    UNIQUE KEY `idx_redemption_discount_user` (`discountID`, `userID`),
+    UNIQUE KEY `idx_redemption_discount_org` (`discountID`, `orgID`),
+    INDEX `idx_redemption_subscription` (`subscriptionID`),
+
+    CONSTRAINT `fk_redemption_discount` FOREIGN KEY (`discountID`)
+        REFERENCES `tblDiscounts` (`discountID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_redemption_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_redemption_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_redemption_subscription` FOREIGN KEY (`subscriptionID`)
+        REFERENCES `tblSubscriptions` (`subscriptionID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='🎟️ Discount redemption audit trail (#70) - one row per successful redemption, one-per-subject-per-discount by default via its UNIQUE keys';
+
+-- ==============================================================================
+-- 📋 Table 26: tblCreditLedger (#70)
+-- ==============================================================================
+-- Append-only ledger for pay-as-you-go (PAYG) credit balances. A subject's
+-- (user or org) balance for a given `meterKey` (e.g. 'qr_generations') is
+-- ALWAYS derived - never stored - as SUM(delta) across every row matching
+-- that subject+meterKey: a positive delta GRANTS credits (a PAYG pack
+-- purchase, an admin comp grant, a refund reversal), a negative delta
+-- CONSUMES credits (one gated act, e.g. one bulk-generate item beyond a
+-- subscription's free allowance). This is a classic append-only ledger
+-- pattern - rows are NEVER UPDATEd or DELETEd, only inserted - so the running
+-- balance is always reconstructable and auditable from history alone.
+--
+-- PAYG-WITH-A-CAP needs NO new column here at all: `credit_spend_cap_monthly`
+-- and `credit_balance_cap` are just two more keys in the EXISTING
+-- tblSubscriptionPlans.limitsJSON, read by the EXISTING, unmodified generic
+-- limitFor() - this table only needs to exist for consumeCreditsOr402()
+-- (fn_features.php) to have somewhere to write consumption rows and sum
+-- month-to-date spend against that cap.
+--
+-- @see fn_features.php - creditBalanceFor() (SUM(delta), request-cached like
+--      planByKey()) and consumeCreditsOr402() (the advisory-lock-wrapped
+--      writer, mirroring SECURITY.md F-023's GET_LOCK pattern)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS `tblCreditLedger` (
+    `entryID`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  COMMENT '🔑 Primary key - auto-incrementing ledger entry identifier',
+    `userID`           INT UNSIGNED    NULL                     COMMENT '👤 FK tblUsers - the credit-holding individual (NULL when this is an org-level ledger entry instead - XOR with orgID, mirroring tblSubscriptions)',
+    `orgID`            INT UNSIGNED    NULL                     COMMENT '🏢 FK tblOrganisations - the credit-holding organisation (NULL when this is an individual ledger entry instead)',
+    `meterKey`         VARCHAR(48)     NOT NULL                 COMMENT '🏷️ Machine key naming WHAT is metered (e.g. qr_generations) - a subject can hold independent balances for multiple meter keys',
+    `delta`            INT             NOT NULL                 COMMENT '➕➖ Signed change to the balance - positive = grant (purchase/admin/refund), negative = consume (one gated act); the running balance is SUM(delta) for this subject+meterKey, never stored directly',
+    `reason`           VARCHAR(100)    NOT NULL                 COMMENT '📝 Free-text audit reason (purchase, consume, refund, admin_grant, expiry, ...) - not an ENUM so a future reason never needs a schema change',
+    `refPurchaseID`    BIGINT UNSIGNED NULL                     COMMENT '🔗 FK tblOneOffPurchases - the purchase that granted this entry (NULL for a consumption row or a reason with no purchase, e.g. admin_grant)',
+    `refQrID`          BIGINT UNSIGNED NULL                     COMMENT '🔗 FK tblQRCodes - the QR-related act this consumption entry paid for (NULL for a grant row, or a consumption not tied to a specific QR record)',
+    `createdAt`        DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Ledger entry timestamp - month-to-date spend-cap checks filter on this column',
+
+    PRIMARY KEY (`entryID`),
+    INDEX `idx_ledger_user_meter_created` (`userID`, `meterKey`, `createdAt`),
+    INDEX `idx_ledger_org_meter_created` (`orgID`, `meterKey`, `createdAt`),
+    INDEX `idx_ledger_purchase` (`refPurchaseID`),
+    INDEX `idx_ledger_qr` (`refQrID`),
+
+    CONSTRAINT `fk_ledger_user` FOREIGN KEY (`userID`)
+        REFERENCES `tblUsers` (`userID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_ledger_org` FOREIGN KEY (`orgID`)
+        REFERENCES `tblOrganisations` (`orgID`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_ledger_purchase` FOREIGN KEY (`refPurchaseID`)
+        REFERENCES `tblOneOffPurchases` (`purchaseID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE,
+    CONSTRAINT `fk_ledger_qr` FOREIGN KEY (`refQrID`)
+        REFERENCES `tblQRCodes` (`qrID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='💰 Append-only PAYG credit ledger (#70) - balance = SUM(delta) per (subject, meterKey), inert until billing_payg_enabled=1';
+
+-- ==============================================================================
+-- ➕ Additive columns (#70): tblSubscriptions.pricePointID / discountID
+-- ==============================================================================
+-- Snapshot which price point and (if any) discount a subscription was bought
+-- under - both NULLable so every EXISTING row (and every row a caller inserts
+-- without ever touching the flexible-pricing tables) is completely unaffected
+-- - `fn_features.php`'s subscription resolution logic never reads either
+-- column, so this ALTER cannot change any gating behaviour. Placed via
+-- ALTER TABLE (rather than editing Table 20's CREATE TABLE block above)
+-- specifically so that block stays byte-for-byte the schema this codebase has
+-- already shipped and tested against; these two columns are purely additive.
+-- ==============================================================================
+ALTER TABLE `tblSubscriptions`
+    ADD COLUMN `pricePointID` INT UNSIGNED NULL COMMENT '🔗 FK tblPlanPricePoints - the specific price point this subscription was purchased under (NULL = legacy priceMonthly/priceYearly checkout, or a manually-granted/comp subscription with no price point)' AFTER `planID`,
+    ADD COLUMN `discountID`   INT UNSIGNED NULL COMMENT '🔗 FK tblDiscounts - the discount (if any) applied at checkout, snapshotted so it survives the discount later expiring/being deactivated' AFTER `pricePointID`,
+    ADD INDEX `idx_subscription_pricepoint` (`pricePointID`),
+    ADD INDEX `idx_subscription_discount` (`discountID`),
+    ADD CONSTRAINT `fk_subscription_pricepoint` FOREIGN KEY (`pricePointID`)
+        REFERENCES `tblPlanPricePoints` (`pricePointID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE,
+    ADD CONSTRAINT `fk_subscription_discount` FOREIGN KEY (`discountID`)
+        REFERENCES `tblDiscounts` (`discountID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE;
+
+-- ==============================================================================
+-- ➕ Additive column (#70): tblPayments.pricePointID
+-- ==============================================================================
+-- Same rationale as tblSubscriptions above - snapshots which price point a
+-- recurring-subscription payment corresponds to, NULLable so every existing/
+-- legacy payment row is unaffected. Placed via ALTER TABLE for the same
+-- "keep Table 21's CREATE TABLE block untouched" reason.
+-- ==============================================================================
+ALTER TABLE `tblPayments`
+    ADD COLUMN `pricePointID` INT UNSIGNED NULL COMMENT '🔗 FK tblPlanPricePoints - the price point this payment corresponds to (NULL = legacy priceMonthly/priceYearly billing, no price-point table in use)' AFTER `subscriptionID`,
+    ADD INDEX `idx_payment_pricepoint` (`pricePointID`),
+    ADD CONSTRAINT `fk_payment_pricepoint` FOREIGN KEY (`pricePointID`)
+        REFERENCES `tblPlanPricePoints` (`pricePointID`)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE;
+
+-- ==============================================================================
 -- ✅ Installation Complete
 -- ==============================================================================
--- All 21 tables have been created:
+-- All 26 tables have been created:
 --   1. tblSettings              - Application configuration (now incl. per-record encryptionSalt, F-006/G-010)
 --   2. tblErrorLog              - Error/exception logging
 --   3. tblActivityLog           - Activity tracking
@@ -913,8 +1298,25 @@ CREATE TABLE IF NOT EXISTS `tblPayments` (
 --  17. tblOrganisationMembers   - Organisation membership + roles (Epic E3 org stage stub)
 --  18. tblInvitations           - Organisation invitations (Epic E3 org stage stub)
 --  19. tblSubscriptionPlans     - Data-driven premium tier definitions (Epic E4, #25/#26/#53)
---  20. tblSubscriptions         - User/org subscriptions to a plan (Epic E4, #25/#26/#53)
---  21. tblPayments              - Payment ledger, schema only (Epic E4, #25/#26/#53)
+--  20. tblSubscriptions         - User/org subscriptions to a plan (Epic E4, #25/#26/#53) +
+--                                 pricePointID/discountID snapshot columns (#70)
+--  21. tblPayments              - Payment ledger, schema only (Epic E4, #25/#26/#53) +
+--                                 pricePointID snapshot column (#70)
+--  22. tblPlanPricePoints       - Multi-price-point/multi-currency/lifetime/PAYG-pack pricing
+--                                 per plan (#70 - flexible pricing, BUILT BUT DISABLED)
+--  23. tblDiscounts             - One-off/limited-time/lifetime discounts, coupon or automatic
+--                                 (#70 - BUILT BUT DISABLED)
+--  24. tblOneOffPurchases       - Standalone lifetime-deal/PAYG-credit-pack purchases, sibling
+--                                 to tblPayments (#70 - BUILT BUT DISABLED)
+--  25. tblDiscountRedemptions   - Discount redemption audit trail, one-per-subject-per-discount
+--                                 (#70 - BUILT BUT DISABLED)
+--  26. tblCreditLedger          - Append-only PAYG credit ledger, balance = SUM(delta) (#70 -
+--                                 BUILT BUT DISABLED)
+--
+-- ⚠️ Tables 22-26 and the two additive columns above are INERT until the
+--    matching `billing_price_points_enabled` / `billing_discounts_enabled` /
+--    `billing_payg_enabled` kill-switches (seed_data.sql, `billing` settings
+--    group) are flipped from their seeded 0 to 1 - see #70.
 --
 -- 📌 Next step: Run seed_data.sql to populate initial data.
 -- ==============================================================================

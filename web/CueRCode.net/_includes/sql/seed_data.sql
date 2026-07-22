@@ -126,6 +126,27 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('billing', 'billing_upgrade_url', '/pricing', 'url', 0, 1, 'URL shown to a caller denied a gated feature/limit (requireFeatureOr402() + the bulk-generate over-cap response) - a future plan-selection/pricing page; owner-editable, no code change needed to point it elsewhere'),
 ('billing', 'billing_past_due_downgrade_plan_key', 'free', 'string', 0, 1, 'The tblSubscriptionPlans.planKey the gating engine falls back to for CREATING new gated objects while a subscription is past_due (existing objects remain readable regardless) - see fn_features.php effectivePlanForGating()'),
 
+-- 💷 Flexible-pricing kill-switches (Epic E4 flexible-pricing delta, #70) -
+-- ------------------------------------------------------------------------------
+-- ⚠️  INERT BY DEFAULT (mirrors the email_enabled/sso_enabled kill-switch
+--     pattern above): each subsystem below is BUILT (schema + fn_features.php
+--     helpers + fn_pricing.php display preference all ship in this same
+--     migration) but stays COMPLETELY OFF until an admin flips its switch to
+--     1 - AND, independently, until real rows exist in the matching new table
+--     (tblPlanPricePoints/tblDiscounts+tblDiscountRedemptions/tblCreditLedger
+--     - see install.sql Tables 22-26). A fresh install therefore behaves
+--     IDENTICALLY to before this migration: `fn_pricing.php` keeps rendering
+--     the legacy priceMonthly/priceYearly columns, and every new
+--     fn_features.php helper (pricePointsForPlan()/resolveDiscountForCheckout()/
+--     creditBalanceFor()/consumeCreditsOr402()) no-ops/fails closed.
+-- @see _includes/sql/install.sql - Tables 22-26 (#70 schema delta)
+-- @see _functions/fn_features.php - the kill-switch-gated helpers
+-- @see _functions/fn_pricing.php - the price-point-preferring display query
+-- @see Pricing_Strategy.md §5 - worked examples of every structure these unlock
+('billing', 'billing_price_points_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for tblPlanPricePoints (#70) - 0 = fn_pricing.php ignores any price-point rows and keeps rendering the legacy priceMonthly/priceYearly columns; pricePointsForPlan() (fn_features.php) always returns [] while this is 0'),
+('billing', 'billing_discounts_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for tblDiscounts/tblDiscountRedemptions (#70) - 0 = resolveDiscountForCheckout() (fn_features.php) always returns null (no discount applied), regardless of what rows exist'),
+('billing', 'billing_payg_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for the pay-as-you-go credit subsystem (tblCreditLedger/tblOneOffPurchases, #70) - 0 = creditBalanceFor() reports a balance of 0 and consumeCreditsOr402() (fn_features.php) always denies (fails closed), regardless of any rows already in the ledger'),
+
 -- 🔐 SSO / OIDC Client Settings (Epic E2 - #55/#19/#20/#28)
 -- ------------------------------------------------------------------------------
 -- ⚠️  INERT BY DEFAULT (mirrors the email_enabled kill-switch pattern above):
@@ -498,14 +519,19 @@ VALUES
 -- ✅ Seed Data Complete
 -- ==============================================================================
 -- Inserted:
---   - 72 default settings across 8 groups (email group is Microsoft Graph -
---     based settings, Epic E8/#29; billing group, Epic E4/#25/#26/#53; new
---     sso group - 16 settings, Epic E2/#55/#19/#20/#28 - every provider
+--   - 75 default settings across 8 groups (email group is Microsoft Graph -
+--     based settings, Epic E8/#29; billing group, Epic E4/#25/#26/#53 plus the
+--     3 flexible-pricing kill-switches added by #70 - billing_price_points_
+--     enabled/billing_discounts_enabled/billing_payg_enabled, all seeded 0/
+--     INERT; sso group - 16 settings, Epic E2/#55/#19/#20/#28 - every provider
 --     seeded INERT: sso_enabled=0, all sso_<provider>_enabled=0, all
 --     client_id/client_secret empty)
 --   - 26 QR code type definitions with form field schemas
 --   - 25 predefined logo entries
---   - 4 subscription plan tiers (anonymous/free/pro/business, Epic E4/#53)
+--   - 4 subscription plan tiers (anonymous/free/pro/business, Epic E4/#53) -
+--     UNCHANGED by #70; the 5 new flexible-pricing tables (install.sql Tables
+--     22-26) are seeded with ZERO rows here - they stay empty/no-op until an
+--     admin populates them AND flips the matching kill-switch above
 --
 -- 📌 The application is now ready for use.
 --    Remove or restrict access to the /install/ directory.

@@ -269,3 +269,167 @@ assertFalse(
     (bool) preg_match('/dbQuery\(\s*[\'"][^\'"]*\'\s*\.\s*\$/', $featuresEngineSource),
     'regression guard: no dbQuery() call site string-concatenates a variable directly into the SQL text'
 );
+
+// ==============================================================================
+// 💷 Section 9: Flexible-pricing helpers (Epic E4 flexible-pricing delta, #70)
+//     - FAIL-CLOSED / NO-OP with empty tables + kill-switches off
+// ==============================================================================
+// This harness has neither getConfig() nor dbQuery() defined (see Section 3's
+// sanity assertion above) - exactly the "subsystem entirely unavailable"
+// scenario every helper below must fail closed/no-op against, mirroring how
+// Section 4's featureEnabled()/limitFor() assertions already prove the SAME
+// posture for the pre-#70 engine. None of these calls touch a database or a
+// config row; every one of them is a pure function-availability guard.
+// ==============================================================================
+
+assertFalse(function_exists('getConfig'), 'sanity: getConfig() is genuinely undefined in this harness (the #70 kill-switches cannot be read -> every helper below fails closed)');
+
+// ------------------------------------------------------------------------
+// 💷 pricePointsForPlan()
+// ------------------------------------------------------------------------
+assertEquals(
+    [],
+    pricePointsForPlan(1),
+    'pricePointsForPlan: no-op [] when getConfig() is unavailable (the billing_price_points_enabled kill-switch cannot be read -> fails closed, never fails open)'
+);
+assertEquals([], pricePointsForPlan(0), 'pricePointsForPlan: an invalid planID (0) fails closed to [] before even attempting the kill-switch check');
+assertEquals([], pricePointsForPlan(-5), 'pricePointsForPlan: a negative planID fails closed to []');
+
+// ------------------------------------------------------------------------
+// 🎟️ resolveDiscountForCheckout()
+// ------------------------------------------------------------------------
+assertEquals(
+    null,
+    resolveDiscountForCheckout(null, 1, null, null),
+    'resolveDiscountForCheckout: no-op null (automatic/sitewide lookup branch) when getConfig() is unavailable'
+);
+assertEquals(
+    null,
+    resolveDiscountForCheckout('LAUNCH25', 1, 'monthly', 7),
+    'resolveDiscountForCheckout: no-op null (explicit coupon-code lookup branch) when getConfig() is unavailable'
+);
+
+// ------------------------------------------------------------------------
+// 💰 creditBalanceFor() / 🗓️ creditSpentThisMonth()
+// ------------------------------------------------------------------------
+assertEquals(0, creditBalanceFor('user', 1, 'qr_generations'), 'creditBalanceFor: no-op 0 when getConfig() is unavailable (the billing_payg_enabled kill-switch cannot be read)');
+assertEquals(0, creditBalanceFor('org', 1, 'qr_generations'), 'creditBalanceFor: no-op 0 for an org subject too');
+assertEquals(0, creditBalanceFor('bogus', 1, 'qr_generations'), 'creditBalanceFor: an unrecognised subjectType fails closed to 0 before even checking the kill-switch');
+assertEquals(0, creditBalanceFor('user', 0, 'qr_generations'), 'creditBalanceFor: a non-positive subjectId fails closed to 0');
+assertEquals(0, creditBalanceFor('user', 1, ''), 'creditBalanceFor: an empty meterKey fails closed to 0');
+
+assertEquals(0, creditSpentThisMonth('user', 1, 'qr_generations'), 'creditSpentThisMonth: no-op 0 when dbQuery() is unavailable');
+assertEquals(0, creditSpentThisMonth('bogus', 1, 'qr_generations'), 'creditSpentThisMonth: an unrecognised subjectType fails closed to 0');
+
+// ------------------------------------------------------------------------
+// 🔢 resolveCreditLimitForSubject() - limitFor() for a user OR an org subject
+// ------------------------------------------------------------------------
+assertEquals(
+    0,
+    resolveCreditLimitForSubject('credit_spend_cap_monthly', 'user', 1),
+    'resolveCreditLimitForSubject: the user path is a pure pass-through to limitFor(), which itself fails safe '
+    . 'to 0 with no database available (Section 4 already proves this for limitFor() directly)'
+);
+assertEquals(
+    0,
+    resolveCreditLimitForSubject('credit_balance_cap', 'org', 3),
+    'resolveCreditLimitForSubject: the org path (effectivePlanForGating(null, $orgID)) ALSO fails safe to 0 - '
+    . 'the fail-safe plan shape has no credit_* keys at all'
+);
+assertEquals(0, resolveCreditLimitForSubject('credit_spend_cap_monthly', 'bogus', 1), 'resolveCreditLimitForSubject: an unrecognised subjectType fails closed to 0');
+
+// ------------------------------------------------------------------------
+// 🔒 acquireCreditLock() / releaseCreditLock()
+// ------------------------------------------------------------------------
+assertFalse(acquireCreditLock('cuercode_credit:test'), 'acquireCreditLock: returns false (not fatal) when dbQuery() is unavailable - the caller must not proceed unserialised');
+releaseCreditLock('cuercode_credit:test');
+assertTrue(true, 'releaseCreditLock: completes without throwing when dbQuery() is unavailable (best-effort, mirrors releaseSaveLimitLock())');
+
+// ------------------------------------------------------------------------
+// 💸 consumeCreditsOr402() - request-shape gate, then kill-switch gate
+// ------------------------------------------------------------------------
+$emptyMeterKeyDenial = consumeCreditsOr402('', 5, 'user', 1);
+assertTrue($emptyMeterKeyDenial !== null, 'consumeCreditsOr402: denies an empty meterKey');
+assertEquals('CREDIT_INVALID_REQUEST', $emptyMeterKeyDenial['errorCode'], 'consumeCreditsOr402: empty meterKey -> CREDIT_INVALID_REQUEST');
+assertEquals(402, $emptyMeterKeyDenial['httpCode'], 'consumeCreditsOr402: CREDIT_INVALID_REQUEST carries httpCode 402');
+
+$zeroQtyDenial = consumeCreditsOr402('qr_generations', 0, 'user', 1);
+assertEquals('CREDIT_INVALID_REQUEST', $zeroQtyDenial['errorCode'], 'consumeCreditsOr402: qty <= 0 -> CREDIT_INVALID_REQUEST');
+
+$negativeQtyDenial = consumeCreditsOr402('qr_generations', -3, 'user', 1);
+assertEquals('CREDIT_INVALID_REQUEST', $negativeQtyDenial['errorCode'], 'consumeCreditsOr402: a negative qty -> CREDIT_INVALID_REQUEST');
+
+$badSubjectTypeDenial = consumeCreditsOr402('qr_generations', 5, 'bogus', 1);
+assertEquals('CREDIT_INVALID_REQUEST', $badSubjectTypeDenial['errorCode'], 'consumeCreditsOr402: an unrecognised subjectType -> CREDIT_INVALID_REQUEST');
+
+$badSubjectIdDenial = consumeCreditsOr402('qr_generations', 5, 'user', 0);
+assertEquals('CREDIT_INVALID_REQUEST', $badSubjectIdDenial['errorCode'], 'consumeCreditsOr402: a non-positive subjectId -> CREDIT_INVALID_REQUEST');
+
+// 🚦 A perfectly well-formed request is STILL denied - never a silent
+// success - because the kill-switch cannot be read (getConfig() undefined)
+// under this harness, exactly the "kill-switch off" posture #70 requires.
+$killSwitchDenial = consumeCreditsOr402('qr_generations', 5, 'user', 1);
+assertTrue($killSwitchDenial !== null, 'consumeCreditsOr402: a well-formed request is still denied when the subsystem is unavailable/off');
+assertEquals('CREDIT_PAYG_DISABLED', $killSwitchDenial['errorCode'], 'consumeCreditsOr402: no-op denial is CREDIT_PAYG_DISABLED, never a silent success');
+assertEquals(402, $killSwitchDenial['httpCode'], 'consumeCreditsOr402: CREDIT_PAYG_DISABLED carries httpCode 402');
+assertEquals('/pricing', $killSwitchDenial['upgradeUrl'], 'consumeCreditsOr402: falls back to the same hard-coded default upgrade URL as requireFeatureOr402()');
+
+// ------------------------------------------------------------------------
+// 🧮 evaluateCreditSpend() - PURE PAYG-with-a-cap decision (no I/O)
+// ------------------------------------------------------------------------
+assertEquals(
+    ['allowed' => false, 'reason' => 'invalid_quantity'],
+    evaluateCreditSpend(0, 100, 20, 0),
+    'evaluateCreditSpend: qty <= 0 is always denied, regardless of balance/cap'
+);
+assertEquals(
+    ['allowed' => false, 'reason' => 'not_permitted'],
+    evaluateCreditSpend(5, 100, 0, 0),
+    'evaluateCreditSpend: spendCapMonthly=0 (an unseeded plan - limitFor()\'s fail-closed default) denies PAYG entirely, '
+    . 'distinct from "no budget left this month"'
+);
+assertEquals(
+    ['allowed' => false, 'reason' => 'insufficient_balance'],
+    evaluateCreditSpend(150, 100, -1, 0),
+    'evaluateCreditSpend: qty > currentBalance is denied even with an UNLIMITED (-1) monthly spend cap'
+);
+assertEquals(
+    ['allowed' => false, 'reason' => 'spend_cap_exceeded'],
+    evaluateCreditSpend(10, 100, 20, 15),
+    'evaluateCreditSpend: 15 already spent + 10 requested = 25 > the 20 monthly cap -> denied'
+);
+assertEquals(
+    ['allowed' => true, 'reason' => null],
+    evaluateCreditSpend(5, 100, 20, 15),
+    'evaluateCreditSpend: 15 already spent + 5 requested = 20, exactly AT the cap -> allowed (the boundary is inclusive)'
+);
+assertEquals(
+    ['allowed' => true, 'reason' => null],
+    evaluateCreditSpend(1000, 5000, -1, 999999),
+    'evaluateCreditSpend: an UNLIMITED (-1) monthly spend cap never denies on the spend-cap check, however much has already been spent'
+);
+
+// ------------------------------------------------------------------------
+// 📝 creditDenialMessage()
+// ------------------------------------------------------------------------
+assertContains('qr_generations', creditDenialMessage('not_permitted', 'qr_generations'), 'creditDenialMessage: names the meterKey in the not_permitted message');
+assertContains('Insufficient', creditDenialMessage('insufficient_balance', 'qr_generations'), 'creditDenialMessage: insufficient_balance message reads as expected');
+assertContains('spend cap', creditDenialMessage('spend_cap_exceeded', 'qr_generations'), 'creditDenialMessage: spend_cap_exceeded message reads as expected');
+assertEquals('Credit consumption denied.', creditDenialMessage('some_unmapped_reason', 'x'), 'creditDenialMessage: an unrecognised reason falls back to a generic message, never a fatal/undefined-index error');
+
+// ------------------------------------------------------------------------
+// 🧬 Static regression guards - #70 kill-switches present + no dynamic
+//     error-code concatenation (the #58 error-catalogue drift guard,
+//     tests/test_error_catalogue.php, statically scans for literal
+//     'errorCode' => 'X' shapes only - a concatenated value would either
+//     confuse it or hide a real code from the documented catalogue).
+// ------------------------------------------------------------------------
+assertFalse(
+    str_contains($featuresEngineSource, "'CREDIT_' ."),
+    'regression guard: consumeCreditsOr402() never builds an error code via string concatenation - '
+    . 'every CREDIT_* code is spelled out as its own complete literal (see the match() block near the end of the function)'
+);
+assertContains('CUERCODE_CREDIT_LOCK_NAME_PREFIX', $featuresEngineSource, 'regression guard: the credit advisory-lock prefix constant is present (mirrors CUERCODE_SAVE_LOCK_NAME_PREFIX/F-023)');
+assertContains('billing_price_points_enabled', $featuresEngineSource, 'regression guard: pricePointsForPlan() reads the documented billing_price_points_enabled kill-switch key');
+assertContains('billing_discounts_enabled', $featuresEngineSource, 'regression guard: resolveDiscountForCheckout() reads the documented billing_discounts_enabled kill-switch key');
+assertContains('billing_payg_enabled', $featuresEngineSource, 'regression guard: creditBalanceFor()/consumeCreditsOr402() read the documented billing_payg_enabled kill-switch key');
