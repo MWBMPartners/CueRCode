@@ -81,7 +81,7 @@ jobs:
       - name: Initialise CodeQL
         # ⏳ TRANSITIONAL — see header note; remove once GHAS is enabled.
         continue-on-error: true
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v4.37.4
         with:
           languages: ${{ matrix.language }}
           # 'security-extended' widens the query set beyond the default.
@@ -92,6 +92,6 @@ jobs:
         #    private repo; keeps the PR check from failing until GHAS is on.
         #    Remove once GHAS is enabled so CodeQL failures block again.
         continue-on-error: true
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v4.37.4
         with:
           category: "/language:${{ matrix.language }}"
