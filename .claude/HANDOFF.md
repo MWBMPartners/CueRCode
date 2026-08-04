@@ -1,6 +1,6 @@
 # 🤝 CueRCode — Session Handoff
 
-> **Last updated:** 2026-07-22 (Dynamic redirect + dual-function QR — Stage S0/S1 dark foundation, #27/#71/#33, #82 — see §0 top bullet); previously 2026-07-22 (Native UTF emoji centre-icon picker + scheduled emoji-ingest Action, #67/#68 — see §0 top bullets); previously 2026-07-18 (Beta `infoAppVer.php` stash-pop conflict resolved + real MWservices vendor URL populated across all 3 channel copies, #59 — see §30 below; API error-code catalogue completeness + CI drift guard, Epic E7 stage-2 catalogue item, #58 — see §28 below; autonomous launch-prep continuation — issue reconciliation, /pricing page, bulk a11y parity, #56/#57 — see §27; Thorough OpenAPI 3.0 refresh — full coverage, security schemes+scopes, error catalogue, JSON/XML examples + drift guard, launch-prep close-out — see §25 below; GDPR/CCPA data-subject rights — account export + erasure by anonymization, #37/epic #52 — see §24 below; Independent OIDC/SSO security review remediation — F-027 unlink TOCTOU lock + F-028/F-029/F-030/F-031 fail-closed CSRF/JWK kty/azp/CRLF hardening, Epic E2, #55 — see §23; SSO/OIDC client — Microsoft 365 + Google, SIGNula behind a flag, Epic E2, #55/#19/#20/#28 — see §22 below; Account-management privilege/scope-bypass fix, F-026, #52/#54 — see §21; Epic E7 stage 1 — self-service API keys + per-key scope enforcement, #54 — see §20; SVG logo screening parity on the base64 API path — closes F-024's companion gap, #52 — see §19; inline-SVG CSP sandbox hardening on qr-preview/download, F-024, #52 — see §18; Epic E3 stage 2b — account UI + own-account dashboard — see §17; F-023 saved_codes TOCTOU race fix — independent IDOR review of Epic E3 stage 2a — see §16; saved-codes API addendum in §15; Epic E4 framework stage — extensible premium tiers + feature gating — see §14; independent auth security review remediation in §13; Epic E3 stage 1 accounts-foundation addendum in §12; Epic E8 email subsystem addendum in §11; Round-1 planning content in §1-6 otherwise unchanged from 2026-07-09)
+> **Last updated:** 2026-08-04 (Four-tier branch cadence `alpha → beta → release-candidate → main` + single `work-in-progress` integration branch; multi-branch Dependabot + `security-propagate.yml`, all validated live — see §0); previously 2026-07-22 (Dynamic redirect + dual-function QR — Stage S0/S1 dark foundation, #27/#71/#33, #82 — see §0.1); previously 2026-07-22 (Native UTF emoji centre-icon picker + scheduled emoji-ingest Action, #67/#68 — see §0 top bullets); previously 2026-07-18 (Beta `infoAppVer.php` stash-pop conflict resolved + real MWservices vendor URL populated across all 3 channel copies, #59 — see §30 below; API error-code catalogue completeness + CI drift guard, Epic E7 stage-2 catalogue item, #58 — see §28 below; autonomous launch-prep continuation — issue reconciliation, /pricing page, bulk a11y parity, #56/#57 — see §27; Thorough OpenAPI 3.0 refresh — full coverage, security schemes+scopes, error catalogue, JSON/XML examples + drift guard, launch-prep close-out — see §25 below; GDPR/CCPA data-subject rights — account export + erasure by anonymization, #37/epic #52 — see §24 below; Independent OIDC/SSO security review remediation — F-027 unlink TOCTOU lock + F-028/F-029/F-030/F-031 fail-closed CSRF/JWK kty/azp/CRLF hardening, Epic E2, #55 — see §23; SSO/OIDC client — Microsoft 365 + Google, SIGNula behind a flag, Epic E2, #55/#19/#20/#28 — see §22 below; Account-management privilege/scope-bypass fix, F-026, #52/#54 — see §21; Epic E7 stage 1 — self-service API keys + per-key scope enforcement, #54 — see §20; SVG logo screening parity on the base64 API path — closes F-024's companion gap, #52 — see §19; inline-SVG CSP sandbox hardening on qr-preview/download, F-024, #52 — see §18; Epic E3 stage 2b — account UI + own-account dashboard — see §17; F-023 saved_codes TOCTOU race fix — independent IDOR review of Epic E3 stage 2a — see §16; saved-codes API addendum in §15; Epic E4 framework stage — extensible premium tiers + feature gating — see §14; independent auth security review remediation in §13; Epic E3 stage 1 accounts-foundation addendum in §12; Epic E8 email subsystem addendum in §11; Round-1 planning content in §1-6 otherwise unchanged from 2026-07-09)
 > **Read this first when resuming work on CueRCode from a cold start.**
 > Companion docs: `PROJECT_ROADMAP.md` (repo root — the master launch plan this handoff summarises), `PROJECT.md` (autopilot memory/backlog), `.dev-team/autopilot.json` (machine state), `VERIFICATION.md` + `verdict.json` (independent verify evidence).
 
@@ -8,72 +8,91 @@
 
 ## 0. ⚡ LATEST — 2026-08-04 session (READ FIRST — supersedes everything below)
 
-**Big change: the branch model is now a FOUR-tier cadence with a single working branch.**
+**Big change: the branch model is now a FOUR-tier cadence with a single integration branch, and the multi-branch security/Dependabot plumbing is BUILT, MERGED, and VALIDATED LIVE.**
 
 ### Branch model (authoritative — supersedes the old "alpha → beta → main" note)
 Work flows **`alpha → beta → release-candidate → main`** (four permanent
 promotion branches, ascending maturity: `alpha` = leading dev, `main` =
-production). There is **ONE** long-lived integration branch, **`working`**,
-that feeds `alpha`: cut short-lived topic work as needed, but consolidate it
-into `working` (via PRs that target `working`, so the source branch
-auto-deletes on merge), and when `working` is green + complete, open **one** PR
-`working → alpha`. Promotions up the chain (`alpha → beta`, `beta →
-release-candidate`, `release-candidate → main`) are owner-gated.
+production). There is **ONE** long-lived integration branch — **`work-in-progress`**
+(the owner renamed the earlier `working` branch to this) — that feeds `alpha`:
+cut short-lived topic work as needed, consolidate it into `work-in-progress`,
+and when it's green + complete open **one** PR `work-in-progress → alpha`.
+Promotions up the chain (`alpha → beta`, `beta → release-candidate`,
+`release-candidate → main`) are owner-gated.
+> ⚠️ A **stray leftover `working` branch @ `a4042c6`** also exists (a duplicate
+> created before the rename); it is NOT the integration branch — delete it (see
+> stale list). The live integration branch is `work-in-progress`.
 
-- **`release-candidate` created** this session off `main` (aligned to `main`
-  tip `ad5abbb`); **`working` created** off `alpha` (`a4042c6`). Both pushed.
-- **This HANDOFF/docs update is the first change to exercise the new cadence
-  end-to-end:** topic branch `claude/pr-consolidation-deps-p0ar32` → PR into
-  **`working`** → then promotion PR **`working → alpha`**. It also carries the
-  four-tier scan-trigger + config updates below.
+### What shipped & MERGED this session (all green)
+- **PR #86 → `main`** (merged, squash `9d9595b`) — `.github/dependabot.yml`
+  gains a **4th `target-branch: release-candidate` block** (weekly
+  github-actions version updates now open PRs against all four branches;
+  Dependabot reads config only from the default branch `main`, hence this had
+  to land on `main`) **+ `.github/workflows/security-propagate.yml`** (NEW).
+- **PR #87 → `work-in-progress`** then **PR #88 `work-in-progress → alpha`**
+  (both merged) — carried the four-tier scan-trigger updates: `ci.yml`,
+  `codeql.yml`, `semgrep.yml` now include **`release-candidate`** in their
+  push/PR branch triggers; `.github/SECURITY.md` → four-tier table +
+  propagation note; this HANDOFF §0. Full CI green on #88 (php-l 8.4/8.5, test
+  suite, gitleaks, CodeQL, Semgrep, actionlint). This exercised the new cadence
+  **topic → work-in-progress → alpha** end-to-end.
+- **Dependabot per-tier PRs #89–#92** (all merged) — Dependabot immediately
+  opened **one PR per tier** bumping `github/codeql-action 4 → 4.37.4`:
+  #92→alpha, **#91→release-candidate**, #90→beta, #89→main. #91 targeting
+  `release-candidate` **proves the new 4th Dependabot tier works**. Merged
+  branch-PRs first, `main` (#89) last.
 
-### Branch cleanup (review of all extra branches — DONE, no consolidation needed)
-All "extra" topic branches were reviewed: **every one is already fully merged
-into `alpha`/`beta`/`main` (unique-vs-alpha commit count = 0)**, so there was
-nothing to consolidate or cherry-pick — they are pure stale heads. **`git push
---delete` is policy-blocked (HTTP 403) at this environment's git proxy**, and
-the GitHub MCP exposes no branch-delete tool, so I **could not delete them
-programmatically**. The **12 stale merged branches to delete via the GitHub UI**
-(Settings → Branches, or enable *Settings → General → "Automatically delete head
-branches"*): `autopilot/2026-06-28`, `ci/actionlint-workflow-lint`,
+### `security-propagate.yml` — VALIDATED LIVE ✅
+Closes the gap that **Dependabot *security* updates only ever target the
+default branch (`main`)**. On a security/dependency PR merged into `main`, it
+cherry-picks the merged commit onto `alpha`/`beta`/`release-candidate` and opens
+a PR against each (conflict → tracking issue, never silently dropped). Trigger:
+`pull_request_target` closed+merged, gated to Dependabot author **or**
+`security`/`dependencies` label; only ever cherry-picks an already-merged `main`
+commit (no untrusted PR code executed). actionlint-clean. **First real firing:**
+on #89's merge it ran to `success` and correctly **no-op'd** (0 duplicate PRs, 0
+issues) because `alpha`/`beta`/`rc` were already patched by #90–92 — the
+"already-present" guard working as designed.
+
+### Final branch tips (post-session)
+| Branch | Role | Protected | Tip |
+| --- | --- | --- | --- |
+| `main` | Production | ✅ | `f59d5e3` |
+| `release-candidate` | RC staging | ❌ **(protect — owner)** | `0305742` |
+| `beta` | Beta testing | ✅ | `dbd9fa4` |
+| `alpha` | Leading dev | ✅ | `f742df9` (+ this doc PR) |
+| `work-in-progress` | Single integration branch → alpha | ❌ | tracks alpha |
+
+### Branch cleanup — 14 stale branches to delete via the GitHub UI
+**`git push --delete` is policy-blocked (HTTP 403) at this environment's git
+proxy** and the GitHub MCP exposes no branch-delete tool, so these **cannot be
+deleted programmatically** — delete via Settings → Branches, or enable
+*Settings → General → "Automatically delete head branches"*. All are fully
+merged (verified: 0 unique-by-SHA commits, or — for the squash-merged ones —
+empty content-diff vs their target), so deleting loses nothing:
+`autopilot/2026-06-28`, `ci/actionlint-workflow-lint`,
 `claude/alpha-deps-security-docs`, `claude/barcodes-api`,
 `claude/beta-security-config`, `claude/ci-security-main`,
+`claude/deps-multibranch-propagation` (#86, squash-merged — content on `main`),
 `claude/dynamic-redirect-s0s1`, `claude/emoji-picker`,
-`claude/fix-predefined-logos`, `claude/pricing-model`,
-`launch-prep/2026-07-10`. Deleting them loses nothing — all their work is
-already in the promotion chain. (Note: `claude/pr-consolidation-deps-p0ar32`
-is **active this session** as the topic branch above — delete it only after
-its `working` PR merges. `claude/deps-multibranch-propagation` is **active** as
-PR #86's head → do not delete until #86 merges.)
+`claude/fix-predefined-logos`, `claude/pr-consolidation-deps-p0ar32` (#87,
+merged), `claude/pricing-model`, `launch-prep/2026-07-10`, **`working`**
+(a4042c6 — the stray pre-rename duplicate). Dependabot's own
+`dependabot/github_actions/*` branches auto-delete on merge. **KEEP:** the four
+tier branches + `work-in-progress`.
 
-### Security/Dependabot across all four branches (DONE / in-flight)
-- **`.github/dependabot.yml`** now declares a **4th `target-branch` block for
-  `release-candidate`** (weekly github-actions version updates now open PRs
-  against all four branches). ⚠️ Dependabot reads its config **only from the
-  default branch (`main`)**, so this must land on `main` to take effect →
-  **PR #86** (`claude/deps-multibranch-propagation → main`).
-- **`.github/workflows/security-propagate.yml`** (NEW, in **PR #86**) closes the
-  gap that **Dependabot *security* updates only ever target the default branch
-  (`main`)**. On a security/dependency PR merging into `main`, it cherry-picks
-  the merged commit onto `alpha`/`beta`/`release-candidate` and opens a PR
-  against each (conflict → tracking issue, never silently dropped). Trigger:
-  `pull_request_target` closed+merged, gated to Dependabot author **or**
-  `security`/`dependencies` label; only ever cherry-picks an already-merged
-  `main` commit (no untrusted PR code executed). actionlint-clean.
-- **Scan workflows** (`ci.yml`, `codeql.yml`, `semgrep.yml`) now include
-  **`release-candidate`** in their push/PR branch triggers (this branch →
-  alpha, then promoted down the chain so every tier's own copy runs its scans).
-- **`.github/SECURITY.md`** updated to the four-tier table + documents the
-  propagation Action.
-
-### ➡️ Pick up here (next actions — 2026-08-04)
-1. **Merge PR #86 → `main`** once CI green (all four checks were green:
-   actionlint, Semgrep, CodeQL, actionlint). Needed for the 4th Dependabot tier
-   + the security-propagation Action to take effect (config lives on `main`).
-2. **Owner:** delete the 12 stale branches above (or enable auto-delete).
-3. Promote `alpha → beta → release-candidate → main` when each tier is signed
+### ➡️ Pick up here (next actions — owner)
+1. **Delete the 14 stale branches** above (or enable auto-delete).
+2. **Add branch protection to `release-candidate`** — it's the only permanent
+   tier currently unprotected (extends `LAUNCH_DECISIONS.md` §A).
+3. **CI-suite propagation down the chain:** the full `ci.yml` test suite +
+   `release-candidate` triggers currently live richest on `alpha`; `beta`/`main`
+   run CodeQL + Semgrep + actionlint (no `ci.yml` test suite yet), and
+   `release-candidate` runs actionlint only. Each tier gains the full suite as
+   you promote `alpha → beta → release-candidate → main`.
+4. Promote `alpha → beta → release-candidate → main` when each tier is signed
    off (owner-gated).
-4. Everything under the 2026-07-22 entry below still stands (pricing #70,
+5. Everything under the 2026-07-22 entry below still stands (pricing #70,
    `LAUNCH_DECISIONS.md` owner items, dynamic/dual-function S2/S4 gated on
    G-007). Read on.
 

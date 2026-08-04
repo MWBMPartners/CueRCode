@@ -111,6 +111,22 @@ CueRCode/
 | 🧪 Alpha | `public_html_dev_alpha/` | Restricted (`.htaccess` auth) |
 | 🚀 Landing | `public_html_landing/` | Public (pre-launch only) |
 
+#### 🌿 Git branch cadence
+
+Development follows a **four-tier promotion cadence**, fed by a single
+integration branch:
+
+```
+work-in-progress → alpha → beta → release-candidate → main
+```
+
+`work-in-progress` is the single long-lived integration branch (cut topic
+branches from it; promote with one PR to `alpha`). The four tiers are permanent
+and each up-chain promotion is owner-gated. Automated code scanning
+(CodeQL/Semgrep/CI), Dependabot version updates, and automatic security-fix
+propagation all cover **all four** branches. See DEV_NOTES.md ("Branch Model &
+CI/CD Cadence") for the full workflow.
+
 ## 📖 API Documentation
 
 - 📚 **Developer Portal**: `/developers/` - quickstart, authentication guide, a live endpoint reference

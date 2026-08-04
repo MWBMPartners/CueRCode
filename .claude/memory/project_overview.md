@@ -26,4 +26,15 @@ CueRCode is a comprehensive QR code generation service with web UI and RESTful A
 
 **Key constraint:** Email integration (#29) should be prioritised alongside Phase 2 as it's needed for registration/password reset.
 
-**How to apply:** Always audit issues against codebase before closing. Check PROJECT_STATUS.md for current status. Never assume prior completion claims are accurate.
+**Branch cadence (as of 2026-08-04, #64):** Four-tier promotion model
+`work-in-progress → alpha → beta → release-candidate → main`. `work-in-progress`
+is the SINGLE long-lived integration branch that feeds `alpha` (renamed from the
+earlier `working`; a stray `working`@a4042c6 duplicate is stale). The four tier
+branches are permanent; up-chain promotions are owner-gated. Scanning
+(ci/codeql/semgrep), Dependabot version updates, and the
+`security-propagate.yml` security-fix cherry-pick all cover ALL FOUR branches.
+Note: `git push --delete` is policy-blocked at the CI git proxy — stale branches
+must be deleted via the GitHub UI. Full detail + current branch tips live in
+`.claude/HANDOFF.md` §0.
+
+**How to apply:** Always audit issues against codebase before closing. Check PROJECT_STATUS.md for current status. Never assume prior completion claims are accurate. Cut new work from `work-in-progress`; promote via `work-in-progress → alpha`.
