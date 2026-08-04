@@ -1,0 +1,131 @@
+# =============================================================================
+# 🔁 CueRCode - Propagate security / dependency fixes to the release branches
+# =============================================================================
+# Dependabot *version* updates already target every branch (see
+# .github/dependabot.yml). But Dependabot *security* updates (advisory-driven)
+# and any manually-merged security fix only ever land on the DEFAULT branch
+# (`main`). In our four-tier model (alpha → beta → release-candidate → main)
+# that would leave the other three branches exposed.
+#
+# This workflow closes that gap: when a security/dependency PR is MERGED into
+# `main`, it cherry-picks the merged commit onto `alpha`, `beta`, and
+# `release-candidate` and opens a PR against each — so the same fix reaches
+# every branch. A cherry-pick conflict opens a tracking ISSUE for manual
+# backport instead of failing silently.
+#
+# 🔒 Safety: uses `pull_request_target` (needs write scope to push branches +
+#    open PRs) but only ever cherry-picks an ALREADY-MERGED commit from `main`
+#    — no untrusted PR code is checked out or executed. The job is gated to
+#    merged PRs authored by Dependabot or labelled security/dependencies.
+#
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: Propagate security fixes
+
+on:
+  pull_request_target:
+    types:
+      - closed
+    branches:
+      - main
+
+# Least-privilege: only what cherry-pick + branch push + PR/issue creation need.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: security-propagate-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  propagate:
+    name: Propagate to ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    # Only merged PRs that are dependency/security fixes.
+    if: >-
+      github.event.pull_request.merged == true &&
+      (
+        github.event.pull_request.user.login == 'dependabot[bot]' ||
+        contains(github.event.pull_request.labels.*.name, 'security') ||
+        contains(github.event.pull_request.labels.*.name, 'dependencies')
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - alpha
+          - beta
+          - release-candidate
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create automated --color ededed --description "Opened automatically by a workflow" 2>/dev/null || true
+          gh label create security --color d73a4a --description "Security fix" 2>/dev/null || true
+          gh label create dependencies --color 0366d6 --description "Dependency update" 2>/dev/null || true
+
+      - name: Cherry-pick the merged fix onto ${{ matrix.target }} and open a PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # Target branch may not exist yet (e.g. release-candidate not created).
+          if ! git ls-remote --exit-code --heads origin "${TARGET}" >/dev/null 2>&1; then
+            echo "::notice::Target branch '${TARGET}' does not exist — skipping."
+            exit 0
+          fi
+
+          git fetch origin "${TARGET}"
+
+          # Already contains the fix? Nothing to do.
+          if git merge-base --is-ancestor "${MERGE_SHA}" "origin/${TARGET}"; then
+            echo "::notice::${MERGE_SHA} already present on ${TARGET} — skipping."
+            exit 0
+          fi
+
+          BRANCH="security-propagation/${TARGET}/pr-${PR_NUMBER}"
+          git checkout -B "${BRANCH}" "origin/${TARGET}"
+
+          # A squash-merge produces a single-parent commit (cherry-pick as-is);
+          # a merge-commit has 2+ parents and needs -m 1.
+          PARENTS="$(git rev-list --parents -n 1 "${MERGE_SHA}" | wc -w)"
+          MFLAG=""
+          if [ "${PARENTS}" -ge 3 ]; then MFLAG="-m 1"; fi
+
+          if git cherry-pick ${MFLAG} "${MERGE_SHA}"; then
+            git push -u origin "${BRANCH}" --force-with-lease
+            if gh pr list --head "${BRANCH}" --state open --json number --jq 'length' | grep -qx 0; then
+              gh pr create \
+                --base "${TARGET}" \
+                --head "${BRANCH}" \
+                --title "[auto-propagate → ${TARGET}] ${PR_TITLE}" \
+                --body "Automated propagation of security/dependency fix #${PR_NUMBER} (merged into \`main\`) onto \`${TARGET}\`, so the fix lands on every branch in the alpha → beta → release-candidate → main model. Source commit: \`${MERGE_SHA}\`. Review + merge once CI is green." \
+                --label automated --label security --label dependencies
+            else
+              echo "::notice::PR for ${BRANCH} already open — updated the branch."
+            fi
+          else
+            git cherry-pick --abort || true
+            gh issue create \
+              --title "⚠️ Manual backport needed: propagate PR #${PR_NUMBER} to ${TARGET}" \
+              --body "Automatic propagation of security/dependency fix #${PR_NUMBER} to \`${TARGET}\` hit a **cherry-pick conflict** (source commit \`${MERGE_SHA}\`). Please backport it to \`${TARGET}\` manually so the fix is not left out of that branch." \
+              --label automated --label security --label dependencies
+          fi

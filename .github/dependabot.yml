@@ -1,15 +1,21 @@
 # =============================================================================
 # 🤖 CueRCode - Dependabot configuration (multi-branch)
 # =============================================================================
-# Keeps dependencies patched across our three-tier branch model
-# (alpha → beta → main) instead of only the default branch.
+# Keeps dependencies patched across our FOUR-tier branch model
+# (alpha → beta → release-candidate → main) instead of only the default branch.
 #
 # ⚠️ IMPORTANT — how Dependabot reads this file:
 #   Dependabot ONLY loads `.github/dependabot.yml` from the repository's
-#   DEFAULT branch (`main`). A copy on `alpha`/`beta` alone is ignored.
-#   To open update PRs against non-default branches we therefore declare
-#   one update block per branch using `target-branch:`. This whole file
-#   must live on `main` to take effect.
+#   DEFAULT branch (`main`). A copy on other branches is ignored. To open
+#   *version-update* PRs against non-default branches we therefore declare one
+#   update block per branch using `target-branch:`. This whole file must live
+#   on `main` to take effect.
+#
+#   NOTE: Dependabot *security* updates (advisory-driven auto-PRs) still only
+#   target the DEFAULT branch. Propagating those (and any security fix merged
+#   to `main`) onto alpha/beta/release-candidate is handled by
+#   `.github/workflows/security-propagate.yml`, which cherry-picks the merged
+#   fix and opens a PR against each release branch.
 #
 # 📦 Ecosystem coverage:
 #   - github-actions: fully covered (workflow files are always tracked).
@@ -82,6 +88,30 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "beta"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "security"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # 🕯️ GitHub Actions — release-candidate (final staging before main)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "release-candidate"
     schedule:
       interval: "weekly"
       day: "monday"
