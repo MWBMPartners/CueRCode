@@ -17,18 +17,22 @@ welcome reports from the security community.
 
 ## Supported branches
 
-CueRCode is developed on a three-tier branch model. Security fixes are applied
+CueRCode is developed on a four-tier branch model. Security fixes are applied
 across all supported tiers:
 
-| Branch  | Channel                        | Security fixes |
-| ------- | ------------------------------ | -------------- |
-| `main`  | Production (CueRCode.net)      | ✅ Supported   |
-| `beta`  | Beta testing environment       | ✅ Supported   |
-| `alpha` | Alpha testing environment      | ✅ Supported   |
+| Branch              | Channel                          | Security fixes |
+| ------------------- | -------------------------------- | -------------- |
+| `main`              | Production (CueRCode.net)        | ✅ Supported   |
+| `release-candidate` | Release-candidate staging        | ✅ Supported   |
+| `beta`              | Beta testing environment         | ✅ Supported   |
+| `alpha`             | Alpha testing environment        | ✅ Supported   |
 
 Automated dependency updates (Dependabot) and code scanning (see
-`.github/workflows/`) run against all three branches so that a vulnerability
-patched on one tier is not silently left open on another.
+`.github/workflows/`) run against all four branches so that a vulnerability
+patched on one tier is not silently left open on another. Security fixes that
+land on `main` first (Dependabot security updates target only the default
+branch) are automatically cherry-picked back to `alpha`, `beta`, and
+`release-candidate` by `.github/workflows/security-propagate.yml`.
 
 ## Reporting a vulnerability
 

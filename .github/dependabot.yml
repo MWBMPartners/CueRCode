@@ -1,8 +1,8 @@
 # =============================================================================
 # 🤖 CueRCode - Dependabot configuration (multi-branch)
 # =============================================================================
-# Keeps dependencies patched across our three-tier branch model
-# (alpha → beta → main) instead of only the default branch.
+# Keeps dependencies patched across our four-tier branch model
+# (alpha → beta → release-candidate → main) instead of only the default branch.
 #
 # ⚠️ IMPORTANT — how Dependabot reads this file:
 #   Dependabot ONLY loads `.github/dependabot.yml` from the repository's
@@ -82,6 +82,30 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "beta"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "security"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # 🚦 GitHub Actions — release-candidate (final pre-production staging branch)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "release-candidate"
     schedule:
       interval: "weekly"
       day: "monday"

@@ -21,11 +21,13 @@ on:
   push:
     branches:
       - main
+      - release-candidate
       - beta
       - alpha
   pull_request:
     branches:
       - main
+      - release-candidate
       - beta
       - alpha
   schedule:

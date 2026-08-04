@@ -6,7 +6,80 @@
 
 ---
 
-## 0. ⚡ LATEST — 2026-07-22 session (READ FIRST — supersedes the §1 snapshot below)
+## 0. ⚡ LATEST — 2026-08-04 session (READ FIRST — supersedes everything below)
+
+**Big change: the branch model is now a FOUR-tier cadence with a single working branch.**
+
+### Branch model (authoritative — supersedes the old "alpha → beta → main" note)
+Work flows **`alpha → beta → release-candidate → main`** (four permanent
+promotion branches, ascending maturity: `alpha` = leading dev, `main` =
+production). There is **ONE** long-lived integration branch, **`working`**,
+that feeds `alpha`: cut short-lived topic work as needed, but consolidate it
+into `working` (via PRs that target `working`, so the source branch
+auto-deletes on merge), and when `working` is green + complete, open **one** PR
+`working → alpha`. Promotions up the chain (`alpha → beta`, `beta →
+release-candidate`, `release-candidate → main`) are owner-gated.
+
+- **`release-candidate` created** this session off `main` (aligned to `main`
+  tip `ad5abbb`); **`working` created** off `alpha` (`a4042c6`). Both pushed.
+- **This HANDOFF/docs update is the first change to exercise the new cadence
+  end-to-end:** topic branch `claude/pr-consolidation-deps-p0ar32` → PR into
+  **`working`** → then promotion PR **`working → alpha`**. It also carries the
+  four-tier scan-trigger + config updates below.
+
+### Branch cleanup (review of all extra branches — DONE, no consolidation needed)
+All "extra" topic branches were reviewed: **every one is already fully merged
+into `alpha`/`beta`/`main` (unique-vs-alpha commit count = 0)**, so there was
+nothing to consolidate or cherry-pick — they are pure stale heads. **`git push
+--delete` is policy-blocked (HTTP 403) at this environment's git proxy**, and
+the GitHub MCP exposes no branch-delete tool, so I **could not delete them
+programmatically**. The **12 stale merged branches to delete via the GitHub UI**
+(Settings → Branches, or enable *Settings → General → "Automatically delete head
+branches"*): `autopilot/2026-06-28`, `ci/actionlint-workflow-lint`,
+`claude/alpha-deps-security-docs`, `claude/barcodes-api`,
+`claude/beta-security-config`, `claude/ci-security-main`,
+`claude/dynamic-redirect-s0s1`, `claude/emoji-picker`,
+`claude/fix-predefined-logos`, `claude/pricing-model`,
+`launch-prep/2026-07-10`. Deleting them loses nothing — all their work is
+already in the promotion chain. (Note: `claude/pr-consolidation-deps-p0ar32`
+is **active this session** as the topic branch above — delete it only after
+its `working` PR merges. `claude/deps-multibranch-propagation` is **active** as
+PR #86's head → do not delete until #86 merges.)
+
+### Security/Dependabot across all four branches (DONE / in-flight)
+- **`.github/dependabot.yml`** now declares a **4th `target-branch` block for
+  `release-candidate`** (weekly github-actions version updates now open PRs
+  against all four branches). ⚠️ Dependabot reads its config **only from the
+  default branch (`main`)**, so this must land on `main` to take effect →
+  **PR #86** (`claude/deps-multibranch-propagation → main`).
+- **`.github/workflows/security-propagate.yml`** (NEW, in **PR #86**) closes the
+  gap that **Dependabot *security* updates only ever target the default branch
+  (`main`)**. On a security/dependency PR merging into `main`, it cherry-picks
+  the merged commit onto `alpha`/`beta`/`release-candidate` and opens a PR
+  against each (conflict → tracking issue, never silently dropped). Trigger:
+  `pull_request_target` closed+merged, gated to Dependabot author **or**
+  `security`/`dependencies` label; only ever cherry-picks an already-merged
+  `main` commit (no untrusted PR code executed). actionlint-clean.
+- **Scan workflows** (`ci.yml`, `codeql.yml`, `semgrep.yml`) now include
+  **`release-candidate`** in their push/PR branch triggers (this branch →
+  alpha, then promoted down the chain so every tier's own copy runs its scans).
+- **`.github/SECURITY.md`** updated to the four-tier table + documents the
+  propagation Action.
+
+### ➡️ Pick up here (next actions — 2026-08-04)
+1. **Merge PR #86 → `main`** once CI green (all four checks were green:
+   actionlint, Semgrep, CodeQL, actionlint). Needed for the 4th Dependabot tier
+   + the security-propagation Action to take effect (config lives on `main`).
+2. **Owner:** delete the 12 stale branches above (or enable auto-delete).
+3. Promote `alpha → beta → release-candidate → main` when each tier is signed
+   off (owner-gated).
+4. Everything under the 2026-07-22 entry below still stands (pricing #70,
+   `LAUNCH_DECISIONS.md` owner items, dynamic/dual-function S2/S4 gated on
+   G-007). Read on.
+
+---
+
+## 0.1 — 2026-07-22 session (superseded branch-model note; content otherwise current)
 
 **Big change: the launch-prep + autopilot work is now consolidated onto `alpha`.** The old "merge PR #46 first" hard-blocker (§1, HB-1) is **DONE/superseded**.
 
