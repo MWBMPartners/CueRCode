@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Four-Tier Branch Cadence + Multi-Branch Security/Dependabot Propagation (2026-08-04, #64) - CI/INFRA
+
+Moves the project from a three-tier (`alpha → beta → main`) to a **four-tier
+branch cadence** — **`alpha → beta → release-candidate → main`** — fed by a
+single long-lived integration branch, **`work-in-progress`** (the `working`
+branch was renamed by the owner). Extends automated dependency updates, code
+scanning, and security-fix propagation to cover **all four** branches.
+
+- **`.github/dependabot.yml`** - added a **4th `target-branch: release-candidate`**
+  github-actions update block (weekly, grouped, same schedule as the other
+  tiers). Dependabot reads its config only from the default branch (`main`), so
+  the authoritative copy lives there. **Validated live:** Dependabot opened one
+  version-update PR per tier (#89 main / #90 beta / #91 release-candidate / #92
+  alpha, `codeql-action 4 → 4.37.4`), confirming the release-candidate tier works.
+- **`.github/workflows/security-propagate.yml`** (NEW) - Dependabot **security**
+  updates (and any security-labelled fix) only ever target the default branch
+  (`main`). This workflow closes that gap: on such a PR merging into `main` it
+  **cherry-picks the merged commit onto `alpha`, `beta`, and `release-candidate`**
+  and opens a PR against each; a cherry-pick conflict opens a tracking issue
+  (never silently dropped). Trigger `pull_request_target` (closed → merged),
+  gated to Dependabot author **or** `security`/`dependencies` label; it only ever
+  cherry-picks an already-merged `main` commit, so no untrusted PR code is
+  executed. Skips branches that don't exist and skips when the fix is already
+  present. **Validated live:** fired on #89's merge, ran to `success`, and
+  correctly no-op'd (0 duplicate PRs / 0 issues) because the other tiers were
+  already patched. actionlint-clean.
+- **`.github/workflows/{ci,codeql,semgrep}.yml`** - `release-candidate` added to
+  the push/PR branch triggers so all four tiers are scanned; four-tier header text.
+- **`.github/SECURITY.md`** - four-tier supported-branch table + documents the
+  propagation Action.
+- **Docs** - `.claude/HANDOFF.md` §0 (authoritative four-tier + integration-branch
+  model, final branch tips, 14 stale-branch deletion list), `.claude/memory/`,
+  DEV_NOTES.md, PROJECT_STATUS.md, README.md.
+- **Residual (owner):** `git push --delete` is policy-blocked at the CI git proxy,
+  so 14 stale (fully-merged) branches must be deleted via the GitHub UI; add
+  branch protection to `release-candidate`; the full `ci.yml` test suite
+  propagates down to `beta`/`rc`/`main` as tiers are promoted. See
+  `LAUNCH_DECISIONS.md` §A and `.claude/HANDOFF.md` §0.
+
 ### Added - Dynamic Redirect + Dual-Function QR: Stage S0/S1 Dark Foundation (2026-07-22, #27/#71/#33, #82) - BUILT BUT DARK/INERT
 
 Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destination API) of the dynamic-redirect / dual-function QR design (`.dev-team/dynamic_dualfn_design.md`, copied into the repo this session). **Nothing goes live**: no public `/r/{uuid}` redirect endpoint exists anywhere in the codebase, the `dynamic_url` QR type seeds `isActive=0`, and the `dynamic_qr_enabled` kill-switch seeds `'0'`. Stage S2 (the live redirect route) and Stage S4 (dual-function QR) are BUILT-READY but NOT started - both explicitly gated on owner sign-off G-007 (see `LAUNCH_DECISIONS.md` §H, O-1…O-11).

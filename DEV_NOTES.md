@@ -1,6 +1,42 @@
 # 🛠️ CueRCode - Developer Notes
 
-**📅 Last Updated:** 2026-07-10 (Epic E3 stage 2b - account UI & own-account dashboard, #52/#12/#14/#23/#24)
+**📅 Last Updated:** 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
+
+---
+
+## 🌿 Branch Model & CI/CD Cadence (2026-08-04, #64)
+
+CueRCode uses a **four-tier promotion cadence** (ascending maturity):
+
+```
+work-in-progress  ──►  alpha  ──►  beta  ──►  release-candidate  ──►  main
+ (integration)       (leading dev)          (staging)            (production)
+```
+
+- **`work-in-progress`** is the **single long-lived integration branch** (renamed
+  from the earlier `working`). Cut short-lived topic branches as needed,
+  consolidate them into `work-in-progress`, and promote with **one** PR
+  `work-in-progress → alpha`. Keep it synced with `alpha` (merge `alpha` in
+  before starting new work) so its promotion PRs show only the new diff.
+- **`alpha → beta → release-candidate → main`** are the four permanent tiers.
+  Each up-chain promotion is **owner-gated**.
+- **Scanning** (`ci.yml` php-lint + test suite + gitleaks, `codeql.yml` JS,
+  `semgrep.yml` PHP+JS) triggers on push/PR to **all four** tiers. The full
+  `ci.yml` suite currently lives richest on `alpha` and propagates down as tiers
+  are promoted.
+- **Dependabot** (`.github/dependabot.yml`) declares one `target-branch` block
+  per tier, so github-actions version-update PRs open against **all four**
+  branches (config is read only from the default branch `main`).
+- **Security-fix propagation** (`.github/workflows/security-propagate.yml`):
+  Dependabot *security* updates only ever target `main`. When a
+  security/dependency PR merges into `main`, this workflow cherry-picks it onto
+  `alpha`/`beta`/`release-candidate` and opens a PR against each (conflict →
+  tracking issue). It only cherry-picks an already-merged `main` commit — no
+  untrusted PR code runs — and no-ops cleanly when a tier is already patched.
+
+See `.claude/HANDOFF.md` §0 for the current branch tips, the stale-branch
+cleanup list, and the outstanding owner actions (protect `release-candidate`,
+delete stale branches).
 
 ---
 
