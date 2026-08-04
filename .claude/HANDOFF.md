@@ -54,45 +54,48 @@ on #89's merge it ran to `success` and correctly **no-op'd** (0 duplicate PRs, 0
 issues) because `alpha`/`beta`/`rc` were already patched by #90–92 — the
 "already-present" guard working as designed.
 
-### Final branch tips (post-session)
+### Final branch tips + topology (post-session — CLEAN)
+The repo is now **exactly the target topology: the four permanent tiers + the
+single `work-in-progress` integration branch, and NOTHING else** — every stale
+branch has been removed.
+
 | Branch | Role | Protected | Tip |
 | --- | --- | --- | --- |
 | `main` | Production | ✅ | `f59d5e3` |
 | `release-candidate` | RC staging | ❌ **(protect — owner)** | `0305742` |
 | `beta` | Beta testing | ✅ | `dbd9fa4` |
-| `alpha` | Leading dev | ✅ | `f742df9` (+ this doc PR) |
+| `alpha` | Leading dev | ✅ | `f16e5d0` |
 | `work-in-progress` | Single integration branch → alpha | ❌ | tracks alpha |
 
-### Branch cleanup — 14 stale branches to delete via the GitHub UI
-**`git push --delete` is policy-blocked (HTTP 403) at this environment's git
-proxy** and the GitHub MCP exposes no branch-delete tool, so these **cannot be
-deleted programmatically** — delete via Settings → Branches, or enable
-*Settings → General → "Automatically delete head branches"*. All are fully
-merged (verified: 0 unique-by-SHA commits, or — for the squash-merged ones —
-empty content-diff vs their target), so deleting loses nothing:
-`autopilot/2026-06-28`, `ci/actionlint-workflow-lint`,
-`claude/alpha-deps-security-docs`, `claude/barcodes-api`,
-`claude/beta-security-config`, `claude/ci-security-main`,
-`claude/deps-multibranch-propagation` (#86, squash-merged — content on `main`),
-`claude/dynamic-redirect-s0s1`, `claude/emoji-picker`,
-`claude/fix-predefined-logos`, `claude/pr-consolidation-deps-p0ar32` (#87,
-merged), `claude/pricing-model`, `launch-prep/2026-07-10`, **`working`**
-(a4042c6 — the stray pre-rename duplicate). Dependabot's own
-`dependabot/github_actions/*` branches auto-delete on merge. **KEEP:** the four
-tier branches + `work-in-progress`.
+### ⚠️ Auto-delete is ENABLED (operational note)
+The repo has *Settings → General → "Automatically delete head branches"* ON.
+This auto-cleaned all the old topic branches — **but it also deletes
+`work-in-progress` every time it is promoted** (`work-in-progress → alpha`),
+because that branch is the PR head. After each promotion, **recreate
+`work-in-progress` from `alpha`'s tip** (`git branch -f work-in-progress
+origin/alpha && git push -u origin work-in-progress`), or promote via a
+short-lived topic branch *into* `work-in-progress` so only the topic branch is
+auto-deleted. Before starting new work, **merge `alpha` into `work-in-progress`**
+so its promotion PRs show only the new diff. (The earlier `git push --delete`
+403 block only affected *manual* deletes; auto-delete-on-merge is unaffected.)
+
+### Branch cleanup — ✅ COMPLETE
+All previously-listed stale branches (`autopilot/*`, `ci/*`, `claude/*`,
+`launch-prep/*`, the `dependabot/github_actions/*` update branches, and the
+stray pre-rename `working`) have been deleted — the branch-tips table above is
+the entire branch set. Nothing further to clean.
 
 ### ➡️ Pick up here (next actions — owner)
-1. **Delete the 14 stale branches** above (or enable auto-delete).
-2. **Add branch protection to `release-candidate`** — it's the only permanent
+1. **Add branch protection to `release-candidate`** — it's the only permanent
    tier currently unprotected (extends `LAUNCH_DECISIONS.md` §A).
-3. **CI-suite propagation down the chain:** the full `ci.yml` test suite +
+2. **CI-suite propagation down the chain:** the full `ci.yml` test suite +
    `release-candidate` triggers currently live richest on `alpha`; `beta`/`main`
    run CodeQL + Semgrep + actionlint (no `ci.yml` test suite yet), and
    `release-candidate` runs actionlint only. Each tier gains the full suite as
    you promote `alpha → beta → release-candidate → main`.
-4. Promote `alpha → beta → release-candidate → main` when each tier is signed
+3. Promote `alpha → beta → release-candidate → main` when each tier is signed
    off (owner-gated).
-5. Everything under the 2026-07-22 entry below still stands (pricing #70,
+4. Everything under the 2026-07-22 entry below still stands (pricing #70,
    `LAUNCH_DECISIONS.md` owner items, dynamic/dual-function S2/S4 gated on
    G-007). Read on.
 
