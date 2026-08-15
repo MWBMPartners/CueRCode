@@ -34,6 +34,12 @@ work-in-progress  ──►  alpha  ──►  beta  ──►  release-candidat
   tracking issue). It only cherry-picks an already-merged `main` commit — no
   untrusted PR code runs — and no-ops cleanly when a tier is already patched.
 
+- **Runners — always `ubuntu-latest`:** every workflow job (including the SFTP
+  deploy in `deploy.yml`) runs on **`ubuntu-latest`** — the project standard. Any
+  new or edited workflow MUST set `runs-on: ubuntu-latest`; do **not** use macOS,
+  Windows, or self-hosted runners without an explicit, documented reason. As of
+  2026-08-04 all 8 workflows / 10 jobs comply.
+
 See `.claude/HANDOFF.md` §0 for the current branch tips, the stale-branch
 cleanup list, and the outstanding owner actions (protect `release-candidate`,
 delete stale branches).

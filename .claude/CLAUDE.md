@@ -66,3 +66,8 @@ These instructions MUST be followed for EVERY prompt/action:
 - WCAG 2.1 AA accessibility compliant
 - AJAX with graceful JS-disabled fallback
 - Bot protection: Cloudflare Turnstile > reCAPTCHA > hCaptcha (based on available API keys)
+
+### CI/CD & GitHub Actions
+
+- **Runners:** ALL GitHub Actions workflow jobs MUST use `runs-on: ubuntu-latest` — including the SFTP deploy (`.github/workflows/deploy.yml`) and any future deploy/build/test workflows. Do NOT introduce macOS, Windows, or self-hosted runners without an explicit, documented reason.
+- **Branch cadence:** four-tier `work-in-progress → alpha → beta → release-candidate → main` (see DEV_NOTES.md "Branch Model & CI/CD Cadence"). Scanning, Dependabot, and security-fix propagation cover all four tier branches.
