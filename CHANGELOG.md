@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - CI: false backport alarms + release-candidate scanning gap (2026-09-23, #109/#110) - CI/INFRA
+
+- **`security-propagate.yml`** (committed directly to `main`, `0c2a761`,
+  owner-approved, #109) - if a branch already has the fix, the copy has
+  nothing to add, and git reports that as a failure. That "empty" case is now
+  skipped with a notice. Before, it wrongly opened a "Manual backport needed"
+  issue (false alarms #93-#95). A real clash still opens the issue. Also quoted
+  the optional `-m 1` flag safely (shellcheck SC2086).
+- **`release-candidate` scanning** (committed directly to `release-candidate`,
+  `f12b6f9`, owner-approved, #110) - `codeql.yml` and `semgrep.yml` now trigger
+  on `release-candidate`; `ci.yml` and `.gitleaks.toml` were added so it gets the
+  PHP syntax check, the test suite and the secret scan.
+- **`ci.yml`** (here and on `release-candidate`, identical) - now tolerant of an
+  older branch: it checks only folders that exist, and skips the test suite with
+  a notice when `tests/run.php` isn't there yet. No change on branches that
+  have the suite.
+
 ### Changed - Standing working rules refreshed + fresh-session handoff (2026-09-23, #108) - PROCESS/DOCS
 
 No application code changed. Records the owner's revised working rules so any

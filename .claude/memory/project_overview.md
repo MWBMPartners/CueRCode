@@ -37,6 +37,6 @@ Note (2026-09-23): stale-branch cleanup is complete; repo auto-deletes PR head b
 must be deleted via the GitHub UI. Full detail + current branch tips live in
 `.claude/HANDOFF.md` §0.
 
-**Current state (2026-09-23):** see `.claude/HANDOFF.md` §0 — open fixes from #103 (security-propagate false alarms, release-candidate scanning gap, Swagger UI offline fallback) + full issue/docs sweep still queued.
+**Current state (2026-09-23 late):** see `.claude/HANDOFF.md` §0. #109 (security-propagate empty-cherry-pick fix, on `main`) and #110 (release-candidate scanning, on RC) are pushed. Owner allowed direct fixes on those two branches for that task only. Next: Swagger UI offline fallback, then the issue sweep and docs refresh. BLOCKER: GitHub Actions stopped starting jobs at ~20:20 UTC 2026-09-23 (likely billing/minutes), so verify locally with actionlint/shellcheck/gitleaks/php -l.
 
 **How to apply:** Always audit issues against codebase before closing. Check PROJECT_STATUS.md for current status. Never assume prior completion claims are accurate. Cut new work from `work-in-progress`; promote via `work-in-progress → alpha`.

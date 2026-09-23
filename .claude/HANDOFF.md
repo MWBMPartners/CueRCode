@@ -1,6 +1,6 @@
 # 🤝 CueRCode — Session Handoff
 
-> **Last updated:** 2026-09-23 (Standing rules refreshed + fresh-session pick-up point, #108 — see §0); previously 2026-08-04 (Four-tier branch cadence `alpha → beta → release-candidate → main` + single `work-in-progress` integration branch; multi-branch Dependabot + `security-propagate.yml`, all validated live — see §0); previously 2026-07-22 (Dynamic redirect + dual-function QR — Stage S0/S1 dark foundation, #27/#71/#33, #82 — see §0.1); previously 2026-07-22 (Native UTF emoji centre-icon picker + scheduled emoji-ingest Action, #67/#68 — see §0 top bullets); previously 2026-07-18 (Beta `infoAppVer.php` stash-pop conflict resolved + real MWservices vendor URL populated across all 3 channel copies, #59 — see §30 below; API error-code catalogue completeness + CI drift guard, Epic E7 stage-2 catalogue item, #58 — see §28 below; autonomous launch-prep continuation — issue reconciliation, /pricing page, bulk a11y parity, #56/#57 — see §27; Thorough OpenAPI 3.0 refresh — full coverage, security schemes+scopes, error catalogue, JSON/XML examples + drift guard, launch-prep close-out — see §25 below; GDPR/CCPA data-subject rights — account export + erasure by anonymization, #37/epic #52 — see §24 below; Independent OIDC/SSO security review remediation — F-027 unlink TOCTOU lock + F-028/F-029/F-030/F-031 fail-closed CSRF/JWK kty/azp/CRLF hardening, Epic E2, #55 — see §23; SSO/OIDC client — Microsoft 365 + Google, SIGNula behind a flag, Epic E2, #55/#19/#20/#28 — see §22 below; Account-management privilege/scope-bypass fix, F-026, #52/#54 — see §21; Epic E7 stage 1 — self-service API keys + per-key scope enforcement, #54 — see §20; SVG logo screening parity on the base64 API path — closes F-024's companion gap, #52 — see §19; inline-SVG CSP sandbox hardening on qr-preview/download, F-024, #52 — see §18; Epic E3 stage 2b — account UI + own-account dashboard — see §17; F-023 saved_codes TOCTOU race fix — independent IDOR review of Epic E3 stage 2a — see §16; saved-codes API addendum in §15; Epic E4 framework stage — extensible premium tiers + feature gating — see §14; independent auth security review remediation in §13; Epic E3 stage 1 accounts-foundation addendum in §12; Epic E8 email subsystem addendum in §11; Round-1 planning content in §1-6 otherwise unchanged from 2026-07-09)
+> **Last updated:** 2026-09-23 late (CI fixes #109 on `main` + #110 on `release-candidate` pushed; ⚠️ GitHub Actions not starting jobs since ~20:20 UTC — see §0); earlier 2026-09-23 (Standing rules refreshed + fresh-session pick-up point, #108 — see §0); previously 2026-08-04 (Four-tier branch cadence `alpha → beta → release-candidate → main` + single `work-in-progress` integration branch; multi-branch Dependabot + `security-propagate.yml`, all validated live — see §0); previously 2026-07-22 (Dynamic redirect + dual-function QR — Stage S0/S1 dark foundation, #27/#71/#33, #82 — see §0.1); previously 2026-07-22 (Native UTF emoji centre-icon picker + scheduled emoji-ingest Action, #67/#68 — see §0 top bullets); previously 2026-07-18 (Beta `infoAppVer.php` stash-pop conflict resolved + real MWservices vendor URL populated across all 3 channel copies, #59 — see §30 below; API error-code catalogue completeness + CI drift guard, Epic E7 stage-2 catalogue item, #58 — see §28 below; autonomous launch-prep continuation — issue reconciliation, /pricing page, bulk a11y parity, #56/#57 — see §27; Thorough OpenAPI 3.0 refresh — full coverage, security schemes+scopes, error catalogue, JSON/XML examples + drift guard, launch-prep close-out — see §25 below; GDPR/CCPA data-subject rights — account export + erasure by anonymization, #37/epic #52 — see §24 below; Independent OIDC/SSO security review remediation — F-027 unlink TOCTOU lock + F-028/F-029/F-030/F-031 fail-closed CSRF/JWK kty/azp/CRLF hardening, Epic E2, #55 — see §23; SSO/OIDC client — Microsoft 365 + Google, SIGNula behind a flag, Epic E2, #55/#19/#20/#28 — see §22 below; Account-management privilege/scope-bypass fix, F-026, #52/#54 — see §21; Epic E7 stage 1 — self-service API keys + per-key scope enforcement, #54 — see §20; SVG logo screening parity on the base64 API path — closes F-024's companion gap, #52 — see §19; inline-SVG CSP sandbox hardening on qr-preview/download, F-024, #52 — see §18; Epic E3 stage 2b — account UI + own-account dashboard — see §17; F-023 saved_codes TOCTOU race fix — independent IDOR review of Epic E3 stage 2a — see §16; saved-codes API addendum in §15; Epic E4 framework stage — extensible premium tiers + feature gating — see §14; independent auth security review remediation in §13; Epic E3 stage 1 accounts-foundation addendum in §12; Epic E8 email subsystem addendum in §11; Round-1 planning content in §1-6 otherwise unchanged from 2026-07-09)
 > **Read this first when resuming work on CueRCode from a cold start.**
 > Companion docs: `PROJECT_ROADMAP.md` (repo root — the master launch plan this handoff summarises), `PROJECT.md` (autopilot memory/backlog), `.dev-team/autopilot.json` (machine state), `VERIFICATION.md` + `verdict.json` (independent verify evidence).
 
@@ -13,54 +13,71 @@
 > **#103** (the umbrella for the current programme of work).
 
 ### 🧭 Where we are, in plain English
-- The code itself hasn't changed since the dynamic-redirect groundwork (#82).
-  Recent sessions have been housekeeping: dependency bumps, branch tidy-up,
-  CI plumbing, and now the working rules.
-- Every branch is healthy and on the same CodeQL scanner version (4.37.7), except
-  `release-candidate` which has an automatic Dependabot PR **#107** (4.37.7 →
-  4.38.0) waiting — **leave it for Dependabot/owner**, it's not ours.
-- `work-in-progress` was brought level with `alpha` (picked up Dependabot #104)
-  at the start of this session, then this session's rules/handoff commit added.
-- The owner planned a **Codex review at 00:08** (2026-09-24) and may restart
-  the session first to update Claude Code. **The Codex CLI is not installed in
-  the cloud container** — Codex reviews have to run on the owner's machine (or a
-  session that has Codex). Nothing code-level is waiting on that review right
-  now; this session only changed docs/rules.
+- The app code itself hasn't changed since the dynamic-redirect groundwork
+  (#82). Recent work has been housekeeping: dependency bumps, CI plumbing, and
+  the working rules.
+- This session: rules/handoff refresh (#108), then — on the owner's say-so —
+  two CI fixes committed **directly** to `main` (#109) and `release-candidate`
+  (#110). Dependabot's #104–#107 were merged by the owner, so all tiers are on
+  CodeQL action 4.38.0.
+- 🚨 GitHub Actions has stopped starting jobs (see BLOCKER below) — nothing can
+  be confirmed green on GitHub until the owner sorts that out.
+- The Codex CLI is not installed in the cloud container, so Codex reviews run on
+  the owner's machine (e.g. the planned 00:08 review). Owed: #108/#109/#110.
 
-### 🌿 Branch tips (2026-09-23)
+### 🚨 BLOCKER — GitHub Actions stopped running jobs (~20:20 UTC 2026-09-23)
+Since about 20:20 UTC on 2026-09-23, **every** job on **every** branch fails
+within ~2 seconds with **no log at all**. That includes Dependabot's own merges
+#104–#107, which happened BEFORE this session pushed anything, and identical
+checks passed on 2026-09-14. So GitHub is refusing to *start* the jobs, and the
+code is not what's failing. The usual cause on a private repo is **used-up
+Actions minutes / a spending limit / a billing problem**.
+**Owner:** check GitHub → Settings → Billing and plans → Actions (for the
+MWBMPartners org). Once jobs run again, re-run the latest runs on `main`
+(`0c2a761`), `release-candidate` (`f12b6f9`), `alpha`, `beta`, and confirm green.
+Until then, the checks below were run **locally** instead (same tools CI uses).
+
+### 🌿 Branch tips (2026-09-23, late)
 | Branch | Tip | Notes |
 | --- | --- | --- |
-| `main` | `b0ce41e` | codeql-action bump #106 |
-| `release-candidate` | `071f2cc` | Dependabot PR #107 open against it; **still unprotected** (owner) |
-| `beta` | `7d31f71` | codeql-action bump #105 |
+| `main` | `0c2a761` | #109 security-propagate fix (direct commit, owner-approved) |
+| `release-candidate` | `f12b6f9` | #110 scan fix (direct commit, owner-approved); Dependabot #107 merged (`0fd4d5b`); **still unprotected** (owner) |
+| `beta` | `7d31f71` | codeql-action bump #105; **also has no `ci.yml`** (same gap #110 fixed on RC — arrives via promotion, or fix directly if owner OKs) |
 | `alpha` | `6053147` | codeql-action bump #104 |
-| `work-in-progress` | `25475f1` (#108 rules/handoff) on top of `alpha` | the ONLY branch we push to |
+| `work-in-progress` | see `git log` — #108 rules + #109/#110 docs + tolerant `ci.yml` | the ONLY branch we normally push to |
 
 ### 📋 Task queue (pick up from the top)
 | # | Task | Status | Notes |
 | --- | --- | --- | --- |
-| 1 | Refresh standing rules + handoff + `.OpenAI/` Codex memory (#108) | ✅ Done | Pushed `25475f1` to `work-in-progress` |
-| 2 | Fix `security-propagate.yml` false alarms (#103 item 2b) | ⏳ Queued | An "already applied" fix makes `git cherry-pick` stop with an *empty* change; the script wrongly treats that as a conflict and opens a "Manual backport needed" issue. Fix: detect the empty case (`git cherry-pick --skip`/check `git diff --cached --quiet`) and skip quietly. Lives on `main` (workflow runs from default branch) — needs owner OK to change `main`, or ship via the normal promotion chain. |
-| 3 | Scan `release-candidate` properly (#103 item 2c) | ⏳ Queued | Its `codeql.yml`/`semgrep.yml` don't list `release-candidate`, and it has no `ci.yml` (no tests, no `php -l`, no secret scan). Arrives naturally when `alpha` is promoted up the chain; otherwise a direct fix on `release-candidate` needs owner OK. |
-| 4 | Swagger UI offline fallback (#103 item 2d) | ⏳ Queued | `public_html/api/docs/index.php` loads Swagger UI from unpkg only. Vendor `swagger-ui-dist` (css + bundle + standalone preset) under `public_html/assets/vendor/swagger-ui/` with the same CDN-first/local-fallback pattern as Bootstrap/jQuery. Mirror to `public_html_dev_alpha`/`_dev_beta` copies if they carry the docs page. Works on shared hosting (static files only, no Docker). |
+| 1 | Refresh standing rules + handoff + `.OpenAI/` Codex memory (#108) | ✅ Done | `25475f1`, `521d2fa` |
+| 2 | Fix `security-propagate.yml` false alarms (#109) | ✅ Done (closed) | `main` `0c2a761`. Empty cherry-pick (no conflicted files + clean index/tree) → skip with notice; real conflict still opens the issue. Both paths tested in a throwaway repo; actionlint + shellcheck clean. |
+| 3 | Scan `release-candidate` properly (#110) | ✅ Pushed — ⏳ awaiting a real CI run (#110 left OPEN) | `release-candidate` `f12b6f9`: codeql/semgrep triggers, `ci.yml`, `.gitleaks.toml`. Locally: actionlint clean, `php -l` 34/34 files clean, gitleaks "no leaks", test step skips (no `tests/` on RC yet). Close #110 once Actions runs green. |
+| 3a | Same tolerant `ci.yml` on `work-in-progress` | ✅ Done | Only adds guards (lint only existing folders; skip tests with notice if `tests/run.php` missing) — no change where the suite exists. Keeps RC and WIP copies identical so promotion won't clash. |
+| 4 | Swagger UI offline fallback (#103 item 2d) | ⏳ Next | `public_html/api/docs/index.php` loads Swagger UI from unpkg only. Vendor `swagger-ui-dist` (css + bundle + standalone preset) under `public_html/assets/vendor/swagger-ui/` with the same CDN-first/local-fallback pattern as Bootstrap/jQuery. Mirror to `public_html_dev_alpha`/`_dev_beta` copies if they carry the docs page. Works on shared hosting (static files only, no Docker). |
 | 5 | Full GitHub issue sweep — all open/closed issues checked against the ACTUAL code (#103 Part 3) | ⏳ Queued | 38 open issues on 2026-09-23. Audit-first rule applies. |
 | 6 | Thorough documentation update (standing task) | ⏳ Queued | All `.md` files, in-app help/guides, developer portal, OpenAPI spec, `.claude/`, `.OpenAI/`. |
-| 7 | Propose further work for alpha test releases (#103 Part 3) | ⏳ Queued | Use dev-team plugins; unactioned ideas → `for consideration` issues. |
-| 8 | Codex review of everything since the last review | ⏳ Owed | Codex review → fix → re-review until clean. Needs Codex (owner's machine). |
-| 9 | One PR `work-in-progress → alpha` | ⏳ Later | Only when 2–7 are done and green. **Auto-delete will remove `work-in-progress` after merge — recreate it from `alpha`.** |
+| 7 | Propose further work for alpha test releases (#103 Part 3) | ⏳ Queued | Use dev-team plugins; unactioned ideas → `for consideration` issues. Candidate: tidy the ~60 pre-existing *info-level* shellcheck notes in `deploy.yml`/`release.yml`/`version-bump.yml` (unquoted variables) — harmless today, not fixed. |
+| 8 | Codex review of everything since the last review (#108, #109, #110 diffs) | ⏳ Owed | Codex review → fix → re-review until clean. Needs Codex (owner's machine). |
+| 9 | One PR `work-in-progress → alpha` | ⏳ Later | Only when 4–7 are done and green (and Actions is running again). **Auto-delete will remove `work-in-progress` after merge — recreate it from `alpha`.** |
 
-### ❓ Owner decisions still open
+### ❓ Owner decisions / actions still open
+- 🚨 **GitHub Actions billing/limits** — see BLOCKER above.
 - **Branch protection for `release-candidate`** (owner action in GitHub settings).
-- Tasks 2 and 3 touch `main`/`release-candidate` directly — **OK to commit there,
-  or wait for the normal promotion chain?** (Default if no answer: fix in
-  `work-in-progress` and let promotion carry it up.)
+- ✅ ~~Direct fixes on `main`/`release-candidate`~~ — owner said "fix them directly" (2026-09-23); done.
+- `beta` has the same missing-`ci.yml` gap — fix directly too, or let promotion carry it? (Default: let promotion carry it.)
 - Everything in `LAUNCH_DECISIONS.md` (pricing #70, G-007 go/no-go for the live
   `/r/` redirect route, PayPal/SSO/email credentials, legal review, live tests).
 
 ### ✏️ Correction to the 2026-08-04 note below
 The 2026-08-04 section says `security-propagate.yml`'s first run "cleanly
 no-op'd (0 issues)". **That was wrong** — it opened three false-alarm issues
-(#93, #94, #95, since closed). The root cause is queue task 2 above.
+(#93, #94, #95, since closed). Fixed by #109.
+
+### 🧰 Local check tools (cloud container)
+GitHub's API is blocked by the container proxy, but release downloads work:
+`pip install actionlint-py shellcheck-py` (gives `actionlint` + `shellcheck`);
+gitleaks: `curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar -xz gitleaks`.
+PHP 8.4 CLI is pre-installed.
 
 ### 📜 Standing rules — changed 2026-09-23 (full text in `.claude/CLAUDE.md`)
 - **Push is now allowed** — commit AND push to `work-in-progress` after each

@@ -64,13 +64,21 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
+          # Only scan folders that exist — an older tier (e.g. release-candidate
+          # before alpha is promoted into it) may not have tests/ yet (#110).
+          DIRS=()
+          for d in web tests; do
+            if [ -d "${d}" ]; then
+              DIRS+=("${d}")
+            fi
+          done
           while IFS= read -r file; do
             if ! php -l "$file" > /dev/null 2>&1; then
               echo "::error file=${file}::PHP syntax error"
               php -l "$file" || true
               fail=1
             fi
-          done < <(find web tests -name '*.php' -type f)
+          done < <(find "${DIRS[@]}" -name '*.php' -type f)
           if [ "${fail}" -ne 0 ]; then
             echo "PHP syntax errors found."
             exit 1
@@ -87,7 +95,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
+      # 🔎 An older tier (e.g. release-candidate before alpha is promoted into
+      #    it) may not carry the test suite yet. Skip the remaining steps with
+      #    a visible notice rather than failing; the suite switches on by
+      #    itself once tests/run.php arrives via promotion (#110).
+      - name: Check the test suite is present on this branch
+        id: suite
+        run: |
+          if [ -f tests/run.php ]; then
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::tests/run.php is not on this branch yet — test suite skipped (it arrives via promotion)."
+          fi
+
       - name: Set up PHP 8.4
+        if: steps.suite.outputs.present == 'true'
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
@@ -95,6 +118,7 @@ jobs:
           coverage: none
 
       - name: Install vendored libraries (no Composer, mirrors the server)
+        if: steps.suite.outputs.present == 'true'
         run: |
           set -euo pipefail
           LIB="web/CueRCode.net/_libraries"
@@ -112,6 +136,7 @@ jobs:
           echo "Vendored libraries installed."
 
       - name: Run test suite
+        if: steps.suite.outputs.present == 'true'
         run: php tests/run.php
 
   # ---------------------------------------------------------------------------

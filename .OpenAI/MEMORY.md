@@ -21,3 +21,10 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
 - **Known trap:** the repo auto-deletes a PR's source branch when merged, so
   `work-in-progress` disappears after each promotion to `alpha` — recreate it
   from `alpha`.
+- **Direct pushes to tier branches** need explicit owner permission each time.
+  On 2026-09-23 the owner OK'd one-off direct fixes on `main` (#109) and
+  `release-candidate` (#110) only.
+- **If GitHub Actions jobs fail in ~2 seconds with no log**, GitHub isn't starting
+  them (billing/minutes), and the code isn't at fault. Run the same checks
+  locally (actionlint, shellcheck, gitleaks, `php -l`) and flag it to the owner.
+  This happened from ~20:20 UTC 2026-09-23.

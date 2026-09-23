@@ -1,6 +1,6 @@
 # 🛠️ CueRCode - Developer Notes
 
-**📅 Last Updated:** 2026-09-23 (AI-assisted working rules, #108); previously 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
+**📅 Last Updated:** 2026-09-23 (CI fixes #109/#110 — empty cherry-picks skipped in `security-propagate.yml`; `release-candidate` now fully scanned; AI-assisted working rules, #108); previously 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
 
 ---
 
