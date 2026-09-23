@@ -6,9 +6,22 @@
  *
  * Path: public_html/api/docs/index.php
  *
- * Renders the interactive API documentation using Swagger UI. The Swagger UI
- * library is loaded from the unpkg CDN and pointed at the OpenAPI 3.0
- * specification file at /api/v1/openapi.json.
+ * Renders the interactive API documentation using Swagger UI, pointed at the
+ * OpenAPI 3.0 specification file at /api/v1/openapi.json.
+ *
+ * 🌐 CDN-first with local fallback (Issue #111): the Swagger UI library is
+ * loaded from jsDelivr, pinned to version 5.33.0, with a Subresource
+ * Integrity (SRI) hash on every file so the browser refuses anything that
+ * doesn't match byte-for-byte. If jsDelivr can't be reached (or the file
+ * fails the SRI check), the page falls back to a copy of the same 5.33.0
+ * files vendored under /assets/vendor/swagger-ui/ - unmodified, straight
+ * from the official npm tarball - so the docs page still works with no
+ * internet-facing CDN at all (useful on Dreamhost shared hosting, and
+ * required because this site's Content-Security-Policy header only
+ * allow-lists https://cdn.jsdelivr.net for scripts/styles, NOT unpkg.com -
+ * a previous revision of this page loaded Swagger UI from unpkg, which the
+ * CSP silently blocked on every live request, leaving visitors stuck on the
+ * "Documentation Unavailable" message with no way to reach the docs).
  *
  * This page uses the shared header.php and footer.php templates for consistent
  * site navigation and styling.
@@ -16,11 +29,12 @@
  * @package     CueRCode
  * @subpackage  API Documentation
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       Phase 2
  * @see         https://swagger.io/tools/swagger-ui/ Swagger UI
  * @see         https://spec.openapis.org/oas/v3.0.3 OpenAPI 3.0 Specification
- * @see         https://unpkg.com/ unpkg CDN
+ * @see         https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/ jsDelivr CDN copy (pinned, SRI-checked)
+ * @see         web/CueRCode.net/public_html/assets/vendor/swagger-ui/ Local fallback copy (vendored, same version)
  */
 
 // ==============================================================================
@@ -143,10 +157,24 @@ X-RateLimit-Remaining: 58</code></pre>
     </div>
 
     <!-- ====================================================================
-         🎨 Swagger UI CSS (from unpkg CDN)
-         @see https://unpkg.com/swagger-ui-dist/
+         🎨 Swagger UI CSS (jsDelivr CDN, pinned 5.33.0, SRI-checked, with
+         local vendored fallback)
+         @see https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/
+         The inline onerror handler below is an inline event handler, so
+         it is governed by the CSP's script-src directive - which includes
+         'unsafe-inline' - and is therefore allowed. It fires only if the CSS
+         request fails outright (network error, or an SRI mismatch causes
+         the browser to refuse the resource) - it clears the error handler
+         first (so a second failure on the fallback path can't loop), drops
+         the now-irrelevant integrity attribute (the local file is served
+         same-origin so SRI isn't needed there), and repoints href at the
+         vendored copy under /assets/vendor/swagger-ui/.
          ==================================================================== -->
-    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" crossorigin="anonymous">
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/swagger-ui.css"
+          integrity="sha384-Ov4/wv3j2bmct8cDc5X4ngJZohVPzEmc6uDPH8WeljUxO5vtoykvMEfbu9Vh6RaW"
+          crossorigin="anonymous"
+          onerror="this.onerror=null;this.removeAttribute('integrity');this.href='/assets/vendor/swagger-ui/swagger-ui.css';">
 
     <!-- 🎨 Custom overrides for Swagger UI to match CueRCode theme -->
     <style>
@@ -240,12 +268,35 @@ X-RateLimit-Remaining: 58</code></pre>
     </style>
 
     <!-- ====================================================================
-         📦 Swagger UI JavaScript (from unpkg CDN)
-         @see https://unpkg.com/swagger-ui-dist/
+         📦 Swagger UI JavaScript (jsDelivr CDN, pinned 5.33.0, SRI-checked,
+         with local vendored fallback)
+         @see https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/
          @see https://swagger.io/docs/open-source-tools/swagger-ui/usage/configuration/
+         Same fallback pattern used site-wide for jQuery/Bootstrap in
+         _includes/footer.php: each CDN <script> is followed by an inline
+         <script> that checks whether the expected global made it onto the
+         page. If the CDN request failed (network error, SRI mismatch, or
+         CSP block), document.write() pulls in the vendored local copy
+         instead, before the DOM finishes parsing.
          ==================================================================== -->
-    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/swagger-ui-bundle.js"
+            integrity="sha384-YDALVcy8kj8yltLBVi1vBiBAUqdxvus673gM8XKwiy6aDUJFXivF/KCufekjYbVf"
+            crossorigin="anonymous"></script>
+    <script>
+        /* 🔄 Swagger UI bundle CDN fallback to local vendored copy */
+        if (typeof SwaggerUIBundle === 'undefined') {
+            document.write('<script src="/assets/vendor/swagger-ui/swagger-ui-bundle.js"><\/script>');
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/swagger-ui-standalone-preset.js"
+            integrity="sha384-My2aDM4r2Mbm3ybHcubKm9O9U8FEjvF/O5nGvE9YK5dzqOTbWEKa79RPJ1krdMaF"
+            crossorigin="anonymous"></script>
+    <script>
+        /* 🔄 Swagger UI standalone preset CDN fallback to local vendored copy */
+        if (typeof SwaggerUIStandalonePreset === 'undefined') {
+            document.write('<script src="/assets/vendor/swagger-ui/swagger-ui-standalone-preset.js"><\/script>');
+        }
+    </script>
 
     <script>
         /**
@@ -309,13 +360,24 @@ X-RateLimit-Remaining: 58</code></pre>
                 /* 📌 Store reference globally for debugging */
                 window.swaggerUI = ui;
             } else {
-                /* ❌ Swagger UI failed to load from CDN */
+                /* ❌ Swagger UI failed to load - this should be rare, since
+                   both the jsDelivr CDN copy AND a vendored local fallback
+                   copy are loaded above (see the <script> tags near the
+                   bottom of this page). Point visitors at the raw
+                   machine-readable spec so they aren't left stuck. The
+                   openapi.json path is a fixed string, not user input, but
+                   it's still emitted via json_encode() with the JSON_HEX_*
+                   flags (safe inside a <script> block and an HTML
+                   attribute) to stay consistent with this project's
+                   "always escape output" house rule. */
+                var specPath = <?php echo json_encode('/api/v1/openapi.json', JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
                 document.getElementById('swagger-ui').innerHTML =
                     '<div class="alert alert-warning m-4">'
                     + '<i class="fa-solid fa-triangle-exclamation me-2"></i>'
                     + '<strong>Documentation Unavailable</strong><br>'
-                    + 'The API documentation library could not be loaded. '
-                    + 'Please check your internet connection or try again later.'
+                    + 'The interactive API documentation library could not be loaded. '
+                    + 'You can still view the raw API specification directly: '
+                    + '<a href="' + specPath + '">' + specPath + '</a>'
                     + '</div>';
             }
         });

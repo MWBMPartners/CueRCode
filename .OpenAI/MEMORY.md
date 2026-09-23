@@ -28,3 +28,7 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   them (billing/minutes), and the code isn't at fault. Run the same checks
   locally (actionlint, shellcheck, gitleaks, `php -l`) and flag it to the owner.
   This happened from ~20:20 UTC 2026-09-23.
+- **Site CSP** (`public_html/.htaccess`) only allows scripts from self +
+  jsDelivr (styles also cdnjs). Never load a library from another CDN (e.g.
+  unpkg) without updating the CSP. That exact mistake left `/api/docs/` blank
+  on the live server until #111.

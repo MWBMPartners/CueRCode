@@ -134,6 +134,7 @@ License: **CC-BY-4.0** (Creative Commons Attribution 4.0 International) - unlike
 | 🎨 Bootstrap | 5.3.3 | jsDelivr | CSS framework, responsive grid, components |
 | 🎨 FontAwesome | 6.x | cdnjs | Icons |
 | 📜 jQuery | 3.7.x | jsDelivr | DOM manipulation, AJAX |
+| 📖 Swagger UI | 5.33.0 | jsDelivr (SRI-pinned) | Interactive API docs at `/api/docs/` - local fallback also **committed** (not gitignored) under `public_html/assets/vendor/swagger-ui/`, so the page works with no CDN reachable (#111) |
 
 ### 📥 Installation (No Composer)
 

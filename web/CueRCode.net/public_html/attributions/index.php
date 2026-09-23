@@ -142,6 +142,12 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <strong><a href="https://jquery.com/" target="_blank" rel="noopener noreferrer">jQuery</a></strong>
                                 - JavaScript utility library. MIT licence.
                             </li>
+                            <li>
+                                <strong><a href="https://swagger.io/tools/swagger-ui/" target="_blank" rel="noopener noreferrer">Swagger UI</a></strong>
+                                (<code>swagger-ui-dist</code>) - powers the interactive API documentation
+                                at <a href="/api/docs/">/api/docs/</a>. Copyright &copy; 2020-2021 SmartBear
+                                Software Inc. Apache License 2.0.
+                            </li>
                         </ul>
 
                         <p class="text-body-secondary mt-4">

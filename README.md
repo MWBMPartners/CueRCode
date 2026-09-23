@@ -133,6 +133,8 @@ CI/CD Cadence") for the full workflow.
   rendered directly from `openapi.json` (no hand-copied duplicate), an errors/rate-limit reference, code
   samples (curl/PHP/JavaScript/Python), and integration recipes.
 - 🧪 **Interactive Swagger UI**: `/api/docs/` - explore and try out every endpoint against the live spec.
+  Loads from jsDelivr (pinned version, integrity-checked) with a committed local fallback copy, so the
+  page keeps working even if the CDN can't be reached (#111).
 - ✅ **`openapi.json` is drift-free**: every one of the 30 documented paths (28 real `api/v1` routes + 2 SSO browser-redirect routes intentionally included for completeness) matches the router's route table exactly - a router↔spec diff and the API-key scope allowlist are both enforced by an automated drift-guard test (`tests/test_openapi_render.php`) that fails the build the moment either side changes without the other.
 
 ### 💡 Quick Example

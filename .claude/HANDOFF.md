@@ -53,11 +53,11 @@ Until then, the checks below were run **locally** instead (same tools CI uses).
 | 2 | Fix `security-propagate.yml` false alarms (#109) | ✅ Done (closed) | `main` `0c2a761`. Empty cherry-pick (no conflicted files + clean index/tree) → skip with notice; real conflict still opens the issue. Both paths tested in a throwaway repo; actionlint + shellcheck clean. |
 | 3 | Scan `release-candidate` properly (#110) | ✅ Pushed — ⏳ awaiting a real CI run (#110 left OPEN) | `release-candidate` `f12b6f9`: codeql/semgrep triggers, `ci.yml`, `.gitleaks.toml`. Locally: actionlint clean, `php -l` 34/34 files clean, gitleaks "no leaks", test step skips (no `tests/` on RC yet). Close #110 once Actions runs green. |
 | 3a | Same tolerant `ci.yml` on `work-in-progress` | ✅ Done | Only adds guards (lint only existing folders; skip tests with notice if `tests/run.php` missing) — no change where the suite exists. Keeps RC and WIP copies identical so promotion won't clash. |
-| 4 | Swagger UI offline fallback (#103 item 2d) | ⏳ Next | `public_html/api/docs/index.php` loads Swagger UI from unpkg only. Vendor `swagger-ui-dist` (css + bundle + standalone preset) under `public_html/assets/vendor/swagger-ui/` with the same CDN-first/local-fallback pattern as Bootstrap/jQuery. Mirror to `public_html_dev_alpha`/`_dev_beta` copies if they carry the docs page. Works on shared hosting (static files only, no Docker). |
+| 4 | Swagger UI offline fallback + **CSP bug** (#111) | ✅ Done (closed; Codex review owed) | **Found:** `.htaccess` CSP allows scripts only from self + jsDelivr, but the docs page loaded Swagger UI from unpkg → blank docs page on the live server. Fixed: jsDelivr pinned 5.33.0 + SRI, committed local copy `public_html/assets/vendor/swagger-ui/` (2 MB, Apache-2.0, README with upgrade steps), `/attributions` credit. Verified: `php -l` clean; **2185/2185 tests** (libs installed locally); headless Chromium with jsDelivr blocked → all 3 local files load, Swagger renders 35 operations. Built by the Sonnet `implementer` agent, reviewed by Opus (2 comment fixes). SRI hashes from the npm tarball (jsDelivr proxy-blocked here — a mismatch would just fall back to local). |
 | 5 | Full GitHub issue sweep — all open/closed issues checked against the ACTUAL code (#103 Part 3) | ⏳ Queued | 38 open issues on 2026-09-23. Audit-first rule applies. |
 | 6 | Thorough documentation update (standing task) | ⏳ Queued | All `.md` files, in-app help/guides, developer portal, OpenAPI spec, `.claude/`, `.OpenAI/`. |
 | 7 | Propose further work for alpha test releases (#103 Part 3) | ⏳ Queued | Use dev-team plugins; unactioned ideas → `for consideration` issues. Candidate: tidy the ~60 pre-existing *info-level* shellcheck notes in `deploy.yml`/`release.yml`/`version-bump.yml` (unquoted variables) — harmless today, not fixed. |
-| 8 | Codex review of everything since the last review (#108, #109, #110 diffs) | ⏳ Owed | Codex review → fix → re-review until clean. Needs Codex (owner's machine). |
+| 8 | Codex review of everything since the last review (#108, #109, #110, #111 diffs) | ⏳ Owed | Codex review → fix → re-review until clean. Needs Codex (owner's machine). |
 | 9 | One PR `work-in-progress → alpha` | ⏳ Later | Only when 4–7 are done and green (and Actions is running again). **Auto-delete will remove `work-in-progress` after merge — recreate it from `alpha`.** |
 
 ### ❓ Owner decisions / actions still open
@@ -74,6 +74,7 @@ no-op'd (0 issues)". **That was wrong** — it opened three false-alarm issues
 (#93, #94, #95, since closed). Fixed by #109.
 
 ### 🧰 Local check tools (cloud container)
+Test suite: clone the 5 libraries exactly as `ci.yml` does into `web/CueRCode.net/_libraries/` (gitignored), then `php tests/run.php` (2185/2185 on 2026-09-23). Browser checks: Playwright with `executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'` (the npm Playwright version expects a different browser build).
 GitHub's API is blocked by the container proxy, but release downloads work:
 `pip install actionlint-py shellcheck-py` (gives `actionlint` + `shellcheck`);
 gitleaks: `curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar -xz gitleaks`.

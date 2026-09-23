@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - API docs page blank on the live server + Swagger UI offline fallback (2026-09-23, #111)
+
+- **The bug:** the interactive API documentation page (`/api/docs/`) loaded its
+  Swagger UI library from the `unpkg.com` CDN. But the site's security header
+  (Content-Security-Policy) only ever allowed scripts and styles to load from
+  `cdn.jsdelivr.net` - `unpkg.com` was never on that allow-list. So on the real,
+  live website, every visitor's browser silently blocked Swagger UI from
+  loading, and the page always showed a "Documentation Unavailable" message,
+  telling people to check their internet connection - even though their
+  internet connection was fine; it was the site itself blocking the resource.
+- **The fix:** Swagger UI (version 5.33.0) now loads from `cdn.jsdelivr.net`
+  instead, which the security header does allow, with an integrity check
+  (a security feature that makes the browser refuse the file if it's ever
+  been tampered with) on every file. On top of that, a full local backup copy
+  of the same version of Swagger UI is now shipped with the website itself
+  (`public_html/assets/vendor/swagger-ui/`), so if the CDN can't be reached
+  at all, the page still works using the local copy - no more dead end.
+- The "Documentation Unavailable" message was also improved: instead of just
+  telling people to check their connection, it now links straight to the raw
+  machine-readable API specification file (`/api/v1/openapi.json`) as a
+  backup way to see the API's shape.
+- Added a Swagger UI credit to the `/attributions` page (Apache-2.0, SmartBear
+  Software), matching the style of the site's other open-source credits.
+- Added a README inside the new local Swagger UI folder explaining what it
+  is, how to check it's still genuine, and how to upgrade it later.
+
 ### Fixed - CI: false backport alarms + release-candidate scanning gap (2026-09-23, #109/#110) - CI/INFRA
 
 - **`security-propagate.yml`** (committed directly to `main`, `0c2a761`,
