@@ -164,10 +164,9 @@ print("Saved qr-output/001-url.png")</code></pre>
   -d '{"type": "url", "input": {"url": "https://example.com"}}'</code></pre>
                         <p class="mb-0">
                             See <a href="/developers/authentication/">Authentication</a> for the full
-                            picture (including how to request a key today, and how self-service key
-                            management will work once accounts ship), and
-                            <a href="/developers/samples/">Code Samples</a> for the equivalent PHP,
-                            JavaScript, and Python calls to every core endpoint.
+                            picture (including how to create your own key from your account in under a
+                            minute), and <a href="/developers/samples/">Code Samples</a> for the equivalent
+                            PHP, JavaScript, and Python calls to every core endpoint.
                         </p>
 
                     </div>

@@ -1,5 +1,11 @@
 # CueRCode — Independent VERIFY Report
 
+> **📌 Historical snapshot (added 2026-09-23):** this report is a point-in-time
+> record from commit `f5cf408` (2026-06-29). Its numbers (400 assertions,
+> 115/122 files clean, 7 OpenAPI paths) are superseded — the current state is
+> **2185/2185 tests passing and 30 OpenAPI paths, as of 2026-09-23**. Keep this
+> report as-is for history; do not edit its figures to match today.
+
 > Autopilot VERIFY phase — independent, read-only re-verification of the
 > autopilot/2026-06-28 cycle (cycles 2–10). No code was modified.
 > Every claim below was re-proven with fresh evidence generated during this

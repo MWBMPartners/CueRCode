@@ -14,9 +14,9 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 
 **CueRCode** is a comprehensive QR code generation platform that supports:
 
-- 📊 **21+ QR code types**: URLs, text, email, phone, SMS, WhatsApp, Zoom, geolocation, vCard, calendar events, PayPal, Bitcoin, media files, social media, Wi-Fi, and more
+- 📊 **26 QR code types**: URLs, text, email, phone, SMS, WhatsApp, Zoom, geolocation, vCard, calendar events, PayPal, Bitcoin, media files, social media, Wi-Fi, and more
 - 📏 **Non-QR barcodes** (#69): `POST /api/v1/barcode` generates 11 additional 1D/2D symbologies - Code 128, Code 39, EAN-13, EAN-8, UPC-A, UPC-E, ITF, Codabar, Data Matrix, PDF417, Aztec Code - with strict server-side check-digit/charset validation
-- 🎨 **7 output formats**: PNG, JPG, GIF, SVG, WEBP, PDF, JPEG XL
+- 🎨 **6 output formats**: PNG, JPG, GIF, SVG, WEBP, PDF (JPEG XL isn't available on the host, #40)
 - 🖌️ **Full customisation**: colours, patterns, marker shapes, centre logos, frames with labels, gradients, transparency
 - 🙂 **Native emoji centre-icons** (#67): a searchable, categorised picker offering ~400 curated Twemoji (CC-BY-4.0) emoji as a QR-centre logo source (`logo: "emoji:1f600"`), alongside file-upload and predefined-brand logos
 - 🔌 **RESTful API**: JSON and XML responses, API key authentication (self-service key create/rotate/revoke + per-key scope enforcement), rate limiting, Swagger/OpenAPI documentation
@@ -40,7 +40,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 ```text
 CueRCode/
 ├── .claude/                        ← 🤖 Claude AI context and prompts
-├── .openai/                        ← 🤖 OpenAI/ChatGPT context and prompts
+├── .OpenAI/                        ← 🤖 OpenAI/ChatGPT context and prompts
 ├── web/                            ← 🌐 All web-deployable files
 │   ├── _auth_keys/                 ← 🔐 Server-wide credentials (outside web root)
 │   ├── _includes/                  ← 📦 Server-wide shared includes
@@ -52,7 +52,7 @@ CueRCode/
 │       ├── _auth_keys/             ← 🔐 Site-specific credentials
 │       ├── _includes/              ← 📦 Site-specific includes (bootstrap, SQL, templates)
 │       ├── _functions/             ← ⚙️ Site-specific functions (QR engine, API handlers)
-│       ├── _libraries/             ← 📚 Third-party libraries (chillerlan, FPDF)
+│       ├── _libraries/             ← 📚 Third-party libraries (chillerlan, FPDF, tecnickcom)
 │       ├── _uploads/               ← 📤 User uploads (logos, generated QR codes)
 │       ├── _backups/               ← 💾 Site backups
 │       ├── public_html/            ← 🌍 Production web root
@@ -60,6 +60,8 @@ CueRCode/
 │       ├── public_html_dev_beta/   ← 🔬 Beta development environment
 │       ├── public_html_landing/    ← 🚀 Pre-launch landing page
 │       └── public_html_redir/      ← ↩️ Redirection web root
+├── tests/                          ← 🧪 Dependency-free PHP test suite (never deployed)
+├── tools/                          ← 🛠️ Maintenance/dev scripts (emoji ingest, logo rendering)
 ├── CHANGELOG.md
 ├── PROJECT_STATUS.md
 └── DEV_NOTES.md
@@ -71,7 +73,7 @@ CueRCode/
 
 ### Prerequisites
 
-- 🐘 PHP 8.4 or 8.5 with extensions: `mbstring`, `gd`, `json`, `openssl`, `mysqli`
+- 🐘 PHP 8.4 or 8.5 with extensions: `mbstring`, `gd`, `json`, `openssl`, `mysqli`, `curl` (email/SSO), `zip` (bulk downloads), `bcmath` (PDF417 barcodes). `imagick` is optional (only used for predefined logos on raster output) - the installer itself only checks for `mysqli`, `mbstring`, `gd`, `json` and `openssl`.
 - 🗄️ MySQL 5.7+ or MariaDB 10.3+
 - 🌐 Apache with `mod_rewrite` enabled
 
@@ -83,19 +85,41 @@ CueRCode/
    git clone https://github.com/MWBMPartners/CueRCode.git
    ```
 
-2. **📦 Download third-party libraries** (not included in repo):
-   - [chillerlan/php-qrcode v5.x](https://github.com/chillerlan/php-qrcode/releases) → `web/CueRCode.net/_libraries/chillerlan/php-qrcode/`
-   - [chillerlan/php-settings-container v3.x](https://github.com/chillerlan/php-settings-container/releases) → `web/CueRCode.net/_libraries/chillerlan/php-settings-container/`
+2. **📦 Download third-party libraries** (not included in repo, and the auto-deploy workflow does NOT upload them - they must be put on the server by hand, once):
+   - [chillerlan/php-qrcode v5.0.5](https://github.com/chillerlan/php-qrcode/releases) → `web/CueRCode.net/_libraries/chillerlan/php-qrcode/`
+   - [chillerlan/php-settings-container v3.2.1](https://github.com/chillerlan/php-settings-container/releases) → `web/CueRCode.net/_libraries/chillerlan/php-settings-container/`
    - [FPDF v1.86](https://www.fpdf.org/) → `web/CueRCode.net/_libraries/fpdf/`
+   - [tecnickcom/tc-lib-barcode v2.12.0](https://github.com/tecnickcom/tc-lib-barcode/releases) → `web/CueRCode.net/_libraries/tecnickcom/tc-lib-barcode/`
+   - [tecnickcom/tc-lib-color v2.13.1](https://github.com/tecnickcom/tc-lib-color/releases) → `web/CueRCode.net/_libraries/tecnickcom/tc-lib-color/`
+   - CDN-fallback copies of Bootstrap 5.3.3, jQuery 3.7.1 and FontAwesome 6.5.1 (used only if the CDN can't be reached) → `web/CueRCode.net/public_html/assets/vendor/bootstrap/`, `.../assets/vendor/jquery/`, `.../assets/vendor/fontawesome/` respectively (these three are gitignored; the Swagger UI fallback, by contrast, IS committed to the repo already, so it needs no manual step - #111)
 
 3. **🔐 Configure credentials:**
 
+   There is no `auth_creds.example.php` template in the repo - `.gitignore`'s `**/_auth_keys/*.php` rule deliberately blocks any PHP file under `_auth_keys/` from ever being committed, template or otherwise. Instead, create the file yourself on the server:
+
    ```bash
-   cp web/_auth_keys/auth_creds.example.php web/_auth_keys/auth_creds.php
-   cp web/CueRCode.net/_auth_keys/auth_creds.example.php web/CueRCode.net/_auth_keys/auth_creds.php
+   touch web/CueRCode.net/_auth_keys/auth_creds.php
    ```
 
-   Edit the copied files with your actual database credentials and encryption keys.
+   (The site-specific file is loaded first; `web/_auth_keys/auth_creds.php` - the server-wide equivalent - is used as a fallback if the site-specific one is missing a value.)
+
+   Give it real values in this shape (these are placeholders - never commit real secrets):
+
+   ```php
+   <?php
+   // web/CueRCode.net/_auth_keys/auth_creds.php - NOT committed to git
+
+   define('DB_HOST', 'localhost');           // required
+   define('DB_NAME', 'your_database_name');  // required
+   define('DB_USER', 'your_database_user');  // required
+   define('DB_PASS', 'your_database_password'); // required
+   define('DB_PORT', 3306);                  // optional
+   define('DB_CHARSET', 'utf8mb4');          // optional
+
+   // A long random value used to derive the AES-256-GCM encryption key -
+   // e.g. generate one with: openssl rand -hex 32
+   define('ENCRYPTION_KEY', 'REPLACE_WITH_A_LONG_RANDOM_VALUE');
+   ```
 
 4. **🗄️ Run the database installer:**
    Navigate to `https://your-domain/install/` in your browser.
@@ -157,7 +181,11 @@ curl -X POST https://cuercode.net/api/v1/generate \
 
 ## 📧 Transactional Email (Epic E8)
 
-Registration verification, password resets, and organisation invitations are sent via the **Microsoft Graph API** (client-credentials grant, M365 shared mailbox Send-As) - never PHP's `mail()`. The whole subsystem (`_functions/fn_email.php`) is **inert by default**: the `email_enabled` kill-switch seeds to `0` and every Graph credential seeds empty, so no email can be sent (and no network call is attempted) until an owner completes the M365 app registration and fills the settings via the admin UI. See [DEV_NOTES.md](DEV_NOTES.md#email-subsystem-microsoft-graph---epic-e8-29) for the full setup runbook. Google Workspace (#30) is a future driver slot behind the same `email_provider` setting.
+Registration verification, password resets, and organisation invitations are sent via the **Microsoft Graph API** (client-credentials grant, M365 shared mailbox Send-As) - never PHP's `mail()`. The whole subsystem (`_functions/fn_email.php`) is **inert by default**: the `email_enabled` kill-switch seeds to `0` and every Graph credential seeds empty, so no email can be sent (and no network call is attempted) until an owner completes the M365 app registration and fills in the settings. See [DEV_NOTES.md](DEV_NOTES.md#email-subsystem-microsoft-graph---epic-e8-29) for the full setup runbook. Google Workspace (#30) is a future driver slot behind the same `email_provider` setting.
+
+> ⚠️ **Two things are not built yet, even once M365 is configured and `email_enabled` is on:**
+> 1. There is no admin screen for entering the Microsoft credentials (#31) - they currently have to be set from a one-off script (see DEV_NOTES.md).
+> 2. There is no scheduled job that sends queued emails yet (#29) - so verification and password-reset emails are queued but will NOT actually go out until that job exists.
 
 ## 🔐 User Accounts (Epic E3 stages 1, 2a & 2b)
 
@@ -179,7 +207,7 @@ The account dashboard's new "Your data" section gives every user two self-servic
 
 "Sign in with Microsoft 365" and "Sign in with Google" are available on the login and register pages - each button is rendered ONLY once an owner has configured and enabled that provider (both are **inert by default**: a master `sso_enabled` kill-switch plus a per-provider `sso_<provider>_enabled` flag, both seeded `0`, and empty client credentials). The underlying client (`_functions/fn_oauth.php`) is a generic OAuth2/OIDC authorization-code flow with mandatory PKCE (S256): `state` + `nonce` are cryptographically random, session-bound, and single-use; the returned `id_token` is cryptographically verified against the provider's own published signing keys (RS256 only - `alg: none`/`HS256` are explicitly rejected) before any claim (issuer, audience, expiry, email) is trusted.
 
-**Account linking is conservative by design** (the anti-account-takeover defence): a brand-new external identity only auto-creates a local account when the provider has verified the email address AND no local account already claims it; if a local account with that email already exists but was never explicitly linked, sign-in is refused and the visitor is guided to log in normally first and link the provider from account settings instead - an external identity is never silently attached to a pre-existing account it doesn't already own. The `/account/` dashboard's new "Linked accounts" section lists every linked provider and lets you link an additional one or unlink an existing one (you can never remove your only sign-in method without first setting a password). `signula` is present in the provider list but remains inert pending upstream OIDC support in the SIGNula.id project (its own repo currently exposes only a credential-proxy API, not a real identity-provider surface). See [DEV_NOTES.md](DEV_NOTES.md#sso--oidc-client-epic-e2-5519202028-2026-07-10) for the owner IdP-registration runbook (Entra ID + Google Cloud Console app setup, redirect URIs, and where to fill in the client credentials).
+**Account linking is conservative by design** (the anti-account-takeover defence): a brand-new external identity only auto-creates a local account when the provider has verified the email address AND no local account already claims it; if a local account with that email already exists but was never explicitly linked, sign-in is refused and the visitor is guided to log in normally first and link the provider from account settings instead - an external identity is never silently attached to a pre-existing account it doesn't already own. The `/account/` dashboard's new "Linked accounts" section lists every linked provider and lets you link an additional one or unlink an existing one (you can never remove your only sign-in method without first setting a password). There is no profile-picture sync from the provider yet - a linked account's avatar still follows the normal upload/Gravatar/default priority chain, never the provider's own photo. `signula` is present in the provider list but remains inert pending upstream OIDC support in the SIGNula.id project (its own repo currently exposes only a credential-proxy API, not a real identity-provider surface). See [DEV_NOTES.md](DEV_NOTES.md#sso--oidc-client-epic-e2-5519202028-2026-07-10) for the owner IdP-registration runbook (Entra ID + Google Cloud Console app setup, redirect URIs, and where to fill in the client credentials).
 
 ## 🔗 Dynamic Redirect + Dual-Function QR (Epic E1a, #27/#71/#33) - built dark, gated
 
@@ -196,9 +224,17 @@ This project is maintained by MWBM Partners Ltd. See [DEV_NOTES.md](DEV_NOTES.md
 
 AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.claude/CLAUDE.md) (rules), [`.claude/HANDOFF.md`](.claude/HANDOFF.md) §0 (current position) and, for Codex, [`AGENTS.md`](AGENTS.md) / [`.OpenAI/`](.OpenAI/).
 
+## 🧪 Testing
+
+```bash
+php tests/run.php
+```
+
+runs the full dependency-free characterization suite - 2185 assertions across 23 test files, no database or Composer required.
+
 ## 📄 License
 
-Copyright &copy; 2026 MWBM Partners Ltd. All rights reserved.
+Copyright &copy; 2025-2026 MWBM Partners Ltd. All rights reserved.
 
 Third-party assets and libraries are used under their own licences - see the
 [`/attributions`](web/CueRCode.net/public_html/attributions/index.php) page

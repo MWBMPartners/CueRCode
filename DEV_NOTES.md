@@ -1,6 +1,6 @@
 # 🛠️ CueRCode - Developer Notes
 
-**📅 Last Updated:** 2026-09-23 (CI fixes #109/#110 — empty cherry-picks skipped in `security-propagate.yml`; `release-candidate` now fully scanned; AI-assisted working rules, #108); previously 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
+**📅 Last Updated:** 2026-09-23 (documentation refresh, #103); previously 2026-09-23 (CI fixes #109/#110 — empty cherry-picks skipped in `security-propagate.yml`; `release-candidate` now fully scanned; AI-assisted working rules, #108); previously 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
 
 ---
 
@@ -39,6 +39,18 @@ work-in-progress  ──►  alpha  ──►  beta  ──►  release-candidat
   `semgrep.yml` PHP+JS) triggers on push/PR to **all four** tiers. The full
   `ci.yml` suite currently lives richest on `alpha` and propagates down as tiers
   are promoted.
+  - **Documentation-refresh correction (#103):** `ci.yml` already triggers on
+    push/PR to all four permanent tiers (`alpha`, `beta`, `release-candidate`,
+    `main`) - it is NOT limited to three of them. What it does NOT run on is
+    `work-in-progress` itself (the integration branch), since that branch feeds
+    `alpha` via a single promotion PR rather than being one of the four
+    permanent tiers.
+  - **`emoji-ingest.yml`'s schedule only fires once the workflow is on `main`.**
+    GitHub only runs a `schedule:`-triggered workflow from whatever the
+    repository's default branch is (currently `main`) - a copy of the workflow
+    sitting on `work-in-progress`/`alpha`/`beta`/`release-candidate` will not
+    fire on its cron until it has been promoted all the way to `main`. This is
+    a GitHub platform behaviour, not a bug in this repo's config.
 - **Dependabot** (`.github/dependabot.yml`) declares one `target-branch` block
   per tier, so github-actions version-update PRs open against **all four**
   branches (config is read only from the default branch `main`).
@@ -203,7 +215,11 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
 2. **Grant the `Mail.Send` APPLICATION permission** (not delegated) and have a Global Admin **grant admin consent**.
 3. **Create/designate a shared mailbox** the app will send *as* (Send-As), e.g. `notifications@yourdomain.com`. The signed-in app has no user of its own - Graph's `sendMail` targets `/v1.0/users/{mailbox}/sendMail` where `{mailbox}` is this shared mailbox's address.
 4. **Configure DKIM and DMARC** on the sending domain (M365 admin center → Exchange → mail flow, or your DNS provider) so mail sent via Graph passes authentication checks at the recipient (Gmail/Outlook increasingly reject/spam-fold unauthenticated bulk mail).
-5. **Fill the settings via the admin UI** (never commit real values - all seed EMPTY):
+5. **Set the settings** (never commit real values - all seed EMPTY). There is no
+   admin screen for this yet (#31) - until it exists, run a one-off PHP script
+   on the server that `require_once`s `fn_config.php` and calls `setConfig()`
+   for each key below (it encrypts any key marked `isSensitive` automatically),
+   then delete the script:
    - `graph_tenant_id` - the Entra ID tenant ID (Directory (tenant) ID on the app registration's Overview page).
    - `graph_client_id` - the app registration's Application (client) ID.
    - `graph_client_secret` - a client secret VALUE (not the secret ID) created under the app registration's "Certificates & secrets".
@@ -211,7 +227,7 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
    - `email_from_name` - the display name recipients see (e.g. "CueRCode Notifications").
 6. **Flip `email_enabled` to `1`** once the above is verified working (e.g. via a manual `sendEmailNow()` smoke test).
 7. **Choose a queue-processing strategy** - `email_queue_autoprocess` (0 = OFF by default):
-   - **Recommended: Dreamhost panel cron** (no SSH needed) - Dreamhost's panel → Cron Jobs → add a job that runs a small PHP script (e.g. `_includes/cron/process_email_queue.php`, to be added when the queue starts carrying real traffic) calling `processEmailQueue()` on a schedule (e.g. every 5 minutes).
+   - **Recommended: Dreamhost panel cron** (no SSH needed) - Dreamhost's panel → Cron Jobs → add a job that runs a small PHP script (e.g. `_includes/cron/process_email_queue.php`, to be added when the queue starts carrying real traffic) calling `processEmailQueue()` on a schedule (e.g. every 5 minutes). **This script does not exist yet, and nothing else in this codebase calls `processEmailQueue()` or `maybeProcessEmailQueueOnShutdown()` outside the test suite** - until it (or the opportunistic alternative below) is actually wired up, every queued email stays `queued`/`pending` forever and is never sent, regardless of whether `email_enabled` is on.
    - **Alternative: opportunistic shutdown-hook** - set `email_queue_autoprocess=1` and call `maybeProcessEmailQueueOnShutdown()` from an entry point AFTER `fn_email.php` is loaded (NOT wired into `bootstrap.php` by default, so the core request path is untouched unless this is deliberately opted into). Processes ≤2 emails per request, after the response has already been sent - fail-open, never surfaces an error to the client.
 
 **Queue + retry:** `queueEmail()` inserts a `tblEmailQueue` row (status `queued`, `nextAttemptAt = NOW()`); `processEmailQueue($max=2)` claims due rows (`status IN ('queued','failed')`, `nextAttemptAt <= NOW()`, `attempts < maxAttempts`), re-renders the template fresh (never trusts a stored, possibly-stale rendered body), and calls `sendEmailNow()`. On success the row becomes `sent`; on failure, `attempts` increments and the row is rescheduled with **exponential backoff** (`nextAttemptAt = NOW() + 2^attempts MINUTES`, computed by the pure, unit-tested `computeEmailBackoffMinutes()`) until `maxAttempts` (default 5) is reached, at which point the row is marked permanently `failed`. **Caveat:** a row queued while `email_enabled=0` (or otherwise unconfigured) will burn through its retry budget (~62 cumulative minutes at the default schedule/maxAttempts) and land on `failed` even though the "failure" was really just "not configured yet" - don't queue anything meaningful before `email_enabled=1` is set.
@@ -518,6 +534,8 @@ Flip a switch to `1` (plus populate the matching new table) to bring a structure
 
 **Verification caveat:** no local MySQL server was available in the implementing session (`apt-get install mariadb-server` failed - the sandboxed proxy could not fetch `libmysqlclient21`/`rsync`/`iproute2`), so `install.sql` was NOT loaded into a live scratch database this session. Verification relied on `php -l`, a JSON-validity check on `openapi.json`, and structural sanity checks (balanced parentheses/backticks, exact `CREATE TABLE`/`ALTER TABLE` counts). Load `install.sql`/`seed_data.sql` into a real MySQL/MariaDB instance before relying on this schema in production.
 
+**⚠️ Re-run caveat (2026-09-23, #103):** the two `ALTER TABLE ... ADD COLUMN` blocks (`install.sql`, roughly lines 1248-1276 - `tblSubscriptions.pricePointID`/`discountID` and `tblPayments.pricePointID`) are **not safe to run a second time**. `install.sql` is a single linear script with no "if column doesn't exist" guard, so re-running it against a database that already has these columns fails outright with a `duplicate column` error at the first `ALTER TABLE` - and because everything after that point in the file (including the Stage S0/S1 dynamic-redirect tables, `tblQRRedirects`/`tblQRScans`/`tblResolveNonces`) is never reached once the script aborts, those later tables are never created (the installer does report an install.sql error, but it does not say which tables were skipped). There is currently no upgrade/migration script for a database that was installed before this delta shipped - an older database needs the new pieces applied by hand (or a fresh `install.sql` run against a brand-new database), not a blind re-run of the whole file.
+
 ### Dynamic Redirect + Dual-Function QR: Stage S0/S1 (#27/#71/#33, 2026-07-22) - BUILT BUT DARK/INERT
 
 Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destination API) ONLY of the dynamic-redirect / dual-function QR design (`.dev-team/dynamic_dualfn_design.md`, copied into the repo this session, read fully before implementing). **Nothing is live** - no public `public_html/r/` redirect route exists anywhere in this codebase, the `dynamic_url` QR type seeds `isActive=0`, and the `dynamic_qr_enabled` kill-switch seeds `'0'`. Stage S2 (the live `/r/{uuid}` route) and Stage S4 (dual-function QR, `GET /api/v1/resolve/{uuid}`) are fully designed and BUILT-READY but explicitly NOT started - gated on the G-007 owner sign-off (`LAUNCH_DECISIONS.md` §H).
@@ -577,7 +595,7 @@ Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destinati
 2. **Add a Web platform redirect URI**: exactly `https://cuercode.net/auth/callback/microsoft` (must match byte-for-byte - Entra ID rejects a mismatched `redirect_uri` outright).
 3. **Add the `openid`, `email`, `profile` delegated Microsoft Graph permissions** (these are the OIDC standard scopes - no admin consent should be required for them).
 4. **Create a client secret** (App registration → Certificates & secrets → New client secret) - copy the VALUE (not the secret ID) immediately, it is shown once.
-5. **Fill the settings via the admin UI** (never commit real values - all seed EMPTY): `sso_microsoft_client_id` (the app registration's Application (client) ID), `sso_microsoft_client_secret` (the secret VALUE from step 4).
+5. **Set the settings** (never commit real values - all seed EMPTY): `sso_microsoft_client_id` (the app registration's Application (client) ID), `sso_microsoft_client_secret` (the secret VALUE from step 4). There is no admin screen for this yet (#31) - until it exists, set them from a one-off PHP script on the server that calls `setConfig()` (it encrypts settings marked sensitive automatically), then delete the script.
 6. **Flip `sso_microsoft_enabled` to `1`**, and the master **`sso_enabled` to `1`** (if not already on for another provider).
 
 **Owner setup to activate Google:**
@@ -585,7 +603,7 @@ Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destinati
 1. **Create OAuth credentials** (Google Cloud Console → APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application).
 2. **Add an Authorized redirect URI**: exactly `https://cuercode.net/auth/callback/google`.
 3. **Configure the OAuth consent screen** with `openid`, `email`, `profile` scopes (Google's non-sensitive standard scopes - no verification review needed for these alone).
-4. **Fill the settings via the admin UI**: `sso_google_client_id`, `sso_google_client_secret`.
+4. **Set the settings**: `sso_google_client_id`, `sso_google_client_secret`. Same caveat as Microsoft above - no admin screen yet (#31), so use the one-off `setConfig()` script until it exists.
 5. **Flip `sso_google_enabled` to `1`** (+ the master switch).
 
 **SIGNula - pending upstream (SIGNula issue #88).** `sso_signula_discovery_url` seeds EMPTY on purpose: SIGNula.id (as verified against its own repo - see PROJECT_ROADMAP.md Epic E2) is currently a credential-proxy REST API (opaque bearer tokens via `POST /api/v1/auth/login`) with **no `/authorize`, `/token`, `/userinfo`, discovery document, or JWKS** - it is not yet an OIDC identity provider. `ssoProviderIsUsable('signula')` fails closed on the empty discovery URL regardless of its own `sso_signula_enabled` flag, so no special-case code is needed to keep it inert - flipping the flag alone does nothing until an owner also fills in a real discovery URL, which cannot happen until SIGNula ships that surface upstream.
@@ -626,7 +644,7 @@ Exits 0 if all assertions pass (or if there are no tests), 1 if any fail. Colour
 | `tests/run.php` | Test runner — discovers `tests/test_*.php`, supports `--filter` |
 | `tests/bootstrap.php` | Test-only constants (ENCRYPTION_KEY/SALT, CUERCODE_* paths), `requireFn()` loader (includes `fn_*.php` without opening a DB), `requireLibraryAutoloader()` opt-in |
 | `tests/lib/assert.php` | Assertion helpers: `assertEquals`, `assertTrue`, `assertFalse`, `assertContains`, `assertMatches`, `assertThrows` |
-| `tests/test_payloads.php` | Characterization tests for all 21 QR payload builders and escaping helpers |
+| `tests/test_payloads.php` | Characterization tests for all 26 QR payload builders and escaping helpers (`dynamic_url`'s destination checks are covered by `test_dynamic_redirect_s0.php` instead) |
 | `tests/test_core.php` | Characterization tests for encryption, CSRF, validation, QR options, and response formatting |
 | `tests/test_email.php` | Microsoft Graph email subsystem (#29) - template rendering/escaping, backoff schedule maths, and the fail-open contract when unconfigured/no DB |
 | `tests/test_auth.php` | Authentication (Epic E3 stage 1, #52) - Argon2id hash/verify/rehash/policy, token generation/hashing, pure lockout-window maths, and session-dependent functions' fail-safe behaviour with no PHP session/database |
@@ -634,8 +652,25 @@ Exits 0 if all assertions pass (or if there are no tests), 1 if any fail. Colour
 | `tests/test_qrcodes.php` | Saved-codes API (Epic E3 stage 2a, #52/#24) - exhaustive truth-table coverage of the three ownership predicates (`qrCodeIsReadableBy()`/`qrCodeIsWritableBy()`/`qrCodeIsDownloadableBy()` - the entire IDOR-enforcement surface), UUID/label/type-filter/pagination validation helpers. The live scratch-DB + real-HTTP-router IDOR pack (cross-user 404s, plan-limit 402, pagination, PATCH regeneration) is documented in CHANGELOG.md/SECURITY.md, not re-run inside this dependency-free harness (same convention as `test_auth.php`'s DB-dependent exclusions) |
 | `tests/test_account_ui.php` | Account UI (Epic E3 stage 2b, #52/#12/#14/#23/#24) - `resolveAvatarUrl()`'s full §11.4 priority-chain truth table, `maskTokenForDisplay()` (incl. the `substr(-0)` footgun regression this stage's own testing caught), `decodeAndValidateAvatarBase64()` (malformed input, explicit SVG rejection, and a genuine 1×1 PNG decode round-trip via the reused `saveBase64LogoToTemp()`), and static own-scope/no-SVG-allowlist regression guards. The live scratch-DB + real-HTTP end-to-end drive (both the AJAX-JSON and no-JS `<form>` paths, cross-account IDOR proof, plan-limit 402/upgrade-prompt proof, open-redirect proof) is documented in CHANGELOG.md, not re-run inside this dependency-free harness |
 | `tests/test_api_keys.php` | Self-service API keys (Epic E7 stage 1, #54) - `apiKeyIsOwnedBy()`'s full IDOR truth table (mirrors `qrCodeIsWritableBy()`), `apiKeyManagementAllowedFor()`'s CSRF-only guard, name/scope validators (incl. the fail-closed-by-omission vs. required-field distinction), the scope allowlist + label helper, and static source-text regression guards (the CSRF-only guard runs first in every handler, the hash column is never SELECTed, the router's scope-enforcement wiring exists). The live scratch-DB + real-HTTP two-account pack (cross-user rotate/revoke 404s, scope-missing 403s, the `api_keys` plan-cap 402, create/rotate-only one-time-secret exposure, list never leaking the hash, expired-key rejection) is documented in CHANGELOG.md/SECURITY.md, not re-run inside this dependency-free harness |
+| `tests/test_accessibility.php` | Accessible-QR presets (E5, #48) - WCAG contrast-ratio maths, the 10:1 recommended-print-size calculator, and the preset-enforcement (ecc=H, quiet zone, contrast pass/fail/warning classification) |
+| `tests/test_account_data.php` | GDPR/CCPA data-subject rights (#37, epic #52) - the DB-independent slice of `collectAccountExportData()`/`eraseUserAccount()`: confirmation-required short-circuit, fail-safe behaviour with no DB, and the PII-free erasure email/audit-log shape |
+| `tests/test_api_parity.php` | API⇄UI parity audit - proves customisation parameters the web UI can send (`quiet_zone`, marker-shape selectors, etc.) are all accepted, validated, and mapped by the REST API, closing the "api-has-ui-missing" gaps found by the audit |
+| `tests/test_barcode.php` | Non-QR barcode generation (#69) - GTIN/UPC check-digit maths, UPC-E→UPC-A expansion, the strict per-symbology validator/dispatcher for all 11 symbologies, and real tc-lib-barcode SVG/PNG rendering |
+| `tests/test_braille.php` | Braille/tactile/Avery-label PDF output (E5, #49) - the Grade-1 Braille transliteration table and per-dot cell positioning maths |
+| `tests/test_bulk.php` | Bulk QR generation helpers (#32) - bulk-input parsing (items-array and CSV shapes), CSV boolean coercion, cap/shape validation, and safe ZIP filename building |
+| `tests/test_dynamic_redirect_s0.php` | Dynamic redirect Stage S0 (Epic E1a, #27/#71/#33) - the pure `validateRedirectDestination()` SSRF/open-redirect accept-reject matrix (scheme allowlist, IP-literal loopback/private/link-local checks for IPv4 and bracketed IPv6, self-referential-loop rejection) |
+| `tests/test_dynamic_redirect_s1.php` | Dynamic redirect Stage S1 (Epic E1a, #27) - the owner-facing destination-API ownership predicate (`redirectIsWritableBy()`), still entirely dark (no public `/r/` route exists yet) |
+| `tests/test_emoji_logo.php` | Emoji centre-icon picker (#67) - resolving an `emoji:<codepoint>` logo purely from the committed Twemoji asset tree, no database or upload involved |
+| `tests/test_error_catalogue.php` | API error-code catalogue drift guard (#58) - statically scans production source for every emitted `errorResponse(..., 'CODE')` and diffs it against `openapi.json`'s documented catalogue, so a new/removed error code can never go undocumented |
+| `tests/test_oauth.php` | SSO/OIDC client (Epic E2, #55/#19/#20/#28) - PKCE code_verifier/challenge (incl. the official RFC 7636 worked example), state/nonce generation and single-use consumption, and the open-redirect-proof allowlist |
+| `tests/test_openapi_render.php` | Developer-portal OpenAPI render helpers (#50) - proves the helpers behind the live "Endpoint Reference" page are correct AND that the real `openapi.json` still has the shape the page depends on (30 documented paths) |
+| `tests/test_pricing.php` | Public pricing page display helpers (#56) - price/limit formatting, key humanising, and the pure JSON-decode transform that turns plan rows into display rows |
+| `tests/test_pricing_flex.php` | Flexible-pricing schema delta (#70, built but disabled) - proves multiple price points, discounts, lifetime tiers, and PAYG credits are representable by data alone, with every kill-switch off by default |
+| `tests/test_qr_logo.php` | SVG logo screener (F-024, #52) - the shared `screenSvgLogoContent()` active-content screener used by both the base64 and multipart logo-upload paths, plus the Issue #65 predefined-logo path resolver against the real asset tree |
 
 **Deployment boundary:** `tests/` is repo-root only and is excluded from all SFTP deploy workflows. It never reaches the Dreamhost server.
+
+**Current total (2026-09-23, #103):** 2185 assertions across 23 test files - see `tests/README.md` for the full per-file breakdown.
 
 **DB-independent vs DB-dependent boundary:** `requireFn()` in `bootstrap.php` includes `fn_*.php` files directly without running `db_connect.php`, so any function that does not open a DB connection is testable. Functions that require a live MySQLi connection (`fn_config.php` `getConfig`/`setConfig`, `fn_activity_log.php`, etc.) are deliberately out of scope and documented as such in the test file headers.
 
@@ -695,9 +730,18 @@ Uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`
 Version is stored in `infoAppVer.php` as `$app["Application"]["Version"]["Number"]` and also embedded in:
 
 - 📄 Code file headers (comment blocks)
-- 🔌 API responses (`X-API-Version` header)
 - 📱 `manifest.json`
 - 🗄️ Database (`tblSettings.app_version`)
+
+> **Documentation correction (2026-09-23, #103):** an earlier version of this
+> note also claimed the version is sent in an `X-API-Version` response header.
+> No code anywhere in this repo sets that header - it does not exist. Also,
+> `infoAppVer.php` is not `require`/`include`d by anything else in the
+> codebase; it is a standalone file. `GET /api/v1/health` reports a version
+> too, but it reads it from the SEPARATE `tblSettings.app_version` setting, not
+> from `infoAppVer.php` - so bumping `infoAppVer.php`'s version number does
+> NOT change what `/api/v1/health` reports until `app_version` is updated to
+> match (#35).
 
 ### Automated Version Bumping
 
@@ -787,3 +831,38 @@ Pushing a version tag creates a GitHub Release (`release.yml`):
 ### Workflow Location
 
 `.github/workflows/deploy.yml` — modelled after [phpWhoIs deploy.yml](https://github.com/MWBMPartners/phpWhoIs/blob/main/.github/workflows/deploy.yml)
+
+### Deploy status caveats (2026-09-23, #103)
+
+- **Trigger branches:** `deploy.yml` only triggers on push to `main`, `beta`, and
+  `alpha` - **not** `release-candidate` (a staging tier that currently gets no
+  automatic deploy target of its own).
+- **Never actually run:** as of this refresh, `deploy.yml` has never executed a
+  real deployment - the `SFTP_ENABLED` repository variable is not set to
+  `true`, so every run so far (30 of them) has finished as "skipped". Whether
+  the SFTP secrets (`SFTP_HOST`/`SFTP_USER`/etc.) have been filled in can't be
+  seen from the repo - check them in the repository settings before enabling.
+- **Vendored libraries and CDN fallbacks are NOT uploaded.** The deploy
+  workflow copies `web/` as committed - it does not download or stage
+  chillerlan/php-qrcode, FPDF, tecnickcom's barcode libraries, or the
+  Bootstrap/jQuery/FontAwesome CDN-fallback copies (all gitignored - see the
+  "Installation" step in the root README). Those still have to be placed on
+  the server by hand, once, outside this workflow.
+- **TLS/host-key checks are currently turned off (#44).** The `lftp` SFTP
+  transfer step runs with `StrictHostKeyChecking=no` (skips SSH host-key
+  verification) and `set ssl:verify-certificate no` (skips TLS certificate
+  verification) - a known, tracked weakening that should be tightened before
+  this workflow is trusted to run automatically.
+
+### Known documentation-level gaps
+
+See `PROJECT_STATUS.md` for the up-to-date list of what is built vs. still
+outstanding (admin UI, email queue cron, deploy activation, etc.) - this file
+covers HOW things work technically, not the current project status.
+
+### Predefined-logo PNG generation (#65)
+
+`tools/render_logo_pngs.php` renders the 26 predefined-logo PNG copies used as
+centre-logo choices (a one-off/occasional maintenance script, not run on every
+request or every deploy - re-run it by hand whenever the source logo set
+changes).

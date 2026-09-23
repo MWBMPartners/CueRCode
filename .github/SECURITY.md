@@ -32,7 +32,10 @@ Automated dependency updates (Dependabot) and code scanning (see
 patched on one tier is not silently left open on another. Security fixes that
 land on `main` first (Dependabot security updates target only the default
 branch) are automatically cherry-picked back to `alpha`, `beta`, and
-`release-candidate` by `.github/workflows/security-propagate.yml`.
+`release-candidate` by `.github/workflows/security-propagate.yml`. The full CI
+suite (tests, syntax check, secret scan via `ci.yml`) currently runs on
+`alpha`, `beta`, `release-candidate` and `main`; it does not yet run on the
+`work-in-progress` integration branch that feeds `alpha`.
 
 ## Reporting a vulnerability
 

@@ -9,10 +9,9 @@ This directory contains all files for the CueRCode QR code generation service.
 | `_auth_keys/` | Site-specific database credentials and API keys (outside web root) |
 | `_includes/` | Shared PHP includes (bootstrap, DB connection, HTML templates, SQL scripts) |
 | `_functions/` | PHP function files (QR engine, API handlers, utilities) |
-| `_libraries/` | Third-party PHP libraries (chillerlan/php-qrcode, FPDF) |
+| `_libraries/` | Third-party PHP libraries (chillerlan/php-qrcode, FPDF, tecnickcom barcode) |
 | `_uploads/` | User-uploaded files (custom logos, generated QR codes) |
 | `_backups/` | Site backup files |
-| `private_html/` | Private HTML (placeholder, reserved for future use) |
 | `public_html/` | Production web root (publicly accessible) |
 | `public_html_dev_alpha/` | Alpha development environment (restricted access) |
 | `public_html_dev_beta/` | Beta development environment (restricted access) |
@@ -20,6 +19,16 @@ This directory contains all files for the CueRCode QR code generation service.
 | `public_html_redir/` | Redirection web root (limited use) |
 
 > Directories prefixed with `_` are private and secured via `.htaccess` deny-all rules.
+
+> `_auth_keys/auth_creds.php` must be created by hand on the server - it is not
+> in the repo (`.gitignore` blocks it) and the auto-deploy does not create it.
+> See the root [README.md](../../README.md) for the exact steps and the
+> `define()` shape it needs.
+
+> The third-party libraries listed above under `_libraries/` are not in the
+> repo either, and the auto-deploy does not upload them - they must be
+> downloaded and placed on the server by hand, once (root README.md has the
+> download links and target folders).
 
 ## Deployment
 

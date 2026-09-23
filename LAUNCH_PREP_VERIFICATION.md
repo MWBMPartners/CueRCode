@@ -1,5 +1,11 @@
 # CueRCode — Launch-Prep Independent VERIFICATION Report
 
+> **📌 Historical snapshot (added 2026-09-23):** this report is a point-in-time
+> record from commit `3b919ef` (2026-07-10). Its numbers (1355 assertions,
+> 171 files clean, 27 OpenAPI paths) are superseded — the current state is
+> **2185/2185 tests passing and 30 OpenAPI paths, as of 2026-09-23**. Keep this
+> report as-is for history; do not edit its figures to match today.
+
 > Independent, read-only re-verification of the `launch-prep/2026-07-10` programme
 > (23 commits ahead of `autopilot/2026-06-28`: security sweep, accessibility,
 > dev portal, email, accounts/auth, tiers, API keys, SSO, GDPR, OpenAPI refresh
@@ -80,7 +86,12 @@ are notes for the record, exactly what "PASS-WITH-NOTES" is for.
 - `.htaccess:104-116` — CSP still carries `'unsafe-inline'` (F-004 correctly not fully fixed); HSTS is live and uncommented (`max-age=15768000; includeSubDomains`, F-002 fixed).
 - `header.php:236-238`/`footer.php:144-145` — Bootstrap CSS+JS carry real `integrity=` SRI hashes; `header.php:275`/`footer.php:125` — FontAwesome/jQuery still carry `TODO F-004` comments, no guessed hashes. Matches the "partial SRI" claim exactly.
 - `seed_data.sql:109,162,164,170,176` — `email_enabled`, `sso_enabled`, `sso_microsoft_enabled`, `sso_google_enabled`, `sso_signula_enabled` all seed to `'0'`; every `client_id`/`client_secret` seeds to `''`. Confirmed inert-by-default at the data-definition level, not just in prose.
-- Secrets grep (`AKIA…`, `-----BEGIN…PRIVATE KEY-----`, hardcoded `client_secret`/`password` literals) across `web/` (excluding `_libraries/`, `*.example.php`) → **zero hits**. Only tracked files under any `_auth_keys/` directory are `.htaccess` (deny-all) and `auth_creds.example.php` — real credential files stay gitignored (`**/auth_creds.php`, `**/_auth_keys/*.php`).
+- Secrets grep (`AKIA…`, `-----BEGIN…PRIVATE KEY-----`, hardcoded `client_secret`/`password` literals) across `web/` (excluding `_libraries/`, `*.example.php`) → **zero hits**. Only tracked files under any `_auth_keys/` directory are `.htaccess` (deny-all) — real credential files stay gitignored (`**/auth_creds.php`, `**/_auth_keys/*.php`).
+  **Correction (2026-09-23):** this report's original wording implied an
+  `auth_creds.example.php` template was tracked in the repo. It is not —
+  `.gitignore`'s `**/_auth_keys/*.php` rule blocks any `.php` file under
+  `_auth_keys/`, example or otherwise, so nothing there is committed. An owner
+  setting up a live server must create `_auth_keys/auth_creds.php` by hand.
 - `<table` scan outside `_libraries/`: exactly two files — `public_html/install/index.php:647` (a genuine semantic prereq-check data table, not layout) and `_functions/fn_email.php:220-226` (explicitly documented, in-code, as the project's one intentional email-client-compatibility exception to the no-table-layout rule). No other `<table>` usage anywhere in web-facing pages.
 
 ---
@@ -216,10 +227,13 @@ me) checked out against real source, not documentation.
   headers, hardcoded `client_secret`/password literal assignments across
   `web/` (excluding vendored `_libraries/` and `*.example.php`) — zero hits.
 - **No real IdP/Graph/PayPal credentials anywhere.** All SSO/email/payment
-  credential settings seed empty string; only `.example.php` templates exist
-  under `_auth_keys/`; `.gitignore:11-13` correctly excludes
-  `**/auth_creds.php` and `**/_auth_keys/*.php` while allowlisting
-  `.htaccess`.
+  credential settings seed empty string; no credential file of any kind is
+  tracked under `_auth_keys/` — `.gitignore:11-13` correctly excludes
+  `**/auth_creds.php` and `**/_auth_keys/*.php` while allowlisting only
+  `.htaccess`. **Correction (2026-09-23):** no `.example.php` template is
+  tracked in the repo either; the gitignore rule blocks every `.php` file
+  under `_auth_keys/`, so an owner setting up a live server must create
+  `_auth_keys/auth_creds.php` by hand (no template to copy from).
 - **`email_enabled` / `sso_enabled` seed to `0`** — confirmed directly in
   `seed_data.sql` (both the master switches and every per-provider flag).
 - **No `<table>` for layout** outside the two documented exceptions (§1).

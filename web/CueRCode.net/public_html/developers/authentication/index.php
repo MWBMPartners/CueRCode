@@ -8,10 +8,11 @@
  *
  * Explains the two supported authentication modes (X-API-Key header for
  * server-to-server integrations; session CSRF token for the web UI's own
- * AJAX calls), the anonymous fallback and its limits, and how API keys will
- * be issued once self-service key management ships with the accounts system
- * (Epic E3) - which is explicitly OUT OF SCOPE for this pass (issue #50,
- * scope item 3, deferred).
+ * AJAX calls), the anonymous fallback and its limits, and how self-service
+ * API keys work now that accounts and key management have shipped (Epic
+ * E7 stage 1, #54) - a signed-in user creates, names, scopes, rotates, and
+ * revokes their own keys from the account dashboard, no team involvement
+ * needed.
  *
  * Content here is narrative/explanatory by design; the exact per-endpoint
  * auth requirement is also rendered LIVE from openapi.json on the
@@ -21,10 +22,11 @@
  * @package     CueRCode
  * @subpackage  Developer Portal
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
- * @since       Phase 2 (E6 developer portal cycle, #50)
+ * @version     1.1.0
+ * @since       Phase 2 (E6 developer portal cycle, #50); self-service key
+ *              management section rewritten for Epic E7 stage 1, #54
  * @see         web/CueRCode.net/_functions/fn_api_auth.php - authenticateAPIRequest(), validateAPIKey()
- * @see         PROJECT_ROADMAP.md - Epic E3 (Accounts & Organisations) and Epic E6 (this portal)
+ * @see         PROJECT_ROADMAP.md - Epic E7 (Self-Service API Keys) and Epic E6 (this portal)
  */
 
 // ==============================================================================
@@ -85,8 +87,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <ul>
                                 <li><a href="#modes">1. The two authentication modes</a></li>
                                 <li><a href="#anonymous">2. Anonymous access and its limits</a></li>
-                                <li><a href="#getting-a-key">3. Getting an API key today</a></li>
-                                <li><a href="#self-service">4. Self-service key management (coming with accounts)</a></li>
+                                <li><a href="#getting-a-key">3. Getting an API key</a></li>
+                                <li><a href="#self-service">4. Managing your keys (rotate / revoke / scopes)</a></li>
                                 <li><a href="#which-mode">5. Which mode should I use?</a></li>
                             </ul>
                         </nav>
@@ -146,9 +148,17 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             and output formats without a key.
                         </p>
                         <p>
-                            <code>POST /generate</code>, <code>POST /preview</code>, and
+                            <code>POST /generate</code>, <code>POST /preview</code>,
+                            <code>POST /barcode</code>, <code>POST /barcode/preview</code>, and
                             <code>GET /download/{uuid}</code> are NEVER anonymous - one of the two modes
                             above is always required, returning <code>401 AUTH_REQUIRED</code> otherwise.
+                            The same is true of the saved-codes routes -
+                            <code>POST /save</code>, <code>GET /qrcodes</code>,
+                            <code>GET/PATCH/DELETE /qrcodes/{uuid}</code>, and
+                            <code>GET/PATCH /qrcodes/{uuid}/destination</code>. The routes that act on a single
+                            saved code (<code>/qrcodes/{uuid}</code> and its <code>/destination</code>) also
+                            re-check that the caller owns that code, and the list only ever shows the
+                            caller's own codes.
                         </p>
                         <p class="mb-0">
                             Anonymous requests are rate limited by IP address, more strictly than
@@ -159,43 +169,70 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </p>
 
                         <!-- ============================================================
-                             3. Getting a key today
+                             3. Getting a key
                              ============================================================ -->
-                        <h2 id="getting-a-key" class="h5 mt-4 mb-3">3. Getting an API Key Today</h2>
-                        <p class="mb-0">
-                            Self-service key issuance isn't built yet (see the notice below), so today API
-                            keys are provisioned directly by the
-                            <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> team on request.
-                            Reach out with the intended use case (integration name, expected request volume)
-                            and a key will be issued with sensible default rate limits. In the meantime, the
-                            <a href="/developers/quickstart/">Quickstart</a> guide's anonymous
-                            <code>/bulk-generate</code> path works for evaluation and light/experimental use
-                            without waiting on a key.
+                        <h2 id="getting-a-key" class="h5 mt-4 mb-3">3. Getting an API Key</h2>
+                        <p>
+                            API keys are self-service - there is no waiting on the
+                            <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> team. Follow these
+                            steps:
+                        </p>
+                        <ol class="mb-0">
+                            <li>Register a free account, or sign in if you already have one.</li>
+                            <li>Open the API keys section of your account dashboard
+                                (<code>/account/#api-keys-section</code>).</li>
+                            <li>Give the new key a name so you can recognise it later (e.g. "Staging
+                                server").</li>
+                            <li>Choose which scopes it needs (see Section 4 below) - grant only what the
+                                integration actually uses.</li>
+                            <li>Copy the key shown on screen straight away. It is displayed
+                                <strong>exactly once</strong>; after that, only its prefix is visible, and a
+                                lost key cannot be recovered - only rotated for a new one.</li>
+                        </ol>
+                        <p class="mb-0 mt-3">
+                            In the meantime, the <a href="/developers/quickstart/">Quickstart</a> guide's
+                            anonymous <code>/bulk-generate</code> path works for evaluation and
+                            light/experimental use without a key at all.
                         </p>
 
                         <!-- ============================================================
-                             4. Self-service placeholder
+                             4. Managing your keys
                              ============================================================ -->
-                        <h2 id="self-service" class="h5 mt-4 mb-3">4. Self-Service Key Management - Coming With Accounts</h2>
-                        <div class="alert alert-info" role="note">
-                            <p>
-                                A full self-service flow - create a key, name it, see its prefix and
-                                last-used timestamp, rotate it, or revoke it - is planned for
-                                <strong>Epic E3 (Accounts &amp; Organisations)</strong> per
-                                PROJECT_ROADMAP.md. The underlying database table
-                                (<code>tblAPIKeys</code>, including per-key rate limits and a JSON
-                                <code>permissions</code>/scopes column) already exists in the schema today;
-                                what's missing is the account login system to gate a "my API keys" screen
-                                behind, and the CRUD UI/API itself.
-                            </p>
-                            <p class="mb-0">
-                                This is intentionally scoped OUT of the current developer-portal pass
-                                (issue #50, item 3) because it has a hard dependency on Epic E3, which has
-                                zero authentication code today (no registration, login, or session
-                                management exists yet). Once E3 ships, this section will be replaced with
-                                the actual self-service flow.
-                            </p>
-                        </div>
+                        <h2 id="self-service" class="h5 mt-4 mb-3">4. Managing Your Keys (Rotate / Revoke / Scopes)</h2>
+                        <p>
+                            The account dashboard's API keys section lists every key you own (name, prefix,
+                            scopes, rate limits, last-used timestamp) - never the secret itself, only its
+                            HMAC-SHA256 hash is stored server-side. From there you can:
+                        </p>
+                        <ul>
+                            <li><strong>Rotate</strong> a key to issue it a brand-new secret. The old secret
+                                stops working <strong>immediately</strong>, so update any integration using it
+                                before rotating.</li>
+                            <li><strong>Revoke</strong> a key you no longer need. This is a soft-revoke - the
+                                key stops authenticating straight away.</li>
+                        </ul>
+                        <p>
+                            Each key is granted one or more scopes from a fixed allowlist:
+                            <code>generate</code>, <code>preview</code>, <code>download</code>,
+                            <code>bulk</code>, <code>qrcodes:read</code>, <code>qrcodes:write</code>, and
+                            <code>save</code>. A request made with a key that lacks the scope an endpoint
+                            needs is rejected with <code>403 INSUFFICIENT_SCOPE</code>, naming the missing
+                            scope. Scope checks only apply to <code>X-API-Key</code> requests - a signed-in
+                            session (Mode B) is never scope-limited.
+                        </p>
+                        <p>
+                            For safety, a key can never manage other keys - any <code>/keys*</code> call made
+                            with an <code>X-API-Key</code> header is refused with
+                            <code>403 API_KEY_MANAGEMENT_FORBIDDEN</code>, even if that key holds every
+                            scope. Key creation, listing, rotation, and revocation are session/CSRF only
+                            (the account dashboard, or an equivalent signed-in AJAX call).
+                        </p>
+                        <p class="mb-0">
+                            Each plan also caps how many keys an account may hold at once (seeded caps:
+                            free 1, pro 5, business 20). Creating another key once you are at the cap
+                            returns <code>402 API_KEY_LIMIT_REACHED</code> - rotate or revoke an existing
+                            key, or upgrade your plan, to make room.
+                        </p>
 
                         <!-- ============================================================
                              5. Which mode?

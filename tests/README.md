@@ -40,6 +40,37 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
+## Current suite (2026-09-23, #103)
+
+| File | Assertions |
+| --- | --- |
+| `test_accessibility.php` | 41 |
+| `test_account_data.php` | 116 |
+| `test_account_ui.php` | 70 |
+| `test_api_keys.php` | 108 |
+| `test_api_parity.php` | 76 |
+| `test_auth.php` | 61 |
+| `test_barcode.php` | 120 |
+| `test_braille.php` | 65 |
+| `test_bulk.php` | 82 |
+| `test_core.php` | 140 |
+| `test_dynamic_redirect_s0.php` | 97 |
+| `test_dynamic_redirect_s1.php` | 41 |
+| `test_email.php` | 69 |
+| `test_emoji_logo.php` | 123 |
+| `test_error_catalogue.php` | 132 |
+| `test_features.php` | 91 |
+| `test_oauth.php` | 135 |
+| `test_openapi_render.php` | 115 |
+| `test_payloads.php` | 138 |
+| `test_pricing.php` | 54 |
+| `test_pricing_flex.php` | 50 |
+| `test_qr_logo.php` | 178 |
+| `test_qrcodes.php` | 83 |
+| **Total** | **2185** |
+
+Run `php tests/run.php` at any time to reproduce this table live.
+
 ## Syntax-checking the harness
 
 ```bash
@@ -142,6 +173,13 @@ boundaries when deciding what to test:
   also calls `getConfig` (DB). Session-based tests would need a session harness.
 - **`fn_debug.php`** — `isDebugMode` reads config/DB; `debugOutput` emits output.
 - **`fn_response.php`** — emits HTTP headers / `exit`s and reads config (DB).
-- **`fn_error_handler.php`**, **`fn_api_*.php`**, **`fn_qr_generate.php`**,
-  **`fn_qr_logo.php`**, **`fn_qr_frames.php`** — require the DB and/or the QR
-  rendering pipeline; out of scope for pure unit tests.
+- **`fn_error_handler.php`**, **`fn_qr_generate.php`**, **`fn_qr_frames.php`**
+  — require the DB and/or the QR rendering pipeline; out of scope for pure
+  unit tests.
+- **`fn_api_*.php`** and **`fn_qr_logo.php`** — mostly require the DB and/or
+  real HTTP request handling, but each now has a pure-function slice that IS
+  unit-tested: `fn_qr_logo.php`'s SVG-content screener and predefined-logo
+  path resolver (`test_qr_logo.php`), `fn_api_keys.php`'s ownership/scope
+  validators (`test_api_keys.php`), and `fn_api_qrcodes.php`'s ownership
+  predicates (`test_qrcodes.php`). Their **DB/render-dependent parts** remain
+  out of scope for this dependency-free harness.

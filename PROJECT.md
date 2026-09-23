@@ -10,9 +10,9 @@ CueRCode is a PHP 8.4/8.5 QR-code-generator SaaS for Dreamhost shared hosting, p
 
 Production-ready for the current phase scope, tuned to this PHP app:
 
-- [ ] `php -l` clean on every PHP file (114/114 currently pass) AND zero lint/standards/security warnings before any commit (ProjectBrief §19.7, §20).
+- [ ] `php -l` clean on every PHP file (77 tracked web PHP files clean (2026-09-23)) AND zero lint/standards/security warnings before any commit (ProjectBrief §19.7, §20).
 - [ ] Core QR generation works end-to-end via BOTH the Web UI and the REST API (feature parity preserved).
-- [ ] Automated coverage exists for core flows: payload builders, generation pipeline, API auth/rate-limit, response formatting. (No test harness present yet — see Backlog.)
+- [ ] Automated coverage exists for core flows: payload builders, generation pipeline, API auth/rate-limit, response formatting. (tests/ harness: 2185 assertions, 23 files.)
 - [ ] No unresolved Critical/High security finding (see SECURITY.md). All Medium findings triaged with an owner decision.
 - [ ] No High-severity correctness/UX backlog item left open.
 - [ ] Docs current: PROJECT_STATUS.md, CHANGELOG.md, DEV_NOTES.md, README.md, OpenAPI spec all reflect shipped state.
