@@ -33,8 +33,10 @@ earlier `working`; a stray `working`@a4042c6 duplicate is stale). The four tier
 branches are permanent; up-chain promotions are owner-gated. Scanning
 (ci/codeql/semgrep), Dependabot version updates, and the
 `security-propagate.yml` security-fix cherry-pick all cover ALL FOUR branches.
-Note: `git push --delete` is policy-blocked at the CI git proxy — stale branches
+Note (2026-09-23): stale-branch cleanup is complete; repo auto-deletes PR head branches on merge, so recreate `work-in-progress` from `alpha` after each promotion. `git push --delete` is policy-blocked at the CI git proxy — stale branches
 must be deleted via the GitHub UI. Full detail + current branch tips live in
 `.claude/HANDOFF.md` §0.
+
+**Current state (2026-09-23):** see `.claude/HANDOFF.md` §0 — open fixes from #103 (security-propagate false alarms, release-candidate scanning gap, Swagger UI offline fallback) + full issue/docs sweep still queued.
 
 **How to apply:** Always audit issues against codebase before closing. Check PROJECT_STATUS.md for current status. Never assume prior completion claims are accurate. Cut new work from `work-in-progress`; promote via `work-in-progress → alpha`.

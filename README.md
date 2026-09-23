@@ -192,6 +192,8 @@ The schema and an owner-facing destination-management API (`GET`/`PATCH /api/v1/
 
 This project is maintained by MWBM Partners Ltd. See [DEV_NOTES.md](DEV_NOTES.md) for development conventions and guidelines.
 
+AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.claude/CLAUDE.md) (rules), [`.claude/HANDOFF.md`](.claude/HANDOFF.md) §0 (current position) and, for Codex, [`AGENTS.md`](AGENTS.md) / [`.OpenAI/`](.OpenAI/).
+
 ## 📄 License
 
 Copyright &copy; 2026 MWBM Partners Ltd. All rights reserved.

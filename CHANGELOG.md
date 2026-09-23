@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Standing working rules refreshed + fresh-session handoff (2026-09-23, #108) - PROCESS/DOCS
+
+No application code changed. Records the owner's revised working rules so any
+new session (or another AI tool) can pick up exactly where the last one stopped.
+
+- **`.claude/CLAUDE.md`** - new "Standing Rules" section: plain-English
+  feedback, keep the handoff updated as you go, Opus (one-after-another) for
+  deep planning and Sonnet/Haiku for building, dev-team plugins + cross-AI
+  review (Claude builds → Codex reviews, and vice versa, until clean), steps
+  after each task, standing documentation-update task, autonomy with questions
+  up front, task-table progress updates, no stacked PRs, AI-tool fallback.
+  Checklist step 7 changed from "commit, do not push" to **commit and push to
+  `work-in-progress`**.
+- **`.claude/HANDOFF.md`** - new §0 with the 2026-09-23 position, branch tips,
+  task queue and cold-start steps; corrects the 2026-08-04 note that
+  `security-propagate.yml` had cleanly done nothing (it opened false-alarm
+  issues #93-#95).
+- **`.OpenAI/`** (NEW) + root **`AGENTS.md`** (NEW) - Codex memory and context.
+- **`.claude/DEVICE_WIDE_RULES.md`** (NEW) - copy of the AI-tool fallback rule
+  for each tool's device-wide instructions.
+- **`.claude/agents/`** - `deep-architect` now uses Opus; new Sonnet
+  `implementer` agent. **`.claude/memory/`** - three new rule notes.
+
 ### Changed - Four-Tier Branch Cadence + Multi-Branch Security/Dependabot Propagation (2026-08-04, #64) - CI/INFRA
 
 Moves the project from a three-tier (`alpha → beta → main`) to a **four-tier

@@ -1,6 +1,21 @@
 # 🛠️ CueRCode - Developer Notes
 
-**📅 Last Updated:** 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
+**📅 Last Updated:** 2026-09-23 (AI-assisted working rules, #108); previously 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
+
+---
+
+## 🤖 AI-Assisted Working Rules (2026-09-23, #108)
+
+Work on this repo is done with AI coding tools (Claude Code, Codex). The full
+rules live in `.claude/CLAUDE.md` ("Standing Rules"); the live position and task
+queue live in `.claude/HANDOFF.md` §0. In short:
+
+- Commit **and push** to `work-in-progress` only; one PR `work-in-progress → alpha` later (no stacked PRs).
+- Deep planning with Opus agents one after another; building with Sonnet/Haiku (Opus if complex).
+- Every change is reviewed by the *other* AI tool (Codex reviews Claude's work and vice versa) until no issues remain.
+- After each task: push, update its GitHub issue, update `.claude/` and `.OpenAI/` memory, update the handoff.
+- If one AI tool is unavailable, another can take over from the handoff; switch back and do a full review.
+- Codex context: `.OpenAI/` (root `AGENTS.md` points there).
 
 ---
 
