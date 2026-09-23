@@ -32,3 +32,11 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   jsDelivr (styles also cdnjs). Never load a library from another CDN (e.g.
   unpkg) without updating the CSP. That exact mistake left `/api/docs/` blank
   on the live server until #111.
+- **Issue audit 2026-09-23:** `.claude/ISSUE_AUDIT_2026-09-23.md` is the latest
+  code-verified status of every issue. Top open bug: **#112** — the email queue is
+  never sent, so sign-ups can't be verified. Follow-ups: #113 deploy/setup,
+  #114 accounts, #115 polish.
+- **Writer agents and the handoff:** when delegating doc edits, give writers an
+  explicit file allow-list and tell them the handoff's task numbers aren't theirs.
+  On 2026-09-23 two writers misread "tasks 5-6" in HANDOFF, skipped most of their
+  work and edited HANDOFF against instructions.

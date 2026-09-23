@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Full issue audit + thorough documentation refresh (2026-09-23, #103) - DOCS/PROCESS
+
+No application logic changed; documentation and the API spec's wording only.
+
+- **Issue audit** - all 67 real GitHub issues checked against the actual
+  code by four Opus agents working one after another (results in
+  `.claude/ISSUE_AUDIT_2026-09-23.md`). One plain-English audit comment was
+  posted on each of 50 issues. #67 (emoji picker) and #61 (workflow linting)
+  were closed as finished. Gaps found on closed issues went into new issues
+  rather than reopening old ones:
+  - **#112** - **HIGH bug:** the email queue is never sent, so new sign-ups
+    can never be verified.
+  - **#113** - server setup/deploy gaps.
+  - **#114** - account follow-ups, including sign-in activity logging and bot
+    protection.
+  - **#115** - smaller polish items.
+- **Documentation refresh** (Opus plan, Sonnet writers, Opus fact-check;
+  the fact-checks fixed several wrong statements):
+  - README, DEV_NOTES, tests/README, the site README/CHANGELOG,
+    `.github/SECURITY.md`, PROJECT.md and the two verification reports:
+    current counts (2185 tests in 23 files, 30 API paths, 93 error codes,
+    26 QR + 11 barcode types, 6 formats), honest setup steps (there's no
+    credentials template in the repo), and deploy and testing notes.
+  - PROJECT_STATUS, FEATURES, PROJECT_ROADMAP, LAUNCH_DECISIONS and SECURITY.md
+    now match the audit.
+  - `openapi.json` wording: API keys are self-service; the full list of
+    protected routes; barcode types; notes on the missing XML stylesheet and
+    the predefined-logo PNG files. No structural change, and the drift checks
+    pass.
+  - Developer portal: removed "API keys coming with accounts"; added a
+    `POST /barcode` recipe and samples; brought the dynamic-QR and single
+    sign-on status up to date.
+
 ### Fixed - API docs page blank on the live server + Swagger UI offline fallback (2026-09-23, #111)
 
 - **The bug:** the interactive API documentation page (`/api/docs/`) loaded its
