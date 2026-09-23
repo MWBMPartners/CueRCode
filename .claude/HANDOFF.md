@@ -34,12 +34,12 @@
 | `release-candidate` | `071f2cc` | Dependabot PR #107 open against it; **still unprotected** (owner) |
 | `beta` | `7d31f71` | codeql-action bump #105 |
 | `alpha` | `6053147` | codeql-action bump #104 |
-| `work-in-progress` | this session's #108 commit on top of `alpha` | the ONLY branch we push to |
+| `work-in-progress` | `25475f1` (#108 rules/handoff) on top of `alpha` | the ONLY branch we push to |
 
 ### 📋 Task queue (pick up from the top)
 | # | Task | Status | Notes |
 | --- | --- | --- | --- |
-| 1 | Refresh standing rules + handoff + `.OpenAI/` Codex memory (#108) | ✅ Done | Pushed to `work-in-progress` |
+| 1 | Refresh standing rules + handoff + `.OpenAI/` Codex memory (#108) | ✅ Done | Pushed `25475f1` to `work-in-progress` |
 | 2 | Fix `security-propagate.yml` false alarms (#103 item 2b) | ⏳ Queued | An "already applied" fix makes `git cherry-pick` stop with an *empty* change; the script wrongly treats that as a conflict and opens a "Manual backport needed" issue. Fix: detect the empty case (`git cherry-pick --skip`/check `git diff --cached --quiet`) and skip quietly. Lives on `main` (workflow runs from default branch) — needs owner OK to change `main`, or ship via the normal promotion chain. |
 | 3 | Scan `release-candidate` properly (#103 item 2c) | ⏳ Queued | Its `codeql.yml`/`semgrep.yml` don't list `release-candidate`, and it has no `ci.yml` (no tests, no `php -l`, no secret scan). Arrives naturally when `alpha` is promoted up the chain; otherwise a direct fix on `release-candidate` needs owner OK. |
 | 4 | Swagger UI offline fallback (#103 item 2d) | ⏳ Queued | `public_html/api/docs/index.php` loads Swagger UI from unpkg only. Vendor `swagger-ui-dist` (css + bundle + standalone preset) under `public_html/assets/vendor/swagger-ui/` with the same CDN-first/local-fallback pattern as Bootstrap/jQuery. Mirror to `public_html_dev_alpha`/`_dev_beta` copies if they carry the docs page. Works on shared hosting (static files only, no Docker). |
