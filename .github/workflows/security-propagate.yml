@@ -11,7 +11,8 @@
 # `main`, it cherry-picks the merged commit onto `alpha`, `beta`, and
 # `release-candidate` and opens a PR against each — so the same fix reaches
 # every branch. A cherry-pick conflict opens a tracking ISSUE for manual
-# backport instead of failing silently.
+# backport instead of failing silently. An EMPTY cherry-pick (the fix is
+# already on that branch under a different commit) is skipped quietly (#109).
 #
 # 🔒 Safety: uses `pull_request_target` (needs write scope to push branches +
 #    open PRs) but only ever cherry-picks an ALREADY-MERGED commit from `main`
@@ -107,10 +108,11 @@ jobs:
           # A squash-merge produces a single-parent commit (cherry-pick as-is);
           # a merge-commit has 2+ parents and needs -m 1.
           PARENTS="$(git rev-list --parents -n 1 "${MERGE_SHA}" | wc -w)"
-          MFLAG=""
-          if [ "${PARENTS}" -ge 3 ]; then MFLAG="-m 1"; fi
+          # (Bash array so the optional flag is quoted safely — shellcheck SC2086.)
+          MFLAG=()
+          if [ "${PARENTS}" -ge 3 ]; then MFLAG=(-m 1); fi
 
-          if git cherry-pick ${MFLAG} "${MERGE_SHA}"; then
+          if git cherry-pick "${MFLAG[@]}" "${MERGE_SHA}"; then
             git push -u origin "${BRANCH}" --force-with-lease
             if gh pr list --head "${BRANCH}" --state open --json number --jq 'length' | grep -qx 0; then
               gh pr create \
@@ -123,6 +125,18 @@ jobs:
               echo "::notice::PR for ${BRANCH} already open — updated the branch."
             fi
           else
+            # 🧹 An "empty" cherry-pick is NOT a conflict. If the target branch
+            #    already carries the same change (e.g. Dependabot's per-branch
+            #    version PR landed it separately, as a different commit), git
+            #    stops with "nothing to commit". With no conflicted paths and a
+            #    clean index + working tree, there is genuinely nothing to
+            #    back-port — skip quietly instead of opening a false-alarm
+            #    "Manual backport needed" issue (#109; see #93/#94/#95).
+            if [ -z "$(git diff --name-only --diff-filter=U)" ] && git diff --cached --quiet && git diff --quiet; then
+              git cherry-pick --skip || git cherry-pick --abort || true
+              echo "::notice::${MERGE_SHA} is already applied on ${TARGET} (empty cherry-pick) — skipping."
+              exit 0
+            fi
             git cherry-pick --abort || true
             gh issue create \
               --title "⚠️ Manual backport needed: propagate PR #${PR_NUMBER} to ${TARGET}" \
