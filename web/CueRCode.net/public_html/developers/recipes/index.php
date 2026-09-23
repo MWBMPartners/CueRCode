@@ -8,10 +8,12 @@
  *
  * Task-oriented "how do I..." recipes that combine the endpoints documented
  * elsewhere on the portal into complete workflows: embedding a QR code on a
- * website/CMS, bulk-generating from a spreadsheet (CSV -> ZIP), and generating
- * an accessible QR code via the API (preset=accessible). A "dynamic QR via
- * API" recipe is stubbed as coming soon, pending the in-house redirect layer
- * (Epic E1a) and the Go2My.Link integration (#137).
+ * website/CMS, bulk-generating from a spreadsheet (CSV -> ZIP), generating
+ * an accessible QR code via the API (preset=accessible), and generating a
+ * non-QR barcode via /barcode (#69). A "dynamic QR via API" recipe is stubbed
+ * as coming soon: the foundation (database tables, destination-check rules,
+ * and an owner-only destination API) is already built but switched off,
+ * pending owner approval gate G-007, and the Go2My.Link integration (#137).
  *
  * @package     CueRCode
  * @subpackage  Developer Portal
@@ -94,6 +96,7 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
                                 <li><a href="#spreadsheet">2. Bulk generate from a spreadsheet (CSV &rarr; ZIP)</a></li>
                                 <li><a href="#accessible">3. Accessible QR via the API</a></li>
                                 <li><a href="#dynamic">4. Dynamic QR via API - coming soon</a></li>
+                                <li><a href="#barcode">5. Non-QR barcodes via the API</a></li>
                             </ul>
                         </nav>
 
@@ -234,19 +237,52 @@ cat codes-output/manifest.txt   # per-row success/failure detail</code></pre>
                             <p>
                                 <i class="fa-solid fa-hourglass-half me-1" aria-hidden="true"></i>
                                 <strong>Coming soon</strong> - a QR code whose PRINTED image never changes
-                                while its destination stays editable requires an indirection layer that does
-                                not exist in the API yet.
+                                while its destination stays editable.
                             </p>
                             <p class="mb-0">
-                                Per PROJECT_ROADMAP.md Epic E1, this ships in two stages: an in-house
-                                redirect layer (<code>/r/{uuid}</code> + a new <code>dynamic_url</code> QR
-                                type + a destination-update endpoint), pending an owner approval gate, and
-                                then an optional Go2My.Link-backed driver once their public short-link API
-                                ships (tracked upstream as
-                                <a href="https://github.com/MWBMPartners/Go2My.Link/issues/137" class="alert-link" rel="noopener noreferrer">Go2My.Link&nbsp;#137</a>).
-                                This recipe will be filled in once either lands.
+                                The foundation for this is already BUILT but switched off: the database
+                                tables, the destination-check rules, and an owner-only
+                                <code>GET</code>/<code>PATCH /api/v1/qrcodes/{uuid}/destination</code> API all
+                                exist today (see the Endpoint Reference). What's still missing is the PUBLIC
+                                redirect itself - a <code>/r/{uuid}</code> route and the <code>dynamic_url</code>
+                                QR type are not yet enabled - pending an owner approval decision (gate
+                                G-007). A future, optional Go2My.Link-backed driver is also tracked, waiting
+                                on their public short-link API
+                                (<a href="https://github.com/MWBMPartners/Go2My.Link/issues/137" class="alert-link" rel="noopener noreferrer">Go2My.Link&nbsp;#137</a>).
+                                This recipe will be filled in once the redirect route is switched on.
                             </p>
                         </div>
+
+                        <!-- ============================================================
+                             5. Non-QR barcodes via the API
+                             ============================================================ -->
+                        <h2 id="barcode" class="h5 mt-4 mb-3">5. Non-QR Barcodes via the API</h2>
+                        <p>
+                            Need a traditional 1D or 2D barcode (not a QR code) - e.g. a product barcode for
+                            a label, or a PDF417 boarding-pass-style code? <code>POST /barcode</code>
+                            generates 8 linear (1D) symbologies (<code>code128</code>, <code>code39</code>,
+                            <code>ean13</code>, <code>ean8</code>, <code>upca</code>, <code>upce</code>,
+                            <code>itf</code>, <code>codabar</code>) and 3 matrix (2D) symbologies
+                            (<code>datamatrix</code>, <code>pdf417</code>, <code>aztec</code>). It needs
+                            authentication the same way as <code>/generate</code> (API key or CSRF token,
+                            <code>generate</code> scope), and the generated barcode is saved and downloadable
+                            through the SAME <code>/download/{uuid}</code> endpoint as a QR code.
+                        </p>
+                        <pre class="bg-body-tertiary p-3 rounded"><code>curl -X POST <?php echo $siteURLEscaped; ?>/api/v1/barcode \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: cuercode_your_api_key_here" \
+  -d '{
+        "symbology": "ean13",
+        "data": "400638133393",
+        "options": { "format": "svg" }
+      }'</code></pre>
+                        <p class="mb-0">
+                            Check digits are verified server-side: EAN-13/EAN-8/UPC-A codes with a WRONG
+                            check digit are rejected with <code>422 GENERATION_FAILED</code> naming the
+                            specific problem, never silently coerced. For <code>pdf417</code> codes containing
+                            long runs of digits, the server's PHP <code>bcmath</code> extension is required
+                            for the numeric-compaction encode mode to work.
+                        </p>
 
                     </div>
                 </div>

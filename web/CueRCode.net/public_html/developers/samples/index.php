@@ -6,9 +6,9 @@
  *
  * Path: public_html/developers/samples/index.php
  *
- * Working, runnable request samples for the four core API endpoints
- * (/generate, /preview, /download/{uuid}, /bulk-generate) in curl, PHP,
- * JavaScript (fetch), and Python (requests) - matching the CURRENT API
+ * Working, runnable request samples for the core API endpoints
+ * (/generate, /preview, /download/{uuid}, /bulk-generate, /barcode) in curl,
+ * PHP, JavaScript (fetch), and Python (requests) - matching the CURRENT API
  * contract (auth requirements, request/response shapes, field names) as
  * declared in openapi.json. Samples are shown sequentially (not behind
  * JS-only tabs) so every language is readable/searchable even with
@@ -43,7 +43,7 @@ if (function_exists('getConfig')) {
 
 $pageTitle       = 'Code Samples';
 $pageDescription = 'Working curl, PHP, JavaScript (fetch), and Python (requests) samples for '
-    . 'generate, preview, download, and bulk-generate.';
+    . 'generate, preview, download, bulk-generate, and non-QR barcodes.';
 $bodyClass       = 'page-developers page-developers-samples';
 $pageCSS         = [];
 $pageJS          = [];
@@ -85,6 +85,7 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
                                 <li><a href="#preview">2. Live preview (POST /preview)</a></li>
                                 <li><a href="#download">3. Download by UUID (GET /download/{uuid})</a></li>
                                 <li><a href="#bulk">4. Bulk generate (POST /bulk-generate) - anonymous OK</a></li>
+                                <li><a href="#barcode">5. Non-QR barcode (POST /barcode)</a></li>
                             </ul>
                         </nav>
 
@@ -460,6 +461,63 @@ elif response.ok and content_type.startswith("application/pdf"):
 else:
     error = response.json()
     print(f"Error [{error.get('error_code')}]: {error.get('message')}")</code></pre>
+
+                        <!-- ============================================================
+                             5. Non-QR barcode
+                             ============================================================ -->
+                        <h2 id="barcode" class="h5 mt-4 mb-3">5. Non-QR Barcode</h2>
+                        <p><code>POST /api/v1/barcode</code> - requires an API key or CSRF token (same
+                            <code>generate</code> scope as <code>/generate</code>); generates a non-QR
+                            barcode symbology (8 linear types, 3 matrix types - see
+                            <a href="/developers/recipes/#barcode">Integration Recipes</a> for the full
+                            list) and returns a <code>uuid</code> and <code>download_url</code>, exactly
+                            like <code>/generate</code>.</p>
+
+                        <h3 class="h6 mt-3">curl</h3>
+                        <pre class="bg-body-tertiary p-3 rounded"><code>curl -X POST <?php echo $siteURLEscaped; ?>/api/v1/barcode \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: cuercode_your_api_key_here" \
+  -d '{
+        "symbology": "ean13",
+        "data": "400638133393",
+        "options": { "format": "svg" }
+      }'</code></pre>
+
+                        <h3 class="h6 mt-3">PHP</h3>
+                        <pre class="bg-body-tertiary p-3 rounded"><code>&lt;?php
+declare(strict_types=1);
+
+$apiKey  = 'cuercode_your_api_key_here';
+$payload = [
+    'symbology' => 'ean13',
+    'data'      => '400638133393',
+    'options'   => ['format' => 'svg'],
+];
+
+$curlHandle = curl_init('<?php echo $siteURLEscaped; ?>/api/v1/barcode');
+curl_setopt_array($curlHandle, [
+    CURLOPT_POST           => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_TIMEOUT        => 10,
+    CURLOPT_HTTPHEADER     => [
+        'Content-Type: application/json',
+        'X-API-Key: ' . $apiKey,
+    ],
+    CURLOPT_POSTFIELDS => json_encode($payload, JSON_THROW_ON_ERROR),
+]);
+
+$responseBody = curl_exec($curlHandle);
+$httpStatus   = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
+curl_close($curlHandle);
+
+$result = json_decode((string) $responseBody, true, 512, JSON_THROW_ON_ERROR);
+
+if ($httpStatus === 200 && $result['success'] === true) {
+    // A wrong check digit (e.g. a mistyped EAN-13) comes back as 422 GENERATION_FAILED.
+    echo 'Download URL: ' . $result['data']['download_url'] . PHP_EOL;
+} else {
+    echo 'Error [' . $result['error_code'] . ']: ' . $result['message'] . PHP_EOL;
+}</code></pre>
 
                         <p class="mt-4 mb-0">
                             See <a href="/developers/errors/">Errors &amp; Rate Limits</a> for the full

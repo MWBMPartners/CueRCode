@@ -16,9 +16,9 @@
  * Scope note (issue #50, E6 "Developer portal"): this pass covers items 1, 2,
  * and 4 of the epic draft - the public docs, samples, and the openapi.json-
  * rendered reference. Item 3, self-service API-key management (create/rotate/
- * revoke in an account area), is DEFERRED - it needs the accounts system
- * (Epic E3), which has zero auth code today. See the "Coming with accounts"
- * notice below and on the Authentication guide.
+ * revoke in an account area), is now BUILT via Epic E7 stage 1 (#54) - see the
+ * "Get your own API key" box below and the Authentication guide for the
+ * step-by-step walkthrough.
  *
  * @package     CueRCode
  * @subpackage  Developer Portal
@@ -158,7 +158,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <a href="/developers/authentication/" class="fw-semibold text-decoration-none">
                                         <i class="fa-solid fa-key me-1" aria-hidden="true"></i>Authentication</a>
                                     <div class="small text-body-secondary">API keys vs. session CSRF tokens vs.
-                                        anonymous access, and how self-service keys will work once accounts ship.</div>
+                                        anonymous access, and how to create your own self-service key.</div>
                                 </li>
                                 <li>
                                     <a href="/developers/reference/" class="fw-semibold text-decoration-none">
@@ -196,20 +196,20 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     </div>
 
                     <!-- ========================================================
-                         🚧 Self-service API keys placeholder (deferred to E3)
+                         ✅ Self-service API keys (Epic E7 stage 1, #54)
                          ======================================================== -->
-                    <div class="alert alert-info" role="note">
+                    <div class="alert alert-success" role="note">
                         <h2 class="h6 alert-heading">
-                            <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
-                            Self-service API keys - coming with accounts
+                            <i class="fa-solid fa-key me-1" aria-hidden="true"></i>
+                            Get your own API key
                         </h2>
                         <p class="mb-0">
-                            Creating, rotating, and revoking your own API keys from an account dashboard is
-                            planned for <strong>Epic E3 (Accounts &amp; Organisations)</strong>, per
-                            PROJECT_ROADMAP.md. Until then, API keys are provisioned directly by the
-                            <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> team - see the
-                            <a href="/developers/authentication/" class="alert-link">Authentication guide</a>
-                            for how to request one, and everything you can do anonymously in the meantime.
+                            Create a free account at <a href="/register/" class="alert-link">/register/</a>,
+                            then create, name, scope, rotate, and revoke your own keys from
+                            <a href="/account/#api-keys-section" class="alert-link">Account &gt; API Keys</a>.
+                            The free plan includes 1 API key. See
+                            <a href="/developers/authentication/#getting-a-key" class="alert-link">Authentication
+                            &gt; Getting an API key</a> for the step-by-step walkthrough.
                         </p>
                     </div>
 

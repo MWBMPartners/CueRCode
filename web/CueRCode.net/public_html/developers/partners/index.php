@@ -103,13 +103,15 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     needed for QR-backed dynamic short links"</a>.
                             </p>
                             <p class="mb-0">
-                                Once their API contract (endpoints, <code>X-API-Key</code> auth scopes,
-                                request/response shapes) is frozen, CueRCode will add an in-house redirect
-                                layer first (<code>/r/{uuid}</code> + a <code>dynamic_url</code> QR type,
-                                Epic E1a - pending a separate owner approval gate for the abuse-surface
-                                implications of hosting redirects) and then a Go2My.Link-backed driver
-                                (Epic E1b) as an alternative backend. See the stubbed
-                                <a href="/developers/recipes/#dynamic">"Dynamic QR via API"</a> recipe.
+                                CueRCode's own in-house redirect foundation (Epic E1a, Stage S0/S1, #82) is
+                                already BUILT - the database tables, destination-check rules, and an
+                                owner-only destination API all exist - but it is switched OFF, pending a
+                                separate owner approval gate (G-007) for the abuse-surface implications of
+                                hosting redirects. Once their API contract (endpoints, <code>X-API-Key</code>
+                                auth scopes, request/response shapes) is frozen, CueRCode will add a
+                                Go2My.Link-backed driver (Epic E1b) as an alternative backend. See the
+                                stubbed <a href="/developers/recipes/#dynamic">"Dynamic QR via API"</a>
+                                recipe.
                             </p>
                         </div>
 
@@ -135,12 +137,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     surface for suite SSO (CueRCode + future apps)"</a>.
                             </p>
                             <p class="mb-0">
-                                <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> is shipping
-                                standard Microsoft 365 and Google OIDC sign-in first (Epic E2), with a
-                                SIGNula provider slotted in behind a feature flag once their IdP surface (or
-                                an agreed lighter hosted-login redirect) lands. Every SSO identity - whichever
-                                provider - will link to a local CueRCode account (which itself requires Epic
-                                E3, accounts &amp; organisations, to exist first).
+                                <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> local accounts
+                                now exist, and standard Microsoft 365 and Google OIDC sign-in are now BUILT
+                                (Epic E2, #55/#19/#20) - both are switched OFF until the owner registers the
+                                respective apps and provides the credentials. A SIGNula provider will slot in
+                                behind a feature flag once their IdP surface (or an agreed lighter
+                                hosted-login redirect) lands. Every SSO identity - whichever provider - links
+                                to a local CueRCode account.
                             </p>
                         </div>
 
