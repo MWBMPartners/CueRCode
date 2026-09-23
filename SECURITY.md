@@ -258,3 +258,18 @@ Owner directive: fix ALL syntax/lint/security findings regardless of severity/ag
 **Additional finding fixed during the sweep (not on the original DS list):** `public_html/api/docs/index.php` ended with a trailing `?>` closing tag (the only entry-point page in `public_html/` that still had one — every other page/error/install page already omits it). Removed for consistency with the house no-trailing-close-tag standard; not a security defect (this file is never `include`d by another script), but a genuine standards inconsistency the sweep's `?>` scan surfaced.
 
 **Also fixed during the sweep (missing file headers, house-standards item explicitly called out in the scan matrix but broader in scope than previously catalogued):** 32 non-vendor PHP files across `_functions/`, `_includes/`, `public_html*/`, and both `_auth_keys/auth_creds.example.php` templates were missing the `Path:` and `@copyright` docblock fields mandated by the project's own `.claude/CLAUDE.md` ("File headers must include: file path, copyright"). All 32 were fixed mechanically (script-verified idempotent, `php -l` clean, 400/400 tests green before/after). Every non-vendor `.php` file in the tree now has both fields.
+
+---
+
+## 2026-09-23 audit — issue sweep + documentation refresh (#103)
+
+**Scan evidence:** `php tests/run.php` — **2185/2185 assertions pass** across 23 test files. `php -l` — all 77 tracked web PHP files clean. No new numbered findings raised by this pass; it is a documentation and issue-status sweep, not a fresh adversarial PoC pass.
+
+**Open items still outstanding (unchanged by this pass, carried forward from the findings table above):**
+
+- **F-004** — CSP/SRI: FontAwesome (`@6.5.1`) and jQuery (`@3.7.1`) still have no integrity (SRI) hash on their CDN tags, and the site's Content-Security-Policy still allows `unsafe-inline` scripts. Needs live-UI verification before the nonce migration can happen.
+- **F-012 / DS-8** — No bot protection is wired up (Cloudflare Turnstile > reCAPTCHA > hCaptcha). The settings rows exist in the database but there is no challenge on any form and no server-side verification call. Blocked on the owner supplying provider keys.
+- **`deploy.yml` (SFTP auto-deploy, #44)** — the workflow turns off SSH host-key checking and TLS certificate checking. This is a known, accepted gap tracked under #44 (needs a documented, secure alternative — e.g. pinning a known host key — before the first real live deploy).
+- **Auth events are not in the activity log** — sign-ups, logins, failed logins, logouts and password resets are not written to `tblActivityLog` (#12/#14/#15), so there is currently no audit trail of authentication activity to review after an incident.
+
+**Correction to a prior claim:** any earlier text in this register implying an `auth_creds.example.php` template is currently present/tracked in the repo should be read as historical only (it describes a past working-tree state during the #47 deep-sweep pass). As of 2026-09-23, `git ls-files` and a full filesystem search confirm **no `auth_creds.example.php` file exists anywhere in the tree, tracked or untracked** — `.gitignore`'s `**/_auth_keys/*.php` rule means no template can ever be committed. The owner must create `_auth_keys/auth_creds.example.php`'s real counterpart, `_auth_keys/auth_creds.php`, by hand on the live server (see `LAUNCH_DECISIONS.md` §E).

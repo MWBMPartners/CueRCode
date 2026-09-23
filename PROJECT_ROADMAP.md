@@ -7,6 +7,30 @@
 
 ---
 
+> ## 📌 Status update 2026-09-23 — read this first
+>
+> This document is a historical plan from 2026-07-09. It is **not rewritten** here — everything below this banner is kept as it was written, for the record — but several of its central claims are no longer true:
+>
+> - **"Zero authentication code" and "7 paths" are no longer true.** Since this plan was written, the following have all been built in code (with tests passing): accounts (E3 stages 1/2a/2b — registration, login, sessions, saved codes, profile), SSO (E2 — Microsoft 365 + Google, switched off pending owner setup), email (E8 — Microsoft Graph sender + queue, switched off), the tiers/gating framework (E4), accessibility (E5 — colourblind toggle, accessible-QR presets, print-size calculator), the developer portal (E6), API platform stage 1 (E7 — self-service API keys, pagination, error catalogue), and barcode generation (#69, 11 symbologies). The OpenAPI spec now has 30 paths, not 7.
+> - **PR #46 and HB-1 are long done.** The branch model has moved on entirely — it is now a four-tier `work-in-progress → alpha → beta → release-candidate → main` cadence (see DEV_NOTES.md "Branch Model & CI/CD Cadence"), not the single-`main`-PR model this document was written against.
+> - **The real blockers today** are the owner/live-server items tracked in `LAUNCH_DECISIONS.md`, plus the fresh gaps found in the 2026-09-23 issue audit and listed in `PROJECT_STATUS.md`'s "Known gaps found in the 2026-09-23 audit" section — not the items this document lists as blockers.
+>
+> **One-line status per epic (E1–E12), 2026-09-23:**
+> - **E1a** (in-house redirect groundwork, Stage S0/S1) — built but switched off; no public `/r/` route yet, gated on owner decision G-007.
+> - **E2** (SSO) — built but switched off; needs the owner to register OAuth apps with Microsoft/Google.
+> - **E3** (accounts & orgs) — partly done; no organisations (#21) and no passkeys (#16) yet.
+> - **E4** (tiers & pricing) — framework plus the #70 flexible-pricing extension are built but disabled; PayPal (#26) not started.
+> - **E5** (accessibility) — built.
+> - **E6** (developer portal) — built; the portal's API-key text was corrected 2026-09-23 (it used to say keys were "coming with accounts"/admin-issued, which is no longer true).
+> - **E7** (platform-grade API, stage 1) — built; idempotency keys and webhooks are not built yet.
+> - **E8** (email) — built, but nothing empties the send queue yet (no scheduled runner), so verification emails can't reach anyone on a live site.
+> - **E9** — not started.
+> - **E10** — not run (needs the live server).
+> - **E11** (analytics) — schema only, nothing writes to it yet.
+> - **E12** (CI/CD) — partly done; `beta` and `main` still lack `ci.yml`, and the SFTP deploy has never actually run (secrets not set, #44).
+
+---
+
 ## Launch Readiness Assessment
 
 ### Verdict

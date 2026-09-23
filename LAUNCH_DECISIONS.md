@@ -11,7 +11,7 @@
 > **Run through this checklist before launching.** It collects the decisions and
 > external setup that **only the owner** can make — things the autonomous build
 > cannot decide (money, credentials, legal, cost, live-server, and abuse-surface
-> go/no-go calls). Each item links the tracking issue. Last updated **2026-07-22**.
+> go/no-go calls). Each item links the tracking issue. Last updated **2026-09-23**.
 
 ---
 
@@ -21,9 +21,10 @@
 - [ ] Enable **Secret scanning** + **push protection**.
 - [ ] **GitHub Advanced Security / Code Security** for CodeQL (per-committer cost on private repos). Decision received: **"Both"** (Semgrep now + GHAS for CodeQL). After enabling, remove the two transitional `continue-on-error` lines in `.github/workflows/codeql.yml`.
 - [ ] **Vendored-library dependency coverage** (PHP libs + CDN JS have no manifest, so Dependabot can't see them). Choose: **(A)** metadata-only `composer.json`/`package.json` for advisory PRs, or **(B)** a scheduled "vendored-deps watch" Action.
-- [ ] **Merge PR #72** (deps/security → `main`) — required for Dependabot to read `.github/dependabot.yml` from the default branch.
+- [x] **Merge PR #72** (deps/security → `main`) — done (2026-09-23 audit: `main` now has `.github/dependabot.yml`).
 - [ ] Add **branch protection** + required status checks on `main`, `alpha`, **and** `beta` (all three receive direct pushes via `deploy.yml`).
-- [ ] Replicate the scanning workflows (codeql/semgrep/ci) onto **`beta`** (follow-up after #72/#74 merge).
+- [ ] Replicate the scanning workflows (codeql/semgrep/ci) onto **`beta`** — **2026-09-23 audit update**: `codeql.yml` and `semgrep.yml` are already on `beta`. What's still missing is `ci.yml` (tests, PHP syntax check, secret scan) — it's on `work-in-progress`, `alpha` and `release-candidate` but **not** on `beta` **or `main`**.
+- [ ] **emoji-ingest.yml** (#68) only fires on its monthly schedule once it reaches `main` — GitHub only runs scheduled workflows from the default branch. Currently only on `alpha`/`work-in-progress`.
 
 ## B. Pricing & billing  — see `Pricing_Strategy.md`, issues #25 / #53 / #70
 
@@ -59,8 +60,22 @@
 - [ ] **#17** — all 26 QR types × 6 formats generate scannable output.
 - [ ] **#18** — all API v1 endpoints (CORS, rate-limit, auth, Swagger).
 - [ ] **#22** — responsive + WCAG on real devices/screen-readers.
-- [ ] **`php-imagick` availability on Dreamhost** — determines whether **raster** predefined/emoji logos work at request time (#65/#67). If absent, run `tools/render_logo_pngs.php` once in an Imagick-equipped env to commit PNG twins. (SVG-output logos work regardless.)
+- [ ] **`php-imagick` availability on Dreamhost** (2026-09-23 audit correction) — emoji logos already ship with committed PNG copies, so they work regardless of Imagick. Only the **26 predefined brand logos** (#65) still need either Imagick on the live server at request time, **or** a one-off run of `tools/render_logo_pngs.php` on any machine with an SVG rasteriser, with the resulting 26 PNGs committed to the repo. (SVG-output logos work regardless, for both.)
+- [ ] Confirm the PHP extensions **`zip`** (bulk ZIP downloads), **`bcmath`** (PDF417 number-mode barcodes) and **`curl`** (email/SSO outbound calls) are enabled on Dreamhost (2026-09-23 audit, #13).
+- [ ] **Upload `_libraries` by hand** (chillerlan/php-qrcode, FPDF, tecnickcom/tc-lib-barcode) and the Bootstrap/jQuery/FontAwesome local CDN-fallback copies (2026-09-23 audit, #7/#36/#44) — the SFTP deploy workflow does not ship any of these; if the live jsDelivr/CDN copy is ever unreachable, the site loses styling/scripts without this step.
+- [ ] **Create `_auth_keys/auth_creds.php` by hand** on the live server (2026-09-23 audit, #13/LAUNCH_PREP_VERIFICATION.md) — `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, optionally `DB_PORT`/`DB_CHARSET`, and `ENCRYPTION_KEY`. No template file is tracked in the repo (`.gitignore`'s `**/_auth_keys/*.php` rule blocks it).
 - [ ] Confirm `SFTP_*` secrets + `SFTP_ENABLED=true` for auto-deploy.
+
+## E1. New items from the 2026-09-23 issue audit
+
+- [ ] **A way to enter encrypted credentials** — either the admin screen (#31) or, as a stop-gap before that exists, a one-off `setConfig()` script run by hand on the live server. Needed to switch on email (#29), SSO (#55), bot protection and PayPal (#26).
+- [ ] **A scheduled job for the email queue** (#29) — nothing currently empties `tblEmailQueue`; without a cron-style runner, no sign-up/reset email will ever actually send, even once Microsoft 365 is configured.
+- [ ] **`install.sql` re-run safety and an upgrade script** (#70/#11) — running `install.sql` a second time currently fails with a "duplicate column" error partway through (the flexible-pricing `ALTER TABLE ADD COLUMN` statements have no existence guard), and there is no upgrade script for a database installed before recent schema changes. Needed before the first real database test.
+- [ ] **#48 — contrast warning vs block**: should the Accessible-QR contrast check only warn (as now) between 3:1 and 4.5:1, or refuse to generate?
+- [ ] **#40 — JPEG XL**: needs another host/VPS capable of writing it, or a decision to drop the format for good.
+- [ ] **Image-based foreground/background fill** (ProjectBrief §3): open a new issue to scope it, or decide to drop it — it's currently missing from both the UI and the API.
+- [ ] **#16 — WebAuthn/passkeys**: go-ahead for gate **G-006**.
+- [ ] **#34 — internationalisation (i18n)**: go-ahead to start building the translation framework.
 
 ## F. Architecture gates (owner go/no-go)
 
