@@ -23,11 +23,11 @@
 > - **E5** (accessibility) — built.
 > - **E6** (developer portal) — built; the portal's API-key text was corrected 2026-09-23 (it used to say keys were "coming with accounts"/admin-issued, which is no longer true).
 > - **E7** (platform-grade API, stage 1) — built; idempotency keys and webhooks are not built yet.
-> - **E8** (email) — built, but nothing empties the send queue yet (no scheduled runner), so verification emails can't reach anyone on a live site.
+> - **E8** (email) — built, but nothing empties the send queue yet (no scheduled runner, bug #112), so verification emails can't reach anyone on a live site.
 > - **E9** — not started.
 > - **E10** — not run (needs the live server).
 > - **E11** (analytics) — schema only, nothing writes to it yet.
-> - **E12** (CI/CD) — partly done; `beta` and `main` still lack `ci.yml`, and the SFTP deploy has never actually run (secrets not set, #44).
+> - **E12** (CI/CD) — partly done; `beta` and `main` still lack `ci.yml` (`beta` tracked in #115), and the SFTP deploy has never actually run (secrets not set, #44).
 
 ---
 

@@ -61,19 +61,19 @@
 - [ ] **#18** — all API v1 endpoints (CORS, rate-limit, auth, Swagger).
 - [ ] **#22** — responsive + WCAG on real devices/screen-readers.
 - [ ] **`php-imagick` availability on Dreamhost** (2026-09-23 audit correction) — emoji logos already ship with committed PNG copies, so they work regardless of Imagick. Only the **26 predefined brand logos** (#65) still need either Imagick on the live server at request time, **or** a one-off run of `tools/render_logo_pngs.php` on any machine with an SVG rasteriser, with the resulting 26 PNGs committed to the repo. (SVG-output logos work regardless, for both.)
-- [ ] Confirm the PHP extensions **`zip`** (bulk ZIP downloads), **`bcmath`** (PDF417 number-mode barcodes) and **`curl`** (email/SSO outbound calls) are enabled on Dreamhost (2026-09-23 audit, #13).
-- [ ] **Upload `_libraries` by hand** (chillerlan/php-qrcode, FPDF, tecnickcom/tc-lib-barcode) and the Bootstrap/jQuery/FontAwesome local CDN-fallback copies (2026-09-23 audit, #7/#36/#44) — the SFTP deploy workflow does not ship any of these; if the live jsDelivr/CDN copy is ever unreachable, the site loses styling/scripts without this step.
-- [ ] **Create `_auth_keys/auth_creds.php` by hand** on the live server (2026-09-23 audit, #13/LAUNCH_PREP_VERIFICATION.md) — `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, optionally `DB_PORT`/`DB_CHARSET`, and `ENCRYPTION_KEY`. No template file is tracked in the repo (`.gitignore`'s `**/_auth_keys/*.php` rule blocks it).
+- [ ] Confirm the PHP extensions **`zip`** (bulk ZIP downloads), **`bcmath`** (PDF417 number-mode barcodes) and **`curl`** (email/SSO outbound calls) are enabled on Dreamhost (2026-09-23 audit, #13; the installer doesn't check `zip`/`bcmath` yet — #113).
+- [ ] **Upload `_libraries` by hand** (chillerlan/php-qrcode + php-settings-container, FPDF, tecnickcom/tc-lib-barcode + tc-lib-color) and the Bootstrap/jQuery/FontAwesome local CDN-fallback copies (2026-09-23 audit, #7/#36/#44; follow-up #113) — the SFTP deploy workflow does not ship any of these; if the live jsDelivr/CDN copy is ever unreachable, the site loses styling/scripts without this step.
+- [ ] **Create `_auth_keys/auth_creds.php` by hand** on the live server (2026-09-23 audit, #13/LAUNCH_PREP_VERIFICATION.md; template gap tracked in #113) — `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, optionally `DB_PORT`/`DB_CHARSET`, and `ENCRYPTION_KEY`. No template file is tracked in the repo (`.gitignore`'s `**/_auth_keys/*.php` rule blocks it).
 - [ ] Confirm `SFTP_*` secrets + `SFTP_ENABLED=true` for auto-deploy.
 
 ## E1. New items from the 2026-09-23 issue audit
 
-- [ ] **A way to enter encrypted credentials** — either the admin screen (#31) or, as a stop-gap before that exists, a one-off `setConfig()` script run by hand on the live server. Needed to switch on email (#29), SSO (#55), bot protection and PayPal (#26).
-- [ ] **A scheduled job for the email queue** (#29) — nothing currently empties `tblEmailQueue`; without a cron-style runner, no sign-up/reset email will ever actually send, even once Microsoft 365 is configured.
-- [ ] **`install.sql` re-run safety and an upgrade script** (#70/#11) — running `install.sql` a second time currently fails with a "duplicate column" error partway through (the flexible-pricing `ALTER TABLE ADD COLUMN` statements have no existence guard), and there is no upgrade script for a database installed before recent schema changes. Needed before the first real database test.
+- [ ] **A way to enter encrypted credentials** — either the admin screen (#31) or, as a stop-gap before that exists, a one-off `setConfig()` script run by hand on the live server. Needed to switch on email (#29), SSO (#55), bot protection and PayPal (#26). Follow-up #115.
+- [ ] **A scheduled job for the email queue** (#29; bug #112) — nothing currently empties `tblEmailQueue`; without a cron-style runner, no sign-up/reset email will ever actually send, even once Microsoft 365 is configured.
+- [ ] **`install.sql` re-run safety and an upgrade script** (#70/#11; follow-up #113) — running `install.sql` a second time currently fails with a "duplicate column" error partway through (the flexible-pricing `ALTER TABLE ADD COLUMN` statements have no existence guard), and there is no upgrade script for a database installed before recent schema changes. Needed before the first real database test.
 - [ ] **#48 — contrast warning vs block**: should the Accessible-QR contrast check only warn (as now) between 3:1 and 4.5:1, or refuse to generate?
 - [ ] **#40 — JPEG XL**: needs another host/VPS capable of writing it, or a decision to drop the format for good.
-- [ ] **Image-based foreground/background fill** (ProjectBrief §3): open a new issue to scope it, or decide to drop it — it's currently missing from both the UI and the API.
+- [ ] **Image-based foreground/background fill** (ProjectBrief §3): now tracked in #115 — scope it there, or decide to drop it — it's currently missing from both the UI and the API.
 - [ ] **#16 — WebAuthn/passkeys**: go-ahead for gate **G-006**.
 - [ ] **#34 — internationalisation (i18n)**: go-ahead to start building the translation framework.
 
@@ -85,8 +85,8 @@
 
 ## G. Feature scope confirmations
 
-- [ ] **Emoji asset set** (#67): Twemoji (CC-BY, ships PNG+SVG — recommended) vs Noto (needs PNG build); full ~3,700 set vs curated starter subset.
-- [ ] **Emoji-ingest** automation (#68): scheduled Action opens a **bot PR** vs a **diff-report issue**.
+- [x] **Emoji asset set** (#67): decided in practice — Twemoji v17.0.3 curated ~400 starter set shipped (SVG+PNG); #67 closed 2026-09-23. Growing to the full ~3,700 set remains optional.
+- [x] **Emoji-ingest** automation (#68): built as a **diff-report issue** (bot-PR mode is a documented future opt-in). It only runs once it's on `main`.
 - [ ] **Barcode library** (#69): confirm vendoring `tecnickcom/tc-lib-barcode` (LGPL-3) for 1D+2D.
 
 ## H. Dynamic + dual-function QR (gated) — issues #27 / #71 / #33, gate G-007

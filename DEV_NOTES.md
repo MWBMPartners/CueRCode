@@ -350,7 +350,7 @@ This is intentionally a runbook, not code, for this stage - if a future stage au
 
 An optional 4th by-reference parameter, `encryptValue($plaintext, $key, $salt, &$usedSaltOut)`, lets a caller capture the salt that was generated. `fn_config.php`'s `setConfig()` uses this to ALSO mirror the salt into a new `tblSettings.encryptionSalt BINARY(16) NULL` column, purely for DBA-visible auditability that per-record salting is genuinely happening (it is not read back by `getConfig()` - the embedded, self-describing blob is authoritative for decryption). Since all `isSensitive` seed values ship EMPTY, no re-encryption of real data was needed for this change.
 
-`ENCRYPTION_SALT` remains definable in `_auth_keys/auth_creds.php` (both `auth_creds.example.php` templates still document it) for backward-compatibility of the constant's existence, but is no longer consulted by the default (no-explicit-salt) code path - it is effectively legacy/vestigial. Verified via a scratch-DB round trip: two different `isSensitive` settings produced two different 16-byte salts and two different ciphertexts for otherwise-similar plaintext.
+`ENCRYPTION_SALT` remains definable in `_auth_keys/auth_creds.php` (note: no `auth_creds.example.php` template is actually committed — the `**/_auth_keys/*.php` ignore rule blocks it; tracked in #113) for backward-compatibility of the constant's existence, but is no longer consulted by the default (no-explicit-salt) code path - it is effectively legacy/vestigial. Verified via a scratch-DB round trip: two different `isSensitive` settings produced two different 16-byte salts and two different ciphertexts for otherwise-similar plaintext.
 
 ### Braille Dot-Geometry Approach & Grade-1 Scope (#49, 2026-07-10)
 
