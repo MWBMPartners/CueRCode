@@ -43,7 +43,9 @@ on a push to either of those two branches. They will start running there once
 each branch is promoted up the chain (`alpha` → `beta` → `release-candidate`
 → `main`) and carries the file with it. Having the file on `work-in-progress`
 does not make it run there: its trigger list only names the four permanent
-branches, so a push to `work-in-progress` runs nothing. The checks run when
+branches, so a push to `work-in-progress` runs none of these three checks.
+(Only the workflow linter, `lint.yml`, runs there, and only when workflow
+files change.) The checks run when
 `work-in-progress` is proposed into `alpha` as a pull request.
 
 **Note (2026-09-25):** since 2026-09-23, GitHub has refused to start any

@@ -271,9 +271,11 @@ jobs:
         run: |
           STAGING_DIR="${{ steps.staging.outputs.staging_dir }}"
 
-          # 🚫 Never re-minify third-party code under assets/vendor/ (Bootstrap,
-          #    jQuery, and the committed Swagger UI copy at
-          #    public_html/assets/vendor/swagger-ui/). Those files are already
+          # 🚫 Never re-minify third-party code under assets/vendor/ - today that
+          #    means the committed Swagger UI copy at
+          #    public_html/assets/vendor/swagger-ui/ (Bootstrap and jQuery live
+          #    there on the server too, but they're gitignored and uploaded by
+          #    hand, so the deploy never has them). Those files are already
           #    minified upstream, and the Swagger UI copy is promised elsewhere
           #    in the repo (its own README, and api/docs/index.php) to be the
           #    unmodified pinned 5.33.0 release — running it back through our

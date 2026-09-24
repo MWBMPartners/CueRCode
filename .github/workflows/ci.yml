@@ -98,30 +98,49 @@ jobs:
       # 🔎 Three possible situations here, and they must NOT be treated the
       #    same way:
       #      1. tests/run.php exists → the normal case, run the suite.
-      #      2. The tests/ folder does not exist at ALL → an older tier
-      #         (e.g. release-candidate before alpha is promoted into it)
-      #         genuinely predates the test suite. Skip the remaining steps
-      #         with a visible notice rather than failing; the suite
-      #         switches on by itself once tests/ arrives via promotion
-      #         (#110).
-      #      3. The tests/ folder exists but tests/run.php does not → the
-      #         test runner has been deleted or renamed on this branch. This
-      #         is NOT the same as case 2 and must NOT be waved through as a
-      #         skip: a pull request that deletes tests/run.php would
-      #         otherwise still show a green "Test suite" check, which is a
-      #         silent failure — the check would be lying about whether the
-      #         code was actually tested. Fail loudly instead.
+      #      2. The tests/ folder exists but tests/run.php does not → the
+      #         test runner has been deleted or renamed on this branch. A
+      #         pull request that deletes tests/run.php must NOT still show
+      #         a green "Test suite" check - that would be a silent failure,
+      #         the check lying about whether the code was tested. Fail.
+      #      3. The tests/ folder does not exist at ALL. Usually that means
+      #         an older tier (e.g. release-candidate before alpha is
+      #         promoted into it) that genuinely predates the test suite:
+      #         skip with a visible notice; the suite switches on by itself
+      #         once tests/ arrives via promotion (#110). BUT git does not
+      #         keep empty folders, so a pull request that deletes the WHOLE
+      #         tests/ folder lands here too. So on a pull request we ask the
+      #         TARGET branch: if it has tests/run.php, this PR is removing
+      #         the suite → fail. (Found by the 2026-09-25 review, round 2.)
+      #         If the target can't be checked, fail rather than guess.
+      #         Limit: a direct push (no pull request) that deletes tests/
+      #         still only skips - branch protection should make that
+      #         impossible on the four tiers.
       - name: Check the test suite is present on this branch
         id: suite
+        env:
+          # Via env, never ${{ }} inside the script (standard injection guard).
+          # Empty on push events; the PR's target branch on pull requests.
+          BASE_REF: ${{ github.base_ref }}
         run: |
           if [ -f tests/run.php ]; then
             echo "present=true" >> "${GITHUB_OUTPUT}"
-          elif [ ! -d tests ]; then
-            echo "present=false" >> "${GITHUB_OUTPUT}"
-            echo "::notice::tests/ is not on this branch yet — test suite skipped (it arrives via promotion)."
-          else
+          elif [ -d tests ]; then
             echo "::error::tests/run.php is missing but the tests/ folder exists — the test runner has been deleted or renamed. The test suite cannot run; fix the branch rather than letting this check pass silently."
             exit 1
+          else
+            if [ -n "${BASE_REF}" ]; then
+              if ! git fetch --no-tags --depth=1 origin "${BASE_REF}"; then
+                echo "::error::There is no tests/ folder, and the target branch '${BASE_REF}' could not be fetched to check whether it has the test suite. Re-run the check."
+                exit 1
+              fi
+              if git cat-file -e FETCH_HEAD:tests/run.php 2>/dev/null; then
+                echo "::error::The target branch '${BASE_REF}' has the test suite (tests/run.php), but this pull request removes the whole tests/ folder."
+                exit 1
+              fi
+            fi
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::tests/ is not on this branch yet — test suite skipped (it arrives via promotion)."
           fi
 
       - name: Set up PHP 8.4

@@ -12,10 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Codex, the usual reviewer, was out of credit, so a fresh Opus agent with no
 part in building the work reviewed everything since 2026-09-23 as a stand-in.
 It found 13 problems (4 medium, 9 low). The lead re-checked every one against
-the code. Ten are fixed here. Two need a direct commit to `main` and are
+the code. Ten are fixed here (two of the groups below overlap, so the counts
+add up to more than 13). Two need a direct commit to `main` and are
 waiting for the owner's OK. Three older ones became issues: #119, #120, #121.
 The Codex review is still owed.
 
+- **Round 2 (same day):** a second fresh Opus agent reviewed these fixes and
+  #117. It found 2 small problems and 4 wording slips, all now fixed:
+  - Deleting the *whole* `tests/` folder could still skip the check. On a pull
+    request, the check now asks the target branch: if it has the test suite,
+    removing it fails. Tested locally in 6 cases.
+  - The `dual_function_qr` wording, the counts above, and one over-broad
+    sentence in `.github/SECURITY.md`.
+
+  It also found two older bugs, now tracked: **#124** (high: the deploy never
+  uploads the `.htaccess` file at the top of each folder, including the
+  security headers and the rules that keep the alpha and beta sites private)
+  and **#125** (the `/pricing` page lists features that don't exist yet as
+  "Included").
 - **CI test check could pass with the tests deleted** (`.github/workflows/ci.yml`).
   If a pull request deleted or renamed `tests/run.php`, the "Test suite" check
   still showed green. It now skips only when the whole `tests/` folder is
@@ -23,7 +37,8 @@ The Codex review is still owed.
   its runner, the check fails with a plain explanation.
 - **Deploy no longer re-minifies third-party files** (`.github/workflows/deploy.yml`).
   The minify step skips `assets/vendor/`, so the Swagger UI fallback copy
-  goes live exactly as released (#111) and Bootstrap/jQuery are left alone.
+  goes live exactly as released (#111). (Bootstrap and jQuery aren't in the
+  deploy at all: they're gitignored and uploaded by hand.)
 - **API docs page works without JavaScript** (`/api/docs`): a short message
   and a link to the raw specification, instead of an empty box.
 - **Developer portal, authentication page:** corrected four statements.
@@ -43,7 +58,8 @@ The Codex review is still owed.
   - README, DEV_NOTES and LAUNCH_DECISIONS said the FontAwesome local copy is
     a working fallback. Nothing loads it yet (#119).
   - FEATURES said `dual_function_qr` is "seeded off"; it is on for Business
-    (and does nothing yet).
+    (nothing is gated on it yet, but the public pricing grid shows it as
+    included on Business, a separate bug: #125).
   - PROJECT_STATUS said `release-candidate` "now runs" its checks. They have
     never run, because GitHub Actions is blocked by billing.
 - Verified: `php -l` clean, `openapi.json` valid, 2185/2185 tests, actionlint
@@ -57,7 +73,7 @@ Running the tests on PHP 8.5 (the version the project targets) showed PHP
 printing a "deprecated" warning every time the code called `imagedestroy()`
 or `curl_close()`. Both functions have done nothing at all since PHP 8.0,
 because PHP now frees images and web connections by itself. The warnings
-mattered because two of the calls were in the image-making code: on a server
+mattered because eight of the calls were in the image-making code (three files): on a server
 set to show warnings, the warning text would be written into the middle of a
 downloaded QR code or barcode and corrupt the file.
 
