@@ -36,16 +36,28 @@ work-in-progress  ──►  alpha  ──►  beta  ──►  release-candidat
   before starting new work) so its promotion PRs show only the new diff.
 - **`alpha → beta → release-candidate → main`** are the four permanent tiers.
   Each up-chain promotion is **owner-gated**.
-- **Scanning** (`ci.yml` php-lint + test suite + gitleaks, `codeql.yml` JS,
-  `semgrep.yml` PHP+JS) triggers on push/PR to **all four** tiers. The full
-  `ci.yml` suite currently lives richest on `alpha` and propagates down as tiers
-  are promoted.
-  - **Documentation-refresh correction (#103):** `ci.yml` already triggers on
-    push/PR to all four permanent tiers (`alpha`, `beta`, `release-candidate`,
-    `main`) - it is NOT limited to three of them. What it does NOT run on is
-    `work-in-progress` itself (the integration branch), since that branch feeds
-    `alpha` via a single promotion PR rather than being one of the four
-    permanent tiers.
+- **Scanning:** `codeql.yml` (JS) and `semgrep.yml` (PHP+JS) trigger on
+  push/PR to **all four** permanent tiers. `ci.yml` (PHP lint + test suite +
+  gitleaks secret scan) is a separate, narrower-reaching workflow file - see
+  the correction directly below for exactly which branches actually have it.
+  - **Correction (2026-09-25 audit, stand-in review):** an earlier version of
+    this note had the `ci.yml` branch list backwards. Checked directly
+    against the repository (`git cat-file -e <branch>:.github/workflows/ci.yml`):
+    the file exists on `work-in-progress`, `alpha` and `release-candidate`
+    ONLY - it has NOT been copied onto `beta` or `main`. (Having the file on
+    `work-in-progress` does not make it run on pushes there: its trigger list
+    only names the four permanent tiers, so it runs on the
+    `work-in-progress` → `alpha` pull request, not on the branch itself.) So a push to `beta`
+    or `main` gets no automated tests, no PHP syntax check, and no secret
+    scan today; those three checks start running on a branch only once it is
+    promoted up the chain (`alpha` → `beta` → `release-candidate` → `main`)
+    and carries the file with it. (`codeql.yml`/`semgrep.yml` above are
+    unaffected by this mistake - they are unchanged and genuinely do trigger
+    on all four tiers.) Separately: since 2026-09-23 GitHub has refused to
+    start ANY Actions job on this repository (a billing/spending-limit
+    problem, not a fault in the workflows), so even where `ci.yml` already
+    exists - `release-candidate`, for example - it has never actually
+    completed a run yet.
   - **`emoji-ingest.yml`'s schedule only fires once the workflow is on `main`.**
     GitHub only runs a `schedule:`-triggered workflow from whatever the
     repository's default branch is (currently `main`) - a copy of the workflow
@@ -845,10 +857,15 @@ Pushing a version tag creates a GitHub Release (`release.yml`):
   seen from the repo - check them in the repository settings before enabling.
 - **Vendored libraries and CDN fallbacks are NOT uploaded.** The deploy
   workflow copies `web/` as committed - it does not download or stage
-  chillerlan/php-qrcode, FPDF, tecnickcom's barcode libraries, or the
-  Bootstrap/jQuery/FontAwesome CDN-fallback copies (all gitignored - see the
+  chillerlan/php-qrcode, FPDF, tecnickcom's barcode libraries, or the local
+  copies of Bootstrap/jQuery/FontAwesome (all gitignored - see the
   "Installation" step in the root README). Those still have to be placed on
-  the server by hand, once, outside this workflow.
+  the server by hand, once, outside this workflow. **Of those three, only
+  Bootstrap's and jQuery's copies are genuine CDN fallbacks today** -
+  `header.php`/`footer.php` check whether the CDN version loaded and switch
+  to the local file if not. FontAwesome's local copy is not wired up to
+  anything yet (`header.php` loads it from cdnjs only, no fallback check,
+  tracked in #119), so placing it on the server currently has no effect.
 - **TLS/host-key checks are currently turned off (#44).** The `lftp` SFTP
   transfer step runs with `StrictHostKeyChecking=no` (skips SSH host-key
   verification) and `set ssl:verify-certificate no` (skips TLS certificate

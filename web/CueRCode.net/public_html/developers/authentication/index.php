@@ -155,10 +155,23 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             The same is true of the saved-codes routes -
                             <code>POST /save</code>, <code>GET /qrcodes</code>,
                             <code>GET/PATCH/DELETE /qrcodes/{uuid}</code>, and
-                            <code>GET/PATCH /qrcodes/{uuid}/destination</code>. The routes that act on a single
-                            saved code (<code>/qrcodes/{uuid}</code> and its <code>/destination</code>) also
-                            re-check that the caller owns that code, and the list only ever shows the
-                            caller's own codes.
+                            <code>GET/PATCH /qrcodes/{uuid}/destination</code>. <code>GET /qrcodes</code>
+                            (the list) only ever shows the caller's own codes. For a single saved code
+                            (<code>GET/PATCH/DELETE /qrcodes/{uuid}</code>, and
+                            <code>GET /download/{uuid}</code>): <strong>changing or deleting</strong> a
+                            code always needs ownership, but <strong>reading or downloading</strong> it
+                            is also allowed for a caller who does not own it, if the owner has marked
+                            that code public. A code that is neither owned by the caller nor public is
+                            reported as <code>404</code> (never <code>403</code>), so a private code's
+                            existence is never given away.
+                        </p>
+                        <p>
+                            <code>/qrcodes/{uuid}/destination</code> looks similar but is a <strong>different
+                            resource with its own, separate ID</strong>: its <code>{uuid}</code> is the
+                            dynamic redirect's own identifier, not the saved QR code's UUID, and only the
+                            redirect's owner can read or update it - there is no "public" option for a
+                            redirect's destination. Calling this route with a saved code's UUID does not
+                            match a redirect row and returns <code>404</code>.
                         </p>
                         <p class="mb-0">
                             Anonymous requests are rate limited by IP address, more strictly than
@@ -212,13 +225,29 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 key stops authenticating straight away.</li>
                         </ul>
                         <p>
-                            Each key is granted one or more scopes from a fixed allowlist:
-                            <code>generate</code>, <code>preview</code>, <code>download</code>,
+                            Each key is granted <strong>zero or more</strong> scopes from a fixed
+                            allowlist: <code>generate</code>, <code>preview</code>, <code>download</code>,
                             <code>bulk</code>, <code>qrcodes:read</code>, <code>qrcodes:write</code>, and
                             <code>save</code>. A request made with a key that lacks the scope an endpoint
                             needs is rejected with <code>403 INSUFFICIENT_SCOPE</code>, naming the missing
                             scope. Scope checks only apply to <code>X-API-Key</code> requests - a signed-in
                             session (Mode B) is never scope-limited.
+                        </p>
+                        <p>
+                            Leaving the scopes list empty when creating a key is allowed - that key still
+                            authenticates normally (its own rate limits and "last used" timestamp still
+                            apply), but it cannot reach any of the scoped endpoints listed above. A
+                            zero-scope key can still call the handful of routes that need no scope at all:
+                            the <code>/auth/*</code> JSON routes (sign in, sign out, verify email, reset
+                            password), <code>GET /types</code>, <code>GET /formats</code> and
+                            <code>GET /health</code>.
+                        </p>
+                        <p>
+                            One route is different: <code>POST /bulk-generate</code> can be called with
+                            <strong>no</strong> key at all, but if you <strong>do</strong> send a key with
+                            it, that key needs the <code>bulk</code> scope. A zero-scope key sent to
+                            <code>/bulk-generate</code> is refused with <code>403 INSUFFICIENT_SCOPE</code>;
+                            leave the key off to use it anonymously (anonymous rate limits then apply).
                         </p>
                         <p>
                             For safety, a key can never manage other keys - any <code>/keys*</code> call made
@@ -229,9 +258,12 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </p>
                         <p class="mb-0">
                             Each plan also caps how many keys an account may hold at once (seeded caps:
-                            free 1, pro 5, business 20). Creating another key once you are at the cap
-                            returns <code>402 API_KEY_LIMIT_REACHED</code> - rotate or revoke an existing
-                            key, or upgrade your plan, to make room.
+                            free 1, pro 5, business 20). The cap counts active keys, so creating another
+                            key once you are at the cap returns <code>402 API_KEY_LIMIT_REACHED</code> -
+                            <strong>revoke</strong> an existing key, or upgrade your plan, to make room.
+                            <strong>Rotating a key does not free a slot</strong> - rotation replaces the
+                            key's secret in place and leaves it active and still counted, it does not
+                            create a new key or remove the old one.
                         </p>
 
                         <!-- ============================================================

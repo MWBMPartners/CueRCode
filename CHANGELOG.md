@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Review round 1 of the owed catch-up review: wrong docs, a test check that could pass with no tests, vendored files re-minified (2026-09-25, #103)
+
+Codex, the usual reviewer, was out of credit, so a fresh Opus agent with no
+part in building the work reviewed everything since 2026-09-23 as a stand-in.
+It found 13 problems (4 medium, 9 low). The lead re-checked every one against
+the code. Ten are fixed here. Two need a direct commit to `main` and are
+waiting for the owner's OK. Three older ones became issues: #119, #120, #121.
+The Codex review is still owed.
+
+- **CI test check could pass with the tests deleted** (`.github/workflows/ci.yml`).
+  If a pull request deleted or renamed `tests/run.php`, the "Test suite" check
+  still showed green. It now skips only when the whole `tests/` folder is
+  absent (an older branch that predates the suite). If `tests/` exists without
+  its runner, the check fails with a plain explanation.
+- **Deploy no longer re-minifies third-party files** (`.github/workflows/deploy.yml`).
+  The minify step skips `assets/vendor/`, so the Swagger UI fallback copy
+  goes live exactly as released (#111) and Bootstrap/jQuery are left alone.
+- **API docs page works without JavaScript** (`/api/docs`): a short message
+  and a link to the raw specification, instead of an empty box.
+- **Developer portal, authentication page:** corrected four statements.
+  - Public saved codes *can* be read by callers who don't own them.
+  - `/qrcodes/{uuid}/destination` takes the redirect's own ID, not the saved
+    code's.
+  - Keys may have zero scopes; the page now says what such a key can still do.
+    That includes the `/bulk-generate` exception: it works with no key, but a
+    key sent with it needs the `bulk` scope.
+  - Rotating a key does not free a slot under the key limit; only revoking does.
+- **API spec intro** (`openapi.json`): `/account/*` refuses API keys with
+  `ACCOUNT_MANAGEMENT_FORBIDDEN`, not `API_KEY_MANAGEMENT_FORBIDDEN`.
+- **Docs:**
+  - `.github/SECURITY.md` and DEV_NOTES wrongly said the full CI runs on `beta`
+    and `main`. The file isn't on either branch yet, and it doesn't run on
+    pushes to `work-in-progress`.
+  - README, DEV_NOTES and LAUNCH_DECISIONS said the FontAwesome local copy is
+    a working fallback. Nothing loads it yet (#119).
+  - FEATURES said `dual_function_qr` is "seeded off"; it is on for Business
+    (and does nothing yet).
+  - PROJECT_STATUS said `release-candidate` "now runs" its checks. They have
+    never run, because GitHub Actions is blocked by billing.
+- Verified: `php -l` clean, `openapi.json` valid, 2185/2185 tests, actionlint
+  clean on `ci.yml` (`deploy.yml` 29 → 25 notes, rest tracked in #118).
+  Built by two Sonnet builders. The lead re-checked their work and corrected
+  one wrong statement one of them had added about `/bulk-generate`.
+
 ### Fixed - PHP 8.5 "deprecated" warnings that could corrupt image downloads (2026-09-25, #117)
 
 Running the tests on PHP 8.5 (the version the project targets) showed PHP

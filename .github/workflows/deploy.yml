@@ -271,27 +271,38 @@ jobs:
         run: |
           STAGING_DIR="${{ steps.staging.outputs.staging_dir }}"
 
+          # 🚫 Never re-minify third-party code under assets/vendor/ (Bootstrap,
+          #    jQuery, and the committed Swagger UI copy at
+          #    public_html/assets/vendor/swagger-ui/). Those files are already
+          #    minified upstream, and the Swagger UI copy is promised elsewhere
+          #    in the repo (its own README, and api/docs/index.php) to be the
+          #    unmodified pinned 5.33.0 release — running it back through our
+          #    minifiers gains nothing and risks silently corrupting the local
+          #    fallback for the API docs page. `-not -path '*/assets/vendor/*'`
+          #    below excludes any file anywhere under an assets/vendor/ folder,
+          #    for any site (CueRCode.net, QRmy.Link, etc).
+
           # 🟡 Minify JavaScript files
-          find "$STAGING_DIR" -name "*.js" -type f 2>/dev/null | while read -r file; do
-            echo "🟡 Minifying JS: ${file#$STAGING_DIR/}"
+          find "$STAGING_DIR" -name "*.js" -type f -not -path '*/assets/vendor/*' 2>/dev/null | while read -r file; do
+            echo "🟡 Minifying JS: ${file#"$STAGING_DIR"/}"
             terser "$file" --compress --mangle --output "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
           done
 
           # 🔵 Minify CSS files
-          find "$STAGING_DIR" -name "*.css" -type f 2>/dev/null | while read -r file; do
-            echo "🔵 Minifying CSS: ${file#$STAGING_DIR/}"
+          find "$STAGING_DIR" -name "*.css" -type f -not -path '*/assets/vendor/*' 2>/dev/null | while read -r file; do
+            echo "🔵 Minifying CSS: ${file#"$STAGING_DIR"/}"
             cleancss -o "$file" "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
           done
 
           # 🟠 Minify HTML files
-          find "$STAGING_DIR" \( -name "*.html" -o -name "*.htm" \) -type f 2>/dev/null | while read -r file; do
-            echo "🟠 Minifying HTML: ${file#$STAGING_DIR/}"
+          find "$STAGING_DIR" \( -name "*.html" -o -name "*.htm" \) -type f -not -path '*/assets/vendor/*' 2>/dev/null | while read -r file; do
+            echo "🟠 Minifying HTML: ${file#"$STAGING_DIR"/}"
             html-minifier-terser --collapse-whitespace --remove-comments --minify-css true --minify-js true -o "$file" "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
           done
 
           # 🟣 Minify XML files (strip whitespace between tags)
-          find "$STAGING_DIR" -name "*.xml" -type f 2>/dev/null | while read -r file; do
-            echo "🟣 Minifying XML: ${file#$STAGING_DIR/}"
+          find "$STAGING_DIR" -name "*.xml" -type f -not -path '*/assets/vendor/*' 2>/dev/null | while read -r file; do
+            echo "🟣 Minifying XML: ${file#"$STAGING_DIR"/}"
             sed -i 's/>[[:space:]]*</></g' "$file" 2>/dev/null || echo "  ⚠️ Warning: failed to minify $file"
           done
 

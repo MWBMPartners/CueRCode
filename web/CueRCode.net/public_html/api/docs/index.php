@@ -148,6 +148,31 @@ X-RateLimit-Remaining: 58</code></pre>
                      ================================================================ -->
                 <div class="card">
                     <div class="card-body p-0">
+
+                        <!-- ⛔ No-JS fallback (2026-09-25 documentation-accuracy pass):
+                             with JavaScript turned off, nothing below this comment ever
+                             runs, so the #swagger-ui <div> stays permanently empty -
+                             a visitor would see a blank card with no explanation and
+                             no way forward. This <noscript> block is the project's
+                             required graceful fallback: one plain-English sentence
+                             plus a normal link straight to the machine-readable
+                             specification, so the content is still reachable without
+                             JavaScript. The href below is the SAME path the page
+                             passes to SwaggerUIBundle's `url` option further down
+                             this file ('/api/v1/openapi.json') - kept as the same
+                             literal string in both places on purpose, so a future
+                             change to one is easy to spot needs making to the other
+                             too. This needs no Content-Security-Policy change: it is
+                             an ordinary same-origin link, not a script or a style. -->
+                        <noscript>
+                            <div class="alert alert-info m-3" role="note">
+                                <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
+                                This interactive API explorer needs JavaScript to run.
+                                You can still read the full API specification directly:
+                                <a href="/api/v1/openapi.json">/api/v1/openapi.json</a>
+                            </div>
+                        </noscript>
+
                         <div id="swagger-ui"></div>
                     </div>
                 </div>

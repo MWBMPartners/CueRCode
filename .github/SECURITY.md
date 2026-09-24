@@ -27,15 +27,30 @@ across all supported tiers:
 | `beta`              | Beta testing environment         | ✅ Supported   |
 | `alpha`             | Alpha testing environment        | ✅ Supported   |
 
-Automated dependency updates (Dependabot) and code scanning (see
-`.github/workflows/`) run against all four branches so that a vulnerability
-patched on one tier is not silently left open on another. Security fixes that
-land on `main` first (Dependabot security updates target only the default
-branch) are automatically cherry-picked back to `alpha`, `beta`, and
-`release-candidate` by `.github/workflows/security-propagate.yml`. The full CI
-suite (tests, syntax check, secret scan via `ci.yml`) currently runs on
-`alpha`, `beta`, `release-candidate` and `main`; it does not yet run on the
-`work-in-progress` integration branch that feeds `alpha`.
+Automated dependency updates (Dependabot) and two of the code-scanning checks
+(CodeQL for JavaScript, Semgrep for PHP and JavaScript) run against all four
+branches, so that a vulnerability patched on one tier is not silently left
+open on another. Security fixes that land on `main` first (Dependabot
+security updates target only the default branch) are automatically
+cherry-picked back to `alpha`, `beta`, and `release-candidate` by
+`.github/workflows/security-propagate.yml`.
+
+The **full CI suite** (`ci.yml`: automated tests, a PHP syntax check, and a
+secret scan) is a separate check with its own file, and that file currently
+only exists on `work-in-progress`, `alpha` and `release-candidate` — it has
+not yet been copied onto `beta` or `main`, so none of those three checks run
+on a push to either of those two branches. They will start running there once
+each branch is promoted up the chain (`alpha` → `beta` → `release-candidate`
+→ `main`) and carries the file with it. Having the file on `work-in-progress`
+does not make it run there: its trigger list only names the four permanent
+branches, so a push to `work-in-progress` runs nothing. The checks run when
+`work-in-progress` is proposed into `alpha` as a pull request.
+
+**Note (2026-09-25):** since 2026-09-23, GitHub has refused to start any
+Actions job on this repository at all (a billing/spending-limit problem on
+the account, not a fault in the checks themselves), so even where `ci.yml`
+already exists — for example on `release-candidate` — it has never actually
+completed a run yet.
 
 ## Reporting a vulnerability
 

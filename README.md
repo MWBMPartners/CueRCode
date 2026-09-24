@@ -91,7 +91,7 @@ CueRCode/
    - [FPDF v1.86](https://www.fpdf.org/) → `web/CueRCode.net/_libraries/fpdf/`
    - [tecnickcom/tc-lib-barcode v2.12.0](https://github.com/tecnickcom/tc-lib-barcode/releases) → `web/CueRCode.net/_libraries/tecnickcom/tc-lib-barcode/`
    - [tecnickcom/tc-lib-color v2.13.1](https://github.com/tecnickcom/tc-lib-color/releases) → `web/CueRCode.net/_libraries/tecnickcom/tc-lib-color/`
-   - CDN-fallback copies of Bootstrap 5.3.3, jQuery 3.7.1 and FontAwesome 6.5.1 (used only if the CDN can't be reached) → `web/CueRCode.net/public_html/assets/vendor/bootstrap/`, `.../assets/vendor/jquery/`, `.../assets/vendor/fontawesome/` respectively (these three are gitignored; the Swagger UI fallback, by contrast, IS committed to the repo already, so it needs no manual step - #111)
+   - Local copies of Bootstrap 5.3.3, jQuery 3.7.1 and FontAwesome 6.5.1 → `web/CueRCode.net/public_html/assets/vendor/bootstrap/`, `.../assets/vendor/jquery/`, `.../assets/vendor/fontawesome/` respectively (these three are gitignored; the Swagger UI fallback, by contrast, IS committed to the repo already, so it needs no manual step - #111). **Bootstrap's and jQuery's copies are genuine CDN fallbacks** - `header.php`/`footer.php` already check whether the CDN version loaded and, if not, switch to these local files, so uploading them does something real. **FontAwesome's copy currently does nothing** - `header.php` loads FontAwesome from cdnjs only, with no fallback check wired up yet (tracked in #119), so uploading it is harmless but has no effect until that is built.
 
 3. **🔐 Configure credentials:**
 
