@@ -14,6 +14,15 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   without losing context, switch back often, then do a FULL review.
 - **After each task:** push → update the GitHub issue → update `.claude/` and
   `.OpenAI/` → update `.claude/HANDOFF.md`.
+- **Watchdog (2026-09-24, #116).** Anything that finishes later (CI runs, PR
+  merges, deploys, background agents/commands, long builds or tests) gets a
+  watchdog: wait for it to finish and check the result, including side
+  effects like issues or PRs it opened, before starting any step that depends
+  on it. Failed, cancelled, timed out or never started all count as a problem;
+  silence is not success. Re-check GitHub check runs until every one is
+  complete, because notifications don't announce success. Never leave
+  anything running unwatched; record in-flight work in `.claude/HANDOFF.md`
+  §0.
 - **House style:** full multi-line PHP, detailed comments (emojis fine), PHP
   predefined constants, MySQLi prepared statements, no layout `<table>`,
   WCAG 2.1 AA, file headers with path + copyright (2025–current year, MWBM

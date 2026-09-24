@@ -1,6 +1,6 @@
 # 🛠️ CueRCode - Developer Notes
 
-**📅 Last Updated:** 2026-09-23 (documentation refresh, #103); previously 2026-09-23 (CI fixes #109/#110 — empty cherry-picks skipped in `security-propagate.yml`; `release-candidate` now fully scanned; AI-assisted working rules, #108); previously 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
+**📅 Last Updated:** 2026-09-24 (watchdog standing rule, #116); previously 2026-09-23 (documentation refresh, #103); previously 2026-09-23 (CI fixes #109/#110 — empty cherry-picks skipped in `security-propagate.yml`; `release-candidate` now fully scanned; AI-assisted working rules, #108); previously 2026-08-04 (Four-tier branch cadence + multi-branch security/Dependabot propagation, #64)
 
 ---
 
@@ -15,6 +15,7 @@ queue live in `.claude/HANDOFF.md` §0. In short:
 - Every change is reviewed by the *other* AI tool (Codex reviews Claude's work and vice versa) until no issues remain.
 - After each task: push, update its GitHub issue, update `.claude/` and `.OpenAI/` memory, update the handoff.
 - If one AI tool is unavailable, another can take over from the handoff; switch back and do a full review.
+- **Watchdog (2026-09-24, #116):** anything that finishes later (CI runs, merges, deploys, background agents) is watched until it has really finished and its result (including side effects) has been checked. Only then do dependent steps start. Failed, cancelled, timed-out or never-started all count as a problem.
 - Codex context: `.OpenAI/` (root `AGENTS.md` points there).
 
 ---

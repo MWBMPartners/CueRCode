@@ -2,6 +2,7 @@
 
 > **Why this file exists:** the owner asked (2026-09-23, #108) for the AI-tool
 > fallback rule to apply to ALL projects on their device, not just CueRCode.
+> The watchdog rule was added the same way on 2026-09-24 (#116).
 > This session runs in a temporary cloud container, so anything written to its
 > home folder is thrown away when the session ends. Copy the block below into
 > each AI tool's device-wide instruction file on your own computer:
@@ -37,3 +38,30 @@ easy-to-understand, plain English.
 
 Keep each project's handoff document updated as you go, so work can be picked
 up at any time after an interruption.
+
+## ⏱️ Watchdog for anything that finishes later (added 2026-09-24, CueRCode #116)
+
+Some steps don't finish straight away: automatic checks (CI) runs,
+pull-request merges, deploys, helper agents or commands running in the
+background, and long builds or test runs. **Every time a step like that
+starts, set up a "watchdog" — something that waits for it to finish and then
+checks the result — and don't start any later step that depends on it until
+the watchdog says it's done.** Tasks that don't depend on it can carry on in
+the meantime.
+
+- **"Finished" includes going wrong.** Failed, cancelled, timed out, skipped
+  or never started all count as finished-with-a-problem. Silence is not
+  success.
+- **Check the whole result, not just the headline.** A run can report
+  "success" and still have side effects (issues opened, PRs created, branches
+  deleted). Give them time to appear, then look for them properly.
+- **If it went wrong:** find out why, fix it, run it again, and set the
+  watchdog again before moving on.
+- **Use whatever your tool offers to wait properly:** background tasks with a
+  "finished" notification, repeatedly re-checking a status until it's final,
+  or a scheduled self check-in for long waits. Never guess or assume a
+  result. (Automatic GitHub notifications usually report failures but not
+  successes, so actively re-check.)
+- **Never leave anything running unwatched.** Before stopping or handing
+  over, write down in the handoff document anything still in progress and how
+  it's being watched, so the next session or tool can take over the watch.

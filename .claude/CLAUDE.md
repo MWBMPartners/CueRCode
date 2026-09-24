@@ -101,6 +101,20 @@ Use the dev-team plugins freely for any of this work, and for suggesting fixes, 
 3. Update OpenAI/Codex memory and context in `.OpenAI/`.
 4. Update the handoff document (`.claude/HANDOFF.md`).
 
+### ⏱️ Watchdog for anything that finishes later (standing task, #116)
+Some steps don't finish straight away: CI (automatic checks) runs, pull-request merges, deploys, Dependabot and security-propagation runs, helper agents or commands running in the background, and long builds or test runs. **Every time a step like that starts, set up a "watchdog" — something that waits for it to finish and then checks the result — and don't start any later step that depends on it until the watchdog says it's done.** Queued tasks that don't depend on it can carry on in the meantime.
+- **"Finished" includes going wrong.** Failed, cancelled, timed out, skipped, or never started all count as finished-with-a-problem. Silence is not success: a watchdog that only listens for "passed" isn't a watchdog.
+- **Check the whole result, not just the headline.** A run can say "success" and still have side effects (issues it opened, PRs it created, branches it deleted). Wait until those have had time to appear, then look for them properly. (Lesson from 2026-08-04: a propagation run was reported as "did nothing" after a too-early, too-narrow check. It had actually opened false-alarm issues #93–#95.)
+- **If it went wrong:** work out why, fix it, start it again, and set the watchdog again. Only then move down the queue.
+- **How to watch (Claude Code):**
+  - Background helper agents or commands → start them in the background and wait for their "finished" notification (`run_in_background`, or the `Monitor` tool for a stream of updates). Never guess or assume the result.
+  - GitHub checks on a PR or branch → keep re-checking the check runs until **every** check shows as completed. GitHub's automatic notifications report failures but **not** successes, so don't wait for a "passed" message. Also subscribe to the PR's activity to hear about failures and review comments.
+  - Anything that could take a while or outlast this session → schedule a self check-in (`send_later`) as a backstop, so the session wakes up and carries on with the queue even if nothing else prompts it.
+  - After a merge, the watchdog also covers what happens next: the repo auto-deletes the PR's source branch (recreate `work-in-progress` from `alpha`), and version-bump/deploy runs start.
+- **Known trap:** if GitHub Actions jobs "fail" in about 2 seconds with no log, GitHub didn't start them (usually billing or used-up minutes); the code isn't at fault. The watchdog must report that as **blocked**, not done, and must not let dependent steps go ahead as if the checks were green (for example, the `work-in-progress → alpha` PR). Run the same checks locally and tell the owner.
+- **Never leave anything running unwatched.** Before ending a turn or handing over, make sure nothing is still running without a watchdog. Write down anything still in progress, and how it's being watched, in `.claude/HANDOFF.md` §0 so a fresh session can take over the watch.
+- A tool-agnostic copy of this rule is in `.claude/DEVICE_WIDE_RULES.md`.
+
 ### 📚 Thorough documentation update (standing task)
 Keep ALL documentation current: every `.md` file, in-app help, guides and the developer portal, and all Claude info in `.claude/`. Update the OpenAPI/Swagger spec (`web/CueRCode.net/public_html/api/v1/openapi.json`) for every API change. Swagger UI is already included (`/api/docs/`) — it must work on shared hosting with no Docker, which means it needs a **local copy of Swagger UI as a fallback** when the CDN can't be reached (still outstanding — see #103 item 2d).
 

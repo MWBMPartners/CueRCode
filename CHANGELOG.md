@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - New standing rule: "watchdog" for anything that finishes later (2026-09-24, #116) - PROCESS/DOCS
+
+No application code changed. At the owner's request, any step that finishes
+later (CI runs, pull-request merges, deploys, Dependabot and
+security-propagation runs, background agents or commands, long builds or
+tests) now gets a "watchdog". It waits for the step to finish and checks the
+result, including side effects, and no dependent step starts until it has.
+Failed, cancelled, timed-out or never-started all count as a problem, because
+silence is not success.
+
+- **`.claude/CLAUDE.md`** - new "⏱️ Watchdog" standing rule (a standing task),
+  with how to watch in Claude Code and the known trap where GitHub Actions
+  jobs "fail" in about 2 seconds because GitHub never started them.
+- **`.claude/DEVICE_WIDE_RULES.md`** - tool-agnostic copy for each AI tool's
+  device-wide instructions.
+- **`.claude/memory/feedback_watchdog.md`** (NEW) + index; **`.OpenAI/`**
+  memory and context and root **`AGENTS.md`** updated so Codex follows the same
+  rule; `.claude/HANDOFF.md` §0 and `DEV_NOTES.md` updated.
+
 ### Changed - Full issue audit + thorough documentation refresh (2026-09-23, #103) - DOCS/PROCESS
 
 No application logic changed; documentation and the API spec's wording only.
