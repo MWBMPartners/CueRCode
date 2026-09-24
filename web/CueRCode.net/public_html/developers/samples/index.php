@@ -131,7 +131,7 @@ curl_setopt_array($curlHandle, [
 
 $responseBody = curl_exec($curlHandle);
 $httpStatus   = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
-curl_close($curlHandle);
+// No curl_close() needed: PHP 8.0+ frees the handle automatically (and PHP 8.5 warns if you call it).
 
 $result = json_decode((string) $responseBody, true, 512, JSON_THROW_ON_ERROR);
 
@@ -226,7 +226,7 @@ curl_setopt_array($curlHandle, [
 ]);
 
 $result = json_decode((string) curl_exec($curlHandle), true, 512, JSON_THROW_ON_ERROR);
-curl_close($curlHandle);
+// No curl_close() needed: PHP 8.0+ frees the handle automatically (and PHP 8.5 warns if you call it).
 
 if ($result['success'] === true) {
     echo $result['data']['image']; // base64 data URI - use directly as an <img src>
@@ -300,7 +300,7 @@ curl_setopt_array($curlHandle, [
 
 $fileBytes  = curl_exec($curlHandle);
 $httpStatus = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
-curl_close($curlHandle);
+// No curl_close() needed: PHP 8.0+ frees the handle automatically (and PHP 8.5 warns if you call it).
 
 if ($httpStatus === 200) {
     file_put_contents('downloaded-qr.png', (string) $fileBytes);
@@ -398,7 +398,7 @@ curl_setopt_array($curlHandle, [
 $responseBody = curl_exec($curlHandle);
 $httpStatus   = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
 $contentType  = (string) curl_getinfo($curlHandle, CURLINFO_CONTENT_TYPE);
-curl_close($curlHandle);
+// No curl_close() needed: PHP 8.0+ frees the handle automatically (and PHP 8.5 warns if you call it).
 
 if ($httpStatus === 200 && str_starts_with($contentType, 'application/zip')) {
     file_put_contents('qr-batch.zip', (string) $responseBody);
@@ -508,7 +508,7 @@ curl_setopt_array($curlHandle, [
 
 $responseBody = curl_exec($curlHandle);
 $httpStatus   = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
-curl_close($curlHandle);
+// No curl_close() needed: PHP 8.0+ frees the handle automatically (and PHP 8.5 warns if you call it).
 
 $result = json_decode((string) $responseBody, true, 512, JSON_THROW_ON_ERROR);
 

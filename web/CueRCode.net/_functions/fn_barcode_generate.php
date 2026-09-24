@@ -724,7 +724,10 @@ function appendBarcodeTextToPng(string $pngBytes, string $text): string
     $canvas = @imagecreatetruecolor($width, $height + $textBandHeight);
 
     if ($canvas === false) {
-        imagedestroy($sourceImage);
+        // 🧹 No imagedestroy($sourceImage) here - PHP releases it
+        // automatically once this function returns and nothing refers to it
+        // any more. imagedestroy() has been a no-op since PHP 8.0 and PHP
+        // 8.5 warns when it is called (#117) - do not add it back.
         return $pngBytes;
     }
 
@@ -736,7 +739,15 @@ function appendBarcodeTextToPng(string $pngBytes, string $text): string
     }
 
     imagecopy($canvas, $sourceImage, 0, 0, 0, 0, $width, $height);
-    imagedestroy($sourceImage);
+
+    // 🧹 $sourceImage's pixels are already copied into $canvas above, so it
+    // is not needed for the rest of this function. unset() drops this
+    // variable's reference to it, letting PHP free that memory straight
+    // away instead of waiting for the function to return - the same effect
+    // imagedestroy() had before PHP 8.0, but without the "deprecated"
+    // warning PHP 8.5 now prints for imagedestroy() (#117). Do not change
+    // this back to imagedestroy($sourceImage).
+    unset($sourceImage);
 
     $black = imagecolorallocate($canvas, 0, 0, 0);
     if ($black !== false) {
@@ -749,7 +760,11 @@ function appendBarcodeTextToPng(string $pngBytes, string $text): string
     ob_start();
     $pngWritten = imagepng($canvas);
     $outputBytes = ob_get_clean();
-    imagedestroy($canvas);
+
+    // 🧹 No imagedestroy($canvas) here - PHP releases it automatically once
+    // this function returns and nothing refers to it any more.
+    // imagedestroy() has been a no-op since PHP 8.0 and PHP 8.5 warns when
+    // it is called (#117) - do not add it back.
 
     if (!$pngWritten || $outputBytes === false) {
         return $pngBytes;

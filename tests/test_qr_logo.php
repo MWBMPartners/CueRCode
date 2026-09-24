@@ -590,7 +590,9 @@ if ($fixtureMkdirOk) {
     //    distinguishable from any other fixture size in this section).
     $twinCanvas = imagecreatetruecolor(6, 9);
     imagepng($twinCanvas, $twinPngPath);
-    imagedestroy($twinCanvas);
+    // 🧹 No imagedestroy($twinCanvas) here - PHP releases it automatically
+    // once nothing refers to it any more (a no-op since PHP 8.0, and PHP
+    // 8.5 warns when it is called - #117, do not add it back).
 
     $loadedViaTwin = loadLogoImage($twinSvgPath);
 
@@ -602,7 +604,7 @@ if ($fixtureMkdirOk) {
     if ($loadedViaTwin instanceof \GdImage) {
         assertEquals(6, imagesx($loadedViaTwin), 'loadLogoImage() PNG-twin fallback loads the TWIN\'s pixel width (6px), proving the twin (not a broken SVG decode) was used');
         assertEquals(9, imagesy($loadedViaTwin), 'loadLogoImage() PNG-twin fallback loads the TWIN\'s pixel height (9px)');
-        imagedestroy($loadedViaTwin);
+        // 🧹 No imagedestroy($loadedViaTwin) here - see the #117 note above.
     }
 
     // --------------------------------------------------------------------
@@ -644,9 +646,8 @@ if ($fixtureMkdirOk) {
             ($imagickLogoResult instanceof \GdImage) || ($imagickLogoResult === null),
             'loadLogoImage() with Imagick loaded returns a valid GdImage (SVG supported) OR a NON-SILENT null (SVG blocked by build/policy) — never a broken image (#65 fix, Imagick branch)'
         );
-        if ($imagickLogoResult instanceof \GdImage) {
-            imagedestroy($imagickLogoResult);
-        }
+        // 🧹 No imagedestroy($imagickLogoResult) here - see the #117 note
+        // above (imagedestroy() has been a no-op since PHP 8.0).
     }
 
     // --------------------------------------------------------------------
@@ -662,7 +663,7 @@ if ($fixtureMkdirOk) {
         ob_start();
         imagepng($fakeQrCanvas);
         $fakeQrPngBytes = ob_get_clean();
-        imagedestroy($fakeQrCanvas);
+        // 🧹 No imagedestroy($fakeQrCanvas) here - see the #117 note above.
 
         $qrResultWithSkippedLogo = overlayLogoOnRaster(
             (string) $fakeQrPngBytes,

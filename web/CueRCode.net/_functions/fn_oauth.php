@@ -649,7 +649,11 @@ function oauthHttpGetJson(string $url): ?array
     $responseBody = curl_exec($curlHandle);
     $curlErrno    = curl_errno($curlHandle);
     $httpCode     = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
-    curl_close($curlHandle);
+
+    // 🧹 No curl_close($curlHandle) here - PHP releases the handle
+    // automatically once $curlHandle goes out of scope. curl_close() has
+    // been a no-op since PHP 8.0 and PHP 8.5 warns when it is called
+    // (#117) - do not add it back.
 
     if ($curlErrno !== 0 || $responseBody === false || $httpCode !== 200) {
         return null;
@@ -841,7 +845,11 @@ function oauthExchangeCodeForTokens(
     $curlErrno    = curl_errno($curlHandle);
     $curlError    = curl_error($curlHandle);
     $httpCode     = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
-    curl_close($curlHandle);
+
+    // 🧹 No curl_close($curlHandle) here - PHP releases the handle
+    // automatically once $curlHandle goes out of scope. curl_close() has
+    // been a no-op since PHP 8.0 and PHP 8.5 warns when it is called
+    // (#117) - do not add it back.
 
     // ❌ Transport-level failure. NEVER log $postFields (contains
     // client_secret + code_verifier) - only the curl error text.
@@ -902,7 +910,11 @@ function oauthFetchUserInfo(string $userinfoEndpoint, string $accessToken): ?arr
     $responseBody = curl_exec($curlHandle);
     $curlErrno    = curl_errno($curlHandle);
     $httpCode     = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
-    curl_close($curlHandle);
+
+    // 🧹 No curl_close($curlHandle) here - PHP releases the handle
+    // automatically once $curlHandle goes out of scope. curl_close() has
+    // been a no-op since PHP 8.0 and PHP 8.5 warns when it is called
+    // (#117) - do not add it back.
 
     if ($curlErrno !== 0 || $responseBody === false || $httpCode !== 200) {
         return null;

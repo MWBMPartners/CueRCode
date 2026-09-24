@@ -206,7 +206,10 @@ function addFrameToRaster(string $qrImageData, array $frameConfig, string $outpu
     $canvas = imagecreatetruecolor($canvasWidth, $canvasHeight);
 
     if ($canvas === false) {
-        imagedestroy($qrImage);
+        // 🧹 No imagedestroy($qrImage) here - PHP releases it automatically
+        // once this function throws and nothing refers to it any more.
+        // imagedestroy() has been a no-op since PHP 8.0 and PHP 8.5 warns
+        // when it is called (#117) - do not add it back.
         throw new \RuntimeException('Failed to create canvas for frame rendering.');
     }
 
@@ -381,11 +384,11 @@ function addFrameToRaster(string $qrImageData, array $frameConfig, string $outpu
         }
     }
 
-    // 🧹 Free memory
-    // @see https://www.php.net/manual/en/function.imagedestroy.php
-    imagedestroy($canvas);
-    imagedestroy($qrImage);
-
+    // 🧹 $canvas and $qrImage are released automatically once this function
+    // returns and nothing refers to them any more - imagedestroy() was
+    // removed deliberately (#117): it has done NOTHING since PHP 8.0 (GD
+    // images are objects, freed like any other object) and PHP 8.5 prints a
+    // "deprecated" warning every time it is called. Do not add it back.
     return $result;
 }
 

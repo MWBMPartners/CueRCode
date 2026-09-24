@@ -13,6 +13,18 @@
 > **#103** (the umbrella for the current programme of work).
 
 ### 🧭 Where we are, in plain English
+- **2026-09-24/25 session (owner's Mac, not the cloud container):** Codex CLI,
+  PHP 8.5, actionlint and shellcheck are all installed here; the 5 test
+  libraries were cloned into `_libraries/` (gitignored) → **2185/2185 pass on
+  PHP 8.5**. Actions blocker now CONFIRMED by GitHub's own message on the
+  failed jobs: *"The job was not started because recent account payments have
+  failed or your spending limit needs to be increased"* — owner action.
+  **Codex is out of credit until 2026-09-25 04:36 BST** (real credit message,
+  not the model-name problem) — the task-8 catch-up review was attempted and
+  refused; a fresh Opus agent is doing a stand-in review meanwhile (NOT the
+  usual reviewer — Codex review still owed). Working order this session:
+  stand-in review of task 8 → #112 email queue runner (plan Opus → build
+  Sonnet → verify Opus) → new PHP 8.5 deprecation clean-up (see task 7b).
 - **2026-09-24:** the owner added a new standing rule: set up a **"watchdog"**
   for anything that finishes later (CI runs, merges, deploys, background
   agents) and don't start a dependent step until it has really finished and
@@ -58,7 +70,7 @@ Until then, the checks below were run **locally** instead (same tools CI uses).
 | # | Task | Status | Notes |
 | --- | --- | --- | --- |
 | 1 | Refresh standing rules + handoff + `.OpenAI/` Codex memory (#108) | ✅ Done | `25475f1`, `521d2fa` |
-| 1a | Add "watchdog" standing rule: repo rules + device-wide copy + Claude/Codex memory (#116) | ✅ Done (2026-09-24) | Commit: `git log --grep '#116' origin/work-in-progress`. Owner: paste the new "⏱️ Watchdog" block from `.claude/DEVICE_WIDE_RULES.md` into `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` on your machine (the cloud container can't keep device-wide files). |
+| 1a | Add "watchdog" standing rule: repo rules + device-wide copy + Claude/Codex memory (#116) | ✅ Done (2026-09-24) | Commit: `git log --grep '#116' origin/work-in-progress`. Device-wide copy: ✅ confirmed present in the owner's `~/.claude/CLAUDE.md` (checked 2026-09-25; `~/.codex/AGENTS.md` is a link to it). |
 | 2 | Fix `security-propagate.yml` false alarms (#109) | ✅ Done (closed) | `main` `0c2a761`. Empty cherry-pick (no conflicted files + clean index/tree) → skip with notice; real conflict still opens the issue. Both paths tested in a throwaway repo; actionlint + shellcheck clean. |
 | 3 | Scan `release-candidate` properly (#110) | ✅ Pushed — ⏳ awaiting a real CI run (#110 left OPEN) | `release-candidate` `f12b6f9`: codeql/semgrep triggers, `ci.yml`, `.gitleaks.toml`. Locally: actionlint clean, `php -l` 34/34 files clean, gitleaks "no leaks", test step skips (no `tests/` on RC yet). Close #110 once Actions runs green. |
 | 3a | Same tolerant `ci.yml` on `work-in-progress` | ✅ Done | Only adds guards (lint only existing folders; skip tests with notice if `tests/run.php` missing) — no change where the suite exists. Keeps RC and WIP copies identical so promotion won't clash. |
@@ -66,7 +78,9 @@ Until then, the checks below were run **locally** instead (same tools CI uses).
 | 5 | Full GitHub issue sweep (67 issues vs the ACTUAL code) | ✅ Done | Results: **`.claude/ISSUE_AUDIT_2026-09-23.md`** (read this for the code-verified status of every issue). 18 closed-correctly, 13 waiting on owner, 12 closed-with-gaps, 11 partly done, 7 need live test, 5 not started. **#67 and #61 closed** as finished. Plain-English audit comment posted on 50 issues. Gaps from closed issues went into NEW issues rather than reopening old ones: **#112 (HIGH bug: email queue never sent → sign-ups can never be verified)**, #113 (server setup/deploy gaps), #114 (account follow-ups incl. auth activity logging + bot protection), #115 (polish). |
 | 6 | Thorough documentation update | ✅ Done | Every .md doc, `openapi.json` wording (no structural change; drift guards green) and the developer-portal pages refreshed. Opus planned, Sonnet wrote, and an Opus fact-check ran on each batch. Commits `de663e3`, `0e8154b`, `bea6bc9`, `4caf1c7` and `4af3aa6` (fact-check fixes: 7 wrong statements corrected, and gap lists linked to #112–#115). Tests 2185/2185. Note: the first writer pass misread this handoff's task numbers — see `.claude/memory/feedback_writer_agents.md`. |
 | 7 | Propose further work for alpha test releases (#103 Part 3) | ⏳ Next | Start from the audit: **#112 first** (without it nobody can finish signing up), then #113 (first real install will hit these), #114 (sign-in activity logging and bot protection are brief requirements), and #65 (26 logo PNGs; needs Imagick or `tools/render_logo_pngs.php`). Also the ~60 info-level shellcheck notes in deploy/release/version-bump.yml. Use dev-team plugins; unactioned ideas → `for consideration` issues. |
-| 8 | Codex review of everything since the last review (#108–#111 code diffs + the 2026-09-23 docs/API-spec wording) | ⏳ Owed | Codex review → fix → re-review until clean. Needs Codex (owner's machine). |
+| 7a | #112 email queue runner (cron script, no duplicate sends, retry) | 🔄 In progress (2026-09-25) | Opus planner writing the plan to the session scratchpad (`plan_112.md`) → Sonnet build → Opus verify → Codex review. If the session died mid-way: re-plan from the issue; nothing committed yet. |
+| 7b | #117 remove `imagedestroy()`/`curl_close()` (PHP 8.5 warns; could corrupt image downloads) | ✅ Done — pushed (`git log --grep '#117'`) | Sonnet built, Opus lead re-checked: `php -l` clean, 2185/2185, **0** deprecation warnings (18 before). **Codex review owed** (bundled into task 8 retry). Issue #117 left open until Codex has reviewed it. |
+| 8 | Codex review of everything since the last review (#108–#111 code diffs + the 2026-09-23 docs/API-spec wording) | ⏳ Owed — Codex out of credit until 04:36 BST 25 Sep | Tried 2026-09-24 23:5x: refused (credit). Stand-in: fresh Opus agent reviewing the same scope (NOT the usual reviewer). Retry Codex after 04:36 with the same brief (all three branches: `alpha...work-in-progress` minus vendored swagger-ui, `git show 0c2a761` on main, `git show f12b6f9` on RC) and add #112/#117. |
 | 9 | One PR `work-in-progress → alpha` | ⏳ Later | Only when 4–7 are done and green (and Actions is running again). **Auto-delete will remove `work-in-progress` after merge — recreate it from `alpha`.** |
 
 ### ❓ Owner decisions / actions still open

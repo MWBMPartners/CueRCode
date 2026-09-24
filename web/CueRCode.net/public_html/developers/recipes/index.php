@@ -130,7 +130,7 @@ curl_setopt_array($curlHandle, [
 ]);
 
 $result = json_decode((string) curl_exec($curlHandle), true, 512, JSON_THROW_ON_ERROR);
-curl_close($curlHandle);
+// No curl_close() needed: PHP 8.0+ frees the handle automatically (and PHP 8.5 warns if you call it).
 
 // Store $result['data']['download_url'] against the page/post in your CMS's own
 // database, then render it on every subsequent page view as a normal image tag:

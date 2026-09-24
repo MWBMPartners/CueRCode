@@ -489,7 +489,10 @@ function getGraphAccessToken(): ?string
     $curlErrno    = curl_errno($ch);
     $curlError    = curl_error($ch);
     $httpCode     = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+
+    // 🧹 No curl_close($ch) here - PHP releases the handle automatically
+    // once $ch goes out of scope. curl_close() has been a no-op since PHP
+    // 8.0 and PHP 8.5 warns when it is called (#117) - do not add it back.
 
     // ❌ Transport-level failure (DNS, TLS, timeout, connection refused, ...).
     // NEVER log $postFields (contains the client secret) - only the curl error text.
@@ -668,7 +671,10 @@ function sendEmailNow(string $to, string $subject, string $htmlBody, ?string $to
     $curlErrno    = curl_errno($ch);
     $curlError    = curl_error($ch);
     $httpCode     = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+
+    // 🧹 No curl_close($ch) here - PHP releases the handle automatically
+    // once $ch goes out of scope. curl_close() has been a no-op since PHP
+    // 8.0 and PHP 8.5 warns when it is called (#117) - do not add it back.
 
     // ✅ Graph's sendMail action returns HTTP 202 Accepted with an EMPTY body
     // on success - there is no message ID to capture synchronously.

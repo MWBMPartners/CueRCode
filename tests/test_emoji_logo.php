@@ -337,7 +337,10 @@ if (is_string($grinningFacePath)) {
         //    the REAL vendored PNG twin (not a placeholder) was loaded.
         assertEquals(72, imagesx($loadedEmojiImage), 'the loaded emoji PNG twin is 72px wide (Twemoji\'s vendored 72x72 raster size)');
         assertEquals(72, imagesy($loadedEmojiImage), 'the loaded emoji PNG twin is 72px tall (Twemoji\'s vendored 72x72 raster size)');
-        imagedestroy($loadedEmojiImage);
+        // 🧹 No imagedestroy($loadedEmojiImage) here - PHP releases it
+        // automatically once nothing refers to it any more (a no-op since
+        // PHP 8.0, and PHP 8.5 warns when it is called - #117, do not add
+        // it back).
     }
 
     // 📌 End-to-end: overlayLogoOnRaster() with a real emoji logo must still
@@ -348,7 +351,7 @@ if (is_string($grinningFacePath)) {
     ob_start();
     imagepng($fakeQrCanvas);
     $fakeQrPngBytes = ob_get_clean();
-    imagedestroy($fakeQrCanvas);
+    // 🧹 No imagedestroy($fakeQrCanvas) here - see the #117 note above.
 
     $qrResultWithEmojiLogo = overlayLogoOnRaster(
         (string) $fakeQrPngBytes,

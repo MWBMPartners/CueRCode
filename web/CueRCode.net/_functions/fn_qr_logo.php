@@ -316,11 +316,12 @@ function overlayLogoOnRaster(string $qrImageData, string $logoPath, array $confi
     // ==================================================================
     $result = renderGdImageToString($qrImage, $outputFormat);
 
-    // 🧹 Free memory
-    // @see https://www.php.net/manual/en/function.imagedestroy.php
-    imagedestroy($qrImage);
-    imagedestroy($logoImage);
-
+    // 🧹 $qrImage and $logoImage are released automatically once this
+    // function returns and nothing refers to them any more - imagedestroy()
+    // was removed deliberately (#117): it has done NOTHING since PHP 8.0
+    // (GD images are objects, freed like any other object) and PHP 8.5
+    // prints a "deprecated" warning every time it is called. Do not add it
+    // back.
     return $result;
 }
 

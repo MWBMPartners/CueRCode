@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - PHP 8.5 "deprecated" warnings that could corrupt image downloads (2026-09-25, #117)
+
+Running the tests on PHP 8.5 (the version the project targets) showed PHP
+printing a "deprecated" warning every time the code called `imagedestroy()`
+or `curl_close()`. Both functions have done nothing at all since PHP 8.0,
+because PHP now frees images and web connections by itself. The warnings
+mattered because two of the calls were in the image-making code: on a server
+set to show warnings, the warning text would be written into the middle of a
+downloaded QR code or barcode and corrupt the file.
+
+- **Removed** every call from `_functions/fn_qr_logo.php`, `fn_qr_frames.php`,
+  `fn_barcode_generate.php`, `fn_email.php` and `fn_oauth.php`, and from the
+  tests. Each spot has a short comment saying why, so nobody adds it back.
+  The one place where the code carries on after the call (the barcode caption)
+  now uses `unset()`, which still lets PHP free the image's memory early.
+- **Developer portal samples** (`/developers/samples`, `/developers/recipes`):
+  the copy-and-paste PHP examples no longer call `curl_close()`, and say why.
+- Verified on PHP 8.5.10: 2185/2185 tests pass with **zero** deprecation
+  warnings (there were 18 before). Built by the Sonnet builder and checked by
+  the Opus lead. The Codex review is still owed because Codex was out of
+  credit at the time.
+
 ### Changed - New standing rule: "watchdog" for anything that finishes later (2026-09-24, #116) - PROCESS/DOCS
 
 No application code changed. At the owner's request, any step that finishes
