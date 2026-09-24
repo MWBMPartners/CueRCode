@@ -86,6 +86,12 @@ Until then, the checks below were run **locally** instead (same tools CI uses).
 ### ❓ Owner decisions / actions still open
 - 🚨 **GitHub Actions billing/limits** — see BLOCKER above.
 - **Branch protection for `release-candidate`** (owner action in GitHub settings).
+- **Watchdog script bug (found 2026-09-25):** `~/.claude/bin/watchdog.sh` and
+  WebMS-Intra's `tools/watchdog.sh` read a file's age without following
+  symbolic links (shortcuts), so `quiet` on an agent's `tasks/<id>.output` shortcut
+  always false-fires. Fix = add `-L` to both `stat` calls in `mtime()`, in both
+  copies. Both are outside this repo, so it's waiting for the owner's OK. Workaround meanwhile:
+  point the watchdog at the real `…/subagents/agent-<id>.jsonl` file.
 - ✅ ~~Direct fixes on `main`/`release-candidate`~~ — owner said "fix them directly" (2026-09-23); done.
 - `beta` has the same missing-`ci.yml` gap — fix directly too, or let promotion carry it? (Default: let promotion carry it.)
 - Everything in `LAUNCH_DECISIONS.md` (pricing #70, G-007 go/no-go for the live

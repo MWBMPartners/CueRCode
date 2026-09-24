@@ -22,7 +22,11 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   silence is not success. Re-check GitHub check runs until every one is
   complete, because notifications don't announce success. Never leave
   anything running unwatched; record in-flight work in `.claude/HANDOFF.md`
-  §0.
+  §0. **Trap (2026-09-25):** `watchdog.sh quiet` reads a file's age without
+  following symbolic links (shortcuts). Point it at a shortcut and it always
+  reports "unchanged", even while the work is busy. Point it at the real file
+  instead (`ls -la` shows where a shortcut leads). The fix is `-L` on both
+  `stat` calls in the script, awaiting the owner's OK.
 - **House style:** full multi-line PHP, detailed comments (emojis fine), PHP
   predefined constants, MySQLi prepared statements, no layout `<table>`,
   WCAG 2.1 AA, file headers with path + copyright (2025–current year, MWBM
