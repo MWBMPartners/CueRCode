@@ -8,11 +8,37 @@
 # that would leave the other three branches exposed.
 #
 # This workflow closes that gap: when a security/dependency PR is MERGED into
-# `main`, it cherry-picks the merged commit onto `alpha`, `beta`, and
+# `main`, it cherry-picks (copies) the merged commit onto `alpha`, `beta`, and
 # `release-candidate` and opens a PR against each — so the same fix reaches
-# every branch. A cherry-pick conflict opens a tracking ISSUE for manual
-# backport instead of failing silently. An EMPTY cherry-pick (the fix is
-# already on that branch under a different commit) is skipped quietly (#109).
+# every branch.
+#
+# 🚦 When the copy can't be made, it FAILS CLOSED — if in doubt, it asks a
+#    human rather than quietly carrying on:
+#    • Fix already on that branch under a different commit (an "empty"
+#      cherry-pick, e.g. Dependabot's own per-branch PR already landed it) →
+#      skipped quietly, run stays green (#109). This is ONLY believed when git
+#      really did stop part-way through a cherry-pick (CHERRY_PICK_HEAD exists)
+#      with nothing conflicted and nothing changed. Until 2026-09-25 the
+#      CHERRY_PICK_HEAD check was missing, so ANY git error that happened to
+#      leave the files untouched (a stale lock file, an untracked file in the
+#      way — git exit code 128) was mistaken for "already applied" and
+#      silently swallowed.
+#    • A conflict, or any other cherry-pick error → a "⚠️ Manual backport
+#      needed" ISSUE is opened (with git's exit code) and the run ends RED.
+#    • The copy worked but pushing the branch, or opening the PR, failed →
+#      the same issue, saying which step failed, and the run ends RED. The
+#      usual cause today: GitHub's built-in token (GITHUB_TOKEN) is never
+#      allowed to push changes to `.github/workflows/*`, and most Dependabot
+#      fixes ARE workflow updates. Until 2026-09-25 the job just died red
+#      with no issue at all. The long-term fix (a dedicated GitHub App or
+#      token that may push workflow files) is tracked in #121.
+#    • Re-running a failed run does not pile up duplicate issues: if the
+#      issue for that PR + branch is already open, a comment is added to it
+#      instead.
+#    The issue text only ever contains the PR NUMBER, branch names, the
+#    commit id, git's exit code, a link to the run log and our own wording —
+#    never the PR title or git's messages (those can carry text we don't
+#    control; the linked run log has them).
 #
 # 🔒 Safety: uses `pull_request_target` (needs write scope to push branches +
 #    open PRs) but only ever cherry-picks an ALREADY-MERGED commit from `main`
@@ -88,6 +114,52 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
+          # 📋 One tracking issue per (PR, target branch). The title is built
+          #    only from values we trust (the PR *number* and our own matrix
+          #    target), never the PR title, so it is safe to reuse below.
+          ISSUE_TITLE="⚠️ Manual backport needed: propagate PR #${PR_NUMBER} to ${TARGET}"
+          # Link to this run's log — GitHub sets these variables on every run
+          # (the ":-" defaults only stop `set -u` killing the script if not).
+          RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
+
+          # 🚨 The fix did NOT reach ${TARGET}: record that where a human will
+          #    see it, then end the run RED.
+          #    $1 = plain-English account of what went wrong. Callers pass ONLY
+          #         our own wording plus trusted values (branch names, exit
+          #         codes) — never the PR title or git's error text.
+          #    Re-runs: if the issue is already open, comment on it instead of
+          #    opening a duplicate. The search is quoted-phrase, and the result
+          #    is then filtered to an EXACT title match, because GitHub search
+          #    is word-based and could return a near-miss. If the search itself
+          #    fails we open a new issue — a duplicate beats no issue at all.
+          report_backport_needed() {
+            local what="$1"
+            local body
+            local existing
+            body="$(printf '%s\n\n%s\n\n%s\n\n%s' \
+              "Automatic propagation of security/dependency fix #${PR_NUMBER} (merged into \`main\`) onto \`${TARGET}\` did **not** finish. Source commit: \`${MERGE_SHA}\`." \
+              "**What went wrong:** ${what}" \
+              "Please backport the fix to \`${TARGET}\` by hand, so that branch is not left without it." \
+              "Run log (shows git's own messages): ${RUN_URL}")"
+            if ! existing="$(gh issue list --state open \
+                --search "\"${ISSUE_TITLE}\" in:title" \
+                --json number,title \
+                --jq "[.[] | select(.title == \"${ISSUE_TITLE}\")][0].number // empty")"; then
+              echo "::warning::Could not search for an existing tracking issue — opening a new one."
+              existing=""
+            fi
+            if [ -n "${existing}" ]; then
+              gh issue comment "${existing}" --body "Still needed — this run failed again. ${body}"
+            else
+              gh issue create \
+                --title "${ISSUE_TITLE}" \
+                --body "${body}" \
+                --label automated --label security --label dependencies
+            fi
+            echo "::error::${MERGE_SHA} was NOT propagated to ${TARGET} — tracking issue opened/updated."
+            exit 1
+          }
+
           # Target branch may not exist yet (e.g. release-candidate not created).
           if ! git ls-remote --exit-code --heads origin "${TARGET}" >/dev/null 2>&1; then
             echo "::notice::Target branch '${TARGET}' does not exist — skipping."
@@ -112,34 +184,62 @@ jobs:
           MFLAG=()
           if [ "${PARENTS}" -ge 3 ]; then MFLAG=(-m 1); fi
 
-          if git cherry-pick "${MFLAG[@]}" "${MERGE_SHA}"; then
-            git push -u origin "${BRANCH}" --force-with-lease
-            if gh pr list --head "${BRANCH}" --state open --json number --jq 'length' | grep -qx 0; then
-              gh pr create \
-                --base "${TARGET}" \
-                --head "${BRANCH}" \
-                --title "[auto-propagate → ${TARGET}] ${PR_TITLE}" \
-                --body "Automated propagation of security/dependency fix #${PR_NUMBER} (merged into \`main\`) onto \`${TARGET}\`, so the fix lands on every branch in the alpha → beta → release-candidate → main model. Source commit: \`${MERGE_SHA}\`. Review + merge once CI is green." \
-                --label automated --label security --label dependencies
-            else
-              echo "::notice::PR for ${BRANCH} already open — updated the branch."
-            fi
-          else
-            # 🧹 An "empty" cherry-pick is NOT a conflict. If the target branch
+          # Capture git's exit code rather than using `if git cherry-pick`, so
+          # the failure branch below can report it.
+          PICK_EXIT=0
+          git cherry-pick "${MFLAG[@]}" "${MERGE_SHA}" || PICK_EXIT=$?
+
+          if [ "${PICK_EXIT}" -ne 0 ]; then
+            # 🧹 An "empty" cherry-pick is NOT a failure. If the target branch
             #    already carries the same change (e.g. Dependabot's per-branch
             #    version PR landed it separately, as a different commit), git
-            #    stops with "nothing to commit". With no conflicted paths and a
-            #    clean index + working tree, there is genuinely nothing to
-            #    back-port — skip quietly instead of opening a false-alarm
-            #    "Manual backport needed" issue (#109; see #93/#94/#95).
-            if [ -z "$(git diff --name-only --diff-filter=U)" ] && git diff --cached --quiet && git diff --quiet; then
+            #    stops part-way with "nothing to commit" (#109; see #93-#95).
+            #    ALL FOUR must hold before we believe that:
+            #      1. a cherry-pick really is in progress (CHERRY_PICK_HEAD) —
+            #         without this, errors that stop git BEFORE it changes
+            #         anything (exit 128: stale lock file, untracked file in
+            #         the way, …) also look "clean" and were being skipped;
+            #      2. no conflicted paths;  3. clean index;  4. clean files.
+            #    Anything else fails closed: tracking issue + red run.
+            #    (`|| true`: if listing conflicts itself fails, the checks
+            #    below still refuse to call it empty.)
+            CONFLICTED="$(git diff --name-only --diff-filter=U || true)"
+            if [ -z "${CONFLICTED}" ] \
+              && git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null \
+              && git diff --cached --quiet \
+              && git diff --quiet; then
               git cherry-pick --skip || git cherry-pick --abort || true
               echo "::notice::${MERGE_SHA} is already applied on ${TARGET} (empty cherry-pick) — skipping."
               exit 0
             fi
             git cherry-pick --abort || true
-            gh issue create \
-              --title "⚠️ Manual backport needed: propagate PR #${PR_NUMBER} to ${TARGET}" \
-              --body "Automatic propagation of security/dependency fix #${PR_NUMBER} to \`${TARGET}\` hit a **cherry-pick conflict** (source commit \`${MERGE_SHA}\`). Please backport it to \`${TARGET}\` manually so the fix is not left out of that branch." \
-              --label automated --label security --label dependencies
+            # File names and git's message are deliberately left out of the
+            # issue (see header); the run log has them.
+            if [ -n "${CONFLICTED}" ]; then
+              report_backport_needed "Copying the fix onto \`${TARGET}\` hit a **cherry-pick conflict** (git exit code ${PICK_EXIT}): the change clashes with something already on that branch."
+            fi
+            report_backport_needed "Copying the fix onto \`${TARGET}\` failed with a git error that was **not** a conflict (git exit code ${PICK_EXIT}). The run log shows git's message."
+          fi
+
+          # ✅ The fix is now committed on ${BRANCH}. Publish it and open the
+          #    PR. Each step is guarded so that a failure opens the tracking
+          #    issue instead of just killing the job (`set -e`) with nothing
+          #    left to show for it.
+          if ! git push -u origin "${BRANCH}" --force-with-lease; then
+            report_backport_needed "The fix was copied onto \`${TARGET}\` cleanly, but **pushing the branch \`${BRANCH}\` failed**. If this change edits files under \`.github/workflows/\`, that is almost certainly why: GitHub's built-in token (GITHUB_TOKEN) is never allowed to push changes to workflow files. The long-term fix — a dedicated GitHub App or token for this workflow — is tracked in #121."
+          fi
+          if ! OPEN_PRS="$(gh pr list --head "${BRANCH}" --state open --json number --jq 'length')"; then
+            report_backport_needed "The branch \`${BRANCH}\` was pushed, but **checking for an existing pull request failed**, so the workflow could not tell whether one is already open and did not open one. If there is none, open one from that branch into \`${TARGET}\` by hand."
+          fi
+          if [ "${OPEN_PRS}" = "0" ]; then
+            if ! gh pr create \
+              --base "${TARGET}" \
+              --head "${BRANCH}" \
+              --title "[auto-propagate → ${TARGET}] ${PR_TITLE}" \
+              --body "Automated propagation of security/dependency fix #${PR_NUMBER} (merged into \`main\`) onto \`${TARGET}\`, so the fix lands on every branch in the alpha → beta → release-candidate → main model. Source commit: \`${MERGE_SHA}\`. Review + merge once CI is green." \
+              --label automated --label security --label dependencies; then
+              report_backport_needed "The branch \`${BRANCH}\` was pushed, but **opening the pull request failed**. Open one from that branch into \`${TARGET}\` by hand."
+            fi
+          else
+            echo "::notice::PR for ${BRANCH} already open — updated the branch."
           fi
