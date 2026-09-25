@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Reviewed - Codex cross-system review of the 2026-09-23 to 25 work: 3 of 4 parts clean (2026-09-25, #103)
+
+The project's rule is that another AI system reviews Claude's work. Codex
+has a small allowance shared by every project on the owner's machine, and
+three attempts ran out before writing anything. So the review was split
+into four smaller parts, each naming exactly what to read.
+
+| Part | Covers | Result |
+| --- | --- | --- |
+| 1a | Email queue sending, locking and duplicate protection (#112) | **No findings** |
+| 1b | Email clean-up, expired links and address masking (#122, #123, #126) | **No confirmed defects** (it didn't confirm running the "every error-log fallback masked" check) |
+| 2 | Deploy staging and SFTP upload (#124, #127), the CI test check, the prepared propagation patch (#121) | **No actionable defects** |
+| 3 | Docs, developer portal, API spec, #117, #111 | **Not yet**: ran out of allowance. It will be retried at the next reset. |
+
+All four parts had already been through fresh-Opus stand-in reviews (a
+four-round loop ending clean) and independent verifications of #112 and
+#122/#123/#126. Codex's reviews were static readings of the code; it ran
+nothing.
+
 ### Fixed - Email privacy: one-time links are removed after sending, old email records are deleted, expired links are not sent, and addresses stay out of the error log (2026-09-25, #122, #123, #126)
 
 A queued sign-up or password-reset email carries a one-time link. The queue
