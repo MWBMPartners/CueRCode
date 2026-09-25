@@ -40,6 +40,7 @@ or `public_html_dev_beta/` / `public_html_dev_alpha/` for testing environments.
 `_includes/cron/process_email_queue.php` sends the emails the site queues
 (sign-up verification, password reset). Once email is set up it **must** be
 run by a DreamHost cron job every minute - without it no email is ever sent
-(#112). It is command-line only and refuses web requests. See the root
+(#112). It is command-line only and refuses web requests. It also deletes old
+email records and removes one-time links after sending (#122). See the root
 [README.md](../../README.md) ("The email queue job (DreamHost cron)") for the
 exact command.

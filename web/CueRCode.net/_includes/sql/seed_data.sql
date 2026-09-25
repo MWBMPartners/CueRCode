@@ -106,6 +106,14 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 -- 🐘 Google Workspace (#30) is intentionally NOT seeded here yet - fn_email.php
 --     is written driver-shaped (email_provider selects the active driver) so a
 --     future Workspace driver can slot in without a schema change.
+--
+-- 🧹 Clean-up settings (#122): email_queue_retention_days (default 30) and
+--     email_queue_failed_retention_days (default 90) say how many days the
+--     queue runner keeps sent/skipped and given-up email records before it
+--     deletes them. Existing installs do NOT get these two rows (there is no
+--     upgrade script yet, #113); the code uses the same defaults when the rows
+--     are missing, and DEV_NOTES.md ("Email queue clean-up and privacy") has
+--     the SQL to add them so the owner can change the values.
 ('email', 'email_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for the email subsystem - 0 = fully inert, no sends attempted regardless of other settings'),
 ('email', 'email_provider', 'graph', 'string', 0, 1, 'Active email driver (graph = Microsoft Graph client-credentials sendMail; workspace = future Google Workspace driver, #30)'),
 ('email', 'email_from_name', '', 'string', 0, 1, 'Display name used as the From name on outgoing email (e.g. "CueRCode Notifications") - owner-set, seeded empty'),
@@ -114,7 +122,9 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('email', 'graph_client_id', '', 'string', 1, 1, 'Microsoft Entra ID app registration (client) ID - ENCRYPTED, owner-set via admin only, never commit'),
 ('email', 'graph_client_secret', '', 'string', 1, 1, 'Microsoft Entra ID app registration client secret value - ENCRYPTED, owner-set via admin only, never commit'),
 ('email', 'graph_token_cache', '', 'json', 1, 0, 'Runtime OAuth2 access-token cache (access_token + expires_at), auto-managed by getGraphAccessToken() - ENCRYPTED, not owner-editable, do not populate manually'),
-('email', 'email_queue_autoprocess', '0', 'boolean', 0, 1, 'Opportunistic shutdown-hook queue processing (≤2 sends/request) - 0 = OFF (recommended: use a Dreamhost panel cron job hitting the queue processor instead); 1 = ON'),
+('email', 'email_queue_autoprocess', '0', 'boolean', 0, 1, 'Page-visit fallback for sending queued email (up to 2 per page request) - 0 = OFF (recommended: use the DreamHost cron job that runs _includes/cron/process_email_queue.php, #112); 1 = ON'),
+('email', 'email_queue_retention_days', '30', 'integer', 0, 1, 'Days to keep a SENT or SKIPPED email record in tblEmailQueue before the queue runner deletes it (#122), counted from when it was queued. Whole number 1-3650; anything else means the default of 30 is used.'),
+('email', 'email_queue_failed_retention_days', '90', 'integer', 0, 1, 'Days to keep a GIVEN-UP (failed) email record before the queue runner deletes it (#122) - longer than sent ones, because support is asked about these. Whole number 1-3650; anything else means the default of 90 is used.'),
 
 -- 💳 Billing / Premium Tier Settings (Epic E4 - #25/#26/#53)
 -- ------------------------------------------------------------------------------
@@ -673,8 +683,9 @@ VALUES
 -- ✅ Seed Data Complete
 -- ==============================================================================
 -- Inserted:
---   - 78 default settings across 9 groups (email group is Microsoft Graph -
---     based settings, Epic E8/#29; billing group, Epic E4/#25/#26/#53 plus the
+--   - 80 default settings across 9 groups (email group is Microsoft Graph -
+--     based settings, Epic E8/#29 (the email group gained the two #122
+--     clean-up settings); billing group, Epic E4/#25/#26/#53 plus the
 --     3 flexible-pricing kill-switches added by #70 - billing_price_points_
 --     enabled/billing_discounts_enabled/billing_payg_enabled, all seeded 0/
 --     INERT; sso group - 16 settings, Epic E2/#55/#19/#20/#28 - every provider

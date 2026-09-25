@@ -53,6 +53,7 @@
 
 - [ ] **Legal-counsel review** of `privacy.php` / `terms.php` (multi-jurisdiction templates) (#38).
 - [ ] Data-processing / GDPR sign-off (export + erasure already BUILT).
+- [ ] **Confirm how long email records are kept** (#122 — built with 30 days for sent/skipped, 90 for given up; one-time links on given-up emails kept 24 h for re-sending), then put the confirmed periods into `privacy.php` §7 with legal review (#38).
 
 ## E. Live-server verification (E10 soft-launch gate) — owner-run
 

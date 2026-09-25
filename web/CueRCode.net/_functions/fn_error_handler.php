@@ -17,11 +17,16 @@
  * Request headers are sanitised before logging: the Authorization header
  * value is redacted and Cookie values are replaced with "[REDACTED]".
  *
+ * maskSensitiveForLog() also hides email addresses (#126), so every plain-text
+ * error_log() fallback line written by logError() has them replaced with
+ * "[address]" (see fn_log_mask.php).
+ *
  * @package     CueRCode
  * @subpackage  Error Handling
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       Phase 1
+ * @see         fn_log_mask.php - maskEmailAddresses(), used by maskSensitiveForLog() (#126)
  * @see         https://www.php.net/manual/en/function.set-error-handler.php
  * @see         https://www.php.net/manual/en/function.set-exception-handler.php
  * @see         https://www.php.net/manual/en/function.register-shutdown-function.php
@@ -40,6 +45,13 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     header('HTTP/1.1 403 Forbidden');
     exit('Access denied.');
 }
+
+// 🙈 #126: maskSensitiveForLog() below hides email addresses with
+//    maskEmailAddresses(). Loaded here as well as by bootstrap.php, because
+//    this file must work even when loaded on its own (the tests' child
+//    processes load single files). require_once works from the real file path,
+//    so when bootstrap.php has already loaded it this does nothing.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_log_mask.php';
 
 // ==============================================================================
 // 📋 PHP Error Code to Severity Mapping
@@ -526,7 +538,7 @@ function logError(
  * tblErrorLog DB write is impossible — e.g. DB down, pre-bootstrap, or a
  * re-entrant logging loop) typically lands in a shared / less-protected
  * server log. To avoid leaking sensitive technical detail there (F-008),
- * this helper performs two reductions on the plaintext message:
+ * this helper performs three reductions on the plaintext message:
  *
  *   1. SQL statement bodies — db_connect.php throws RuntimeException messages
  *      shaped as "... | SQL: <query text>". The query text can embed schema
@@ -542,6 +554,13 @@ function logError(
  *      The web root is derived from this file's own location (this file lives
  *      at <webroot>/_functions/fn_error_handler.php).
  *
+ *   3. Email addresses (#126) — a database driver message can quote a value
+ *      that is an email address (for example "Duplicate entry '<address>' for
+ *      key ..."), and callers sometimes put an address into a title or
+ *      detail. Every address-shaped piece of text becomes "[address]"
+ *      (maskEmailAddresses(), fn_log_mask.php - the one shared copy of the
+ *      rule). ASCII addresses only; see that file for why.
+ *
  * NOTE: Full, UNMASKED detail is still recorded in tblErrorLog on the normal
  * path — this masking applies ONLY to the plaintext error_log() fallback, so
  * no diagnostic capability is lost for anyone with DB access. This is a
@@ -549,11 +568,14 @@ function logError(
  *
  * @param string $message The raw log message (title, detail, or exception text)
  *
- * @return string The message with SQL bodies redacted and absolute paths
- *                abbreviated to web-root-relative form
+ * @return string The message with SQL bodies redacted, absolute paths
+ *                abbreviated to web-root-relative form and email addresses
+ *                replaced by "[address]" ('' if a regular expression failed -
+ *                never the raw text)
  *
  * @see https://www.php.net/manual/en/function.error-log.php
  * @see https://www.php.net/manual/en/function.preg-replace.php
+ * @see maskEmailAddresses()
  */
 function maskSensitiveForLog(string $message): string
 {
@@ -611,6 +633,19 @@ function maskSensitiveForLog(string $message): string
             $masked = str_replace($needle, '.', $masked);
         }
     }
+
+    // ----------------------------------------------------------------------
+    // 3️⃣ Hide email addresses (#126)
+    // ----------------------------------------------------------------------
+    // A database driver message can quote a value that is an email address
+    // (for example "Duplicate entry '<address>' for key ..."), and this is the
+    // plain-text channel - on the command line it is the cron email.
+    // The steps above can hand back null if a regular expression fails; never
+    // pass that on (this function must return a string) and never return raw text.
+    if (!is_string($masked)) {
+        return '';
+    }
+    $masked = maskEmailAddresses($masked);
 
     return $masked;
 }

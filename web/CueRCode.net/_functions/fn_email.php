@@ -39,16 +39,31 @@
  * function, runEmailQueueBatch(), which is built so that two runs at the same
  * time can never send the same email twice (see the #112 sections below).
  *
+ * 🧹 KEEPING ONLY WHAT IS NEEDED (#122, #123): a queued sign-up or
+ * password-reset email carries a one-time link in its stored details
+ * (tblEmailQueue.paramsJSON). So:
+ *   - the details are cleared in the same database update that marks an
+ *     email sent or skipped, and 24 hours after an email is given up (so the
+ *     owner can still re-send it after an outage);
+ *   - old email records are deleted: sent and skipped ones after 30 days,
+ *     given-up ones after 90 days (two settings);
+ *   - an email whose one-time link has expired (or has under 2 minutes left)
+ *     is marked "skipped" instead of being sent;
+ *   - all of this is done by the queue runner, while it holds its lock and
+ *     before it sends anything (runEmailQueueHousekeeping()).
+ * Email addresses are also kept out of PHP's error log (#126, fn_log_mask.php).
+ *
  * @package     CueRCode
  * @subpackage  Email
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.1.0
+ * @version     1.2.0
  * @since       Phase 2 (Epic E8)
  * @see         https://learn.microsoft.com/en-us/graph/auth-v2-service
  * @see         https://learn.microsoft.com/en-us/graph/api/user-sendmail
  * @see         https://www.php.net/manual/en/book.curl.php
  * @see         fn_config.php   - getConfig()/setConfig() (isSensitive encryption)
  * @see         fn_activity_log.php - logActivity()
+ * @see         fn_log_mask.php - cleanLogText(), the shared log-masking rule (#126)
  * @see         _includes/cron/process_email_queue.php - the scheduled queue runner (#112)
  */
 
@@ -64,6 +79,14 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     header('HTTP/1.1 403 Forbidden');
     exit('Access denied.');
 }
+
+// 🙈 #126: the shared log-masking helpers (cleanLogText(), maskEmailAddresses()).
+//    The cron runner loads THIS file on its own, BEFORE the site start-up code
+//    (bootstrap.php), and the tests load it alone too - so it loads its own
+//    helper here rather than relying on bootstrap.php. require_once works from
+//    the real file path, so bootstrap.php's later load of the same file does
+//    nothing.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_log_mask.php';
 
 // ==============================================================================
 // 🔧 Constants
@@ -403,7 +426,13 @@ function logEmailAttempt(string $activityType, string $toAddress, string $subjec
     } else {
         // ⚠️ Activity logging unavailable (e.g. DB not reachable) - fall back
         // to the PHP error log rather than losing the record entirely.
-        error_log('CueRCode Email [' . $activityType . ']: ' . $toAddress . ' | ' . $detail);
+        // 🙈 #126: that log is the plain-text channel (on the command line, the
+        //    cron email), so the address is hidden by cleanLogText() - it
+        //    becomes "[address]" - along with any control characters. The
+        //    outcome detail (HTTP status, Graph error code, skip reason) is kept
+        //    because that is the useful part. Before #126 this line printed the
+        //    raw recipient address.
+        error_log('CueRCode Email [' . cleanLogText($activityType, 50) . ']: ' . cleanLogText($toAddress . ' | ' . $detail, 1000));
     }
 }
 
@@ -734,6 +763,10 @@ function sendEmailNow(string $to, string $subject, string $htmlBody, ?string $to
  * persisting a fully-rendered HTML blob that could itself carry stale/PII
  * data for longer than necessary.
  *
+ * The parameters can include a one-time link, so they are cleared when the
+ * email is sent or skipped, and 24 hours after it is given up (#122). An
+ * email whose link has expired before it could be sent is skipped (#123).
+ *
  * @param string      $to         Recipient email address.
  * @param string      $templateKey Template identifier (validated against the
  *                                  isValidEmailTemplateKey() allowlist).
@@ -854,6 +887,12 @@ function computeEmailBackoffMinutes(int $attemptsAfterFailure): int
 //      _includes/cron/process_email_queue.php (run by cron every minute).
 //   5. processEmailQueue() / maybeProcessEmailQueueOnShutdown() - the older
 //      entry points, now thin wrappers over the same batch logic.
+//   6. Clean-up (#122/#123) - runEmailQueueHousekeeping(), run inside
+//      runEmailQueueBatch() ONLY while it holds the lock, and BEFORE anything
+//      is claimed: it skips emails whose one-time link has expired, clears the
+//      stored details of given-up emails after 24 hours, and deletes old
+//      finished records. A sent or skipped email loses its details in the
+//      same statement that finishes it.
 //
 // 🛡️ Three layers stop the same email being sent twice:
 //   - Layer 1, the row claim (the real guarantee): the UPDATE that marks a row
@@ -871,8 +910,14 @@ function computeEmailBackoffMinutes(int $attemptsAfterFailure): int
 // before it records "sent", the row is recovered after 10 minutes and sent
 // again. Recovery counts that as an attempt, so repeats are capped - in
 // practice at most one extra copy. Graph's HTTP 202 means "accepted", not
-// "delivered"; bounces are not tracked. Links inside very old queued emails
-// may have expired by the time they are sent after a long outage.
+// "delivered"; bounces are not tracked.
+//
+// ⏳ Expired links (#123): an email whose one-time link has expired - or has
+// less than 2 minutes left - by the time it could be sent (typically after an
+// outage) is marked 'skipped' instead of being sent, because it would only
+// deliver a dead link. The age is measured on the DATABASE's clock from
+// `createdAt`, against fn_auth.php's own link lifetimes. The person has to ask
+// for a new link.
 //
 // 🗂️ Alternatives considered and rejected (so nobody re-introduces them):
 //   - A new claimToken/lockedUntil column: needs a schema change, and there is
@@ -997,6 +1042,10 @@ if (!defined('CUERCODE_EMAIL_QUEUE_LOCK_NAME_SQL')) {
  * @var list<string> The operations every queue "gateway" must provide. The
  * production gateway (emailQueueDatabaseGateway()) maps each one to a real
  * database function; the tests map each one to an in-memory stand-in.
+ *
+ * The last five were added by #122/#123 (the clean-up and the "never send"
+ * guard). They are APPENDED, never inserted, so the order of the #112 ones is
+ * unchanged; the tests check this list against the production gateway.
  */
 if (!defined('CUERCODE_EMAIL_QUEUE_GATEWAY_KEYS')) {
     define('CUERCODE_EMAIL_QUEUE_GATEWAY_KEYS', [
@@ -1014,6 +1063,11 @@ if (!defined('CUERCODE_EMAIL_QUEUE_GATEWAY_KEYS')) {
         'countDue',
         'countOverdue',
         'countByStatus',
+        'markSkipped',      // 🛑 #122/#123: a claimed email that must never be sent
+        'skipExpired',      // ⏳ #123: waiting emails whose link has expired
+        'clearGivenUp',     // 🧹 #122: clear given-up emails' details after 24 hours
+        'purgeFinished',    // 🗑️ #122: delete old sent/skipped records
+        'purgeGivenUp',     // 🗑️ #122: delete old given-up records
     ]);
 }
 
@@ -1036,6 +1090,143 @@ if (!defined('CUERCODE_EMAIL_QUEUE_NOTE_STUCK_GAVE_UP')) {
     define(
         'CUERCODE_EMAIL_QUEUE_NOTE_STUCK_GAVE_UP',
         'Gave up: an earlier run stopped part-way through sending this email on its last allowed attempt.'
+    );
+}
+
+// ==============================================================================
+// 🧹 Clean-up and expired links (#122, #123)
+// ==============================================================================
+// 📌 Order matters: the margin must be defined before the expired-link note
+//    that quotes it.
+
+/**
+ * @var int An email is skipped once its one-time link has LESS than this many
+ * seconds left (#123). A run can take over a minute before it reaches a given
+ * email (a 45-second claim budget plus up to two 10-second Graph calls), and
+ * an email that arrives with seconds left is as useless as one that arrives
+ * dead. Rejected: no margin at all (the runner could still send a link that
+ * dies mid-run).
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_LINK_EXPIRY_MARGIN_SECONDS')) {
+    define('CUERCODE_EMAIL_QUEUE_LINK_EXPIRY_MARGIN_SECONDS', 120);
+}
+
+/**
+ * @var int Hours a GIVEN-UP email keeps its stored details (and so its
+ * one-time link), counted from when it was queued (#122, owner decision 2).
+ * That is the window in which the owner can still re-send it after an outage
+ * (DEV_NOTES.md re-send runbook): there is no "send me a new link" button, so
+ * without it a person whose sign-up email was caught by an outage would be
+ * locked out for good. 24 hours equals the longest link lifetime, so after
+ * that no re-send could help anyway. Switching to "remove at once" later
+ * means changing this one number (and the docs).
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS')) {
+    define('CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS', 24);
+}
+
+/**
+ * @var int The most rows ONE clean-up statement touches per run. Keeps each
+ * statement short, so its row locks are held only briefly; anything left over
+ * is handled on the next run (a minute later with cron).
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_TIDY_BATCH')) {
+    define('CUERCODE_EMAIL_QUEUE_TIDY_BATCH', 500);
+}
+
+/**
+ * @var int Default days to keep a SENT or SKIPPED email record before it is
+ * deleted (#122, owner decision 1). Long enough to answer "I never got my
+ * email" questions. Used when the email_queue_retention_days setting is
+ * missing (every install from before #122) or not a valid number.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_DEFAULT')) {
+    define('CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_DEFAULT', 30);
+}
+
+/**
+ * @var int Default days to keep a GIVEN-UP (failed) email record (#122, owner
+ * decision 1). Longer than sent ones, because given-up emails are the ones
+ * support gets asked about later, and there are few of them.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT')) {
+    define('CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT', 90);
+}
+
+/**
+ * @var int The largest retention (in days) that is accepted - ten years.
+ * Anything above is treated as a typo and the default is used. There is
+ * deliberately NO "keep forever" value: keeping personal data only as long as
+ * needed is the point of #122.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_MAX')) {
+    define('CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_MAX', 3650);
+}
+
+/** @var string tblSettings key: days to keep sent/skipped email records (#122). */
+if (!defined('CUERCODE_EMAIL_QUEUE_SETTING_RETENTION_DAYS')) {
+    define('CUERCODE_EMAIL_QUEUE_SETTING_RETENTION_DAYS', 'email_queue_retention_days');
+}
+
+/**
+ * @var string tblSettings key: days to keep given-up email records (#122).
+ * Named "failed" because that is the status the owner sees in phpMyAdmin.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS')) {
+    define('CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS', 'email_queue_failed_retention_days');
+}
+
+/**
+ * @var array<string, string> The link parameter each template REQUIRES
+ * (taken from each template's own docblock). The templates quietly render an
+ * EMPTY link when it is missing, rather than failing, so the runner checks for
+ * it and skips the email instead of sending it broken (#122). Keep in step
+ * with isValidEmailTemplateKey(): a new template that carries a link needs an
+ * entry here. 'receipt' carries no link, so it has none.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_REQUIRED_LINK_PARAMS')) {
+    define('CUERCODE_EMAIL_QUEUE_REQUIRED_LINK_PARAMS', [
+        'verification'   => 'verificationUrl',
+        'password_reset' => 'resetUrl',
+        'invitation'     => 'inviteUrl',
+    ]);
+}
+
+/**
+ * @var string lastError text stored on an email skipped because its one-time
+ * link had expired, or nearly (#123). Plain English: the owner reads it in
+ * phpMyAdmin.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_NOTE_LINK_EXPIRED')) {
+    define(
+        'CUERCODE_EMAIL_QUEUE_NOTE_LINK_EXPIRED',
+        'Not sent: its one-time link had expired, or had less than '
+            . intdiv(CUERCODE_EMAIL_QUEUE_LINK_EXPIRY_MARGIN_SECONDS, 60)
+            . ' minutes left, before it could be sent. The person needs to ask for a new link.'
+    );
+}
+
+/**
+ * @var string lastError text stored on a claimed email whose stored details
+ * had already been removed (#122) - for example a cleared row put back to
+ * 'queued' by hand. It can never be sent.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_NOTE_DETAILS_REMOVED')) {
+    define(
+        'CUERCODE_EMAIL_QUEUE_NOTE_DETAILS_REMOVED',
+        'Not sent: its stored details (including any one-time link) had already been removed, so it can no longer be sent. The person needs to ask for a new email.'
+    );
+}
+
+/**
+ * @var string lastError text stored on a claimed email whose template needs a
+ * one-time link that is missing or empty (#122). Sending it would only deliver
+ * a broken email.
+ */
+if (!defined('CUERCODE_EMAIL_QUEUE_NOTE_LINK_MISSING')) {
+    define(
+        'CUERCODE_EMAIL_QUEUE_NOTE_LINK_MISSING',
+        'Not sent: the one-time link this email needs is missing, so it would only have delivered a broken email.'
     );
 }
 
@@ -1238,44 +1429,22 @@ function classifyEmailSendError(?string $error): string
  * ⚠️ It CANNOT recognise every kind of secret. Callers must still never pass
  * email bodies, tokens, passwords or setting values in the first place.
  *
+ * #126: now delegates to cleanLogText() (fn_log_mask.php), so the activity
+ * logger, the error logger and the queue runner share ONE copy of the rule.
+ * The behaviour is unchanged (same steps, same order, same results - the
+ * #112 tests for this function pass unedited). Only the default length
+ * differs: 200 here, because the runner's lines are short.
+ *
  * @param string $text      The text to clean.
  * @param int    $maxLength Maximum length in characters (at least 20).
  *
  * @return string The cleaned text ('' if a regular expression failed).
+ *
+ * @see cleanLogText()
  */
 function emailQueueSafeDetail(string $text, int $maxLength = 200): string
 {
-    // 🧹 Control characters (including newlines and tabs) become spaces.
-    $clean = preg_replace('/[\x00-\x1F\x7F]+/', ' ', $text);
-
-    if (!is_string($clean)) {
-        return '';
-    }
-
-    // 🙈 Mask anything shaped like an email address.
-    $clean = preg_replace('/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+/', '[address]', $clean);
-
-    if (!is_string($clean)) {
-        return '';
-    }
-
-    // 📏 Collapse runs of whitespace to one space.
-    $clean = preg_replace('/\s+/', ' ', $clean);
-
-    if (!is_string($clean)) {
-        return '';
-    }
-
-    $clean = trim($clean);
-
-    // ✂️ Cut to length, marking the cut with "...".
-    $maxLength = max(20, $maxLength);
-
-    if (mb_strlen($clean) > $maxLength) {
-        $clean = mb_substr($clean, 0, $maxLength - 3) . '...';
-    }
-
-    return $clean;
+    return cleanLogText($text, $maxLength);
 }
 
 /**
@@ -1445,9 +1614,11 @@ function emailQueueRunnerUsage(): string
         CUERCODE_EMAIL_RUNNER_EXIT_OK . ' = finished normally (including nothing to send, email switched off, or another run already working).',
         CUERCODE_EMAIL_RUNNER_EXIT_CRASH . ' = could not start (for example a missing _auth_keys/auth_creds.php) or stopped by an unexpected error.',
         CUERCODE_EMAIL_RUNNER_EXIT_USAGE . ' = a bad command-line option.',
-        CUERCODE_EMAIL_RUNNER_EXIT_DATABASE . ' = a database problem (cannot connect, queue table unreadable, lock error).',
+        CUERCODE_EMAIL_RUNNER_EXIT_DATABASE . ' = a database problem (cannot connect, queue table unreadable, lock error), or the clean-up of old email records failed (sending is not affected).',
         CUERCODE_EMAIL_RUNNER_EXIT_EMAIL_SETUP . ' = sending is blocked by the settings or by Microsoft Graph, or an earlier run seems stuck.',
         CUERCODE_EMAIL_RUNNER_EXIT_GAVE_UP . ' = finished, but gave up on at least one email after all its attempts.',
+        '',
+        'It also tidies up: one-time links are removed once an email is sent, emails whose link has expired are skipped, and old email records are deleted - see DEV_NOTES.md, "Email queue clean-up".',
         '',
         'Run it from a DreamHost cron job every minute - see DEV_NOTES.md, "Email queue runner".',
     ];
@@ -1459,15 +1630,20 @@ function emailQueueRunnerUsage(): string
  * 📋 A fresh, all-zero result for one runEmailQueueBatch() call.
  *
  * The tests depend on these exact keys, so add to them rather than renaming.
+ * The last five (expired ... housekeepingFailures) were APPENDED by #122/#123.
  *
  * @return array{
  *     status: string, problem: string|null,
  *     processed: int, claimed: int, sent: int, retrying: int, gaveUp: int, released: int,
  *     skipped: int, recovered: int, recordFailures: int, waiting: int|null,
- *     stoppedEarly: bool, stopReason: string|null, stopDetail: string|null, stuckMinutes: int
+ *     stoppedEarly: bool, stopReason: string|null, stopDetail: string|null, stuckMinutes: int,
+ *     expired: int, unsendable: int, detailsCleared: int, purged: int, housekeepingFailures: int
  * }
  *   status is 'ok' | 'busy' | 'stalled' | 'lock_error' | 'db_error' | 'system_problem'.
  *   problem is a safe one-line sentence whenever status is not ok/busy.
+ *   Note: 'skipped' (a #112 key) means "could not claim or re-read" - it is NOT
+ *   the same as the 'skipped' STATUS a row gets from #122/#123, which is
+ *   counted in 'expired' and 'unsendable'.
  */
 function emptyEmailQueueRunResult(): array
 {
@@ -1488,6 +1664,11 @@ function emptyEmailQueueRunResult(): array
         'stopReason'     => null,  // 'time_budget' | 'temporary_problem'
         'stopDetail'     => null,
         'stuckMinutes'   => CUERCODE_EMAIL_QUEUE_STUCK_MINUTES,
+        'expired'              => 0,  // ⏳ #123: waiting emails skipped because their link had expired (clean-up step + per-email check)
+        'unsendable'           => 0,  // 🛑 #122: claimed emails skipped because their details were removed or their link is missing
+        'detailsCleared'       => 0,  // 🧹 #122: given-up emails whose stored details were cleared
+        'purged'               => 0,  // 🗑️ #122: old finished records deleted
+        'housekeepingFailures' => 0,  // ⚠️ #122/#123: clean-up steps that failed (database error)
     ];
 }
 
@@ -1497,13 +1678,23 @@ function emptyEmailQueueRunResult(): array
  * The most serious problem wins: database (3) > sending blocked or stalled (4)
  * > gave up on an email (5) > fine (0).
  *
- * @param array $result A runEmailQueueBatch() result.
+ * #122/#123: a failed clean-up step also gives 3. It is a database problem
+ * that needs fixing - otherwise old records and one-time links would be kept
+ * longer than promised - even though sending itself still happened. Skipped
+ * emails (expired links, removed details) do NOT change the exit code; they
+ * are reported instead.
+ *
+ * @param array $result A runEmailQueueBatch() result (an older-shaped result
+ *                      without housekeepingFailures is accepted).
  *
  * @return int One of the CUERCODE_EMAIL_RUNNER_EXIT_* codes.
  */
 function emailQueueRunnerExitCode(array $result): int
 {
-    if ($result['status'] === 'lock_error' || $result['status'] === 'db_error') {
+    if ($result['status'] === 'lock_error'
+        || $result['status'] === 'db_error'
+        || (isset($result['housekeepingFailures']) && (int) $result['housekeepingFailures'] > 0)
+    ) {
         return CUERCODE_EMAIL_RUNNER_EXIT_DATABASE;
     }
 
@@ -1598,6 +1789,301 @@ function formatEmailQueueRunReport(array $result, float $seconds): array
             . ' minutes (details are in the error log).';
     }
 
+    // 🛑 #122: claimed emails that can never be sent (details removed, link missing).
+    if (isset($result['unsendable']) && (int) $result['unsendable'] > 0) {
+        $lines[] = 'Skipped ' . (int) $result['unsendable']
+            . ' email(s) that can no longer be sent because their stored details (including the one-time link) were already removed or are missing.';
+    }
+
+    // 🧹 #122/#123: expired links, the clean-up totals and any clean-up failure.
+    foreach (formatEmailQueueTidyLines($result) as $tidyLine) {
+        $lines[] = $tidyLine;
+    }
+
+    return $lines;
+}
+
+// ==============================================================================
+// 🧮 Clean-up and expired-link helpers (#122, #123) - pure, fully unit-tested
+// ==============================================================================
+
+/**
+ * 🔢 Read a retention setting (days) and accept only a sensible whole number.
+ *
+ * Accepts an int, or a string of 1 to 5 digits (with optional spaces around
+ * it), whose value is from 1 to CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_MAX.
+ * Anything else - including 0, negatives, decimals, "1e3", true, null and
+ * words - gives null, meaning "not valid: use the default".
+ *
+ * 📌 WHY 0 is refused: getConfig() casts an 'integer' setting with (int), so a
+ * typo such as "thirty" arrives here as 0. Treating 0 as "delete straight
+ * away" would turn a typo into deleting every finished record. There is also
+ * deliberately no "keep forever" value.
+ *
+ * @param mixed $value The raw value (from getConfig() or a batch option).
+ *
+ * @return int|null The number of days, or null when the value is not valid.
+ */
+function parseEmailQueueRetentionDays(mixed $value): ?int
+{
+    // 🔢 Only a whole number from 1 to CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_MAX.
+    //    getConfig() turns a typo into 0 for an 'integer' setting, so 0 MUST mean
+    //    "not valid" - never "delete everything now". No "keep forever" value on purpose.
+    if (is_int($value)) {
+        $days = $value;
+    } elseif (is_string($value) && preg_match('/^\s*[0-9]{1,5}\s*$/', $value) === 1) {
+        $days = (int) trim($value);
+    } else {
+        return null;
+    }
+
+    if ($days < 1 || $days > CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_MAX) {
+        return null;
+    }
+
+    return $days;
+}
+
+/**
+ * ⚙️ Read the two clean-up settings (#122) and fall back to the defaults.
+ *
+ * - A setting that is MISSING (the normal state on installs from before #122,
+ *   because there is no upgrade script - #113) quietly uses the default and is
+ *   not reported: nothing is wrong.
+ * - A setting that is present but not valid (see parseEmailQueueRetentionDays())
+ *   uses the default, and its NAME is listed in invalidSettings so `--check`
+ *   can say which one to fix.
+ * - A settings reader that throws is treated as "missing".
+ *
+ * 🔐 The VALUE of a setting is never put anywhere in the result, so nothing
+ * that prints the result can ever show it.
+ *
+ * @param callable $getSetting Called as $getSetting(string $key, mixed $default)
+ *                             - getConfig in production, a stand-in in tests.
+ *
+ * @return array{retentionDays: int, givenUpRetentionDays: int, invalidSettings: list<string>}
+ */
+function emailQueueHousekeepingOptions(callable $getSetting): array
+{
+    $options = [
+        'retentionDays'        => CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_DEFAULT,
+        'givenUpRetentionDays' => CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT,
+        'invalidSettings'      => [],
+    ];
+
+    // 📋 setting key => option name (the default is already in $options).
+    $settingMap = [
+        CUERCODE_EMAIL_QUEUE_SETTING_RETENTION_DAYS          => 'retentionDays',
+        CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS => 'givenUpRetentionDays',
+    ];
+
+    foreach ($settingMap as $settingKey => $optionName) {
+        try {
+            $rawValue = $getSetting($settingKey, null);
+        } catch (\Throwable $e) {
+            // 🛡️ A settings reader that fails counts as "missing": the default applies.
+            $rawValue = null;
+        }
+
+        if ($rawValue === null) {
+            // 📭 Missing row: the default applies, and there is nothing to report.
+            continue;
+        }
+
+        $parsed = parseEmailQueueRetentionDays($rawValue);
+
+        if ($parsed === null) {
+            // ⚠️ Present but not valid: keep the default and name the setting (never its value).
+            $options['invalidSettings'][] = (string) $settingKey;
+            continue;
+        }
+
+        $options[$optionName] = $parsed;
+    }
+
+    return $options;
+}
+
+/**
+ * ⏳ The lifetime of each template's one-time link, in seconds (#123).
+ *
+ * These are fn_auth.php's own constants, which set the real token expiry in
+ * the database (CUERCODE_EMAIL_VERIFICATION_TTL_HOURS and
+ * CUERCODE_PASSWORD_RESET_TTL_MINUTES) - one place to change a lifetime.
+ * They are read at RUN time, inside this function, because this file can be
+ * loaded before fn_auth.php (the cron runner loads fn_email.php on its own
+ * first; the tests load single files).
+ *   Rejected: copying the numbers into this file (two places to change one
+ *   number - they would drift apart), and moving the constants here
+ *   (bootstrap.php loads this file BEFORE fn_auth.php, so fn_auth.php's own
+ *   definition would silently stop taking effect).
+ *
+ * 'invitation' has no entry yet - nothing issues invitations; add one when
+ * they are built (tblInvitations.expiresAt). 'receipt' has no link.
+ *
+ * ⚠️ What it CANNOT do: if fn_auth.php was not loaded it returns [], and then
+ * nothing is skipped for age. `--check` says so loudly. bootstrap.php always
+ * loads fn_auth.php before any batch runs.
+ *
+ * @return array<string, int> Seconds by template key.
+ */
+function emailQueueLinkLifetimes(): array
+{
+    $lifetimes = [];
+
+    if (defined('CUERCODE_EMAIL_VERIFICATION_TTL_HOURS')) {
+        $lifetimes['verification'] = (int) CUERCODE_EMAIL_VERIFICATION_TTL_HOURS * 3600;
+    }
+
+    if (defined('CUERCODE_PASSWORD_RESET_TTL_MINUTES')) {
+        $lifetimes['password_reset'] = (int) CUERCODE_PASSWORD_RESET_TTL_MINUTES * 60;
+    }
+
+    return $lifetimes;
+}
+
+/**
+ * 🧹 Keep only sensible link lifetimes: a known template key and a whole
+ * number of seconds of at least 1.
+ *
+ * Used on both emailQueueLinkLifetimes() and the 'linkLifetimes' batch option,
+ * so a malformed option can never reach the SQL (an unknown key would only
+ * waste a statement; a zero or negative lifetime would skip everything).
+ *
+ * @param array $lifetimes Seconds by template key (anything).
+ *
+ * @return array<string, int> The valid entries, in their original order.
+ */
+function normaliseEmailQueueLinkLifetimes(array $lifetimes): array
+{
+    $valid = [];
+
+    foreach ($lifetimes as $templateKey => $lifetimeSeconds) {
+        if (!is_string($templateKey) || !isValidEmailTemplateKey($templateKey)) {
+            continue;
+        }
+
+        if (!is_int($lifetimeSeconds) || $lifetimeSeconds < 1) {
+            continue;
+        }
+
+        $valid[$templateKey] = $lifetimeSeconds;
+    }
+
+    return $valid;
+}
+
+/**
+ * 📏 The age (seconds since it was queued) at which an email counts as having
+ * an expired link: its lifetime minus the 2-minute safety margin (#123).
+ *
+ * Never below 60 seconds, so a tiny lifetime can never turn into "skip
+ * everything straight away".
+ *
+ * @param int $lifetimeSeconds The link's lifetime.
+ *
+ * @return int The maximum age, in seconds.
+ */
+function emailQueueLinkMaxAgeSeconds(int $lifetimeSeconds): int
+{
+    return max(60, $lifetimeSeconds - CUERCODE_EMAIL_QUEUE_LINK_EXPIRY_MARGIN_SECONDS);
+}
+
+/**
+ * ⏳ Has this email's link expired (or have fewer than 2 minutes left)?
+ *
+ * This is the SAME rule as the clean-up's SQL (skipExpiredEmailQueueRows()):
+ * "createdAt <= NOW() - maxAge" is the same as "age >= maxAge". The age must
+ * come from the DATABASE's clock (the re-read row's ageSeconds), never from
+ * PHP's time(): PHP's clock follows the site_timezone setting, while the
+ * database stores UTC.
+ *
+ * @param string $templateKey   The email's template.
+ * @param int    $ageSeconds    Seconds since it was queued (database clock).
+ * @param array  $linkLifetimes Seconds by template key (normalised).
+ *
+ * @return bool true when the email must be skipped; false for a template with
+ *              no known lifetime.
+ */
+function emailQueueLinkHasExpired(string $templateKey, int $ageSeconds, array $linkLifetimes): bool
+{
+    if (!array_key_exists($templateKey, $linkLifetimes)) {
+        return false;
+    }
+
+    return $ageSeconds >= emailQueueLinkMaxAgeSeconds((int) $linkLifetimes[$templateKey]);
+}
+
+/**
+ * 🔗 The link parameter a template REQUIRES, or null when it needs none.
+ *
+ * @param string $templateKey The email's template.
+ *
+ * @return string|null The parameter name (for example 'verificationUrl').
+ *
+ * @see CUERCODE_EMAIL_QUEUE_REQUIRED_LINK_PARAMS
+ */
+function emailQueueRequiredLinkParam(string $templateKey): ?string
+{
+    if (array_key_exists($templateKey, CUERCODE_EMAIL_QUEUE_REQUIRED_LINK_PARAMS)) {
+        return CUERCODE_EMAIL_QUEUE_REQUIRED_LINK_PARAMS[$templateKey];
+    }
+
+    return null;
+}
+
+/**
+ * 📝 The plain-English lines describing what the clean-up did (#122/#123).
+ *
+ * Shared by the normal report (formatEmailQueueRunReport()) and the
+ * switched-off path of emailQueueRunnerMain(). Counts only - never an
+ * address, a subject, a link or a setting value. Each count is read with
+ * isset() and (int), so an older-shaped result cannot crash it.
+ *
+ * @param array $result A runEmailQueueBatch() result.
+ *
+ * @return list<string> The lines, in order (empty when there is nothing to say).
+ */
+function formatEmailQueueTidyLines(array $result): array
+{
+    $expired        = 0;
+    $purged         = 0;
+    $detailsCleared = 0;
+    $failures       = 0;
+
+    if (isset($result['expired'])) {
+        $expired = (int) $result['expired'];
+    }
+
+    if (isset($result['purged'])) {
+        $purged = (int) $result['purged'];
+    }
+
+    if (isset($result['detailsCleared'])) {
+        $detailsCleared = (int) $result['detailsCleared'];
+    }
+
+    if (isset($result['housekeepingFailures'])) {
+        $failures = (int) $result['housekeepingFailures'];
+    }
+
+    $lines = [];
+
+    if ($expired > 0) {
+        $lines[] = 'Skipped ' . $expired . ' email(s) whose one-time link had expired, or had less than '
+            . intdiv(CUERCODE_EMAIL_QUEUE_LINK_EXPIRY_MARGIN_SECONDS, 60)
+            . ' minutes left, before it could be sent - the person needs to ask for a new link.';
+    }
+
+    if ($purged > 0 || $detailsCleared > 0) {
+        $lines[] = 'Tidied up: deleted ' . $purged . ' old email record(s) and removed the stored details of '
+            . $detailsCleared . ' given-up email(s).';
+    }
+
+    if ($failures > 0) {
+        $lines[] = 'Could not finish tidying up old email records (database error - details are in the error log). Sending was not affected.';
+    }
+
     return $lines;
 }
 
@@ -1627,8 +2113,111 @@ function validateEmailQueueGateway(array $gateway): void
 }
 
 /**
- * 🔁 Work through one batch of the email queue: recover stuck rows, then claim,
- * send and record each due email.
+ * 🧹 The queue clean-up (#122, #123): skip waiting emails whose one-time link
+ * has expired, clear the stored details of given-up emails once the re-send
+ * window has passed, and delete old FINISHED records.
+ *
+ * ⚠️ The caller MUST hold the queue lock. These are range statements (they
+ * walk an index and lock a range of rows for a moment). Run at the same time
+ * as ANOTHER runner's claims, InnoDB (MySQL's storage engine) could deadlock
+ * one against the other, and a deadlocked claim would stop that run. The lock
+ * already guarantees one runner at a time, so running the clean-up only under
+ * it removes that risk. A web request queuing an email at the same moment may
+ * wait a few milliseconds, but cannot deadlock: its insert holds no lock the
+ * clean-up needs.
+ *   Rejected: running the clean-up without the lock (the deadlock risk above);
+ *   a separate "last clean-up time" setting so it runs only hourly (an extra
+ *   settings write every hour and more moving parts - each statement is cheap
+ *   and uses an index).
+ *
+ * Each step is independent: a failure (a database error, or an operation that
+ * throws) is counted in 'failures' and the next step still runs. The real
+ * database functions log their own errors (logError()).
+ *
+ * ⚠️ What it CANNOT do: each statement handles at most $tidyLimit rows per
+ * run; the rest follow on the next run (a minute later with cron). It never
+ * touches a row that is being sent, and only the expired-link step touches
+ * waiting rows (by design).
+ *
+ * @param array $gateway              The queue gateway (skipExpired, clearGivenUp,
+ *                                    purgeFinished and purgeGivenUp are used).
+ * @param array $linkLifetimes        Seconds by template key (normalised).
+ * @param int   $retentionDays        Days to keep sent/skipped records.
+ * @param int   $givenUpRetentionDays Days to keep given-up records.
+ * @param int   $tidyLimit            Most rows per statement.
+ *
+ * @return array{expired: int, detailsCleared: int, purged: int, failures: int}
+ */
+function runEmailQueueHousekeeping(array $gateway, array $linkLifetimes, int $retentionDays, int $givenUpRetentionDays, int $tidyLimit): array
+{
+    $counts = [
+        'expired'        => 0,
+        'detailsCleared' => 0,
+        'purged'         => 0,
+        'failures'       => 0,
+    ];
+
+    // 1️⃣ #123: skip WAITING emails whose link has expired (or nearly). Done
+    //    first, so the batch below can never pick one of them. One statement
+    //    per template that has a known lifetime.
+    foreach ($linkLifetimes as $templateKey => $lifetimeSeconds) {
+        try {
+            $changed = $gateway['skipExpired'](
+                (string) $templateKey,
+                emailQueueLinkMaxAgeSeconds((int) $lifetimeSeconds),
+                CUERCODE_EMAIL_QUEUE_NOTE_LINK_EXPIRED,
+                $tidyLimit
+            );
+        } catch (\Throwable $e) {
+            $changed = null;
+        }
+
+        if (is_int($changed) && $changed >= 0) {
+            $counts['expired'] = $counts['expired'] + $changed;
+        } else {
+            $counts['failures']++;
+        }
+    }
+
+    // 2️⃣ #122: clear the details of given-up emails once the re-send window has passed.
+    try {
+        $changed = $gateway['clearGivenUp'](CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS, $tidyLimit);
+    } catch (\Throwable $e) {
+        $changed = null;
+    }
+
+    if (is_int($changed) && $changed >= 0) {
+        $counts['detailsCleared'] = $changed;
+    } else {
+        $counts['failures']++;
+    }
+
+    // 3️⃣ #122: delete old FINISHED records (never waiting or in-flight ones).
+    $purges = [
+        'purgeFinished' => $retentionDays,
+        'purgeGivenUp'  => $givenUpRetentionDays,
+    ];
+
+    foreach ($purges as $operationName => $olderThanDays) {
+        try {
+            $changed = $gateway[$operationName]($olderThanDays, $tidyLimit);
+        } catch (\Throwable $e) {
+            $changed = null;
+        }
+
+        if (is_int($changed) && $changed >= 0) {
+            $counts['purged'] = $counts['purged'] + $changed;
+        } else {
+            $counts['failures']++;
+        }
+    }
+
+    return $counts;
+}
+
+/**
+ * 🔁 Work through one batch of the email queue: recover stuck rows, run the
+ * clean-up, then claim, send and record each due email.
  *
  * This is the ONLY copy of the queue logic. The cron runner reaches it through
  * emailQueueRunnerMain(), and the page-shutdown fallback through
@@ -1642,10 +2231,23 @@ function validateEmailQueueGateway(array $gateway): void
  *   markRetry(int $id, int $attemptsAfter, int $retryIn, string $detail): bool,
  *   markGaveUp(int $id, int $attemptsAfter, string $detail): bool,
  *   release(int $id, string $reason): bool, countDue(): ?int,
- *   countOverdue(int $minutes): ?int, countByStatus(): ?array.
+ *   countOverdue(int $minutes): ?int, countByStatus(): ?array,
+ *   and since #122/#123: markSkipped(int $id, string $reason): bool,
+ *   skipExpired(string $templateKey, int $maxAgeSeconds, string $note, int $limit): ?int,
+ *   clearGivenUp(int $olderThanHours, int $limit): ?int,
+ *   purgeFinished(int $olderThanDays, int $limit): ?int,
+ *   purgeGivenUp(int $olderThanDays, int $limit): ?int.
+ *
+ * 🧹 #122/#123: while it holds the lock, and before anything is claimed, it
+ * runs the clean-up (runEmailQueueHousekeeping()). Then every claimed email
+ * is checked before it is rendered: one whose details were removed, whose
+ * required link is missing, or whose link has expired (measured on the
+ * database's clock) is marked 'skipped' and never sent. With 'useLock' false
+ * the clean-up does NOT run (it must never run alongside another runner - see
+ * runEmailQueueHousekeeping()); the per-email checks still apply.
  *
  * ⚠️ What it CANNOT do: see the "at least once" note at the top of this
- * section. It also does not check whether a link inside an email has expired.
+ * section.
  *
  * @param array    $gateway The database operations (validated first).
  * @param callable $sender  Called as $sender($to, $subject, $htmlBody, $toName)
@@ -1656,7 +2258,19 @@ function validateEmailQueueGateway(array $gateway): void
  *                          'timeBudgetSeconds' (1-600, default 45),
  *                          'useLock' (default true; only tests and the
  *                          real-database check pass false - production never
- *                          does), 'clock' (callable returning float seconds).
+ *                          does), 'clock' (callable returning float seconds),
+ *                          and since #122/#123:
+ *                          'sendEmails' (default true; false = a tidy-only run
+ *                          that takes the lock, runs the clean-up and counts,
+ *                          but recovers, claims and sends nothing - used while
+ *                          email is switched off or its settings are incomplete),
+ *                          'retentionDays' (1-3650, default 30),
+ *                          'givenUpRetentionDays' (1-3650, default 90) - an
+ *                          invalid value falls back to the default, never to
+ *                          "delete everything now",
+ *                          'linkLifetimes' (seconds by template key; default
+ *                          emailQueueLinkLifetimes()),
+ *                          'tidyLimit' (1-500, default 500).
  *
  * @return array A result shaped like emptyEmailQueueRunResult().
  *
@@ -1708,6 +2322,50 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         };
     }
 
+    // 🧹 #122/#123 options. A bad option can never mean "delete everything
+    //    now": an invalid retention falls back to the default, the per-statement
+    //    cap is clamped, and the link lifetimes are filtered to known templates
+    //    with a positive lifetime.
+    $sendEmails = true;
+
+    if (array_key_exists('sendEmails', $options) && $options['sendEmails'] === false) {
+        $sendEmails = false;   // 🔕 tidy-only run (email switched off / settings incomplete) - see emailQueueRunnerMain()
+    }
+
+    $retentionDays = CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_DEFAULT;
+
+    if (array_key_exists('retentionDays', $options)) {
+        $parsedDays = parseEmailQueueRetentionDays($options['retentionDays']);
+
+        if ($parsedDays !== null) {
+            $retentionDays = $parsedDays;
+        }
+    }
+
+    $givenUpRetentionDays = CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT;
+
+    if (array_key_exists('givenUpRetentionDays', $options)) {
+        $parsedDays = parseEmailQueueRetentionDays($options['givenUpRetentionDays']);
+
+        if ($parsedDays !== null) {
+            $givenUpRetentionDays = $parsedDays;
+        }
+    }
+
+    $tidyLimit = CUERCODE_EMAIL_QUEUE_TIDY_BATCH;
+
+    if (isset($options['tidyLimit'])) {
+        $tidyLimit = (int) $options['tidyLimit'];
+    }
+
+    $tidyLimit = max(1, min($tidyLimit, CUERCODE_EMAIL_QUEUE_TIDY_BATCH));
+
+    if (isset($options['linkLifetimes']) && is_array($options['linkLifetimes'])) {
+        $linkLifetimes = normaliseEmailQueueLinkLifetimes($options['linkLifetimes']);
+    } else {
+        $linkLifetimes = normaliseEmailQueueLinkLifetimes(emailQueueLinkLifetimes());
+    }
+
     $result                 = emptyEmailQueueRunResult();
     $result['stuckMinutes'] = $stuckMinutes;
     $startedAt              = (float) $clock();
@@ -1730,17 +2388,22 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
             //    that into a loud "stalled" alarm instead of a silent stop.
             $result['status'] = 'busy';
 
-            try {
-                $overdue = $gateway['countOverdue']($stuckMinutes);
-            } catch (\Throwable $e) {
-                $overdue = null;
-            }
+            // 🔕 #122: while sending is switched off (a tidy-only run), emails
+            //    are EXPECTED to wait, so a held lock is never a "stall" - the
+            //    alarm is only raised by a run that would actually send.
+            if ($sendEmails) {
+                try {
+                    $overdue = $gateway['countOverdue']($stuckMinutes);
+                } catch (\Throwable $e) {
+                    $overdue = null;
+                }
 
-            if (is_int($overdue) && $overdue > 0) {
-                $result['status']  = 'stalled';
-                $result['problem'] = 'another run is holding the queue lock, but ' . $overdue
-                    . ' email(s) have been waiting for more than ' . $stuckMinutes
-                    . ' minutes - that run may be stuck, or sending may be falling behind';
+                if (is_int($overdue) && $overdue > 0) {
+                    $result['status']  = 'stalled';
+                    $result['problem'] = 'another run is holding the queue lock, but ' . $overdue
+                        . ' email(s) have been waiting for more than ' . $stuckMinutes
+                        . ' minutes - that run may be stuck, or sending may be falling behind';
+                }
             }
 
             // ⚠️ We do NOT hold the lock here, so we must never unlock it.
@@ -1763,12 +2426,16 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         // 🧯 Layer 3: put back rows a dead runner left 'sending' (inside the lock,
         //    so this can never race a slow-but-alive runner)
         // ======================================================================
-        $stuckRows = $gateway['findStuck']($stuckMinutes, CUERCODE_EMAIL_QUEUE_STUCK_BATCH);
+        if ($sendEmails) {
+            $stuckRows = $gateway['findStuck']($stuckMinutes, CUERCODE_EMAIL_QUEUE_STUCK_BATCH);
 
-        if (!is_array($stuckRows)) {
-            $result['status']  = 'db_error';
-            $result['problem'] = 'could not read the email queue (database error)';
-            return $result;
+            if (!is_array($stuckRows)) {
+                $result['status']  = 'db_error';
+                $result['problem'] = 'could not read the email queue (database error)';
+                return $result;
+            }
+        } else {
+            $stuckRows = [];   // 🔕 tidy-only run: nothing is recovered or claimed
         }
 
         $recoveredIDs = [];
@@ -1818,17 +2485,40 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         }
 
         // ======================================================================
+        // 🧹 #122 / #123: the clean-up - ONLY while this run holds the queue lock,
+        //    and BEFORE anything is claimed (so an expired link is skipped, never sent)
+        // ======================================================================
+        // Only under the lock: its range statements must never run at the same
+        // time as another runner's claims (InnoDB could deadlock the two), and
+        // the lock guarantees one runner at a time. So a run with useLock false
+        // (tests and the real-database check only) skips it; the per-email
+        // checks further down still apply. A failed step is counted and
+        // reported (exit code 3) but never stops sending.
+        if ($haveLock) {
+            $housekeeping = runEmailQueueHousekeeping($gateway, $linkLifetimes, $retentionDays, $givenUpRetentionDays, $tidyLimit);
+
+            $result['expired']              = $result['expired'] + $housekeeping['expired'];
+            $result['detailsCleared']       = $housekeeping['detailsCleared'];
+            $result['purged']               = $housekeeping['purged'];
+            $result['housekeepingFailures'] = $housekeeping['failures'];
+        }
+
+        // ======================================================================
         // 📋 The due rows (a snapshot - it may be out of date by the time each
         //    row is claimed, which is exactly why the claim re-checks everything)
         // ======================================================================
-        $dueIDs = $gateway['findDue']($limit);
+        if ($sendEmails) {
+            $dueIDs = $gateway['findDue']($limit);
 
-        if (!is_array($dueIDs)) {
-            // ⚠️ Reported as a database problem - never mistaken for "the
-            //    queue is empty".
-            $result['status']  = 'db_error';
-            $result['problem'] = 'could not read the email queue (database error)';
-            return $result;
+            if (!is_array($dueIDs)) {
+                // ⚠️ Reported as a database problem - never mistaken for "the
+                //    queue is empty".
+                $result['status']  = 'db_error';
+                $result['problem'] = 'could not read the email queue (database error)';
+                return $result;
+            }
+        } else {
+            $dueIDs = [];      // 🔕 tidy-only run: nothing is claimed or sent
         }
 
         foreach ($dueIDs as $dueID) {
@@ -1887,12 +2577,75 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
                 $toName = (string) $row['toName'];
             }
 
-            // 🎨 Render the body fresh at send time (the queue stores only the
-            //    template parameters, never a rendered body).
-            $params = json_decode((string) $row['paramsJSON'], true);
+            // 🛑 #122 / #123: emails that must never be rendered or sent. Each is marked
+            //    'skipped' (a final state; its details are cleared in the same statement)
+            //    with a plain-English reason. No network call is made.
+            $skipReason = null;
+            $skipKind   = null;
 
-            if (!is_array($params)) {
-                $params = [];
+            // 1️⃣ Its stored details were already removed (they are cleared when an email is
+            //    sent or skipped, and 24 hours after it is given up). The owner's re-send
+            //    runbook, or a hand edit, can put such a row back to 'queued'. Rendering it
+            //    would send an email with an EMPTY link, because the templates quietly
+            //    default a missing link to ''.
+            if (!array_key_exists('paramsJSON', $row) || $row['paramsJSON'] === null || $row['paramsJSON'] === '') {
+                $skipReason = CUERCODE_EMAIL_QUEUE_NOTE_DETAILS_REMOVED;
+                $skipKind   = 'unsendable';
+            }
+
+            // 2️⃣ #123 backstop: its link has expired (or nearly), measured on the DATABASE's
+            //    clock. The clean-up step normally skips these first; this catches any it did
+            //    not reach (its per-run cap, a failed clean-up step, or a run without the lock).
+            if ($skipReason === null
+                && isset($row['ageSeconds'])
+                && is_numeric($row['ageSeconds'])
+                && emailQueueLinkHasExpired((string) $row['templateKey'], (int) $row['ageSeconds'], $linkLifetimes)
+            ) {
+                $skipReason = CUERCODE_EMAIL_QUEUE_NOTE_LINK_EXPIRED;
+                $skipKind   = 'expired';
+            }
+
+            // 🎨 The template parameters (only decoded when the email may still be sent).
+            //    The body is rendered fresh at send time (the queue stores only the
+            //    template parameters, never a rendered body).
+            $params = [];
+
+            if ($skipReason === null) {
+                $decodedParams = json_decode((string) $row['paramsJSON'], true);
+
+                if (is_array($decodedParams)) {
+                    $params = $decodedParams;
+                }
+
+                // 3️⃣ A template that needs a link, with no link (missing, not text, or blank).
+                $requiredLinkParam = emailQueueRequiredLinkParam((string) $row['templateKey']);
+
+                if ($requiredLinkParam !== null
+                    && (!isset($params[$requiredLinkParam]) || !is_string($params[$requiredLinkParam]) || trim($params[$requiredLinkParam]) === '')
+                ) {
+                    $skipReason = CUERCODE_EMAIL_QUEUE_NOTE_LINK_MISSING;
+                    $skipKind   = 'unsendable';
+                }
+            }
+
+            if ($skipReason !== null) {
+                if ($gateway['markSkipped']($emailID, $skipReason) === true) {
+                    if ($skipKind === 'expired') {
+                        $result['expired']++;
+                    } else {
+                        $result['unsendable']++;
+                    }
+                } else {
+                    // ⚠️ Left 'sending'; stuck-row recovery looks at it again later.
+                    $result['recordFailures']++;
+
+                    if (function_exists('logError')) {
+                        // 📝 The ID only - never an address.
+                        logError('warning', 'Email queue: could not mark an email as skipped', 'emailID ' . $emailID);
+                    }
+                }
+
+                continue;
             }
 
             $htmlBody     = null;
@@ -2376,6 +3129,13 @@ function claimEmailQueueRow(int $emailID): ?bool
  * Only returns the row while it is still 'sending', so the batch always works
  * from the values as they are NOW, never from the earlier list.
  *
+ * #123: it also returns `ageSeconds` - how long ago the email was queued,
+ * worked out by the DATABASE (TIMESTAMPDIFF against its own NOW()). The
+ * per-email expired-link check uses it. It is measured in SQL, never with
+ * PHP's time(), because PHP's clock follows the site_timezone setting while
+ * the database stores and compares in UTC (db_connect.php sets the session
+ * time zone), so mixing the two could skip or send at the wrong moment.
+ *
  * @param int $emailID The claimed row.
  *
  * @return array<string, mixed>|null The row, or null if it is not 'sending' or on error.
@@ -2383,7 +3143,8 @@ function claimEmailQueueRow(int $emailID): ?bool
 function loadClaimedEmailQueueRow(int $emailID): ?array
 {
     $rows = emailQueueFetchRows(
-        'SELECT `emailID`, `toAddress`, `toName`, `templateKey`, `paramsJSON`, `subject`, `attempts`, `maxAttempts` '
+        'SELECT `emailID`, `toAddress`, `toName`, `templateKey`, `paramsJSON`, `subject`, `attempts`, `maxAttempts`, '
+        . 'TIMESTAMPDIFF(SECOND, `createdAt`, NOW()) AS `ageSeconds` '
         . 'FROM `tblEmailQueue` '
         . "WHERE `emailID` = ? AND `status` = 'sending' "
         . 'LIMIT 1',
@@ -2400,11 +3161,22 @@ function loadClaimedEmailQueueRow(int $emailID): ?array
 }
 
 /**
- * ✅ Mark a claimed row as sent.
+ * ✅ Mark a claimed row as sent - and clear its stored details (#122).
  *
  * Before #112 this updated the row whatever state it was in and returned
  * nothing. It now only applies while the row is still 'sending' - only the
  * runner that claimed the row can finish it - and reports whether it did.
+ *
+ * 🧹 #122: `paramsJSON` (which can hold a one-time sign-up or password-reset
+ * link) is set to NULL in this SAME statement, so a sent row never holds its
+ * link, not even for a moment. If recording "sent" fails, the row stays
+ * 'sending' WITH its details; stuck-row recovery puts it back and the re-send
+ * still has its link - the same "at least once" behaviour as #112.
+ *   Rejected: keeping only the "non-secret" parameters (needs a per-template
+ *   list of secret keys that somebody must keep up to date; the other keys are
+ *   copies of toName or constants), and a marker such as {"removed":true}
+ *   (could clash with a future template parameter; NULL is unambiguous because
+ *   queueEmail() never writes NULL, and easy to query).
  *
  * @param int $emailID The row.
  *
@@ -2414,7 +3186,7 @@ function settleEmailQueueSuccess(int $emailID): bool
 {
     $outcome = emailQueueChangeOneRow(
         'UPDATE `tblEmailQueue` '
-        . "SET `status` = 'sent', `sentAt` = NOW(), `lastError` = NULL, `updatedAt` = NOW() "
+        . "SET `status` = 'sent', `sentAt` = NOW(), `lastError` = NULL, `paramsJSON` = NULL, `updatedAt` = NOW() "
         . "WHERE `emailID` = ? AND `status` = 'sending'",
         'i',
         [$emailID],
@@ -2660,6 +3432,276 @@ function settleEmailQueueFailure(int $emailID, int $attemptsBefore, int $maxAtte
     return settleEmailQueueRetry($emailID, $decision['attemptsAfter'], (int) $decision['retryInMinutes'], $errorDetail);
 }
 
+// ==============================================================================
+// 🧹 Database operations for the clean-up and the "never send" guard (#122, #123)
+// ==============================================================================
+// Statements N-R in the #122/#123 plan (A-M are #112's). Every one is a
+// prepared statement through dbQuery(); no new text is joined into SQL.
+//
+// 🔒 Rules every one of them keeps:
+//   - None ever touches a row that is 'sending', except N, which is the
+//     claiming runner finishing its OWN row (guarded by status = 'sending').
+//   - Only O (expired links) touches a WAITING row (queued/failed with
+//     attempts left) - by design, because those are the ones that must not be
+//     sent. The two DELETEs (Q, R) only ever match FINISHED rows.
+//   - O, P, Q and R are range statements and are only ever called by
+//     runEmailQueueHousekeeping(), which only runs while the batch holds the
+//     queue lock (see that function for why).
+//   - `LIMIT ?` in UPDATE/DELETE was checked on MariaDB 10.6 and MySQL 8.4
+//     (planner, 2026-09-25). MySQL 5.7 and MariaDB 10.3 were NOT checked.
+// ==============================================================================
+
+/**
+ * ✏️ Run one clean-up write and report how many rows it changed or deleted.
+ *
+ * The same shape as emailQueueChangeOneRow(): null when the database layer is
+ * missing, any error is logged (logError()) and returned as null, and the
+ * statement is always closed.
+ *
+ * affected_rows counts rows actually CHANGED or DELETED (mysqli is not opened
+ * with MYSQLI_CLIENT_FOUND_ROWS). Every statement that uses this helper either
+ * deletes, or changes a column that is not already that value (status, or
+ * paramsJSON guarded by "IS NOT NULL"), so the count is exact.
+ *
+ * @param string $sql        SQL with ? placeholders.
+ * @param string $types      bind_param() types.
+ * @param array  $params     Values to bind.
+ * @param string $errorTitle Short title for the error log.
+ *
+ * @return int|null The number of rows changed or deleted, or null on error.
+ */
+function emailQueueChangeRows(string $sql, string $types, array $params, string $errorTitle): ?int
+{
+    if (!function_exists('dbQuery')) {
+        return null;
+    }
+
+    $stmt = null;
+
+    try {
+        $stmt         = dbQuery($sql, $types, $params);
+        $affectedRows = $stmt->affected_rows;
+
+        // 📌 mysqli reports -1 for an error; anything below 0 is not a count.
+        if (!is_int($affectedRows) || $affectedRows < 0) {
+            return null;
+        }
+
+        return $affectedRows;
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', $errorTitle, $e->getMessage());
+        }
+
+        return null;
+    } finally {
+        if ($stmt instanceof \mysqli_stmt) {
+            $stmt->close();
+        }
+    }
+}
+
+/**
+ * 🛑 N: mark a claimed row as 'skipped' - it must never be sent (#122/#123).
+ *
+ * Used by the batch when a claimed email's details were already removed, its
+ * required link is missing, or its link has expired. Its details are cleared
+ * in the same statement.
+ *
+ * Only applies while the row is still 'sending': only the runner that claimed
+ * the row can finish it (#112). It never touches a waiting row.
+ *
+ * @param int    $emailID The claimed row.
+ * @param string $reason  Plain-English lastError text (cleaned again here).
+ *
+ * @return bool true when exactly one row was updated.
+ */
+function skipClaimedEmailQueueRow(int $emailID, string $reason): bool
+{
+    $outcome = emailQueueChangeOneRow(
+        'UPDATE `tblEmailQueue` '
+        . "SET `status` = 'skipped', `lastError` = ?, `paramsJSON` = NULL, `updatedAt` = NOW() "
+        . "WHERE `emailID` = ? AND `status` = 'sending'",
+        'si',
+        [emailQueueSafeDetail($reason, 500), $emailID],
+        'Email queue skip-settle failed'
+    );
+
+    return $outcome === true;
+}
+
+/**
+ * ⏳ O: mark WAITING emails of one template whose one-time link has expired
+ * (or nearly) as 'skipped', and clear their details (#123).
+ *
+ * "Waiting" means status queued/failed WITH attempts left - whether due now
+ * or waiting out a back-off. 'failed' with attempts left is included because
+ * code from before #112 wrote that for rows that were still being retried.
+ *
+ * 🚫 Never touches:
+ *   - a 'sending' row - only the runner that claimed it may finish it;
+ *   - a given-up row (failed, no attempts left) - that it failed matters more
+ *     to support than that its link later expired, so it keeps 'failed';
+ *   - a sent or skipped row.
+ *
+ * 📌 No ORDER BY, on purpose. Every matching row is dealt with eventually, so
+ * the order does not matter, and an ORDER BY with a LIMIT can lead MySQL to
+ * walk the createdAt index across most of the table; without one it can use
+ * the small status index range. MySQL may note an "unsafe for statement-based
+ * replication" WARNING for a LIMIT with no ORDER BY - a warning, not an error
+ * (dbQuery() only throws on errors), and which rows are changed does not
+ * depend on the order.
+ *
+ * The age is measured on the database's clock (createdAt against NOW()),
+ * never PHP's. "createdAt <= NOW() - maxAge" is the same rule as
+ * emailQueueLinkHasExpired()'s "age >= maxAge".
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param string $templateKey   The template whose link lifetime applies.
+ * @param int    $maxAgeSeconds emailQueueLinkMaxAgeSeconds() of its lifetime.
+ * @param string $note          Plain-English lastError text (cleaned again here).
+ * @param int    $limit         Most rows to change in this run.
+ *
+ * @return int|null How many emails were skipped, or null on error.
+ */
+function skipExpiredEmailQueueRows(string $templateKey, int $maxAgeSeconds, string $note, int $limit): ?int
+{
+    return emailQueueChangeRows(
+        'UPDATE `tblEmailQueue` '
+        . "SET `status` = 'skipped', `lastError` = ?, `paramsJSON` = NULL, `updatedAt` = NOW() "
+        . 'WHERE `templateKey` = ? '
+        . "AND `status` IN ('queued', 'failed') "
+        . 'AND `attempts` < `maxAttempts` '
+        . 'AND `createdAt` <= DATE_SUB(NOW(), INTERVAL ? SECOND) '
+        . 'LIMIT ?',
+        'ssii',
+        [emailQueueSafeDetail($note, 500), $templateKey, $maxAgeSeconds, $limit],
+        'Email queue expired-link skip failed'
+    );
+}
+
+/**
+ * 🧹 P: clear the stored details of GIVEN-UP emails (failed, no attempts
+ * left) once the re-send window has passed (#122).
+ *
+ * A given-up email keeps its details for CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS
+ * after it was queued, so the owner can still re-send it after an outage
+ * (owner decision 2). After that no re-send could help, because the link
+ * itself has expired.
+ *   Rejected: clearing at give-up (anyone whose verification email was lost
+ *   in an outage could never be sent it again - there is no "send a new link"
+ *   feature and they cannot sign up again with the same address).
+ *
+ * `updatedAt` = `updatedAt` stops MySQL's automatic ON UPDATE refresh, so the
+ * time the email was given up stays readable in phpMyAdmin (checked on
+ * MariaDB 10.6 and MySQL 8.4).
+ *
+ * 🚫 Never touches a waiting, 'sending', sent or skipped row. "IS NOT NULL"
+ * keeps it from counting rows that were already cleared.
+ *
+ * 📌 No ORDER BY, on purpose - see skipExpiredEmailQueueRows().
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param int $olderThanHours Clear rows queued at least this many hours ago.
+ * @param int $limit          Most rows to change in this run.
+ *
+ * @return int|null How many rows were cleared, or null on error.
+ */
+function clearGivenUpEmailQueueDetails(int $olderThanHours, int $limit): ?int
+{
+    return emailQueueChangeRows(
+        'UPDATE `tblEmailQueue` '
+        . 'SET `paramsJSON` = NULL, `updatedAt` = `updatedAt` '
+        . "WHERE `status` = 'failed' "
+        . 'AND `attempts` >= `maxAttempts` '
+        . 'AND `paramsJSON` IS NOT NULL '
+        . 'AND `createdAt` <= DATE_SUB(NOW(), INTERVAL ? HOUR) '
+        . 'LIMIT ?',
+        'ii',
+        [$olderThanHours, $limit],
+        'Email queue given-up details clear failed'
+    );
+}
+
+/**
+ * 🗑️ Q: delete old SENT and SKIPPED email records (#122).
+ *
+ * ⚠️ This deletes data, and that cannot be undone. It ONLY ever matches
+ * status 'sent' or 'skipped'. It never matches a queued row, a row being
+ * sent, or a failed row (given-up ones have their own statement and period;
+ * failed rows with attempts left are still waiting). The source-text tests
+ * check this statement never mentions those statuses.
+ *
+ * 📌 Counted from `createdAt`, not sentAt/updatedAt: it never changes, it has
+ * an index (idx_email_created), and every email reaches its final state
+ * within about a day of being queued, so the difference is at most a day.
+ * updatedAt changes whenever anything touches a row, and sentAt only exists
+ * for sent rows.
+ *
+ * 📌 ORDER BY createdAt, emailID (oldest first) matches idx_email_created,
+ * whose entries are stored as (createdAt, emailID), so the delete walks only
+ * the old end of the index. The comparison is strict ("<"): a record exactly
+ * N days old is kept until the next run.
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param int $olderThanDays Delete records queued more than this many days ago.
+ * @param int $limit         Most rows to delete in this run.
+ *
+ * @return int|null How many rows were deleted, or null on error.
+ */
+function purgeFinishedEmailQueueRows(int $olderThanDays, int $limit): ?int
+{
+    return emailQueueChangeRows(
+        'DELETE FROM `tblEmailQueue` '
+        . "WHERE `status` IN ('sent', 'skipped') "
+        . 'AND `createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY) '
+        . 'ORDER BY `createdAt` ASC, `emailID` ASC '
+        . 'LIMIT ?',
+        'ii',
+        [$olderThanDays, $limit],
+        'Email queue old-record delete failed'
+    );
+}
+
+/**
+ * 🗑️ R: delete old GIVEN-UP email records (failed, no attempts left) (#122).
+ *
+ * ⚠️ This deletes data, and that cannot be undone. It ONLY ever matches
+ * status 'failed' WITH no attempts left. It never matches a queued row, a row
+ * being sent, or a failed row that still has attempts left (code from before
+ * #112 wrote 'failed' for rows still being retried, and they are still
+ * waiting). The source-text tests check this statement never mentions the
+ * waiting or in-flight statuses.
+ *
+ * Kept longer than sent ones (default 90 days), because support is asked
+ * about these. Counted from `createdAt` and ordered oldest first - see
+ * purgeFinishedEmailQueueRows() for why.
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param int $olderThanDays Delete records queued more than this many days ago.
+ * @param int $limit         Most rows to delete in this run.
+ *
+ * @return int|null How many rows were deleted, or null on error.
+ */
+function purgeGivenUpEmailQueueRows(int $olderThanDays, int $limit): ?int
+{
+    return emailQueueChangeRows(
+        'DELETE FROM `tblEmailQueue` '
+        . "WHERE `status` = 'failed' "
+        . 'AND `attempts` >= `maxAttempts` '
+        . 'AND `createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY) '
+        . 'ORDER BY `createdAt` ASC, `emailID` ASC '
+        . 'LIMIT ?',
+        'ii',
+        [$olderThanDays, $limit],
+        'Email queue old given-up record delete failed'
+    );
+}
+
 /**
  * 🔌 The production gateway: each queue operation mapped to its real
  * database function, by name (plain strings, so they are easy to search for).
@@ -2683,6 +3725,12 @@ function emailQueueDatabaseGateway(): array
         'countDue'      => 'countDueEmailQueueRows',
         'countOverdue'  => 'countOverdueEmailQueueRows',
         'countByStatus' => 'countEmailQueueRowsByStatus',
+        // 🧹 #122/#123 - appended in the same order as CUERCODE_EMAIL_QUEUE_GATEWAY_KEYS.
+        'markSkipped'   => 'skipClaimedEmailQueueRow',
+        'skipExpired'   => 'skipExpiredEmailQueueRows',
+        'clearGivenUp'  => 'clearGivenUpEmailQueueDetails',
+        'purgeFinished' => 'purgeFinishedEmailQueueRows',
+        'purgeGivenUp'  => 'purgeGivenUpEmailQueueRows',
     ];
 }
 
@@ -2700,6 +3748,14 @@ function emailQueueDatabaseGateway(): array
  *
  * Steps 1 and 2 (bad options, --help) touch nothing but the output, which is
  * why the wrapper can call this BEFORE the site start-up code loads.
+ *
+ * 🧹 #122/#123: every run except --help, a bad option, an unreachable
+ * database and --check also runs the queue clean-up (inside
+ * runEmailQueueBatch(), under the lock) - INCLUDING while email sending is
+ * switched off or its settings are incomplete, when it runs as a tidy-only
+ * batch that claims and sends nothing. A failed clean-up gives exit code 3;
+ * emails skipped during a sending run (expired link, details removed) are
+ * reported on the error stream even with --quiet.
  *
  * @param array $args A parseEmailQueueRunnerArgs() result.
  * @param array $env  Required keys: 'dbCheck' (callable(): ?string),
@@ -2771,45 +3827,100 @@ function emailQueueRunnerMain(array $args, array $env): int
         return CUERCODE_EMAIL_RUNNER_EXIT_DATABASE;
     }
 
-    // 4️⃣ The email settings.
-    $settings = checkEmailQueueRunnerSettings($env['getSetting']);
+    // 4️⃣ The email settings, and the clean-up settings (#122). Only setting
+    //    NAMES ever come back from these two - never values.
+    $settings     = checkEmailQueueRunnerSettings($env['getSetting']);
+    $housekeeping = emailQueueHousekeepingOptions($env['getSetting']);
 
-    // 5️⃣ --check: report, send nothing.
+    // 5️⃣ --check: report, change nothing (no clean-up, no claims).
     if ($args['check'] === true) {
-        return emailQueueRunnerCheck($settings, $env['gateway'], $out, $err);
+        return emailQueueRunnerCheck($settings, $env['gateway'], $out, $err, $housekeeping);
     }
 
-    // 6️⃣ Switched off: that is a normal state (for example before the owner
-    //    has finished the Microsoft 365 set-up), so exit 0 and claim nothing.
-    if ($settings['state'] === 'disabled') {
-        if ($args['quiet'] !== true) {
-            $waiting = $env['gateway']['countDue']();
+    $batchOptions = [
+        'limit'                => $args['limit'],
+        'clock'                => $clock,
+        'retentionDays'        => $housekeeping['retentionDays'],
+        'givenUpRetentionDays' => $housekeeping['givenUpRetentionDays'],
+    ];
 
-            if (is_int($waiting)) {
-                $waitingText = (string) $waiting;
-            } else {
-                $waitingText = 'an unknown number of';
-            }
+    // 6️⃣ / 7️⃣ Not ready to send (switched off, or switched on with settings missing):
+    //    still run the clean-up (#122/#123) - keeping data only as long as needed must
+    //    not depend on whether sending is on (the site can take sign-ups while email
+    //    is off, and those rows would otherwise keep their links and addresses
+    //    indefinitely) - but claim and send nothing. That tidy-only run takes the
+    //    lock, tidies, counts and lets go; it recovers nothing and raises no stall
+    //    alarm, because while sending is off emails are EXPECTED to wait.
+    //    Rejected: running the clean-up only when sending is on.
+    if ($settings['state'] !== 'ready') {
+        $tidyOptions               = $batchOptions;
+        $tidyOptions['sendEmails'] = false;
+        $tidyResult                = runEmailQueueBatch($env['gateway'], $env['sender'], $tidyOptions);
+        $tidyExitCode              = emailQueueRunnerExitCode($tidyResult);   // 0, or 3 when the clean-up/lock failed
+        $tidyLines                 = [];
 
-            $out('CueRCode email queue: email sending is switched off (email_enabled = 0), so nothing was sent. '
-                . $waitingText . ' email(s) are waiting.');
+        if ($tidyResult['status'] === 'lock_error' || $tidyResult['status'] === 'db_error') {
+            $tidyLines[] = 'CueRCode email queue: ' . (string) $tidyResult['problem']
+                . ' - the clean-up of old emails did not run (details are in the error log).';
         }
 
-        return CUERCODE_EMAIL_RUNNER_EXIT_OK;
-    }
+        foreach (formatEmailQueueTidyLines($tidyResult) as $tidyLine) {
+            $tidyLines[] = $tidyLine;
+        }
 
-    // 7️⃣ Switched on but not ready: say which settings (names only).
-    if ($settings['state'] === 'incomplete') {
+        // 6️⃣ Switched off: that is a normal state (for example before the owner
+        //    has finished the Microsoft 365 set-up), so exit 0 and claim nothing -
+        //    unless the clean-up hit a database problem, which is reported on the
+        //    error stream (even with --quiet) with exit code 3.
+        if ($settings['state'] === 'disabled') {
+            if ($tidyExitCode !== CUERCODE_EMAIL_RUNNER_EXIT_OK) {
+                foreach ($tidyLines as $tidyLine) {
+                    $err($tidyLine);
+                }
+
+                return $tidyExitCode;
+            }
+
+            if ($args['quiet'] !== true) {
+                $waiting = $env['gateway']['countDue']();
+
+                if (is_int($waiting)) {
+                    $waitingText = (string) $waiting;
+                } else {
+                    $waitingText = 'an unknown number of';
+                }
+
+                $out('CueRCode email queue: email sending is switched off (email_enabled = 0), so nothing was sent. '
+                    . $waitingText . ' email(s) are waiting.');
+
+                // 🧹 What the clean-up did - only without --quiet, because while
+                //    email is switched off skipped emails are the expected result
+                //    of the owner's choice, not something to be woken up for.
+                foreach ($tidyLines as $tidyLine) {
+                    $out($tidyLine);
+                }
+            }
+
+            return CUERCODE_EMAIL_RUNNER_EXIT_OK;
+        }
+
+        // 7️⃣ Switched on but not ready: say which settings (names only), as before.
         $err('CueRCode email queue: email is switched on, but it cannot send yet: '
             . implode('; ', $settings['problems']) . '. Nothing was sent.');
+
+        foreach ($tidyLines as $tidyLine) {
+            $err($tidyLine);
+        }
+
+        if ($tidyExitCode !== CUERCODE_EMAIL_RUNNER_EXIT_OK) {
+            return $tidyExitCode;          // 3 (database) outranks 4 (email set-up)
+        }
+
         return CUERCODE_EMAIL_RUNNER_EXIT_EMAIL_SETUP;
     }
 
-    // 8️⃣ Send.
-    $result = runEmailQueueBatch($env['gateway'], $env['sender'], [
-        'limit' => $args['limit'],
-        'clock' => $clock,
-    ]);
+    // 8️⃣ Send (the clean-up runs first, inside the batch, under the lock).
+    $result = runEmailQueueBatch($env['gateway'], $env['sender'], $batchOptions);
 
     // 9️⃣ Report.
     $exitCode = emailQueueRunnerExitCode($result);
@@ -2817,11 +3928,15 @@ function emailQueueRunnerMain(array $args, array $env): int
 
     // 🔟 Problems - and anything the owner should know even on a good run
     //    (emails put back after a crash may arrive twice; results that could
-    //    not be recorded may be re-sent) - go to the error stream even with
-    //    --quiet, so cron emails them. A quiet, clean run prints nothing.
+    //    not be recorded may be re-sent; #122/#123: emails skipped because their
+    //    link expired or their details were gone mean people did NOT get an
+    //    email they asked for) - go to the error stream even with --quiet, so
+    //    cron emails them. A quiet, clean run prints nothing.
     if ($exitCode !== CUERCODE_EMAIL_RUNNER_EXIT_OK
         || (int) $result['recovered'] > 0
         || (int) $result['recordFailures'] > 0
+        || (int) $result['expired'] > 0
+        || (int) $result['unsendable'] > 0
     ) {
         foreach ($lines as $line) {
             $err($line);
@@ -2841,14 +3956,23 @@ function emailQueueRunnerMain(array $args, array $env): int
  *
  * It ignores --quiet, because its whole purpose is to show something.
  *
- * @param array    $settings A checkEmailQueueRunnerSettings() result.
- * @param array    $gateway  The queue gateway (only the count operations are used).
- * @param callable $out      Writes one line to the normal stream.
- * @param callable $err      Writes one line to the error stream.
+ * 🧹 #122/#123: it also shows how many emails were skipped on purpose, whether
+ * the expired-link check is on (and the lifetimes it uses), the clean-up
+ * policy (with the retention periods in force), and the NAMES of any
+ * clean-up settings that are not valid - never their values. It still
+ * changes nothing: no clean-up, no claims. The #112 lines are unchanged
+ * (the tests pin the "Queue:" line exactly); the new lines come after it.
+ *
+ * @param array    $settings     A checkEmailQueueRunnerSettings() result.
+ * @param array    $gateway      The queue gateway (only the count operations are used).
+ * @param callable $out          Writes one line to the normal stream.
+ * @param callable $err          Writes one line to the error stream.
+ * @param array    $housekeeping An emailQueueHousekeepingOptions() result; any
+ *                               missing key uses the built-in default.
  *
  * @return int 0 = ready or switched off; 3 = queue unreadable; 4 = switched on but not ready.
  */
-function emailQueueRunnerCheck(array $settings, array $gateway, callable $out, callable $err): int
+function emailQueueRunnerCheck(array $settings, array $gateway, callable $out, callable $err, array $housekeeping = []): int
 {
     $counts = $gateway['countByStatus']();
     $due    = $gateway['countDue']();
@@ -2879,6 +4003,62 @@ function emailQueueRunnerCheck(array $settings, array $gateway, callable $out, c
         . (int) $counts['sending'] . ' being sent; '
         . (int) $counts['sent'] . ' sent; '
         . (int) $counts['failed'] . ' given up.';
+
+    // 🧹 #122/#123 lines - AFTER the "Queue:" line, which stays exactly as it was.
+    $skippedCount = 0;
+
+    if (isset($counts['skipped'])) {
+        $skippedCount = (int) $counts['skipped'];
+    }
+
+    $lines[] = 'Skipped (not sent on purpose - link expired or details removed): ' . $skippedCount . '.';
+
+    // ⏳ The expired-link check, with the lifetimes it will use. Loud when OFF,
+    //    because then an expired link would still be sent.
+    $linkLifetimes = normaliseEmailQueueLinkLifetimes(emailQueueLinkLifetimes());
+
+    if (count($linkLifetimes) > 0) {
+        $lifetimeParts = [];
+
+        foreach ($linkLifetimes as $templateKey => $lifetimeSeconds) {
+            if ($lifetimeSeconds >= 7200 && $lifetimeSeconds % 3600 === 0) {
+                $lifetimeParts[] = $templateKey . ' ' . intdiv($lifetimeSeconds, 3600) . ' hours';
+            } else {
+                $lifetimeParts[] = $templateKey . ' ' . intdiv($lifetimeSeconds, 60) . ' minutes';
+            }
+        }
+
+        $lines[] = 'Expired-link check: on (' . implode(', ', $lifetimeParts) . '); an email is skipped once its link has less than '
+            . intdiv(CUERCODE_EMAIL_QUEUE_LINK_EXPIRY_MARGIN_SECONDS, 60) . ' minutes left.';
+    } else {
+        $lines[] = 'Expired-link check: OFF - the link lifetimes are unknown because fn_auth.php is not loaded, so an expired link would still be sent.'
+            . ' The cron runner loads it through bootstrap.php, so this means a set-up fault.';
+    }
+
+    // 🧹 The clean-up policy in force (the numbers are OUR defaults or a
+    //    validated whole number - never a raw setting value).
+    $retentionDays = CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_DEFAULT;
+
+    if (isset($housekeeping['retentionDays'])) {
+        $retentionDays = (int) $housekeeping['retentionDays'];
+    }
+
+    $givenUpRetentionDays = CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT;
+
+    if (isset($housekeeping['givenUpRetentionDays'])) {
+        $givenUpRetentionDays = (int) $housekeeping['givenUpRetentionDays'];
+    }
+
+    $lines[] = 'Clean-up: one-time links are removed as soon as an email is sent or skipped, and '
+        . CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS . ' hours after it is given up; sent and skipped records are deleted after '
+        . $retentionDays . ' days and given-up ones after ' . $givenUpRetentionDays
+        . ' days. This also runs while sending is switched off.';
+
+    // ⚠️ Settings that are present but not valid - their NAMES only, never values.
+    if (isset($housekeeping['invalidSettings']) && is_array($housekeeping['invalidSettings']) && count($housekeeping['invalidSettings']) > 0) {
+        $lines[] = 'Clean-up settings that are not whole numbers from 1 to ' . CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_MAX
+            . ', so the default is used instead: ' . implode(', ', $housekeeping['invalidSettings']) . '.';
+    }
 
     if ($settings['state'] === 'incomplete') {
         foreach ($lines as $line) {
@@ -2946,6 +4126,12 @@ function emailQueueProductionEnvironment(): array
  * that block sending for every email (switched off, missing settings, Graph
  * refusing our credentials) no longer use up attempts.
  *
+ * 🧹 #122/#123: it also gets the clean-up (under the same lock), using the
+ * retention settings read through getConfig(). ⚠️ The page-shutdown fallback
+ * only calls this while sending is switched ON and fully set up, so a host
+ * with no cron job AND email switched off gets no clean-up - the cron runner
+ * is the one that tidies up while email is off.
+ *
  * The name, parameter and return shape are unchanged from before #112, so any
  * outside caller keeps working. Fail-open: it never throws.
  *
@@ -2973,10 +4159,21 @@ function processEmailQueue(int $max = 2): array
     }
 
     try {
-        $result = runEmailQueueBatch(emailQueueDatabaseGateway(), 'sendEmailNow', [
+        $batchOptions = [
             'limit'             => $max,
             'timeBudgetSeconds' => CUERCODE_EMAIL_QUEUE_SHUTDOWN_TIME_BUDGET_SECONDS,
-        ]);
+        ];
+
+        // 🧹 #122: the clean-up runs inside the batch (under the same lock), so
+        //    it needs the owner's retention settings. Without getConfig() the
+        //    batch simply uses the defaults.
+        if (function_exists('getConfig')) {
+            $housekeeping                         = emailQueueHousekeepingOptions('getConfig');
+            $batchOptions['retentionDays']        = $housekeeping['retentionDays'];
+            $batchOptions['givenUpRetentionDays'] = $housekeeping['givenUpRetentionDays'];
+        }
+
+        $result = runEmailQueueBatch(emailQueueDatabaseGateway(), 'sendEmailNow', $batchOptions);
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
             logError('error', 'Email queue processing failed', $e->getMessage());
@@ -2988,7 +4185,12 @@ function processEmailQueue(int $max = 2): array
     $summary['processed'] = (int) $result['processed'];
     $summary['sent']      = (int) $result['sent'];
     $summary['failed']    = (int) $result['retrying'] + (int) $result['gaveUp'];
-    $summary['skipped']   = (int) $result['skipped'] + (int) $result['released'];
+    // 📌 #122/#123: 'unsendable' is a claimed row this call finished as
+    //    'skipped'. A claimed row skipped for an expired link counts in
+    //    'expired', which mixes rows this call claimed with rows the clean-up
+    //    skipped in bulk (not rows it processed), so it is deliberately left
+    //    out of this older four-number summary.
+    $summary['skipped']   = (int) $result['skipped'] + (int) $result['released'] + (int) $result['unsendable'];
 
     return $summary;
 }

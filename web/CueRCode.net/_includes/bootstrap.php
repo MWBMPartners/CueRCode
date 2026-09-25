@@ -153,6 +153,7 @@ if (file_exists($dbConnectPath)) {
 // ⚙️ Step 3: Load Function Files
 // ==============================================================================
 // Functions are loaded in dependency order:
+// 0. Log masking (no dependencies - #126)
 // 1. Encryption (needed by config)
 // 2. Config (needed by most other functions)
 // 3. Error handler (needs config for debug mode check)
@@ -162,6 +163,13 @@ if (file_exists($dbConnectPath)) {
 
 // 📋 Function files to load (in dependency order)
 $functionFiles = [
+    // 🙈 #126: hides email addresses in text before it is written to PHP's
+    //    error log. It has no dependencies, so it loads first. fn_error_handler.php,
+    //    fn_activity_log.php and fn_email.php ALSO require_once it themselves,
+    //    because each can be loaded without this file (the cron runner loads
+    //    fn_email.php before bootstrap; the tests load single files). require_once
+    //    resolves the real path, so the repeat loads do nothing.
+    'fn_log_mask.php',
     'fn_encryption.php',     // 🔐 Encryption utilities (no dependencies)
     'fn_config.php',         // ⚙️ Configuration manager (depends on encryption)
     'fn_error_handler.php',  // 🚨 Error/exception handling (depends on config for debug mode)

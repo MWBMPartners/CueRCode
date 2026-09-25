@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Email privacy: one-time links are removed after sending, old email records are deleted, expired links are not sent, and addresses stay out of the error log (2026-09-25, #122, #123, #126)
+
+A queued sign-up or password-reset email carries a one-time link. The queue
+table kept that usable link, and every email address, for ever - even though
+the token tables themselves only ever store a scrambled (hashed) copy.
+
+- **Links are removed once an email is sent.** The same database update that
+  marks an email "sent" now also removes its stored details, so a sent email
+  never keeps its link. Emails deliberately not sent ("skipped") lose them the
+  same way. An email that was **given up** keeps its link for 24 hours after it
+  was queued, so the owner can still re-send it after an outage (there is no
+  "send me a new link" button yet, so without this a person caught by an
+  outage would be locked out); after that it is removed.
+- **Old email records are deleted.** Sent and skipped records go after
+  **30 days**, given-up ones after **90 days** - two new settings,
+  `email_queue_retention_days` and `email_queue_failed_retention_days`. Only
+  whole numbers from 1 to 3650 count; anything else (including a typo, which
+  the settings reader turns into 0) uses the default, never "delete
+  everything". Emails still waiting or being sent are never deleted.
+- **A cleared email can never go out with an empty link.** If a cleared email
+  is put back in the queue by hand, or its link is missing, it is marked
+  "skipped" with a plain-English reason instead of being sent broken.
+- **Expired links are not sent (#123).** An email whose link has expired, or
+  has under 2 minutes left, is marked "skipped" instead. The age is measured
+  on the database's own clock, against the real link lifetimes in
+  `fn_auth.php` (24 hours for verification, 60 minutes for password reset).
+- **When the clean-up runs:** inside every queue run, only while that run
+  holds the queue lock, and before anything is sent. It also runs while email
+  sending is switched off. A failure is reported (exit code 3) but never
+  stops sending. `--check` now shows the clean-up policy, the expired-link
+  check and how many emails were skipped.
+- **No email addresses in PHP's error log (#126).** All four error-log
+  fallbacks (the activity logger's two, `logEmailAttempt()`'s and
+  `logError()`'s) now go through one new helper,
+  `_functions/fn_log_mask.php`, which replaces every address with
+  `[address]`. On the command line that log is the cron email.
+- **Tests:** 2707/2707 assertions across 25 test files (195 new in
+  `tests/test_email_queue_runner.php`, 46 in the new `tests/test_log_mask.php`;
+  every earlier assertion passes unedited). The real-database check passed
+  every scenario, including the new ones (9-14 and 10b), on MySQL 8.4 and
+  8.0 and MariaDB 10.11 and 10.6.
+- **Existing installs:** no database change is needed - the defaults apply
+  without the two new setting rows. `DEV_NOTES.md` ("Email queue clean-up and
+  privacy") has the SQL to add them so the periods can be changed. The live
+  table's `paramsJSON` column comment keeps its old (wrong) wording until the
+  upgrade mechanism exists (#113); no code reads it.
+- **Owner decisions** were built with the recommended answers (30/90 days;
+  given-up emails keep their link for 24 hours) and can be changed later.
+- Review: independent Opus verification and Codex review pending.
+
 ### Fixed - A deploy using an SSH key uploaded nothing; the server's identity is now checked (2026-09-25, #127)
 
 Deploy is switched off today (`SFTP_ENABLED` isn't `true`), so this hasn't

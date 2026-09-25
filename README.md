@@ -199,7 +199,8 @@ The queue runner is `web/CueRCode.net/_includes/cron/process_email_queue.php`. I
 
 - Run it once by hand with `--check` first: it tests the database and the email settings and shows the queue counts, without sending anything.
 - `--quiet` means it prints nothing unless something needs attention, so cron only emails you about problems.
-- Exit codes: `0` fine · `1` could not start or crashed · `2` bad option · `3` database problem · `4` sending blocked by the settings or Microsoft Graph, or an earlier run looks stuck · `5` gave up on at least one email · `255` PHP itself stopped the run part-way (for example out of memory; the runner prints a note, and any email it was sending is recovered after 10 minutes).
+- It also tidies up: one-time links are removed from the database as soon as an email is sent; emails whose link has expired are skipped rather than sent; old email records are deleted after 30 days (given-up ones after 90). This runs even while email sending is switched off.
+- Exit codes: `0` fine · `1` could not start or crashed · `2` bad option · `3` database problem, or the clean-up failed (sending not affected) · `4` sending blocked by the settings or Microsoft Graph, or an earlier run looks stuck · `5` gave up on at least one email · `255` PHP itself stopped the run part-way (for example out of memory; the runner prints a note, and any email it was sending is recovered after 10 minutes).
 - The PHP path and the DreamHost menu names have **not** been checked against the live server yet - confirm them when setting up. Full steps: [DEV_NOTES.md → "Email queue runner"](DEV_NOTES.md#email-queue-runner-_includescronprocess_email_queuephp-112).
 
 ## 🔐 User Accounts (Epic E3 stages 1, 2a & 2b)
@@ -245,9 +246,9 @@ AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.cl
 php tests/run.php
 ```
 
-runs the full dependency-free characterization suite - 2466 assertions across 24 test files, no database or Composer required.
+runs the full dependency-free characterization suite - 2707 assertions across 25 test files, no database or Composer required.
 
-There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL container - see [tests/README.md](tests/README.md).
+There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL or MariaDB container - see [tests/README.md](tests/README.md).
 
 ## 📄 License
 

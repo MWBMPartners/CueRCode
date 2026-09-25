@@ -246,7 +246,7 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
    - Set **"Email output"** to your own address. With `--quiet`, the job prints nothing on a normal run, so you only get an email when something needs attention. While sending is blocked (exit code 4) that means **an email every minute** - an intended outage alarm; pause the job while you fix the cause if it gets too noisy.
    - If the panel offers **"Use locking"** (or "prevent overlapping"), **leave it unticked**. The runner has its own lock, and the panel's lock would stop a new run from even starting - so the runner could never report that an earlier run is stuck.
    - **Run it once by hand with `--check` first** (from SSH, or as a one-off cron job): it tests the database and the settings and shows the queue counts, without sending anything.
-   - Fallback for a host without cron: set `email_queue_autoprocess=1`. Since #112 this really works - `bootstrap.php` calls `maybeProcessEmailQueueOnShutdown()` on web requests only - and it sends up to 2 emails at the end of an ordinary page visit, using the same duplicate-proof code as the cron job. It is OFF by default because it adds work to page visits, only runs when people visit (retries stall on a quiet site), and on a server without `fastcgi_finish_request()` the visitor's page keeps loading while the emails send. It is safe (just pointless) to leave it on alongside cron.
+   - Fallback for a host without cron: set `email_queue_autoprocess=1`. Since #112 this really works - `bootstrap.php` calls `maybeProcessEmailQueueOnShutdown()` on web requests only - and it sends up to 2 emails at the end of an ordinary page visit, using the same duplicate-proof code as the cron job. It is OFF by default because it adds work to page visits, only runs when people visit (retries stall on a quiet site), and on a server without `fastcgi_finish_request()` the visitor's page keeps loading while the emails send. It is safe (just pointless) to leave it on alongside cron. The fallback also runs the clean-up (#122/#123, under the same lock), but only when sending is switched on - so a host with **no cron job and email switched off gets no clean-up** at all.
 
 **Queue + retry (#112):** `queueEmail()` inserts a `tblEmailQueue` row (status `queued`, `nextAttemptAt = NOW()`). The runner (`runEmailQueueBatch()`, reached from the cron script or from `processEmailQueue()`) then:
 
@@ -258,6 +258,8 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
 - **Temporary Graph trouble** (HTTP 429, 408, 5xx, a network error or timeout) uses an attempt with back-off and **stops the run early**, so a struggling service is not hammered. Problems with one message (e.g. HTTP 400, a template that will not render) use an attempt and the run carries on.
 - **Takes a named database lock** (`GET_LOCK`, one per database) so only one runner works at a time, and raises a **stall alarm** (exit 4) if the lock is held while emails have been waiting more than 10 minutes.
 - **Stays inside its minute**: at most 20 emails per run (`--limit`, 1-50) and no new email is claimed after 45 seconds.
+- **Skips expired links (#123)**: a waiting email whose one-time link has expired, or has under 2 minutes left, is marked `skipped`, not sent - it would only deliver a dead link. The age is measured on the **database's** clock from `createdAt`, against `fn_auth.php`'s own lifetimes (24 hours for verification, 60 minutes for password reset). It is done in bulk before sending, with a per-email check as a backstop.
+- **Keeps only what it needs (#122)**: the stored details (`paramsJSON`, which can include the one-time link) are cleared when an email is sent or skipped, and 24 hours after it is given up. Old records are deleted (30 days for sent/skipped, 90 for given up). All of this happens under the lock, before sending - see "Email queue clean-up and privacy" below.
 
 #### Email queue runner (`_includes/cron/process_email_queue.php`, #112)
 
@@ -275,23 +277,25 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Finished normally - including nothing to send, email switched off, and another run already working. |
+| 0 | Finished normally - including nothing to send, email switched off, and another run already working (the clean-up still runs while email is switched off). |
 | 1 | Could not start (for example a missing `_auth_keys/auth_creds.php`) or stopped by an unexpected error. |
 | 2 | Bad command-line option. |
-| 3 | Database problem (cannot connect, queue table unreadable, lock error). |
+| 3 | Database problem (cannot connect, queue table unreadable, lock error), or the clean-up of old email records failed (sending is not affected). |
 | 4 | Sending is blocked by the settings or by Microsoft Graph, or an earlier run seems stuck ("stalled"). |
 | 5 | Finished, but gave up on at least one email after all its attempts. |
 | 255 | PHP itself stopped the run part-way (a fatal error such as running out of memory). The runner prints a one-line note; any email it was sending is put back automatically after 10 minutes. Check the PHP error log. |
 
-**What it prints:** one summary line of counts only, for example `CueRCode email queue: sent 3, will retry 1, gave up on 0, 5 still waiting (2.4 seconds).`, plus a plain-English line for anything unusual. With `--quiet` it prints nothing unless the exit code is not 0, stuck emails were put back (they may arrive twice), or a result could not be recorded - those go to the error stream so cron emails them. **Its own output never includes** an email address, subject, body, one-time link, secret, setting value or anybody's ID; every line also passes through an address-masking helper as a backstop. **Two things outside the runner's control can still reach the cron email**, because on the command line PHP's error log is the terminal: (1) if the database misbehaves, the site's shared error logger falls back to PHP's error log, and a database driver message there can include the database user and host; (2) if writing the *activity log* fails mid-run, the shared activity logger's fallback line includes the recipient's **email address and subject** (tracked in #126).
+**What it prints:** one summary line of counts only, for example `CueRCode email queue: sent 3, will retry 1, gave up on 0, 5 still waiting (2.4 seconds).`, plus a plain-English line for anything unusual. With `--quiet` it prints nothing unless the exit code is not 0, stuck emails were put back (they may arrive twice), a result could not be recorded, or (since #122/#123) emails were **skipped because their link expired** or **because their details were already removed** - people did not get an email they asked for. Those go to the error stream so cron emails them. **Its own output never includes** an email address, subject, body, one-time link, secret, setting value or anybody's ID; every line also passes through an address-masking helper as a backstop. **Two things outside the runner's control can still reach the cron email**, because on the command line PHP's error log is the terminal: (1) if the database misbehaves, the site's shared error logger falls back to PHP's error log, and a database driver message there can include the database user and host (never the password); (2) if writing the activity log fails mid-run, the shared activity logger's fallback line includes the subject; **email addresses are hidden** (`[address]`) since #126.
 
 **What it cannot do:**
 
 - It is **"at least once", not "exactly once"**: if Microsoft accepts an email but the runner dies (or the database fails) before recording "sent", the row is recovered after 10 minutes and sent again. Recovery counts that as an attempt, so repeats are capped - in practice at most one extra copy.
 - Graph's `202 Accepted` means accepted, not delivered; bounces are not tracked.
 - The named lock relies on MySQL named locks working on DreamHost's MySQL servers - not verified live, but four existing features already rely on the same feature, and the row claim is the independent backstop.
-- It does not check whether a link inside a queued email has expired (verification links last 24 hours, reset links 60 minutes), so after a long outage it may send dead links.
-- It does not delete old rows or clear the stored template parameters (which include the one-time links) - see SECURITY.md's 2026-09-25 open items.
+- A given-up email keeps its one-time link for 24 hours after it was queued - deliberately, so it can still be re-sent after an outage (#122, owner decision).
+- The clean-up needs the queue lock, so it runs at most once a minute, and each clean-up step handles at most 500 rows per run (the rest follow on the next run).
+- It does not touch the activity log (`tblActivityLog`), which still keeps email events with recipients' addresses and no time limit (a separate follow-up).
+- On existing installs the live table's column comments keep their old wording (including the wrong "never stores secrets" note on `paramsJSON`) until the upgrade mechanism exists (#113). The code never reads those comments.
 
 **Re-sending emails that were given up** (phpMyAdmin → the site's database → SQL):
 
@@ -303,7 +307,52 @@ WHERE status = 'failed' AND createdAt > UTC_TIMESTAMP() - INTERVAL 1 DAY;
 
 `nextAttemptAt = NULL` means "due now", and `UTC_TIMESTAMP()` is used because the site stores times in UTC while phpMyAdmin's `NOW()` uses the server's own time zone. Verification links last 24 hours and reset links 60 minutes, so re-sending older emails is pointless - the person needs to ask for a new one.
 
-**Testing:** `tests/test_email_queue_runner.php` (part of `php tests/run.php`) drives the whole flow with an in-memory stand-in for the table, including two runners interleaved mid-send with and without the lock. The optional `tests/integration/email_queue_real_mysql.php` proves the real SQL, the real lock and two real runner processes against a throwaway MySQL container - see `tests/README.md`.
+Since #122/#123: a re-queued email whose link has expired is skipped automatically (not sent), and a given-up email's details are removed 24 hours after it was queued, so re-queuing anything older does nothing useful - the person must ask for a new link.
+
+#### Email queue clean-up and privacy (#122, #123)
+
+A queued sign-up or password-reset email carries a **one-time link** (with its secret token) in its stored details, `tblEmailQueue.paramsJSON`. The token tables only ever store a hash of the token, so before #122 the queue table quietly undid that protection by keeping the usable link - forever, because nothing ever deleted a row. The queue runner now keeps only what it needs:
+
+| When | `paramsJSON` (may hold the link) | The row itself |
+| --- | --- | --- |
+| queued, waiting for a retry, put back because sending is blocked, or recovered after a crash | **kept** (still needed to send) | kept |
+| **sent** | **cleared** in the same database update that marks it sent | deleted **30 days** after it was queued (setting) |
+| **skipped** (link expired, or its details were already gone) | cleared in the same update | deleted after 30 days |
+| **given up** (failed, no attempts left) | kept **24 hours** after it was queued, so it can be re-sent after an outage, then cleared | deleted after **90 days** (setting) |
+
+What stays on a finished row, for support: the recipient's address and name, the template, the subject, the status, the attempts, the last error and the times. That answers "did my email go out, when, and if not, why?". The address is deliberately **not** masked on the row (that would make the question unanswerable); the deletion limits how long it is kept instead.
+
+- **Why `createdAt`** is the clock for deleting: it never changes, it has an index (so the delete only walks the old end of the table), and every email reaches its final state within about a day of being queued. `updatedAt` changes whenever anything touches a row, and `sentAt` only exists for sent rows.
+- **Nothing waiting or in flight is ever deleted.** The two delete statements only match `sent`/`skipped` rows, and `failed` rows with no attempts left. Rows that are `queued`, `sending`, or `failed` with attempts left (code from before #112 wrote that for rows still being retried) are never deleted. The tests check the delete statements never mention those statuses, and a real-database check proves it on MySQL and MariaDB.
+- **When it runs:** inside every queue run, only while that run holds the queue lock, and **before** anything is claimed (so an expired link is skipped, never sent). It also runs while email sending is **switched off**, or switched on with settings missing - keeping data only as long as needed must not depend on whether sending is on. At most 500 rows per step per run. A failed clean-up step is reported with exit code 3 but never stops sending.
+- **What "skipped" means:** the email was deliberately not sent. The `lastError` column says why, in one of three texts:
+  - `Not sent: its one-time link had expired, or had less than 2 minutes left, before it could be sent. The person needs to ask for a new link.`
+  - `Not sent: its stored details (including any one-time link) had already been removed, so it can no longer be sent. The person needs to ask for a new email.`
+  - `Not sent: the one-time link this email needs is missing, so it would only have delivered a broken email.`
+
+  The last two protect against a cleared email being put back to `queued` by hand (for example by the re-send runbook above): the templates quietly show an empty link when it is missing, so without this guard such an email would go out broken and be reported as sent.
+- **Expired links:** measured on the database's clock (`createdAt` against `NOW()`), never PHP's - PHP's clock follows the `site_timezone` setting while the database stores UTC. The lifetimes come from `fn_auth.php`'s own constants, so there is one place to change them. An email is skipped once its link has **under 2 minutes left**, because a run can take over a minute to reach it.
+- **The two settings** (`tblSettings`, group `email`, type `integer`): `email_queue_retention_days` (default **30**) for sent and skipped records, and `email_queue_failed_retention_days` (default **90**) for given-up ones. Only whole numbers from 1 to 3650 are accepted; anything else (including 0, which is what a typo becomes) means the default is used. There is deliberately no "keep forever" value. `php process_email_queue.php --check` shows the periods in force, whether the expired-link check is on, how many emails were skipped, and the **name** (never the value) of any setting that is not valid.
+- **Existing installs** (there is no upgrade script yet, #113): nothing needs doing - the defaults apply when the two setting rows are missing. To change a period, first add the rows (phpMyAdmin → the site's database → SQL; a "Duplicate entry" error just means the row is already there):
+
+  ```sql
+  INSERT INTO tblSettings (settingGroup, settingKey, settingValue, settingType, isSensitive, isEditable, description) VALUES
+  ('email', 'email_queue_retention_days', '30', 'integer', 0, 1, 'Days to keep a SENT or SKIPPED email record in tblEmailQueue before the queue runner deletes it (#122), counted from when it was queued. Whole number 1-3650; anything else means the default of 30 is used.'),
+  ('email', 'email_queue_failed_retention_days', '90', 'integer', 0, 1, 'Days to keep a GIVEN-UP (failed) email record before the queue runner deletes it (#122) - longer than sent ones, because support is asked about these. Whole number 1-3650; anything else means the default of 90 is used.');
+  ```
+
+  Then change a value with, for example, `UPDATE tblSettings SET settingValue = '60' WHERE settingKey = 'email_queue_retention_days';`.
+
+- **Rows sent before this change** that still hold their details: normally there are none, because #112 (the first code that ever sent the queue) and this change ship together. If there are any, this one-off SQL clears them (`updatedAt = updatedAt` keeps the times as they were):
+
+  ```sql
+  UPDATE tblEmailQueue SET paramsJSON = NULL, updatedAt = updatedAt WHERE status IN ('sent', 'skipped') AND paramsJSON IS NOT NULL;
+  ```
+
+- **The live column comment** on `paramsJSON` (which wrongly says it never stores secrets) is unchanged on existing installs. It is documentation only - no code reads it - and is tracked for the upgrade mechanism (#113). Fresh installs get the corrected comment.
+- **Limits:** email addresses in PHP's error log are masked by a plain-ASCII pattern (`_functions/fn_log_mask.php`, #126), so an address with non-English letters before the `@` may be left partly visible there. The activity log (`tblActivityLog`) still keeps email events with the recipient's address and no time limit, and deleting an account does not touch those rows or the queue (a follow-up).
+
+**Testing:** `tests/test_email_queue_runner.php` (part of `php tests/run.php`) drives the whole flow with an in-memory stand-in for the table, including two runners interleaved mid-send with and without the lock, and (since #122/#123) the clean-up, the expired-link checks and the "never send a cleared email" guard. `tests/test_log_mask.php` proves the four error-log fallbacks hide addresses (#126), running each for real in a separate PHP process. The optional `tests/integration/email_queue_real_mysql.php` proves the real SQL, the real lock and two real runner processes against a throwaway MySQL or MariaDB container - including, since #122/#123, the real clean-up updates and deletes (scenarios 9-14 and 10b) - see `tests/README.md`.
 
 **Templates:** `_includes/email_templates/{key}.php` (currently `verification`, `password_reset`, `invitation`, `receipt` - the allowlist enforced by `isValidEmailTemplateKey()`) each `return [$subject, $htmlBody];` and use the shared `emailRenderShell()` wrapper for consistent branding. Every interpolated parameter is escaped via `emailEscape()` (`htmlspecialchars(..., ENT_QUOTES, 'UTF-8')`) - proven by an XSS-injection test per template. **These templates use nested `<table>` layout - a deliberate, EMAIL-ONLY exception** to the project's no-`<table>`-for-layout house rule: email clients (Outlook desktop's Word rendering engine especially) have extremely limited CSS support and effectively require table layout for reliable cross-client rendering. This does not relax the rule anywhere else in the codebase.
 

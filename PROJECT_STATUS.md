@@ -13,7 +13,7 @@
 
 **Built but switched off** (code exists, kill-switches are off until the owner acts):
 - SSO (Microsoft 365 #19, Google #20) — needs the owner to register OAuth apps and enter credentials.
-- Email sending (Microsoft Graph, #29) — needs the owner's M365 setup and the DreamHost cron job for the new queue runner (#112, built 2026-09-25); not yet live-tested.
+- Email sending (Microsoft Graph, #29) — needs the owner's M365 setup and the DreamHost cron job for the new queue runner (#112, built 2026-09-25); not yet live-tested. Since #122/#123/#126 (2026-09-25) the queue also removes one-time links after sending, deletes old records (30/90 days), skips expired links and keeps addresses out of the error log.
 - Flexible pricing (price points, discounts, lifetime plans, PAYG credits, #70) — tables and helpers built, three kill-switches seeded off.
 - Dynamic-redirect QR codes (Stage S0/S1, #27/#71/#33) — database and per-code destination API exist, but the public `/r/{uuid}` route does not, so no dynamic code actually redirects anyone yet.
 - Barcode generation (#69) — live via the API, but gated behind `barcode_generation` (currently on for every plan by default) and has no web UI tab yet.
@@ -37,6 +37,7 @@
 - A format of `'jxl'` quietly returns PNG (#115; also #40).
 - The installer doesn't check for the zip/bcmath/curl add-ons (#113; also #13).
 - `beta` and `main` have no `ci.yml` (#115 covers `beta`).
+- The activity log keeps email events, with recipients' addresses, with no time limit, and deleting an account does not touch them (tracked in #129; found by #122).
 
 ---
 

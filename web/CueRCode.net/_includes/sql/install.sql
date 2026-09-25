@@ -441,9 +441,25 @@ CREATE TABLE IF NOT EXISTS `tblOrganisations` (
 --   queued  -> sending -> failed             (failure, attempts reaches maxAttempts)
 --   sending -> queued (put back unchanged when sending is blocked by settings/Graph problems - no attempt used)
 --   sending -> queued/failed (left 'sending' > 10 minutes, e.g. the runner stopped mid-send - counted as one attempt)
+--   queued/failed -> skipped   (its one-time link expired, or had under 2 minutes left, before it could be sent - #123)
+--   sending -> skipped         (its stored details were already removed, or its one-time link is missing - it can never be sent)
 --
 -- updatedAt doubles as "claimed at" for stuck-row detection: it is refreshed
 -- on every change, so for a row in 'sending' it records when it was claimed.
+--
+-- 🧹 Clean-up (#122), done by the queue runner inside its lock, before it
+-- sends anything:
+--   - paramsJSON can hold a one-time sign-up or password-reset link, so it is
+--     set to NULL in the same UPDATE that marks an email sent or skipped, and
+--     24 hours after an email is given up (the window in which the owner may
+--     still re-send it after an outage).
+--   - Finished rows are deleted, counted from createdAt: sent and skipped
+--     rows after email_queue_retention_days (default 30), given-up rows
+--     (failed, no attempts left) after email_queue_failed_retention_days
+--     (default 90).
+--   - Rows still waiting to be sent, or being sent, are never deleted.
+--   - Existing installs keep their old column comments until the upgrade
+--     mechanism (#113) exists; the code does not read the comments.
 --
 -- Backoff schedule: nextAttemptAt = NOW() + (2 ^ attempts) MINUTES, computed by
 -- the pure/unit-tested computeEmailBackoffMinutes() helper in fn_email.php.
@@ -458,7 +474,7 @@ CREATE TABLE IF NOT EXISTS `tblEmailQueue` (
     `toAddress`       VARCHAR(320)      NOT NULL                 COMMENT '📧 Recipient email address (RFC 5321 max length 320)',
     `toName`          VARCHAR(255)      NULL                     COMMENT '📝 Recipient display name (optional)',
     `templateKey`     VARCHAR(64)       NOT NULL                 COMMENT '🏷️ Template identifier (e.g., verification, password_reset, invitation, receipt) - must match an allowlisted _includes/email_templates/{key}.php file',
-    `paramsJSON`      JSON              NULL                     COMMENT '📦 Template parameters as JSON (rendered fresh at send time; NEVER stores rendered HTML or secrets)',
+    `paramsJSON`      JSON              NULL                     COMMENT '📦 Template parameters as JSON, used only to render the email at send time (never rendered HTML). They can include a one-time sign-up or password-reset link, so they are set to NULL as soon as the email is sent or skipped, and 24 hours after it is given up (#122)',
     `subject`         VARCHAR(255)      NOT NULL                 COMMENT '📝 Email subject line (rendered at queue time for admin visibility)',
     `status`          ENUM(
                           'queued',
@@ -466,12 +482,12 @@ CREATE TABLE IF NOT EXISTS `tblEmailQueue` (
                           'sent',
                           'failed',
                           'skipped'
-                      )                 NOT NULL DEFAULT 'queued' COMMENT '📊 Current lifecycle status of this queued email',
+                      )                 NOT NULL DEFAULT 'queued' COMMENT '📊 Current lifecycle status of this queued email (skipped = deliberately not sent: its one-time link had expired, or its details were already removed - #122/#123)',
     `attempts`        INT UNSIGNED      NOT NULL DEFAULT 0       COMMENT '🔁 Number of send attempts made so far',
     `maxAttempts`     INT UNSIGNED      NOT NULL DEFAULT 5       COMMENT '🔁 Maximum send attempts before permanently marking failed',
     `lastError`       TEXT              NULL                     COMMENT '⚠️ Last error message (HTTP status/Graph error code only - never logs credentials or full response bodies)',
     `nextAttemptAt`   DATETIME          NULL                     COMMENT '⏰ Earliest time this row is eligible to be picked up again (exponential backoff after a failure)',
-    `createdAt`       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Row creation (queue) timestamp',
+    `createdAt`       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '📅 Row creation (queue) timestamp - also the clock for expired links (#123) and for deleting old records (#122)',
     `updatedAt`       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '📅 Last modification timestamp',
     `sentAt`          DATETIME          NULL                     COMMENT '📅 Timestamp the email was successfully accepted by Microsoft Graph (HTTP 202)',
 

@@ -12,6 +12,17 @@
  * real named lock (GET_LOCK), and two real runner PROCESSES working on the
  * same queue at the same time without ever sending an email twice.
  *
+ * Scenarios: 0 set-up checks (including, since #122/#123, that the real
+ * start-up code gives the runner fn_auth.php's link lifetimes and the seeded
+ * clean-up settings); 1 claim rules; 2 two runners, lock on; 3 two runners,
+ * lock off; 4 retry; 5 stuck recovery; 6 sending blocked; 7 busy and stalled;
+ * 8 counts; and for #122/#123: 9 details cleared on send; 10 expired links
+ * skipped (the real bulk UPDATE); 10b the per-email expiry check (real
+ * TIMESTAMPDIFF); 11 given-up details cleared after 24 hours with updatedAt
+ * kept; 12 old records deleted (the real DELETEs - and nothing waiting is
+ * touched); 13 cleared details are never sent; 14 the runner's main with
+ * email switched off still tidies up and sends nothing.
+ *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
  *
@@ -39,7 +50,7 @@
  * @package     CueRCode
  * @subpackage  Tests
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       2026-09-25 (#112)
  * @see         tests/README.md - "Optional real-database check (email queue)"
  * @see         web/CueRCode.net/_functions/fn_email.php - runEmailQueueBatch() and the queue SQL
@@ -354,6 +365,23 @@ function itQueue(int $itCount): array
 }
 
 /**
+ * 📥 Queue ONE email of any template through the real queueEmail(); returns its ID.
+ * (#122/#123 scenarios need password-reset and receipt rows, not just
+ * verification ones.) The address must still be a ".invalid" test address
+ * matching itAddressPattern, so itClear() removes it.
+ */
+function itQueueOne(string $itAddress, string $itTemplateKey, array $itParams): int
+{
+    $itId = queueEmail($itAddress, $itTemplateKey, $itParams);
+
+    if ($itId === false) {
+        throw new \RuntimeException('queueEmail() failed for a ' . $itTemplateKey . ' test row');
+    }
+
+    return $itId;
+}
+
+/**
  * 📄 Read one queue row.
  */
 function itRow(int $itId): array
@@ -365,6 +393,21 @@ function itRow(int $itId): array
     }
 
     return $itRows[0];
+}
+
+/**
+ * 🏷️ Read one queue row's status ('' when the row does not exist - for
+ * example because the clean-up deleted it).
+ */
+function itStatus(int $itId): string
+{
+    $itRow = itRow($itId);
+
+    if (!isset($itRow['status'])) {
+        return '';
+    }
+
+    return (string) $itRow['status'];
 }
 
 /**
@@ -516,6 +559,14 @@ echo 'Server: ' . itSelect('SELECT VERSION() AS `v`')[0]['v'] . PHP_EOL;
 itCheck('0 set-up', checkEmailQueueDatabase() === null, 'checkEmailQueueDatabase() finds the database and the queue table');
 $itLockName = itSelect('SELECT ' . CUERCODE_EMAIL_QUEUE_LOCK_NAME_SQL . ' AS `lockName`', 's', [CUERCODE_EMAIL_QUEUE_LOCK_PREFIX])[0]['lockName'];
 itCheck('0 set-up', strlen((string) $itLockName) === 48 && str_starts_with((string) $itLockName, CUERCODE_EMAIL_QUEUE_LOCK_PREFIX), 'the lock name is 48 characters and starts with the prefix');
+// ⏳ #123: under the REAL start-up code the runner gets fn_auth.php's lifetimes.
+itCheck('0 set-up', emailQueueLinkLifetimes() === ['verification' => 86400, 'password_reset' => 3600], "emailQueueLinkLifetimes() gives fn_auth.php's lifetimes (24 hours, 60 minutes) under the real bootstrap");
+// 🧹 #122: the two seeded clean-up settings, read through the real getConfig() (integer type).
+itCheck(
+    '0 set-up',
+    emailQueueHousekeepingOptions('getConfig') === ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => []],
+    'emailQueueHousekeepingOptions(getConfig) reads the seeded 30 / 90 days, with no invalid settings'
+);
 
 // ==============================================================================
 // 1️⃣ Claim rules on the real SQL
@@ -681,6 +732,174 @@ $itOverdueBefore = countOverdueEmailQueueRows(10);
 itExec('UPDATE `tblEmailQueue` SET `nextAttemptAt` = DATE_SUB(NOW(), INTERVAL 11 MINUTE) WHERE `emailID` = ?', 'i', [$itIds[0]]);
 $itOverdueAfter = countOverdueEmailQueueRows(10);
 itCheck('8 counts', is_int($itOverdueBefore) && $itOverdueAfter - $itOverdueBefore === 1, 'an email due for 11 minutes counts as overdue (stall alarm)');
+
+// ==============================================================================
+// 9️⃣ #122: the details (which hold the one-time link) are cleared on send
+// ==============================================================================
+echo PHP_EOL . 'Scenario 9: details cleared on send (#122)' . PHP_EOL;
+itClear();
+$itIds       = itQueue(1);
+$itSendCalls = 0;
+runEmailQueueBatch($itGateway, $itOkSender, []);
+$itRow = itRow($itIds[0]);
+itCheck('9 details cleared on send', $itRow['status'] === 'sent', 'the email is sent');
+itCheck('9 details cleared on send', $itRow['paramsJSON'] === null, 'its paramsJSON is NULL in the database');
+$itIds = itQueue(1);
+runEmailQueueBatch($itGateway, $itBadRecipientSender, []);
+$itRow = itRow($itIds[0]);
+itCheck('9 details cleared on send', $itRow['status'] === 'queued', 'a failed attempt puts the email back for a retry');
+itCheck('9 details cleared on send', str_contains((string) $itRow['paramsJSON'], 'token=IT'), 'a retry keeps its paramsJSON (the link is still there for the next attempt)');
+
+// ==============================================================================
+// 🔟 #123: expired links are skipped by the real bulk UPDATE
+// ==============================================================================
+echo PHP_EOL . 'Scenario 10: expired links skipped (#123)' . PHP_EOL;
+itClear();
+$itV1 = itQueueOne('it-01@it.cuercode.invalid', 'verification', ['verificationUrl' => 'https://cuercode.invalid/verify-email?token=ITV1']);
+$itV2 = itQueueOne('it-02@it.cuercode.invalid', 'verification', ['verificationUrl' => 'https://cuercode.invalid/verify-email?token=ITV2']);
+$itR1 = itQueueOne('it-03@it.cuercode.invalid', 'password_reset', ['resetUrl' => 'https://cuercode.invalid/reset-password?token=ITR1']);
+$itR2 = itQueueOne('it-04@it.cuercode.invalid', 'password_reset', ['resetUrl' => 'https://cuercode.invalid/reset-password?token=ITR2']);
+$itR3 = itQueueOne('it-05@it.cuercode.invalid', 'password_reset', ['resetUrl' => 'https://cuercode.invalid/reset-password?token=ITR3']);
+itExec('UPDATE `tblEmailQueue` SET `createdAt` = DATE_SUB(NOW(), INTERVAL 24 HOUR) WHERE `emailID` = ?', 'i', [$itV1]);
+itExec('UPDATE `tblEmailQueue` SET `createdAt` = DATE_SUB(NOW(), INTERVAL 59 MINUTE) WHERE `emailID` = ?', 'i', [$itR1]);
+itExec('UPDATE `tblEmailQueue` SET `createdAt` = DATE_SUB(NOW(), INTERVAL 57 MINUTE) WHERE `emailID` = ?', 'i', [$itR3]);
+$itSendCalls = 0;
+$itResult    = runEmailQueueBatch($itGateway, $itOkSender, []);
+
+foreach (['V1 (24 hours old)' => $itV1, 'R1 (59 minutes old)' => $itR1] as $itName => $itId) {
+    $itRow = itRow($itId);
+    itCheck('10 expired links', $itRow['status'] === 'skipped', $itName . ' is skipped');
+    itCheck('10 expired links', $itRow['paramsJSON'] === null, $itName . ' has its paramsJSON cleared');
+    itCheck('10 expired links', str_starts_with((string) $itRow['lastError'], 'Not sent: its one-time link had expired'), $itName . ' has a plain-English lastError');
+}
+
+foreach (['V2 (fresh)' => $itV2, 'R2 (fresh)' => $itR2, 'R3 (57 minutes old, 3 minutes left)' => $itR3] as $itName => $itId) {
+    itCheck('10 expired links', itRow($itId)['status'] === 'sent', $itName . ' is sent');
+}
+
+itCheck('10 expired links', $itResult['expired'] === 2 && $itSendCalls === 3, 'expired 2 and exactly 3 sends (expired ' . (int) $itResult['expired'] . ', sends ' . $itSendCalls . ')');
+
+// ==============================================================================
+// 🔟b #123: the per-email check on real SQL (the clean-up is skipped without the lock)
+// ==============================================================================
+echo PHP_EOL . 'Scenario 10b: per-email expiry check on real SQL (#123)' . PHP_EOL;
+itClear();
+$itIds = itQueue(1);
+itExec('UPDATE `tblEmailQueue` SET `createdAt` = DATE_SUB(NOW(), INTERVAL 24 HOUR) WHERE `emailID` = ?', 'i', [$itIds[0]]);
+$itSendCalls = 0;
+$itResult    = runEmailQueueBatch($itGateway, $itOkSender, ['useLock' => false]);
+$itRow       = itRow($itIds[0]);
+itCheck('10b per-email expiry', $itRow['status'] === 'skipped' && $itRow['paramsJSON'] === null, 'skipped through the re-read (ageSeconds from TIMESTAMPDIFF), details cleared');
+itCheck('10b per-email expiry', $itResult['expired'] === 1 && $itSendCalls === 0, 'expired 1 and nothing sent');
+
+// ==============================================================================
+// 1️⃣1️⃣ #122: given-up details are cleared after 24 hours; updatedAt is kept
+// ==============================================================================
+echo PHP_EOL . 'Scenario 11: given-up details cleared after 24 hours (#122)' . PHP_EOL;
+itClear();
+$itIds = itQueue(2);
+itExec(
+    "UPDATE `tblEmailQueue` SET `status` = 'failed', `attempts` = 5, `createdAt` = DATE_SUB(NOW(), INTERVAL 25 HOUR), `updatedAt` = DATE_SUB(NOW(), INTERVAL 25 HOUR) WHERE `emailID` = ?",
+    'i',
+    [$itIds[0]]
+);
+itExec(
+    "UPDATE `tblEmailQueue` SET `status` = 'failed', `attempts` = 5, `createdAt` = DATE_SUB(NOW(), INTERVAL 23 HOUR), `updatedAt` = DATE_SUB(NOW(), INTERVAL 23 HOUR) WHERE `emailID` = ?",
+    'i',
+    [$itIds[1]]
+);
+$itResult  = runEmailQueueBatch($itGateway, $itOkSender, []);
+$itRowOld  = itRow($itIds[0]);
+$itRowNew  = itRow($itIds[1]);
+$itAgeRows = itSelect('SELECT TIMESTAMPDIFF(HOUR, `updatedAt`, NOW()) AS `hoursSince` FROM `tblEmailQueue` WHERE `emailID` = ?', 'i', [$itIds[0]]);
+itCheck('11 given-up details', $itRowOld['paramsJSON'] === null && $itRowOld['status'] === 'failed', 'a row given up 25 hours ago loses its details and stays failed');
+itCheck('11 given-up details', (int) $itAgeRows[0]['hoursSince'] >= 24, 'its updatedAt was kept (' . (int) $itAgeRows[0]['hoursSince'] . ' hours ago), so the give-up time is still readable');
+itCheck('11 given-up details', $itRowNew['paramsJSON'] !== null, 'a row given up 23 hours ago keeps its details (the re-send window)');
+itCheck('11 given-up details', $itResult['detailsCleared'] === 1, 'detailsCleared 1');
+
+// ==============================================================================
+// 1️⃣2️⃣ #122: old records are deleted (the real DELETEs); nothing waiting is touched
+// ==============================================================================
+echo PHP_EOL . 'Scenario 12: old records deleted (#122)' . PHP_EOL;
+itClear();
+$itIds       = itQueue(5);
+$itReceiptQ  = itQueueOne('it-06@it.cuercode.invalid', 'receipt', ['orderNumber' => 'IT-1', 'amount' => '1.00']);
+$itReceiptF  = itQueueOne('it-07@it.cuercode.invalid', 'receipt', ['orderNumber' => 'IT-2', 'amount' => '2.00']);
+
+// 📌 Each row is aged with its own prepared statement (the status, attempts and
+//    age are bound as parameters; nothing is joined into the SQL text).
+foreach ([[$itIds[0], 'sent', 0, 31], [$itIds[1], 'sent', 0, 29], [$itIds[2], 'skipped', 0, 31], [$itIds[3], 'failed', 5, 31], [$itIds[4], 'failed', 5, 91]] as $itSetup) {
+    itExec(
+        'UPDATE `tblEmailQueue` SET `status` = ?, `attempts` = ?, `createdAt` = DATE_SUB(NOW(), INTERVAL ? DAY) WHERE `emailID` = ?',
+        'siii',
+        [$itSetup[1], $itSetup[2], $itSetup[3], $itSetup[0]]
+    );
+}
+
+foreach ([[$itReceiptQ, 'queued', 0], [$itReceiptF, 'failed', 2]] as $itSetup) {
+    itExec(
+        'UPDATE `tblEmailQueue` SET `status` = ?, `attempts` = ?, `createdAt` = DATE_SUB(NOW(), INTERVAL 100 DAY), `nextAttemptAt` = DATE_ADD(NOW(), INTERVAL 1 DAY) WHERE `emailID` = ?',
+        'sii',
+        [$itSetup[1], $itSetup[2], $itSetup[0]]
+    );
+}
+
+$itSendCalls = 0;
+$itResult    = runEmailQueueBatch($itGateway, $itOkSender, []);
+itCheck('12 old records deleted', itRow($itIds[0]) === [], 'a record sent 31 days ago is deleted');
+itCheck('12 old records deleted', itRow($itIds[2]) === [], 'a record skipped 31 days ago is deleted');
+itCheck('12 old records deleted', itRow($itIds[4]) === [], 'a record given up 91 days ago is deleted');
+itCheck('12 old records deleted', $itResult['purged'] === 3, 'purged 3 (' . (int) $itResult['purged'] . ')');
+itCheck('12 old records deleted', itRow($itIds[1]) !== [], 'a record sent 29 days ago is kept');
+itCheck('12 old records deleted', itRow($itIds[3]) !== [], 'a record given up 31 days ago is kept (90-day period)');
+itCheck('12 old records deleted', itStatus($itReceiptQ) === 'queued', 'a 100-day-old QUEUED email is never deleted or changed');
+itCheck('12 old records deleted', itStatus($itReceiptF) === 'failed', 'a 100-day-old failed email that still has attempts left is never deleted');
+itCheck('12 old records deleted', $itSendCalls === 0, 'nothing was sent (nothing was due)');
+
+// ==============================================================================
+// 1️⃣3️⃣ #122: an email whose details were cleared is never sent
+// ==============================================================================
+echo PHP_EOL . 'Scenario 13: cleared details are never sent (#122)' . PHP_EOL;
+itClear();
+$itIds = itQueue(1);
+itExec('UPDATE `tblEmailQueue` SET `paramsJSON` = NULL WHERE `emailID` = ?', 'i', [$itIds[0]]);
+$itSendCalls = 0;
+$itResult    = runEmailQueueBatch($itGateway, $itOkSender, []);
+$itRow       = itRow($itIds[0]);
+itCheck('13 cleared details never sent', $itRow['status'] === 'skipped', 'the email is marked skipped');
+itCheck('13 cleared details never sent', str_starts_with((string) $itRow['lastError'], 'Not sent: its stored details'), 'its lastError explains why');
+itCheck('13 cleared details never sent', $itSendCalls === 0 && $itResult['unsendable'] === 1, 'nothing was sent, unsendable 1');
+
+// ==============================================================================
+// 1️⃣4️⃣ #122: the runner's main with email switched off still tidies up
+// ==============================================================================
+echo PHP_EOL . 'Scenario 14: email switched off - the clean-up still runs, nothing is sent (#122)' . PHP_EOL;
+itClear();
+$itIds = itQueue(2);
+itExec("UPDATE `tblEmailQueue` SET `status` = 'sent', `createdAt` = DATE_SUB(NOW(), INTERVAL 31 DAY) WHERE `emailID` = ?", 'i', [$itIds[0]]);
+$itOutLines  = [];
+$itErrLines  = [];
+$itSendCalls = 0;
+
+// 🧰 The REAL production environment (real database check, real getConfig,
+//    real gateway), with ONLY the sender and the output replaced: a counting
+//    stand-in instead of sendEmailNow(), and collectors instead of the terminal.
+$itEnvironment           = emailQueueProductionEnvironment();
+$itEnvironment['sender'] = $itOkSender;
+$itEnvironment['out']    = static function (string $itLine) use (&$itOutLines): void {
+    $itOutLines[] = $itLine;
+};
+$itEnvironment['err']    = static function (string $itLine) use (&$itErrLines): void {
+    $itErrLines[] = $itLine;
+};
+$itExit    = emailQueueRunnerMain(parseEmailQueueRunnerArgs(['process_email_queue.php']), $itEnvironment);
+$itOutText = implode(' ', $itOutLines);
+itCheck('14 switched off still tidies', (int) getConfig('email_enabled', 0) === 0, 'email_enabled is 0 (as seeded)');
+itCheck('14 switched off still tidies', $itExit === 0, 'exit code 0 (' . $itExit . ')');
+itCheck('14 switched off still tidies', itRow($itIds[0]) === [], 'the 31-day-old sent record is gone');
+itCheck('14 switched off still tidies', itStatus($itIds[1]) === 'queued', 'the fresh email is still queued');
+itCheck('14 switched off still tidies', $itSendCalls === 0, 'nothing was sent');
+itCheck('14 switched off still tidies', str_contains($itOutText, 'switched off') && str_contains($itOutText, 'Tidied up: deleted 1'), 'the output says it is switched off and what was tidied');
 
 // ==============================================================================
 // 🧹 Clean up and report

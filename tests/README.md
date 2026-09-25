@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-09-25, #112)
+## Current suite (2026-09-25, #112, #122/#123/#126)
 
 | File | Assertions |
 | --- | --- |
@@ -57,10 +57,11 @@ set.
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
-| `test_email_queue_runner.php` | 281 |
+| `test_email_queue_runner.php` | 476 |
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 132 |
 | `test_features.php` | 91 |
+| `test_log_mask.php` | 46 |
 | `test_oauth.php` | 135 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -68,7 +69,7 @@ set.
 | `test_pricing_flex.php` | 50 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| **Total** | **2466** |
+| **Total** | **2707** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -106,15 +107,23 @@ docker ps -a --filter name=p112-emailq-mysql --format '{{.Names}}'     # must pr
 AFTER=$(docker volume ls -q -f dangling=true | wc -l | tr -d ' '); echo "dangling before=$BEFORE after=$AFTER"   # must be equal
 ```
 
+`mysql:8.4` also works - leave off `--default-authentication-plugin`, which
+8.4 no longer accepts (the server refuses to start with it).
+
 The script waits for the database by itself (up to 120 seconds), loads
-`install.sql` and `seed_data.sql` when `--load-schema` is given, runs eight
-scenarios (claim rules, two runner processes with and without the lock,
-retry with back-off, stuck-row recovery, blocked sending, busy/stalled, and
-counts), deletes its own rows and prints PASS/FAIL per scenario. Exit code 0
-means every scenario passed. For MariaDB, use
+`install.sql` and `seed_data.sql` when `--load-schema` is given, runs its
+set-up checks and then fifteen scenarios (1-14 plus 10b: claim rules, two
+runner processes with and without the lock, retry with back-off, stuck-row
+recovery, blocked sending, busy/stalled, counts, and - since #122/#123 -
+details cleared on send, expired links skipped in bulk and per email,
+given-up details cleared after 24 hours, old records deleted without touching
+waiting ones, cleared emails never sent, and the runner tidying up while email
+is switched off), deletes its own rows and prints PASS/FAIL per scenario. Exit
+code 0 means every scenario passed. For MariaDB, use
 `mariadb:10.11 -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 -e MARIADB_DATABASE=cuercode_it_p112`
-(and no authentication-plugin option). Last run 2026-09-25: all scenarios
-passed on MySQL 8.0.46 and MariaDB 10.11.19.
+(and no authentication-plugin option). Last run 2026-09-25 (#122/#123/#126):
+all scenarios passed on MySQL 8.4.11, MySQL 8.0.46, MariaDB 10.11.19 and
+MariaDB 10.6.28.
 
 ## Syntax-checking the harness
 
@@ -222,7 +231,11 @@ boundaries when deciding what to test:
 - **`fn_response.php`** — emits HTTP headers / `exit`s and reads config (DB).
 - **`fn_error_handler.php`**, **`fn_qr_generate.php`**, **`fn_qr_frames.php`**
   — require the DB and/or the QR rendering pipeline; out of scope for pure
-  unit tests.
+  unit tests. (Exception: `test_log_mask.php` runs the plain-text error-log
+  fallbacks of `fn_error_handler.php` and `fn_activity_log.php` in separate
+  child PHP processes, because loading either file installs error handlers
+  and other test files assert the logging functions do not exist in the main
+  process - #126.)
 - **`fn_api_*.php`** and **`fn_qr_logo.php`** — mostly require the DB and/or
   real HTTP request handling, but each now has a pure-function slice that IS
   unit-tested: `fn_qr_logo.php`'s SVG-content screener and predefined-logo

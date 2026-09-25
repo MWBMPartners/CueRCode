@@ -30,7 +30,7 @@
  *
  * Exit codes: 0 fine (including nothing to send, email switched off, another
  * run already working) | 1 could not start or crashed | 2 bad option |
- * 3 database problem | 4 sending blocked by settings/Microsoft Graph, or an
+ * 3 database problem (including a failed clean-up, #122) | 4 sending blocked by settings/Microsoft Graph, or an
  * earlier run looks stuck | 5 gave up on at least one email | 255 PHP itself
  * stopped the run part-way (a fatal error such as running out of memory; the
  * runner prints a one-line note and any email it was sending is recovered
@@ -47,11 +47,16 @@
  *
  * Its own output never includes an email address, a subject, an email body, a
  * one-time link, a secret or a setting value - only counts and plain-English
- * problems. ONE exception it cannot control: if writing the activity log to
- * the database fails mid-run, the site's shared activity logger falls back to
- * PHP's error log, and that line includes the recipient's address and the
- * subject. On the command line PHP's error log is the terminal, so it would
- * appear in the cron email (tracked in #126).
+ * problems. If writing the activity log to the database fails mid-run, the
+ * site's shared activity logger falls back to PHP's error log, which on the
+ * command line is the terminal (so the cron email). Since #126 that fallback
+ * line hides every email address ("[address]"); it still includes the
+ * subject, which is fixed text for sign-up and password-reset emails.
+ *
+ * It also runs the queue clean-up (#122/#123) - see fn_email.php
+ * runEmailQueueHousekeeping(): one-time links are removed once an email is
+ * sent, emails whose link has expired are skipped, and old records are
+ * deleted. That happens even while email sending is switched off.
  *
  * @package     CueRCode
  * @subpackage  Email

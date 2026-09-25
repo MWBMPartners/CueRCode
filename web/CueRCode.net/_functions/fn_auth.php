@@ -70,6 +70,10 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 /**
  * @var int Email verification token time-to-live, in hours. Matches the
  * verification.php email template's own default expiryHours (24).
+ *
+ * Also read by fn_email.php emailQueueLinkLifetimes(), so the queue runner
+ * skips an email whose link has expired instead of sending it (#123). Change
+ * the lifetime HERE only.
  */
 if (!defined('CUERCODE_EMAIL_VERIFICATION_TTL_HOURS')) {
     define('CUERCODE_EMAIL_VERIFICATION_TTL_HOURS', 24);
@@ -78,6 +82,10 @@ if (!defined('CUERCODE_EMAIL_VERIFICATION_TTL_HOURS')) {
 /**
  * @var int Password reset token time-to-live, in minutes. Matches the
  * password_reset.php email template's own default expiryMinutes (60).
+ *
+ * Also read by fn_email.php emailQueueLinkLifetimes(), so the queue runner
+ * skips an email whose link has expired instead of sending it (#123). Change
+ * the lifetime HERE only.
  */
 if (!defined('CUERCODE_PASSWORD_RESET_TTL_MINUTES')) {
     define('CUERCODE_PASSWORD_RESET_TTL_MINUTES', 60);

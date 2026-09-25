@@ -14,11 +14,24 @@
  * Each log entry captures the activity type, detail, related entity,
  * user context, session, IP address, user agent, and optional JSON data.
  *
+ * 🙈 ERROR-LOG FALLBACKS HIDE EMAIL ADDRESSES (#126): when the database is not
+ * available, or the insert fails, logActivity() writes a one-line summary to
+ * PHP's error log instead. That log is less protected than the database (on a
+ * web request it is a server file; on the command line - the email queue
+ * runner, run by cron - it is the terminal, which cron emails to the owner),
+ * and for email events the detail is "To: <address> | Subject: ...". Since
+ * #126 both fallbacks pass everything through cleanLogText()
+ * (fn_log_mask.php), which replaces every address-shaped piece of text with
+ * "[address]" and removes control characters. The DATABASE row is unchanged:
+ * tblActivityLog still stores the full detail (a separate retention
+ * follow-up covers that).
+ *
  * @package     CueRCode
  * @subpackage  Logging
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       Phase 1
+ * @see         fn_log_mask.php - cleanLogText(), used by the error-log fallbacks (#126)
  * @see         https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php
  * @see         https://dev.mysql.com/doc/refman/8.0/en/json.html
  */
@@ -35,6 +48,13 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     header('HTTP/1.1 403 Forbidden');
     exit('Access denied.');
 }
+
+// 🙈 #126: the error-log fallbacks below mask email addresses with
+//    cleanLogText(). Loaded here as well as by bootstrap.php, because this
+//    file must work even when loaded on its own (the tests and child
+//    processes load single files). require_once works from the real file
+//    path, so when bootstrap.php has already loaded it this does nothing.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_log_mask.php';
 
 // ==============================================================================
 // 📝 logActivity() - Log an activity event
@@ -194,8 +214,15 @@ function logActivity(
             } else {
                 $entityIDStr = 'none';
             }
+            // 🙈 #126: this is the plain-text channel (on the command line, the
+            //    cron email). For email events $detail is "To: <address> |
+            //    Subject: ...", so the type and detail go through cleanLogText(),
+            //    which hides email addresses and control characters. The entity
+            //    type and ID are code-supplied labels and a number, never personal.
+            //    Rejected: leaving $detail out altogether - it would lose what
+            //    happened, when only the address in it is personal.
             error_log(
-                'CueRCode Activity [' . $type . ']: ' . $detail
+                'CueRCode Activity [' . cleanLogText($type, 100) . ']: ' . cleanLogText($detail, 1000)
                 . ' | Entity: ' . $entityTypeStr . ':' . $entityIDStr
             );
             return;
@@ -245,9 +272,24 @@ function logActivity(
         // We use error_log() directly instead of logError() to avoid potential
         // circular dependency issues (logError may also call logActivity in some setups).
         // @see https://www.php.net/manual/en/function.error-log.php
+        //
+        // 🔒 F-008 + #126: this is the plain-text channel (on the command line, the
+        //    cron email). The database error can carry SQL text, so it goes through
+        //    maskSensitiveForLog() when the error handler is loaded; everything goes
+        //    through cleanLogText(), which hides email addresses and control characters.
+        //    Before #126 this line printed the raw detail - for email events the
+        //    recipient's address - and the raw driver message.
+        //    Rejected: leaving $detail out (it loses what happened; only the address
+        //    in it is personal), and reusing emailQueueSafeDetail() from fn_email.php
+        //    (this file loads BEFORE fn_email.php, so a function_exists() check would
+        //    silently skip the masking whenever fn_email.php was not loaded).
+        $safeError = $e->getMessage();
+        if (function_exists('maskSensitiveForLog')) {
+            $safeError = maskSensitiveForLog($safeError);
+        }
         error_log(
-            'CueRCode Activity Log FAILED [' . $type . ']: ' . $detail
-            . ' | DB Error: ' . $e->getMessage()
+            'CueRCode Activity Log FAILED [' . cleanLogText($type, 100) . ']: ' . cleanLogText($detail, 1000)
+            . ' | DB Error: ' . cleanLogText($safeError, 1000)
         );
     }
 }

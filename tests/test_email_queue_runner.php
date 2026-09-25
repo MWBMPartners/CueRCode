@@ -23,15 +23,27 @@
  *   - Source-text regression guards on the real SQL and on the runner file.
  *   - The real runner file started as a child process, with --help and bad
  *     options ONLY.
+ *   - #122 / #123 (Section 6): the clean-up and expired-link helpers
+ *     (parseEmailQueueRetentionDays(), emailQueueHousekeepingOptions(),
+ *     emailQueueLinkLifetimes(), normaliseEmailQueueLinkLifetimes(),
+ *     emailQueueLinkMaxAgeSeconds(), emailQueueLinkHasExpired(),
+ *     emailQueueRequiredLinkParam(), formatEmailQueueTidyLines()); the batch
+ *     clearing one-time links on send and skip, keeping them while an email
+ *     can still be sent, the 24-hour window for given-up emails, deleting old
+ *     finished records (and never waiting or in-flight ones), skipping
+ *     expired links in bulk and per email, the "never send a cleared email"
+ *     guard, tidy-only runs while email is switched off; the runner's
+ *     reporting of all of that; and source-text guards on the new SQL.
  *
  * 🧰 How the stand-in works: a \stdClass "store" holds the rows (keyed by
  *    emailID), a simulated database clock (`now`, whole seconds), a simulated
  *    run clock for the time budget (`runClock`), who holds the lock, and a log
  *    of every send. The gateway built by $eqrMakeGateway() gives the batch the
- *    same 14 operations as emailQueueDatabaseGateway(), each written to mirror
- *    its real SQL WHERE clause exactly. The sender records each send and
- *    returns scripted results, and can run a second runner in the middle of a
- *    send ("onSend") to interleave two runners deterministically.
+ *    same 19 operations as emailQueueDatabaseGateway() (14 from #112, 5 from
+ *    #122/#123), each written to mirror its real SQL WHERE clause exactly. The
+ *    sender records each send and returns scripted results, and can run a
+ *    second runner in the middle of a send ("onSend") to interleave two
+ *    runners deterministically.
  *
  * ⚠️ NOT covered here (needs a real database): the real SQL and the real named
  *    lock. Those are covered by the optional
@@ -51,7 +63,7 @@
  * @package     CueRCode
  * @subpackage  Tests
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       2026-09-25 (#112)
  * @see         tests/bootstrap.php  - requireFn() loader (no DB connection)
  * @see         tests/lib/assert.php - the assert* functions used below
@@ -60,6 +72,15 @@
  */
 
 requireFn('fn_email.php');
+
+// ⏳ #123: fn_auth.php holds the real link-lifetime constants
+//    (CUERCODE_EMAIL_VERIFICATION_TTL_HOURS, CUERCODE_PASSWORD_RESET_TTL_MINUTES)
+//    that emailQueueLinkLifetimes() reads. Loading it here gives this file the
+//    real lifetimes whatever --filter is used. It is safe: fn_auth.php defines
+//    none of the functions five other test files assert do not exist, and
+//    test_auth.php already loads it earlier in a full run (require_once makes
+//    the second load a no-op).
+requireFn('fn_auth.php');
 
 // ==============================================================================
 // 🧰 Section 0: the in-memory stand-in for tblEmailQueue
@@ -319,9 +340,11 @@ $eqrMakeGateway = static function (\stdClass $eqrStore, string $eqrRunner) use (
                 'subject'     => $eqrRow['subject'],
                 'attempts'    => $eqrRow['attempts'],
                 'maxAttempts' => $eqrRow['maxAttempts'],
+                // E' (#123): TIMESTAMPDIFF(SECOND, createdAt, NOW()) on the database clock.
+                'ageSeconds'  => $eqrStore->now - $eqrRow['createdAt'],
             ];
         },
-        // F: only while 'sending'.
+        // F' (#122): only while 'sending'; clears paramsJSON in the same statement.
         'markSent' => static function (int $eqrId) use ($eqrStore, $eqrShouldFail): bool {
             if ($eqrShouldFail($eqrStore, 'markSent')) {
                 return false;
@@ -331,10 +354,11 @@ $eqrMakeGateway = static function (\stdClass $eqrStore, string $eqrRunner) use (
                 return false;
             }
 
-            $eqrStore->rows[$eqrId]['status']    = 'sent';
-            $eqrStore->rows[$eqrId]['sentAt']    = $eqrStore->now;
-            $eqrStore->rows[$eqrId]['lastError'] = null;
-            $eqrStore->rows[$eqrId]['updatedAt'] = $eqrStore->now;
+            $eqrStore->rows[$eqrId]['status']     = 'sent';
+            $eqrStore->rows[$eqrId]['sentAt']     = $eqrStore->now;
+            $eqrStore->rows[$eqrId]['lastError']  = null;
+            $eqrStore->rows[$eqrId]['paramsJSON'] = null;
+            $eqrStore->rows[$eqrId]['updatedAt']  = $eqrStore->now;
 
             return true;
         },
@@ -449,6 +473,157 @@ $eqrMakeGateway = static function (\stdClass $eqrStore, string $eqrRunner) use (
             }
 
             return $eqrCounts;
+        },
+        // --- #122 / #123 (statements N-R in the plan). Each result list is built
+        //     by walking the rows in ascending emailID order. ---------------------
+        // N: only while 'sending' - the claiming runner finishing its own row.
+        'markSkipped' => static function (int $eqrId, string $eqrReason) use ($eqrStore, $eqrShouldFail): bool {
+            if ($eqrShouldFail($eqrStore, 'markSkipped')) {
+                return false;
+            }
+
+            if (!isset($eqrStore->rows[$eqrId]) || $eqrStore->rows[$eqrId]['status'] !== 'sending') {
+                return false;
+            }
+
+            $eqrStore->rows[$eqrId]['status']     = 'skipped';
+            $eqrStore->rows[$eqrId]['lastError']  = $eqrReason;
+            $eqrStore->rows[$eqrId]['paramsJSON'] = null;
+            $eqrStore->rows[$eqrId]['updatedAt']  = $eqrStore->now;
+
+            return true;
+        },
+        // O: templateKey = ? AND status IN ('queued','failed') AND attempts < maxAttempts
+        //    AND createdAt <= NOW() - maxAge seconds, at most $limit (no ORDER BY).
+        'skipExpired' => static function (string $eqrTemplate, int $eqrMaxAge, string $eqrNote, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'skipExpired')) {
+                return null;
+            }
+
+            $eqrIds = array_keys($eqrStore->rows);
+            sort($eqrIds);
+            $eqrChanged = 0;
+
+            foreach ($eqrIds as $eqrId) {
+                if ($eqrChanged >= $eqrLimit) {
+                    break;
+                }
+
+                $eqrRow = $eqrStore->rows[$eqrId];
+
+                if ($eqrRow['templateKey'] === $eqrTemplate
+                    && ($eqrRow['status'] === 'queued' || $eqrRow['status'] === 'failed')
+                    && $eqrRow['attempts'] < $eqrRow['maxAttempts']
+                    && $eqrRow['createdAt'] <= $eqrStore->now - $eqrMaxAge
+                ) {
+                    $eqrStore->rows[$eqrId]['status']     = 'skipped';
+                    $eqrStore->rows[$eqrId]['lastError']  = $eqrNote;
+                    $eqrStore->rows[$eqrId]['paramsJSON'] = null;
+                    $eqrStore->rows[$eqrId]['updatedAt']  = $eqrStore->now;
+                    $eqrChanged++;
+                }
+            }
+
+            return $eqrChanged;
+        },
+        // P: status = 'failed' AND attempts >= maxAttempts AND paramsJSON IS NOT NULL
+        //    AND createdAt <= NOW() - hours; updatedAt is deliberately NOT changed.
+        'clearGivenUp' => static function (int $eqrHours, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'clearGivenUp')) {
+                return null;
+            }
+
+            $eqrIds = array_keys($eqrStore->rows);
+            sort($eqrIds);
+            $eqrChanged = 0;
+
+            foreach ($eqrIds as $eqrId) {
+                if ($eqrChanged >= $eqrLimit) {
+                    break;
+                }
+
+                $eqrRow = $eqrStore->rows[$eqrId];
+
+                if ($eqrRow['status'] === 'failed'
+                    && $eqrRow['attempts'] >= $eqrRow['maxAttempts']
+                    && $eqrRow['paramsJSON'] !== null
+                    && $eqrRow['createdAt'] <= $eqrStore->now - ($eqrHours * 3600)
+                ) {
+                    $eqrStore->rows[$eqrId]['paramsJSON'] = null;
+                    $eqrChanged++;
+                }
+            }
+
+            return $eqrChanged;
+        },
+        // Q: DELETE status IN ('sent','skipped') AND createdAt < NOW() - days,
+        //    ORDER BY createdAt, emailID, at most $limit.
+        'purgeFinished' => static function (int $eqrDays, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'purgeFinished')) {
+                return null;
+            }
+
+            $eqrFound = [];
+
+            foreach ($eqrStore->rows as $eqrRow) {
+                if (($eqrRow['status'] === 'sent' || $eqrRow['status'] === 'skipped')
+                    && $eqrRow['createdAt'] < $eqrStore->now - ($eqrDays * 86400)
+                ) {
+                    $eqrFound[] = $eqrRow;
+                }
+            }
+
+            usort($eqrFound, static function (array $eqrLeft, array $eqrRight): int {
+                if ($eqrLeft['createdAt'] !== $eqrRight['createdAt']) {
+                    return $eqrLeft['createdAt'] <=> $eqrRight['createdAt'];
+                }
+
+                return $eqrLeft['emailID'] <=> $eqrRight['emailID'];
+            });
+
+            $eqrDeleted = 0;
+
+            foreach (array_slice($eqrFound, 0, $eqrLimit) as $eqrRow) {
+                unset($eqrStore->rows[$eqrRow['emailID']]);
+                $eqrDeleted++;
+            }
+
+            return $eqrDeleted;
+        },
+        // R: DELETE status = 'failed' AND attempts >= maxAttempts AND createdAt < NOW() - days,
+        //    ORDER BY createdAt, emailID, at most $limit.
+        'purgeGivenUp' => static function (int $eqrDays, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'purgeGivenUp')) {
+                return null;
+            }
+
+            $eqrFound = [];
+
+            foreach ($eqrStore->rows as $eqrRow) {
+                if ($eqrRow['status'] === 'failed'
+                    && $eqrRow['attempts'] >= $eqrRow['maxAttempts']
+                    && $eqrRow['createdAt'] < $eqrStore->now - ($eqrDays * 86400)
+                ) {
+                    $eqrFound[] = $eqrRow;
+                }
+            }
+
+            usort($eqrFound, static function (array $eqrLeft, array $eqrRight): int {
+                if ($eqrLeft['createdAt'] !== $eqrRight['createdAt']) {
+                    return $eqrLeft['createdAt'] <=> $eqrRight['createdAt'];
+                }
+
+                return $eqrLeft['emailID'] <=> $eqrRight['emailID'];
+            });
+
+            $eqrDeleted = 0;
+
+            foreach (array_slice($eqrFound, 0, $eqrLimit) as $eqrRow) {
+                unset($eqrStore->rows[$eqrRow['emailID']]);
+                $eqrDeleted++;
+            }
+
+            return $eqrDeleted;
         },
     ];
 };
@@ -1346,3 +1521,520 @@ assertContains('--limit', $eqrCli['err'], 'real runner --limit=0: the reason is 
 $eqrCli = $eqrRunCli(['--frobnicate']);
 assertEquals(2, $eqrCli['exit'], 'real runner --frobnicate: exit 2');
 assertContains('unknown option', $eqrCli['err'], 'real runner --frobnicate: stderr says unknown option');
+
+// ==============================================================================
+// ✅ Section 6: #122 / #123 - clean-up, expired links, and the "never send" guard
+// ==============================================================================
+// Same in-memory stand-in as Sections 2-3. A row's age is set through its
+// createdAt, relative to the simulated database clock ($eqrStore->now), which
+// is exactly what the real SQL compares against NOW().
+// ==============================================================================
+
+/** One day in seconds, for readability. */
+$eqrDay = 86400;
+
+// --- parseEmailQueueRetentionDays() ------------------------------------------------
+$eqrRetentionCases = [
+    [30, 30],
+    ['45', 45],
+    [' 7 ', 7],
+    [3650, 3650],
+    [0, null],
+    [-1, null],
+    [3651, null],
+    ['abc', null],
+    ['', null],
+    [null, null],
+    [true, null],
+    [30.0, null],
+    ['1e3', null],
+];
+
+foreach ($eqrRetentionCases as $eqrCase) {
+    assertEquals(
+        $eqrCase[1],
+        parseEmailQueueRetentionDays($eqrCase[0]),
+        'parseEmailQueueRetentionDays: ' . var_export($eqrCase[0], true) . ' -> ' . var_export($eqrCase[1], true)
+    );
+}
+
+// --- emailQueueHousekeepingOptions() ---------------------------------------------------
+assertEquals(
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => []],
+    emailQueueHousekeepingOptions($eqrSettingsGetter([])),
+    'emailQueueHousekeepingOptions: missing settings -> the defaults, nothing reported'
+);
+assertEquals(
+    ['retentionDays' => 45, 'givenUpRetentionDays' => 120, 'invalidSettings' => []],
+    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => '45', 'email_queue_failed_retention_days' => 120])),
+    'emailQueueHousekeepingOptions: valid values are used'
+);
+assertEquals(
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => ['email_queue_retention_days', 'email_queue_failed_retention_days']],
+    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 0, 'email_queue_failed_retention_days' => 'thirty'])),
+    'emailQueueHousekeepingOptions: 0 / "thirty" -> the default, and the setting is named'
+);
+$eqrHousekeepingBad = emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 'retention-value-777']));
+assertFalse(str_contains((string) json_encode($eqrHousekeepingBad), 'retention-value-777'), 'emailQueueHousekeepingOptions: an invalid value is never included in the result');
+assertEquals(
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => []],
+    emailQueueHousekeepingOptions(static function (string $eqrKey, mixed $eqrDefault = null): mixed {
+        throw new \RuntimeException('simulated settings failure');
+    }),
+    'emailQueueHousekeepingOptions: a settings reader that throws -> the defaults'
+);
+
+// --- link lifetimes and the expiry rule --------------------------------------------------
+assertEquals(
+    ['verification' => CUERCODE_EMAIL_VERIFICATION_TTL_HOURS * 3600, 'password_reset' => CUERCODE_PASSWORD_RESET_TTL_MINUTES * 60],
+    emailQueueLinkLifetimes(),
+    "emailQueueLinkLifetimes() reads fn_auth.php's constants"
+);
+assertEquals(['verification' => 86400, 'password_reset' => 3600], emailQueueLinkLifetimes(), "emailQueueLinkLifetimes() reads fn_auth.php's constants: today's lifetimes are 24 hours and 60 minutes");
+assertEquals(
+    ['verification' => 86400],
+    normaliseEmailQueueLinkLifetimes(['verification' => 86400, 'nope' => 5, 'password_reset' => 0, 'receipt' => '60']),
+    'normaliseEmailQueueLinkLifetimes drops unknown templates and bad values'
+);
+assertEquals(86280, emailQueueLinkMaxAgeSeconds(86400), 'emailQueueLinkMaxAgeSeconds: 86400 -> 86280 (2-minute margin)');
+assertEquals(3480, emailQueueLinkMaxAgeSeconds(3600), 'emailQueueLinkMaxAgeSeconds: 3600 -> 3480 (2-minute margin)');
+assertEquals(60, emailQueueLinkMaxAgeSeconds(100), 'emailQueueLinkMaxAgeSeconds: 100 -> 60 (never below 60 seconds)');
+
+$eqrLifetimes = ['verification' => 86400, 'password_reset' => 3600];
+assertTrue(emailQueueLinkHasExpired('verification', 86280, $eqrLifetimes), 'emailQueueLinkHasExpired: verification at 86280 seconds -> expired');
+assertFalse(emailQueueLinkHasExpired('verification', 86279, $eqrLifetimes), 'emailQueueLinkHasExpired: verification at 86279 seconds -> not expired');
+assertTrue(emailQueueLinkHasExpired('password_reset', 3480, $eqrLifetimes), 'emailQueueLinkHasExpired: password_reset at 3480 seconds -> expired');
+assertFalse(emailQueueLinkHasExpired('password_reset', 3479, $eqrLifetimes), 'emailQueueLinkHasExpired: password_reset at 3479 seconds -> not expired');
+assertFalse(emailQueueLinkHasExpired('receipt', 999999, $eqrLifetimes), 'emailQueueLinkHasExpired: receipt (no link lifetime) never expires');
+assertFalse(emailQueueLinkHasExpired('verification', 999999, []), 'emailQueueLinkHasExpired: an empty lifetimes map never expires anything');
+
+foreach ([['verification', 'verificationUrl'], ['password_reset', 'resetUrl'], ['invitation', 'inviteUrl'], ['receipt', null], ['nope', null]] as $eqrCase) {
+    assertEquals($eqrCase[1], emailQueueRequiredLinkParam($eqrCase[0]), 'emailQueueRequiredLinkParam: ' . $eqrCase[0] . ' -> ' . var_export($eqrCase[1], true));
+}
+
+// --- the result, exit code and report ------------------------------------------------------
+$eqrEmptyResult  = emptyEmailQueueRunResult();
+$eqrNewKeysZero  = true;
+
+foreach (['expired', 'unsendable', 'detailsCleared', 'purged', 'housekeepingFailures'] as $eqrNewKey) {
+    if (!array_key_exists($eqrNewKey, $eqrEmptyResult) || $eqrEmptyResult[$eqrNewKey] !== 0) {
+        $eqrNewKeysZero = false;
+    }
+}
+
+assertTrue($eqrNewKeysZero, 'emptyEmailQueueRunResult has the five new keys, each 0');
+
+$eqrCaseResult                         = emptyEmailQueueRunResult();
+$eqrCaseResult['housekeepingFailures'] = 1;
+assertEquals(3, emailQueueRunnerExitCode($eqrCaseResult), 'emailQueueRunnerExitCode: ok + a failed clean-up step -> 3');
+$eqrCaseResult['status'] = 'system_problem';
+assertEquals(3, emailQueueRunnerExitCode($eqrCaseResult), 'emailQueueRunnerExitCode: system_problem + a failed clean-up step -> 3 (database outranks set-up)');
+$eqrCaseResult            = emptyEmailQueueRunResult();
+$eqrCaseResult['expired'] = 3;
+assertEquals(0, emailQueueRunnerExitCode($eqrCaseResult), 'emailQueueRunnerExitCode: ok + 3 expired links skipped -> 0 (reported, not an error)');
+
+$eqrCaseResult            = emptyEmailQueueRunResult();
+$eqrCaseResult['expired'] = 2;
+$eqrTidyText              = implode(' ', formatEmailQueueTidyLines($eqrCaseResult));
+assertContains('Skipped 2', $eqrTidyText, 'formatEmailQueueTidyLines: expired 2 -> says Skipped 2');
+assertContains('new link', $eqrTidyText, 'formatEmailQueueTidyLines: expired 2 -> says the person needs a new link');
+$eqrCaseResult                   = emptyEmailQueueRunResult();
+$eqrCaseResult['purged']         = 3;
+$eqrCaseResult['detailsCleared'] = 1;
+$eqrTidyText                     = implode(' ', formatEmailQueueTidyLines($eqrCaseResult));
+assertContains('deleted 3', $eqrTidyText, 'formatEmailQueueTidyLines: purged 3 -> says deleted 3');
+assertContains('details of 1', $eqrTidyText, 'formatEmailQueueTidyLines: detailsCleared 1 -> says details of 1');
+$eqrCaseResult                         = emptyEmailQueueRunResult();
+$eqrCaseResult['housekeepingFailures'] = 1;
+$eqrTidyText                           = implode(' ', formatEmailQueueTidyLines($eqrCaseResult));
+assertContains('Could not finish tidying up', $eqrTidyText, 'formatEmailQueueTidyLines: a failed step -> says it could not finish tidying up');
+assertContains('Sending was not affected', $eqrTidyText, 'formatEmailQueueTidyLines: a failed step -> says sending was not affected');
+assertEquals([], formatEmailQueueTidyLines(emptyEmailQueueRunResult()), 'formatEmailQueueTidyLines: all zero -> no lines');
+assertEquals([], formatEmailQueueTidyLines(['status' => 'ok']), 'formatEmailQueueTidyLines: an older-shaped result without the new keys -> no lines, no crash');
+
+// --- #122: the details (which can hold the one-time link) --------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1);
+$eqrResult = $eqrRun($eqrStore, 'A');
+$eqrLabel  = 'details are cleared in the same step that marks an email sent';
+assertEquals('sent', $eqrStore->rows[1]['status'], $eqrLabel . ': sent');
+assertEquals(null, $eqrStore->rows[1]['paramsJSON'], $eqrLabel . ': paramsJSON is null afterwards');
+assertContains('token=T1', (string) $eqrStore->sends[0]['body'], $eqrLabel . ': the email that went out still contained the link');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1);
+$eqrParamsBefore                           = $eqrStore->rows[1]['paramsJSON'];
+$eqrStore->sendScript['user1@example.com'] = [[false, 'HTTP 400 | graph_error_code: ErrorInvalidRecipients']];
+$eqrRun($eqrStore, 'A');
+$eqrLabel = 'a retry keeps the details, so the next attempt still has its link';
+assertEquals('queued', $eqrStore->rows[1]['status'], $eqrLabel . ': queued for a retry');
+assertEquals($eqrParamsBefore, $eqrStore->rows[1]['paramsJSON'], $eqrLabel . ': paramsJSON unchanged');
+$eqrStore->now = $eqrStore->rows[1]['nextAttemptAt'];
+$eqrRun($eqrStore, 'A');
+assertEquals('sent', $eqrStore->rows[1]['status'], $eqrLabel . ': the retry is sent');
+assertContains('token=T1', (string) $eqrStore->sends[1]['body'], $eqrLabel . ': the retry contained the link');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['attempts' => 4]);
+$eqrParamsBefore                           = $eqrStore->rows[1]['paramsJSON'];
+$eqrStore->sendScript['user1@example.com'] = [[false, 'HTTP 400 | graph_error_code: ErrorInvalidRecipients']];
+$eqrRun($eqrStore, 'A');
+assertEquals('failed', $eqrStore->rows[1]['status'], 'giving up keeps the details for the re-send window: failed');
+assertEquals($eqrParamsBefore, $eqrStore->rows[1]['paramsJSON'], 'giving up keeps the details for the re-send window: paramsJSON unchanged');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1);
+$eqrParamsBefore                           = $eqrStore->rows[1]['paramsJSON'];
+$eqrStore->sendScript['user1@example.com'] = [[false, 'skipped: no Graph access token available']];
+$eqrRun($eqrStore, 'A');
+assertEquals('queued', $eqrStore->rows[1]['status'], 'sending blocked keeps the details: put back to queued');
+assertEquals($eqrParamsBefore, $eqrStore->rows[1]['paramsJSON'], 'sending blocked keeps the details: paramsJSON unchanged');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sending', 'updatedAt' => $eqrStore->now - 660]);
+$eqrParamsBefore = $eqrStore->rows[1]['paramsJSON'];
+$eqrResult       = $eqrRun($eqrStore, 'A');
+assertEquals(1, $eqrResult['recovered'], 'stuck recovery keeps the details: recovered 1');
+assertEquals($eqrParamsBefore, $eqrStore->rows[1]['paramsJSON'], 'stuck recovery keeps the details: paramsJSON unchanged');
+
+// --- #122: the "never send" guard ---------------------------------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['paramsJSON' => null]);
+$eqrResult = $eqrRun($eqrStore, 'A');
+$eqrLabel  = 'a claimed email whose details were removed is skipped, never rendered or sent';
+assertEquals('skipped', $eqrStore->rows[1]['status'], $eqrLabel . ': status skipped');
+assertEquals(CUERCODE_EMAIL_QUEUE_NOTE_DETAILS_REMOVED, $eqrStore->rows[1]['lastError'], $eqrLabel . ': lastError explains why');
+assertEquals(1, $eqrResult['unsendable'], $eqrLabel . ': unsendable 1');
+assertEquals(0, count($eqrStore->sends), $eqrLabel . ': 0 sends');
+assertEquals(0, emailQueueRunnerExitCode($eqrResult), $eqrLabel . ': exit code 0');
+assertContains('can no longer be sent', implode(' ', formatEmailQueueRunReport($eqrResult, 0.5)), $eqrLabel . ': the report says it can no longer be sent');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['paramsJSON' => '{"recipientName":"X"}']);
+$eqrAddRow($eqrStore, 2, ['paramsJSON' => '{"verificationUrl":"   "}']);
+$eqrResult = $eqrRun($eqrStore, 'A');
+$eqrLabel  = 'a verification email with no link is skipped rather than sent broken';
+assertEquals('skipped', $eqrStore->rows[1]['status'], $eqrLabel . ': no link at all -> skipped');
+assertEquals('skipped', $eqrStore->rows[2]['status'], $eqrLabel . ': a blank link -> skipped');
+assertEquals(CUERCODE_EMAIL_QUEUE_NOTE_LINK_MISSING, $eqrStore->rows[1]['lastError'], $eqrLabel . ': lastError explains why');
+assertEquals(CUERCODE_EMAIL_QUEUE_NOTE_LINK_MISSING, $eqrStore->rows[2]['lastError'], $eqrLabel . ': lastError explains why (blank link)');
+assertEquals(2, $eqrResult['unsendable'], $eqrLabel . ': unsendable 2');
+assertEquals(0, count($eqrStore->sends), $eqrLabel . ': 0 sends');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['templateKey' => 'receipt', 'subject' => 'Your CueRCode receipt', 'paramsJSON' => '{"orderNumber":"R-1","amount":"9.99"}']);
+$eqrRun($eqrStore, 'A');
+assertEquals('sent', $eqrStore->rows[1]['status'], 'a receipt (no link needed) is still sent with its details');
+assertEquals(1, count($eqrStore->sends), 'a receipt (no link needed) is still sent with its details: 1 send');
+
+// --- #122: given-up emails keep their details for 24 hours ------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'failed', 'attempts' => 5, 'createdAt' => $eqrStore->now - 86399, 'updatedAt' => $eqrStore->now - 86000]);
+$eqrAddRow($eqrStore, 2, ['status' => 'failed', 'attempts' => 5, 'createdAt' => $eqrStore->now - 86400, 'updatedAt' => $eqrStore->now - 86000]);
+$eqrResult = $eqrRun($eqrStore, 'A');
+$eqrLabel  = 'given-up details are kept for 24 hours, then cleared (updatedAt kept)';
+assertTrue($eqrStore->rows[1]['paramsJSON'] !== null, $eqrLabel . ': a row given up 1 second short of 24 hours keeps its details');
+assertEquals(null, $eqrStore->rows[2]['paramsJSON'], $eqrLabel . ': a row queued 24 hours ago loses its details');
+assertEquals($eqrStore->now - 86000, $eqrStore->rows[2]['updatedAt'], $eqrLabel . ': its updatedAt is unchanged');
+assertEquals('failed', $eqrStore->rows[2]['status'], $eqrLabel . ': it is still failed');
+assertEquals(1, $eqrResult['detailsCleared'], $eqrLabel . ': detailsCleared 1');
+
+// --- #122: deleting old finished records ------------------------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (30 * $eqrDay) - 1]);
+$eqrAddRow($eqrStore, 2, ['status' => 'sent', 'createdAt' => $eqrStore->now - (30 * $eqrDay)]);
+$eqrAddRow($eqrStore, 3, ['status' => 'skipped', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrResult = $eqrRun($eqrStore, 'A');
+$eqrLabel  = 'old sent and skipped records are deleted after 30 days; newer ones are kept';
+assertFalse(isset($eqrStore->rows[1]), $eqrLabel . ': sent 30 days and 1 second ago -> deleted');
+assertTrue(isset($eqrStore->rows[2]), $eqrLabel . ': sent exactly 30 days ago -> kept');
+assertFalse(isset($eqrStore->rows[3]), $eqrLabel . ': skipped 40 days ago -> deleted');
+assertEquals(2, $eqrResult['purged'], $eqrLabel . ': purged 2');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'failed', 'attempts' => 5, 'createdAt' => $eqrStore->now - (31 * $eqrDay)]);
+$eqrAddRow($eqrStore, 2, ['status' => 'failed', 'attempts' => 5, 'createdAt' => $eqrStore->now - (91 * $eqrDay)]);
+$eqrRun($eqrStore, 'A');
+assertTrue(isset($eqrStore->rows[1]), 'given-up records are kept for 90 days, then deleted: given up 31 days ago -> kept');
+assertFalse(isset($eqrStore->rows[2]), 'given-up records are kept for 90 days, then deleted: given up 91 days ago -> deleted');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['templateKey' => 'receipt', 'paramsJSON' => '{"orderNumber":"R-1","amount":"9.99"}', 'createdAt' => $eqrStore->now - (100 * $eqrDay), 'nextAttemptAt' => $eqrStore->now + $eqrDay]);
+$eqrAddRow($eqrStore, 2, ['status' => 'sending', 'updatedAt' => $eqrStore->now - 60, 'createdAt' => $eqrStore->now - (100 * $eqrDay)]);
+$eqrAddRow($eqrStore, 3, ['templateKey' => 'receipt', 'paramsJSON' => '{"orderNumber":"R-3","amount":"1.00"}', 'status' => 'failed', 'attempts' => 2, 'createdAt' => $eqrStore->now - (100 * $eqrDay), 'nextAttemptAt' => $eqrStore->now + $eqrDay]);
+$eqrRowsBefore = $eqrStore->rows;
+$eqrRun($eqrStore, 'A');
+assertEquals($eqrRowsBefore, $eqrStore->rows, 'the clean-up never deletes or changes an email that is waiting, being sent or still has attempts left');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (8 * $eqrDay)]);
+$eqrAddRow($eqrStore, 2, ['status' => 'failed', 'attempts' => 5, 'createdAt' => $eqrStore->now - (11 * $eqrDay)]);
+$eqrRun($eqrStore, 'A', ['retentionDays' => 7, 'givenUpRetentionDays' => 10]);
+assertFalse(isset($eqrStore->rows[1]), 'retention options change the clean-up: retentionDays 7 deletes a record sent 8 days ago');
+assertFalse(isset($eqrStore->rows[2]), 'retention options change the clean-up: givenUpRetentionDays 10 deletes a record given up 11 days ago');
+
+foreach ([0, 'abc', -3] as $eqrBadRetention) {
+    $eqrStore = $eqrNewStore();
+    $eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (10 * $eqrDay)]);
+    $eqrRun($eqrStore, 'A', ['retentionDays' => $eqrBadRetention]);
+    assertTrue(isset($eqrStore->rows[1]), 'an invalid retention option falls back to the default (never "delete everything"): retentionDays ' . var_export($eqrBadRetention, true) . ' keeps a record sent 10 days ago');
+}
+
+$eqrStore = $eqrNewStore();
+
+for ($eqrId = 1; $eqrId <= 3; $eqrId++) {
+    $eqrAddRow($eqrStore, $eqrId, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+}
+
+assertEquals(2, $eqrRun($eqrStore, 'A', ['tidyLimit' => 2])['purged'], 'the clean-up is capped per run: tidyLimit 2 -> purged 2');
+assertEquals(1, $eqrRun($eqrStore, 'A', ['tidyLimit' => 2])['purged'], 'the clean-up is capped per run: the next run deletes the last 1');
+
+// --- #122: clean-up failures, and the lock ------------------------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1);
+$eqrStore->failOps['purgeFinished'] = true;
+$eqrResult                          = $eqrRun($eqrStore, 'A');
+$eqrLabel                           = 'a failing clean-up step is reported, does not stop sending, and gives exit code 3';
+assertEquals(1, $eqrResult['sent'], $eqrLabel . ': sent 1');
+assertEquals(1, $eqrResult['housekeepingFailures'], $eqrLabel . ': housekeepingFailures 1');
+assertEquals(3, emailQueueRunnerExitCode($eqrResult), $eqrLabel . ': exit code 3');
+assertContains('Could not finish tidying up', implode(' ', formatEmailQueueRunReport($eqrResult, 0.5)), $eqrLabel . ': the report says so');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1);
+$eqrStore->failOps['skipExpired'] = 'throw';
+$eqrResult                        = $eqrRun($eqrStore, 'A');
+$eqrLabel                         = 'a clean-up step that throws is contained the same way';
+assertEquals('sent', $eqrStore->rows[1]['status'], $eqrLabel . ': the due email is still sent');
+assertTrue($eqrResult['housekeepingFailures'] >= 1, $eqrLabel . ': housekeepingFailures at least 1');
+assertEquals('ok', $eqrResult['status'], $eqrLabel . ': status ok');
+assertEquals(null, $eqrStore->lockHolder, $eqrLabel . ': the lock is released');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrResult = $eqrRun($eqrStore, 'A', ['useLock' => false]);
+assertTrue(isset($eqrStore->rows[1]), 'with the lock bypassed the clean-up never runs (it must never run alongside another runner): the old record is still there');
+assertEquals(0, $eqrResult['purged'], 'with the lock bypassed the clean-up never runs (it must never run alongside another runner): purged 0');
+
+// --- #123: expired links ---------------------------------------------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['createdAt' => $eqrStore->now - 86280]);
+$eqrAddRow($eqrStore, 2, ['createdAt' => $eqrStore->now - 86279]);
+$eqrResult = $eqrRun($eqrStore, 'A', ['linkLifetimes' => ['verification' => 86400]]);
+$eqrLabel  = 'expired verification link (24 hours): skipped at the boundary, sent just inside it';
+assertEquals('skipped', $eqrStore->rows[1]['status'], $eqrLabel . ': A (2 minutes left) skipped');
+assertEquals(null, $eqrStore->rows[1]['paramsJSON'], $eqrLabel . ': A lost its details');
+assertEquals(CUERCODE_EMAIL_QUEUE_NOTE_LINK_EXPIRED, $eqrStore->rows[1]['lastError'], $eqrLabel . ': A lastError explains why');
+assertEquals('sent', $eqrStore->rows[2]['status'], $eqrLabel . ': B (2 minutes and 1 second left) sent');
+assertEquals(1, $eqrResult['expired'], $eqrLabel . ': expired 1');
+assertTrue($eqrEachSentOnce($eqrStore, ['user2@example.com']), $eqrLabel . ': only B was sent');
+
+$eqrStore      = $eqrNewStore();
+$eqrResetExtra = ['templateKey' => 'password_reset', 'subject' => 'Reset your CueRCode password'];
+$eqrAddRow($eqrStore, 1, $eqrResetExtra + ['paramsJSON' => '{"resetUrl":"https://cuercode.net/reset-password?token=R1"}', 'createdAt' => $eqrStore->now - 3480]);
+$eqrAddRow($eqrStore, 2, $eqrResetExtra + ['paramsJSON' => '{"resetUrl":"https://cuercode.net/reset-password?token=R2"}', 'createdAt' => $eqrStore->now - 3479]);
+$eqrResult = $eqrRun($eqrStore, 'A', ['linkLifetimes' => ['password_reset' => 3600]]);
+$eqrLabel  = 'expired reset link (60 minutes): skipped at the boundary, sent just inside it';
+assertEquals('skipped', $eqrStore->rows[1]['status'], $eqrLabel . ': A skipped');
+assertEquals(CUERCODE_EMAIL_QUEUE_NOTE_LINK_EXPIRED, $eqrStore->rows[1]['lastError'], $eqrLabel . ': A lastError explains why');
+assertEquals('sent', $eqrStore->rows[2]['status'], $eqrLabel . ': B sent');
+assertTrue($eqrEachSentOnce($eqrStore, ['user2@example.com']), $eqrLabel . ': only B was sent');
+assertContains('token=R2', (string) $eqrStore->sends[0]['body'], $eqrLabel . ': B went out with its reset link');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['attempts' => 2, 'nextAttemptAt' => $eqrStore->now + 600, 'createdAt' => $eqrStore->now - 90000]);
+$eqrRun($eqrStore, 'A');
+assertEquals('skipped', $eqrStore->rows[1]['status'], 'expiry also covers an email waiting for a retry');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sending', 'updatedAt' => $eqrStore->now - 60, 'createdAt' => $eqrStore->now - 90000]);
+$eqrAddRow($eqrStore, 2, ['status' => 'sent', 'createdAt' => $eqrStore->now - 90000]);
+$eqrAddRow($eqrStore, 3, ['status' => 'failed', 'attempts' => 5, 'createdAt' => $eqrStore->now - 90000]);
+$eqrRun($eqrStore, 'A');
+$eqrLabel = 'expiry never touches an email being sent, already sent, or given up';
+assertEquals('sending', $eqrStore->rows[1]['status'], $eqrLabel . ': the email being sent is still sending');
+assertEquals('sent', $eqrStore->rows[2]['status'], $eqrLabel . ': the sent email is still sent');
+assertEquals('failed', $eqrStore->rows[3]['status'], $eqrLabel . ': the given-up email is still failed');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['templateKey' => 'receipt', 'paramsJSON' => '{"orderNumber":"R-1","amount":"9.99"}', 'createdAt' => $eqrStore->now - (10 * $eqrDay)]);
+$eqrRun($eqrStore, 'A');
+assertEquals('sent', $eqrStore->rows[1]['status'], 'no link lifetime (receipt) means no expiry: a 10-day-old receipt is sent');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['createdAt' => $eqrStore->now - (2 * $eqrDay)]);
+$eqrRun($eqrStore, 'A', ['linkLifetimes' => []]);
+assertEquals('sent', $eqrStore->rows[1]['status'], 'with no lifetimes known nothing is skipped for age');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['createdAt' => $eqrStore->now - 86400]);
+$eqrResult = $eqrRun($eqrStore, 'A', ['useLock' => false]);
+$eqrLabel  = 'the per-row check stops an expired link even without the clean-up step (lock bypassed)';
+assertEquals('skipped', $eqrStore->rows[1]['status'], $eqrLabel . ': skipped');
+assertEquals(CUERCODE_EMAIL_QUEUE_NOTE_LINK_EXPIRED, $eqrStore->rows[1]['lastError'], $eqrLabel . ': lastError explains why');
+assertEquals(1, $eqrResult['expired'], $eqrLabel . ': expired 1');
+assertEquals(0, count($eqrStore->sends), $eqrLabel . ': 0 sends');
+
+// --- tidy-only runs (sendEmails = false) ------------------------------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrAddRow($eqrStore, 2);
+$eqrAddRow($eqrStore, 3, ['createdAt' => $eqrStore->now - (2 * $eqrDay)]);
+$eqrResult = $eqrRun($eqrStore, 'A', ['sendEmails' => false]);
+$eqrLabel  = 'sendEmails=false tidies up but never claims or sends';
+assertEquals(1, $eqrResult['purged'], $eqrLabel . ': purged 1');
+assertEquals(1, $eqrResult['expired'], $eqrLabel . ': expired 1');
+assertEquals(0, $eqrStore->claimCalls, $eqrLabel . ': claimCalls 0');
+assertEquals(0, count($eqrStore->sends), $eqrLabel . ': 0 sends');
+assertEquals('queued', $eqrStore->rows[2]['status'], $eqrLabel . ': the fresh email is still queued');
+assertEquals(null, $eqrStore->lockHolder, $eqrLabel . ': the lock is released');
+assertEquals('ok', $eqrResult['status'], $eqrLabel . ': status ok');
+
+$eqrStore             = $eqrNewStore();
+$eqrStore->lockHolder = 'other';
+$eqrAddRow($eqrStore, 1, ['nextAttemptAt' => $eqrStore->now - 660]);
+$eqrResult = $eqrRun($eqrStore, 'A', ['sendEmails' => false]);
+assertEquals('busy', $eqrResult['status'], 'sendEmails=false with the lock held elsewhere is busy, never stalled');
+
+// --- the runner's main, with the clean-up ----------------------------------------------------------
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrIo   = $eqrNewIo();
+$eqrCode = $eqrMain($eqrStore, $eqrIo, ['--quiet'], $eqrOffSettings);
+$eqrLabel = 'email switched off, quiet: the clean-up runs silently (exit 0)';
+assertEquals(0, $eqrCode, $eqrLabel . ': exit 0');
+assertFalse(isset($eqrStore->rows[1]), $eqrLabel . ': the 40-day-old record is gone');
+assertEquals([], array_merge($eqrIo->out, $eqrIo->err), $eqrLabel . ': nothing printed');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrIo   = $eqrNewIo();
+$eqrCode = $eqrMain($eqrStore, $eqrIo, [], $eqrOffSettings);
+$eqrText = implode(' ', $eqrIo->out);
+assertEquals(0, $eqrCode, 'email switched off, normal: says what was tidied: exit 0');
+assertContains('switched off', $eqrText, 'email switched off, normal: says what was tidied: says switched off');
+assertContains('Tidied up: deleted 1', $eqrText, 'email switched off, normal: says what was tidied: says deleted 1');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrStore->failOps['purgeFinished'] = true;
+$eqrIo                              = $eqrNewIo();
+$eqrCode                            = $eqrMain($eqrStore, $eqrIo, ['--quiet'], $eqrOffSettings);
+$eqrLabel                           = 'email switched off: a failing clean-up is reported on the error stream with exit 3, even when quiet';
+assertEquals(3, $eqrCode, $eqrLabel . ': exit 3');
+assertContains('Could not finish tidying up', implode(' ', $eqrIo->err), $eqrLabel . ': on the error stream');
+assertEquals([], $eqrIo->out, $eqrLabel . ': nothing on the normal stream');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrAddRow($eqrStore, 2);
+$eqrIo   = $eqrNewIo();
+$eqrCode = $eqrMain($eqrStore, $eqrIo, ['--quiet'], $eqrGappySettings);
+$eqrLabel = 'email on but settings incomplete: the clean-up still runs; exit 4';
+assertEquals(4, $eqrCode, $eqrLabel . ': exit 4');
+assertFalse(isset($eqrStore->rows[1]), $eqrLabel . ': the old record is gone');
+assertEquals(0, $eqrStore->claimCalls, $eqrLabel . ': nothing claimed');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['createdAt' => $eqrStore->now - 90000]);
+$eqrIo   = $eqrNewIo();
+$eqrCode = $eqrMain($eqrStore, $eqrIo, ['--quiet'], $eqrReadySettings);
+$eqrLabel = 'sending run: an expired email is reported on the error stream even when quiet (exit 0)';
+assertEquals(0, $eqrCode, $eqrLabel . ': exit 0');
+assertContains('Skipped 1', implode(' ', $eqrIo->err), $eqrLabel . ': on the error stream');
+assertEquals(0, count($eqrStore->sends), $eqrLabel . ': nothing sent');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['paramsJSON' => null]);
+$eqrIo   = $eqrNewIo();
+$eqrCode = $eqrMain($eqrStore, $eqrIo, ['--quiet'], $eqrReadySettings);
+$eqrLabel = 'sending run: an email whose details were removed is reported on the error stream even when quiet';
+assertEquals(0, $eqrCode, $eqrLabel . ': exit 0');
+assertContains('can no longer be sent', implode(' ', $eqrIo->err), $eqrLabel . ': on the error stream');
+
+$eqrStore = $eqrNewStore();
+$eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (40 * $eqrDay)]);
+$eqrIo   = $eqrNewIo();
+$eqrCode = $eqrMain($eqrStore, $eqrIo, ['--check'], $eqrReadySettings);
+$eqrText = implode(' ', $eqrIo->out);
+$eqrLabel = '--check shows the clean-up policy and the skipped count, and changes nothing';
+assertEquals(0, $eqrCode, $eqrLabel . ': exit 0');
+assertTrue(isset($eqrStore->rows[1]), $eqrLabel . ': the 40-day-old record is still there');
+
+foreach (['Clean-up:', '30 days', '90 days', 'Skipped (not sent on purpose', 'Expired-link check: on', 'verification 24 hours', 'password_reset 60 minutes'] as $eqrNeedle) {
+    assertContains($eqrNeedle, $eqrText, $eqrLabel . ': shows ' . $eqrNeedle);
+}
+
+$eqrCheckSettings                               = $eqrReadySettings;
+$eqrCheckSettings['email_queue_retention_days'] = 'retention-value-777';
+$eqrStore                                       = $eqrNewStore();
+$eqrIo                                          = $eqrNewIo();
+$eqrCode                                        = $eqrMain($eqrStore, $eqrIo, ['--check'], $eqrCheckSettings);
+$eqrText                                        = implode(' ', array_merge($eqrIo->out, $eqrIo->err));
+assertContains('email_queue_retention_days', $eqrText, '--check names an invalid retention setting but never its value: names it');
+assertFalse(str_contains($eqrText, 'retention-value-777'), '--check names an invalid retention setting but never its value: no value');
+
+// --- source-text guards on the new SQL (Section 4's cutter) -------------------------------------------
+assertContains('`paramsJSON` = NULL', $eqrFunctionBody($eqrEmailSource, 'settleEmailQueueSuccess'), 'settleEmailQueueSuccess clears paramsJSON in the same statement that marks the email sent');
+
+$eqrSkipClaimedBody = $eqrFunctionBody($eqrEmailSource, 'skipClaimedEmailQueueRow');
+
+foreach (["`status` = 'skipped'", '`paramsJSON` = NULL', "AND `status` = 'sending'", 'emailQueueChangeOneRow('] as $eqrNeedle) {
+    assertContains($eqrNeedle, $eqrSkipClaimedBody, 'skipClaimedEmailQueueRow contains ' . $eqrNeedle);
+}
+
+$eqrSkipExpiredBody = $eqrFunctionBody($eqrEmailSource, 'skipExpiredEmailQueueRows');
+
+foreach (["`status` IN ('queued', 'failed')", '`attempts` < `maxAttempts`', '`createdAt` <= DATE_SUB(NOW(), INTERVAL ? SECOND)', '`paramsJSON` = NULL', 'LIMIT ?'] as $eqrNeedle) {
+    assertContains($eqrNeedle, $eqrSkipExpiredBody, 'skipExpiredEmailQueueRows contains ' . $eqrNeedle);
+}
+
+assertFalse(str_contains($eqrSkipExpiredBody, "'sending'"), "skipExpiredEmailQueueRows never touches a 'sending' row");
+
+$eqrClearBody = $eqrFunctionBody($eqrEmailSource, 'clearGivenUpEmailQueueDetails');
+
+foreach (['`updatedAt` = `updatedAt`', '`attempts` >= `maxAttempts`', '`paramsJSON` IS NOT NULL', "`status` = 'failed'"] as $eqrNeedle) {
+    assertContains($eqrNeedle, $eqrClearBody, 'clearGivenUpEmailQueueDetails contains ' . $eqrNeedle);
+}
+
+$eqrPurgeBody = $eqrFunctionBody($eqrEmailSource, 'purgeFinishedEmailQueueRows');
+
+foreach (['DELETE FROM `tblEmailQueue`', "`status` IN ('sent', 'skipped')", '`createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY)', 'LIMIT ?'] as $eqrNeedle) {
+    assertContains($eqrNeedle, $eqrPurgeBody, 'purgeFinishedEmailQueueRows contains ' . $eqrNeedle);
+}
+
+assertFalse(str_contains($eqrPurgeBody, 'queued') || str_contains($eqrPurgeBody, 'sending'), 'purgeFinishedEmailQueueRows never mentions queued or sending (it only ever deletes finished rows)');
+
+$eqrPurgeGivenUpBody = $eqrFunctionBody($eqrEmailSource, 'purgeGivenUpEmailQueueRows');
+
+foreach (['DELETE FROM', "`status` = 'failed'", '`attempts` >= `maxAttempts`'] as $eqrNeedle) {
+    assertContains($eqrNeedle, $eqrPurgeGivenUpBody, 'purgeGivenUpEmailQueueRows contains ' . $eqrNeedle);
+}
+
+assertFalse(str_contains($eqrPurgeGivenUpBody, 'queued') || str_contains($eqrPurgeGivenUpBody, 'sending'), 'purgeGivenUpEmailQueueRows never mentions queued or sending (it only ever deletes given-up rows)');
+assertContains('TIMESTAMPDIFF(SECOND, `createdAt`, NOW()) AS `ageSeconds`', $eqrFunctionBody($eqrEmailSource, 'loadClaimedEmailQueueRow'), 'loadClaimedEmailQueueRow measures the age on the database clock');
+
+$eqrBatchBody     = $eqrFunctionBody($eqrEmailSource, 'runEmailQueueBatch');
+$eqrHaveLockPos   = strpos($eqrBatchBody, 'if ($haveLock) {');
+$eqrHousekeepPos  = strpos($eqrBatchBody, 'runEmailQueueHousekeeping(');
+$eqrFindDuePos    = strpos($eqrBatchBody, "\$gateway['findDue']");
+assertTrue(
+    $eqrHaveLockPos !== false && $eqrHousekeepPos !== false && $eqrFindDuePos !== false
+        && $eqrHousekeepPos > $eqrHaveLockPos && ($eqrHousekeepPos - $eqrHaveLockPos) < 400 && $eqrHousekeepPos < $eqrFindDuePos,
+    'runEmailQueueBatch runs the clean-up only while it holds the lock, and before it lists the emails to send'
+);
+assertContains("\$gateway['markSkipped']", $eqrBatchBody, 'runEmailQueueBatch marks unsendable emails skipped through the gateway');
+
+$eqrLifetimesBody = $eqrFunctionBody($eqrEmailSource, 'emailQueueLinkLifetimes');
+assertContains("defined('CUERCODE_EMAIL_VERIFICATION_TTL_HOURS')", $eqrLifetimesBody, 'emailQueueLinkLifetimes reads the verification lifetime at run time');
+assertContains("defined('CUERCODE_PASSWORD_RESET_TTL_MINUTES')", $eqrLifetimesBody, 'emailQueueLinkLifetimes reads the reset lifetime at run time');
+
+assertContains('cleanLogText(', $eqrFunctionBody($eqrEmailSource, 'emailQueueSafeDetail'), 'emailQueueSafeDetail delegates to cleanLogText (one copy of the rule)');
+assertFalse(str_contains($eqrEmailSource, '[A-Za-z0-9._%+\-]+@'), 'fn_email.php no longer has its own copy of the address pattern');
+
+$eqrInstallSource = (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'sql' . DIRECTORY_SEPARATOR . 'install.sql');
+$eqrSeedSource    = (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'sql' . DIRECTORY_SEPARATOR . 'seed_data.sql');
+assertFalse(str_contains($eqrInstallSource, 'NEVER stores rendered HTML or secrets'), 'install.sql no longer claims paramsJSON never stores secrets');
+assertContains('one-time sign-up or password-reset link', $eqrInstallSource, 'install.sql says paramsJSON can hold a one-time link');
+assertContains("('email', 'email_queue_retention_days', '30', 'integer'", $eqrSeedSource, 'seed_data.sql seeds email_queue_retention_days = 30');
+assertContains("('email', 'email_queue_failed_retention_days', '90', 'integer'", $eqrSeedSource, 'seed_data.sql seeds email_queue_failed_retention_days = 90');
