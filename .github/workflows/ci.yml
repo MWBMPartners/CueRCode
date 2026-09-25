@@ -52,7 +52,7 @@ jobs:
           - '8.5'
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@v2
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # 🔎 Three possible situations here, and they must NOT be treated the
       #    same way:
@@ -113,9 +113,15 @@ jobs:
       #         TARGET branch: if it has tests/run.php, this PR is removing
       #         the suite → fail. (Found by the 2026-09-25 review, round 2.)
       #         If the target can't be checked, fail rather than guess.
+      #         The fetch names the branch in full (refs/heads/...) because
+      #         for a short name git would prefer a TAG called the same.
       #         Limit: a direct push (no pull request) that deletes tests/
-      #         still only skips - branch protection should make that
-      #         impossible on the four tiers.
+      #         still only skips. Nothing stops such a push today: alpha,
+      #         beta and release-candidate only block deleting the branch,
+      #         and repository admins can bypass main's pull-request rule
+      #         (checked 2026-09-25). Stricter branch protection, and making
+      #         "Test suite" a required check, are owner decisions (see
+      #         LAUNCH_DECISIONS.md).
       - name: Check the test suite is present on this branch
         id: suite
         env:
@@ -130,7 +136,7 @@ jobs:
             exit 1
           else
             if [ -n "${BASE_REF}" ]; then
-              if ! git fetch --no-tags --depth=1 origin "${BASE_REF}"; then
+              if ! git fetch --no-tags --depth=1 origin "refs/heads/${BASE_REF}"; then
                 echo "::error::There is no tests/ folder, and the target branch '${BASE_REF}' could not be fetched to check whether it has the test suite. Re-run the check."
                 exit 1
               fi
@@ -184,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 

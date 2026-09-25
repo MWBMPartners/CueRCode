@@ -25,7 +25,19 @@ The Codex review is still owed.
   - The `dual_function_qr` wording, the counts above, and one over-broad
     sentence in `.github/SECURITY.md`.
 
-  It also found two older bugs, now tracked: **#124** (high: the deploy never
+- **Round 3 (same day):** a third fresh agent checked round 2's fixes. It
+  found two more statements that weren't true:
+  - `ci.yml` claimed branch protection stops direct pushes to the four
+    branches. It doesn't: `alpha`, `beta` and `release-candidate` only block
+    deleting the branch.
+  - `PROJECT_STATUS.md` still had the old `dual_function_qr` wording.
+
+  Both are corrected. The check now also fetches the target branch by its
+  full name, because git would otherwise prefer a tag with the same name.
+  And the `actions/checkout` pin comments said `v6` for what is really v7.0.1
+  (7 places).
+
+  Round 2 also found two older bugs, now tracked: **#124** (high: the deploy never
   uploads the `.htaccess` file at the top of each folder, including the
   security headers and the rules that keep the alpha and beta sites private)
   and **#125** (the `/pricing` page lists features that don't exist yet as
