@@ -32,6 +32,7 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   Test `run:` scripts locally with the matching flags, and confirm any claim
   about shell behaviour in a real run log. A wrong claim about this went into
   commit 5e2005c's message; the CHANGELOG carries the correction.
+- **Codex allowance (2026-09-25).** A whole-branch review ran out of allowance in about 3 minutes, before writing any finding. Review in chunks (`.claude/plans/codex-review-chunk-*.md`), read only the named functions, and write each finding as soon as it is found.
 - **House style:** full multi-line PHP, detailed comments (emojis fine), PHP
   predefined constants, MySQLi prepared statements, no layout `<table>`,
   WCAG 2.1 AA, file headers with path + copyright (2025–current year, MWBM
