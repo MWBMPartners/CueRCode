@@ -1,10 +1,12 @@
 You are reviewing code that Claude Code wrote for the CueRCode repository (PHP 8.4+/MySQL QR-code web service on DreamHost shared hosting). You did not write any of it. Other Claude agents have already reviewed it; look for what they MISSED. READ-ONLY: do not edit any files.
 
+DO NOT read `AGENTS.md`, `.claude/HANDOFF.md`, `.claude/CLAUDE.md` or `.OpenAI/*` first — this is a review, and everything you need is in this brief. Reading them used up a previous attempt's whole allowance.
+
 YOUR ALLOWANCE IS SMALL. Work economically:
 - Do NOT print whole files or whole diffs. Read only the functions named below, with `grep -n "^function NAME" FILE` then `sed -n 'START,ENDp' FILE`.
 - **Write each finding down the moment you are sure of it** (severity, file:line, what's wrong, a concrete scenario, the fix), then carry on. If you run out of allowance, the findings you already wrote are still useful.
 
-SCOPE (chunk 1 of 3): the email queue runner, branch `work-in-progress`.
+SCOPE (chunk 1a of 3 — duplicates, locking, recovery): the email queue runner, branch `work-in-progress`.
 A DreamHost cron job runs `web/CueRCode.net/_includes/cron/process_email_queue.php` every minute. It sends queued emails (sign-up verification, password reset) through Microsoft Graph. All logic is in `web/CueRCode.net/_functions/fn_email.php`.
 
 Design, in brief:
@@ -18,9 +20,9 @@ Design, in brief:
 - Expiry (#123): an email whose link has less than 2 minutes left is skipped. Its age is measured with the database clock.
 - Masking (#126): `web/CueRCode.net/_functions/fn_log_mask.php` masks addresses in every fallback that writes to PHP's error log.
 
-READ THESE FUNCTIONS in fn_email.php: claimEmailQueueRow, loadClaimedEmailQueueRow, settleEmailQueueSuccess, settleEmailQueueRetry, settleEmailQueueGaveUp, releaseEmailQueueClaim, settleEmailQueueFailure, findStuckEmailQueueRows, recoverStuckEmailQueueRow, findDueEmailQueueIDs, acquireEmailQueueRunLock, releaseEmailQueueRunLock, emailQueueChangeOneRow, emailQueueChangeRows, skipClaimedEmailQueueRow, skipExpiredEmailQueueRows, clearGivenUpEmailQueueDetails, purgeFinishedEmailQueueRows, purgeGivenUpEmailQueueRows, runEmailQueueHousekeeping, runEmailQueueBatch (long — read the lock/claim/send/settle parts), emailQueueLinkMaxAgeSeconds, emailQueueLinkHasExpired, parseEmailQueueRetentionDays, decideEmailQueueFailure, classifyEmailSendError. Then fn_log_mask.php (short), and `maybeProcessEmailQueueOnShutdown` + `processEmailQueue`, and the `bootstrap.php` lines that call it (`grep -n maybeProcessEmailQueueOnShutdown web/CueRCode.net/_includes/bootstrap.php`).
+READ ONLY THESE FUNCTIONS in `web/CueRCode.net/_functions/fn_email.php` (find each with `grep -n "^function NAME"`): claimEmailQueueRow, loadClaimedEmailQueueRow, settleEmailQueueSuccess, settleEmailQueueRetry, settleEmailQueueGaveUp, releaseEmailQueueClaim, findStuckEmailQueueRows, recoverStuckEmailQueueRow, findDueEmailQueueIDs, acquireEmailQueueRunLock, releaseEmailQueueRunLock, emailQueueChangeOneRow, decideEmailQueueFailure. Then ONLY the lock/claim/send/settle loop inside runEmailQueueBatch (search for `acquireEmailQueueRunLock(` and `finally` inside it).
 
-LOOK FOR, most important first:
+LOOK FOR, most important first (items 1, 4 and 5 are this half's focus):
 1. The same email sent twice, or one lost. Examples: a stale read; a final UPDATE that isn't guarded; the lock not released on some path; stuck-row recovery racing a live sender.
 2. **Data loss.** Could a purge or a `paramsJSON = NULL` ever touch a row that still needs sending (queued, sending, or failed with attempts left)?
 3. **Wrong sends.** Could an email go out with an empty link or an expired link?

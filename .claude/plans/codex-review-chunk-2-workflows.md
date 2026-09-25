@@ -1,5 +1,7 @@
 You are reviewing GitHub Actions workflow changes that Claude Code made to the CueRCode repository. You did not write them, and other Claude agents have already reviewed them, so look for what they MISSED. This is READ-ONLY: do not edit any files.
 
+DO NOT read `AGENTS.md`, `.claude/HANDOFF.md`, `.claude/CLAUDE.md` or `.OpenAI/*` first — this is a review, and everything you need is in this brief. Reading them used up a previous attempt's whole allowance.
+
 YOUR ALLOWANCE IS SMALL, so work economically:
 - Read only the steps named below. Use `grep -n` to find them, then `sed -n` to read the ranges. Do not print whole files.
 - **Write down each finding the moment you are sure of it**, then carry on.

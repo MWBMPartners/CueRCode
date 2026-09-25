@@ -1,5 +1,7 @@
 You are reviewing changes that Claude Code made to the CueRCode repository: a PHP 8.4+/MySQL service that makes QR codes. You did not write them, and other Claude agents have already reviewed them, so look for what they MISSED. This is read-only: do not edit any files.
 
+DO NOT read `AGENTS.md`, `.claude/HANDOFF.md`, `.claude/CLAUDE.md` or `.OpenAI/*` first — this is a review, and everything you need is in this brief. Reading them used up a previous attempt's whole allowance.
+
 YOUR ALLOWANCE IS SMALL, so work economically:
 - Read only what is named below. Use `git diff origin/alpha...origin/work-in-progress -- <file>` for one file at a time. Never print the whole diff.
 - **Write each finding down the moment you are sure of it**, then carry on.
