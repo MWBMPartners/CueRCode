@@ -21,7 +21,16 @@
 #
 # 📋 Required GitHub Secrets:
 #   SFTP_HOST, SFTP_PORT, SFTP_USER, SFTP_KEY, SFTP_PASSWORD,
-#   SFTP_REMOTE_BASE
+#   SFTP_REMOTE_BASE, SFTP_KNOWN_HOSTS
+#
+#   SFTP_KNOWN_HOSTS (#127): one or more lines in OpenSSH known_hosts
+#   format, e.g. the output of `ssh-keyscan -p <port> <host>` run from a
+#   trusted machine, with the printed fingerprint checked against
+#   DreamHost's own records for this server. Without it, BOTH upload steps
+#   refuse to connect at all - "trust on first use" (accepting whatever
+#   host key shows up the first time) is not a safe default for a job that
+#   uploads the whole site and a password/key to whatever answers on that
+#   address.
 #
 # 📋 Required GitHub Variables:
 #   SFTP_ENABLED = 'true'
@@ -483,18 +492,70 @@ jobs:
           SFTP_HOST: ${{ secrets.SFTP_HOST }}
           SFTP_PORT: ${{ secrets.SFTP_PORT }}
           SFTP_KEY: ${{ secrets.SFTP_KEY }}
+          SFTP_KNOWN_HOSTS: ${{ secrets.SFTP_KNOWN_HOSTS }}
           STAGING_DIR: ${{ steps.staging.outputs.staging_dir }}
           REMOTE_BASE: ${{ secrets.SFTP_REMOTE_BASE }}
         run: |
-          # 🔑 Write SSH key to file
+          # 🪪 Refuse to deploy unless the server's identity is pinned (#127).
+          #    This used to be `-o StrictHostKeyChecking=no` (see below for
+          #    the replacement `=yes`), which skipped identity checking
+          #    entirely. But `=yes` on its own only protects the SECOND
+          #    connection onwards - the very first connection to an empty
+          #    known_hosts file would still succeed against an impostor,
+          #    because ssh has nothing yet to compare it to ("trust on first
+          #    use"). Requiring SFTP_KNOWN_HOSTS to already be set, and
+          #    refusing outright when it isn't, is what actually closes that
+          #    hole. The secret only ever reaches this script through the
+          #    `env:` block above, never spelled out as a workflow
+          #    expression inside the script itself, so it can't end up
+          #    pasted into the runner's expanded command log.
+          if [[ -z "$SFTP_KNOWN_HOSTS" ]]; then
+            echo "::error::Deploy stopped: the server's SSH identity (host key) is not pinned, so there is no safe way to tell the real server from an impostor. To fix: from a trusted machine run 'ssh-keyscan -p ${SFTP_PORT} ${SFTP_HOST}', check the fingerprint it prints against DreamHost's own records for this server, then save that output as the repository secret SFTP_KNOWN_HOSTS."
+            exit 1
+          fi
+
+          # 📌 Write the pinned host key(s) to their own known_hosts file.
+          #    Mode 600 because ssh silently ignores a known_hosts file other
+          #    users on the runner could have written to.
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$SFTP_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          # 🔑 Write SSH key to file
           echo "$SFTP_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
+          # 🧹 Remove the private key on EVERY way this step can end, not
+          #    just a successful one. Before #127 the `rm -f` sat only at the
+          #    bottom of the script - `run:` steps execute as `bash -e {0}`,
+          #    so any earlier failure (a bad connection, a non-zero lftp exit)
+          #    stopped the script before that line ran, leaving the key file
+          #    on the runner's disk for the rest of the job. A `trap` on EXIT
+          #    runs regardless of how the script finishes, so this replaces
+          #    the old bottom-of-script `rm -f` rather than duplicating it.
+          trap 'rm -f "$HOME/.ssh/deploy_key"' EXIT
+
           # 🚀 Upload using lftp mirror
+          #
+          # 🐛 #127 bug this fixes: "open sftp://user@host:port" (a user name
+          #    but NO password) makes lftp PROMPT for a password even though
+          #    the SSH key above would log in fine - a CI job has no keyboard
+          #    to answer that prompt, so it logs "GetPass() failed" /
+          #    "Login failed: Password required" and retries forever (lftp's
+          #    default net:max-retries is 1000), uploading nothing. Adding a
+          #    bare `:` after the user name (`user:@host`) tells lftp "the
+          #    password is empty, don't ask" - it goes straight to the SSH
+          #    key set in sftp:connect-program above instead of prompting.
+          #    Proven against a local key-auth SFTP server (#124 stand-in
+          #    review, 2026-09-25): the old form uploaded 0 files after ~10
+          #    minutes of retrying; this form uploaded all 957.
           cat > /tmp/lftp_script.txt <<LFTP_EOF
-          set sftp:connect-program "ssh -o StrictHostKeyChecking=no -i $HOME/.ssh/deploy_key"
-          open sftp://${SFTP_USER}@${SFTP_HOST}:${SFTP_PORT}
+          set sftp:connect-program "ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -i $HOME/.ssh/deploy_key"
+          set net:max-retries 2
+          set net:timeout 30
+          set net:reconnect-interval-base 5
+          open sftp://${SFTP_USER}:@${SFTP_HOST}:${SFTP_PORT}
           mirror --reverse --verbose --only-newer --no-empty-dirs \
             --exclude .DS_Store \
             --exclude .gitkeep \
@@ -509,9 +570,6 @@ jobs:
           echo "🚀 Deploying to ${SFTP_HOST}:${REMOTE_BASE}..."
           lftp -f /tmp/lftp_script.txt
 
-          # 🧹 Clean up SSH key
-          rm -f ~/.ssh/deploy_key
-
       # =======================================================================
       # 🚀 Step 6b: Deploy via SFTP using password (fallback)
       # =======================================================================
@@ -522,12 +580,32 @@ jobs:
           SFTP_PASS: ${{ secrets.SFTP_PASSWORD }}
           SFTP_HOST: ${{ secrets.SFTP_HOST }}
           SFTP_PORT: ${{ secrets.SFTP_PORT }}
+          SFTP_KNOWN_HOSTS: ${{ secrets.SFTP_KNOWN_HOSTS }}
           STAGING_DIR: ${{ steps.staging.outputs.staging_dir }}
           REMOTE_BASE: ${{ secrets.SFTP_REMOTE_BASE }}
         run: |
+          # 🪪 Same fail-closed host-key check as the key step above (#127) -
+          #    see that step's comment for why "trust on first use" isn't
+          #    good enough on its own and why this has to refuse outright
+          #    rather than proceed with an unpinned server. The secret only
+          #    reaches this script via `env:` above, never written inline as
+          #    a workflow expression.
+          if [[ -z "$SFTP_KNOWN_HOSTS" ]]; then
+            echo "::error::Deploy stopped: the server's SSH identity (host key) is not pinned, so there is no safe way to tell the real server from an impostor. To fix: from a trusted machine run 'ssh-keyscan -p ${SFTP_PORT} ${SFTP_HOST}', check the fingerprint it prints against DreamHost's own records for this server, then save that output as the repository secret SFTP_KNOWN_HOSTS."
+            exit 1
+          fi
+
+          # 📌 Write the pinned host key(s) - same file/permissions as the
+          #    key step above.
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$SFTP_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
           echo "🚀 Deploying to ${SFTP_HOST}:${REMOTE_BASE}..."
           lftp -u "${SFTP_USER},${SFTP_PASS}" \
-            -e "set sftp:auto-confirm yes; set ssl:verify-certificate no; \
+            -e "set sftp:connect-program \"ssh -a -x -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts\"; \
+            set net:max-retries 2; set net:timeout 30; set net:reconnect-interval-base 5; \
             mirror --reverse --verbose --only-newer --no-empty-dirs \
             --exclude .DS_Store \
             --exclude .gitkeep \
@@ -538,6 +616,26 @@ jobs:
             ${STAGING_DIR}/web/ ${REMOTE_BASE}; \
             bye" \
             "sftp://${SFTP_HOST}:${SFTP_PORT}"
+          #
+          # 🔐 What changed here and why (#127):
+          #   - `set sftp:connect-program "ssh -a -x ..."` replaces lftp's own
+          #     default sftp:connect-program (`ssh -a -x`, per lftp's manual)
+          #     so the SAME strict host-key options as the key step above can
+          #     be added, while keeping lftp's original `-a -x` (no
+          #     ssh-agent forwarding, no X11 forwarding) unchanged - nothing
+          #     else about the connection is different.
+          #   - `set sftp:auto-confirm yes` has been REMOVED. That setting
+          #     told lftp to auto-accept whatever host key the server
+          #     presented the first time, which is exactly the "impostor
+          #     server" hole StrictHostKeyChecking=yes above is meant to
+          #     close - leaving both in place would have made the strict
+          #     check pointless.
+          #   - `set ssl:verify-certificate no` has been REMOVED. It
+          #     controls certificate checking for FTPS/HTTPS connections;
+          #     this step only ever speaks SFTP (over plain SSH, no TLS
+          #     certificate involved), so the setting did nothing here - it
+          #     was misleading to read next to a security-relevant line and
+          #     is safer gone than kept "just in case".
 
       # =======================================================================
       # 📊 Step 7: Deployment summary

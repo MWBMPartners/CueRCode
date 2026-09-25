@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - A deploy using an SSH key uploaded nothing; the server's identity is now checked (2026-09-25, #127)
+
+Deploy is switched off today (`SFTP_ENABLED` isn't `true`), so this hasn't
+caused harm. It would have stopped the first real deploy.
+
+- **Key login uploaded nothing.** The upload tool (lftp) was given
+  `sftp://user@host`, with a user name but no password, so it tried to *ask*
+  for one even though the SSH key would have worked. In CI there's nobody to
+  ask, so it failed with "Password required". The address now ends the user
+  name with a colon (`user:@host`), which tells lftp to use the key.
+- **The server's identity is now checked** (security). Both upload steps used
+  to accept any server (`StrictHostKeyChecking=no`, and `sftp:auto-confirm
+  yes` on the password route), so an impostor server could have received the
+  whole site and the password. They now check the server's key against a new
+  repository secret, **`SFTP_KNOWN_HOSTS`**. **If that secret is missing, the
+  deploy stops with a message saying exactly how to add it.** (Owner action
+  before switching deploy on: run `ssh-keyscan -p <port> <host>` from a
+  trusted machine, check the fingerprint with DreamHost, and save the output
+  as that secret.)
+- **A failed login now gives up in about a minute**, instead of lftp's
+  default of up to 1,000 retries.
+- **The SSH key file is removed whenever the step ends**, including on
+  failure. Before, a failed upload left it behind.
+- **Tested** against a real SFTP server in throwaway containers (lftp 4.9.2,
+  as on GitHub's runner), running the steps the way GitHub does (`bash -e`):
+  - key login uploads everything (including `.htaccess`);
+  - a missing secret stops the step before any connection is made;
+  - an impostor server is refused within about 12 seconds;
+  - the key file is gone after both success and failure;
+  - the password route works and also refuses an impostor;
+  - the old step failed with "Password required" and 0 files.
+  - actionlint: no new notes.
+- Built by a Sonnet builder; the lead read the change. The Codex review is
+  owed (it's in the queued review).
+
 ### Fixed - Emails now actually get sent: new scheduled email queue runner (2026-09-25, #112)
 
 Until now the site only ever *queued* emails. Nothing sent them, so no
