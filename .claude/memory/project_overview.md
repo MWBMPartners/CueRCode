@@ -41,4 +41,6 @@ must be deleted via the GitHub UI. Full detail + current branch tips live in
 
 **2026-09-25 afternoon:** owner answered 12 decisions (HANDOFF §0). #121 fix is on `main` (`e45b490`). **Dynamic QR + dual-function QR APPROVED for the alpha test group** — next big task (HANDOFF task 7j): must reuse Go2My.Link's short-code system on the QRmy.Link address; Web Risk → Safe Browsing → pluggable link checkers. Remaining launch decisions to be asked as questions at the start of the next session.
 
+**Pricing page allow-list (#125, 2026-09-25):** `/pricing` only shows plan features/limits listed in `pricingAllowedDisplayKeys()` (`_functions/fn_pricing.php`), each with a label and a status (available / coming soon). A new plan key stays hidden until it's added there on purpose. When dynamic QR ships (HANDOFF 7j), switch `dynamic_qr`, `dual_function_qr`, `dynamic_codes` (and any other newly built ones) to available.
+
 **How to apply:** Always audit issues against codebase before closing. Check PROJECT_STATUS.md for current status. Never assume prior completion claims are accurate. Cut new work from `work-in-progress`; promote via `work-in-progress → alpha`.

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Pricing page no longer advertises features that aren't built yet (2026-09-25, #125)
+
+`/pricing` used to list every key in every plan's settings. So features that
+don't exist yet (for example "Dynamic qr" and "Dual function qr") showed as
+**Included**, with half-finished labels. As the owner decided, the page now:
+
+- shows only features and allowances on one hand-written list
+  (`pricingAllowedDisplayKeys()` in `_functions/fn_pricing.php`). Each has a
+  proper name and a status: available, or **coming soon**. A new setting added
+  to a plan stays hidden until someone deliberately adds it to that list;
+- shows a **"Coming soon"** badge (visible text, plus words for screen
+  readers) instead of "Included" for features that aren't built yet, and
+  instead of the number for allowances that can't be used yet;
+- classifies all 16 plan settings against the actual code, with evidence.
+  Available: barcodes, single sign-on (once the owner sets it up), saved
+  codes, bulk size, API keys, and the two API rate limits. Coming soon:
+  dynamic QR, dual-function QR, expiry and scheduling, password-protected QR,
+  organisations, webhooks, analytics export, dynamic-code allowance, and
+  analytics history.
+
+Tests: 53 new checks in `tests/test_pricing.php`, covering unknown settings
+never shown, every row labelled, the right status, and the list's order.
+Full suite 2765/2765, and `php -l` is clean. Built by the Sonnet implementer;
+the lead re-checked the scope and re-ran the suite. Not checked in a real
+browser. Codex review is owed. Follow-up: #131 (the SSO plan setting isn't
+enforced anywhere).
+
 ### Changed - Owner decisions recorded; #121 fix applied to `main`; dynamic QR approved for alpha (2026-09-25, #121, #125, #122, #27/#71/#33) - PROCESS/CI
 
 The owner answered 12 open decisions (asked as proper questions, with a
