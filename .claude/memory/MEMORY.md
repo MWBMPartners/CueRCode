@@ -8,6 +8,7 @@
 - [feedback_push_and_workflow.md](feedback_push_and_workflow.md) - Commit AND push to work-in-progress; one PR to alpha later; after-each-task steps (2026-09-23)
 - [feedback_model_routing.md](feedback_model_routing.md) - Opus sequential for planning, Sonnet/Haiku to build, Codex review loop, AI-tool fallback (2026-09-23)
 - [feedback_watchdog.md](feedback_watchdog.md) - Set a watchdog on anything that finishes later (CI, merges, deploys, background agents); silence isn't success; don't move on until it's done (2026-09-24, #116)
+- [feedback_gha_shell_testing.md](feedback_gha_shell_testing.md) - Test Actions steps with the shell GitHub really uses: no `shell:` = `bash -e` WITHOUT pipefail (2026-09-25, #124)
 - [feedback_writer_agents.md](feedback_writer_agents.md) - Give writer agents explicit file allow-lists; the handoff's task numbers aren't theirs (2026-09-23)
 - [project_overview.md](project_overview.md) - CueRCode QR code service, branch cadence, current state pointer
 - [user_role.md](user_role.md) - Developer at MWBM Partners Ltd, prefers detailed comments, full PHP notation, thorough GitHub project management

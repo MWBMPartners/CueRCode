@@ -54,10 +54,10 @@ sign-up could be verified and no password-reset email ever arrived.
   "Email queue runner". Nothing is sent until it exists.
 - Review: independent Opus verification and Codex review pending (Codex out of credit at build time)
 
-### Fixed - The deploy would have shipped the site without its `.htaccess` files, and every production deploy would have failed (2026-09-25, #124)
+### Fixed - The deploy would have shipped the site without its `.htaccess` files (2026-09-25, #124)
 
-Nothing is deployed today (SFTP deploy is switched off), so neither bug has
-done harm yet. Both would have hit on the first real deploy.
+Nothing is deployed today (SFTP deploy is switched off), so this hasn't done
+harm yet. It would have hit on the first real deploy.
 
 - **`.htaccess` files were never uploaded.** The deploy copied each folder with
   `cp -r "$item"*`, and in bash `*` skips names that start with a dot. So 16
@@ -65,27 +65,40 @@ done harm yet. Both would have hit on the first real deploy.
   site's rewrite rules and security headers, the rules that keep the alpha and
   beta sites private, and the deny-all protection on the private folders.
   - The copy now uses `cp -R "$item".`, which includes hidden files.
-  - The `2>/dev/null || true` that hid every copy error is gone, so a failed
-    copy stops the deploy instead of shipping a half-empty site.
+  - The `2>/dev/null || true` that hid copy errors is gone from all seven copy
+    lines (the five folder copies and the two copies of top-level files), so a
+    failed copy stops the deploy instead of shipping a half-empty site.
   - A new check after staging stops the deploy, with a plain explanation, if
     any `.htaccess` from a copied folder is missing.
-- **Every production deploy would have failed.** The step listed the first 50
-  staged files with `find … | head -50`. GitHub runs the step in strict mode
-  (`bash -e -o pipefail`), so when `head` stopped reading, the failure of the
-  `find` feeding it stopped the whole deploy. That happens whenever more than
-  about 50 files are staged, which is always true for the main site (967
-  files). It now uses `sed -n '1,50p'`, which reads to the end.
-- Tested locally by running the staging step exactly as GitHub does, against
-  a clean export of the repo:
-  - main site: 15 `.htaccess` files staged and verified (the old step: 2);
+  - Removing the error-hiding exposed two cases it used to hide, now handled.
+    A site folder with no subfolders (for example the first QRmy.Link commit)
+    used to make the copy fail on a pattern that doesn't exist. And there was
+    no destination folder for its top-level files.
+- **A correction to the first version of this entry.** It claimed "every
+  production deploy would have failed" because of a `find … | head -50` line.
+  **That was wrong.** GitHub runs steps that don't name a shell as
+  `bash -e {0}`, *without* `pipefail`, so `head` closing early never failed
+  the step. The #124 stand-in review showed this from this repo's own run
+  logs. The mistake came from the lead testing locally with the stricter
+  `bash -e -o pipefail`. The change to `sed -n '1,50p'` is kept as a
+  harmless safeguard, in case `pipefail` is ever switched on. The same wrong
+  claim is in commit 5e2005c's message, which is pushed and can't be edited;
+  this entry is the correction.
+- **Tested locally**, running the staging step exactly as GitHub does
+  (`bash -e`) against a clean export of the repo:
+  - main site: 15 `.htaccess` files staged and verified (the old step: 2),
+    968 files;
   - alpha and beta: 13 each (the old step: 0);
-  - the staged file list matches `git ls-files` exactly (967 files);
-  - deleting one `.htaccess` on purpose makes the check stop the deploy;
-  - `head -50` → exit 141, `sed` → exit 0;
+  - a QRmy.Link folder holding only a README: passes, and the README is staged;
+  - an unreadable file: the deploy stops;
+  - a `.htaccess` deleted before the check: the deploy stops with a clear error;
   - actionlint: no new notes.
-- Built by a Sonnet builder, which also found the `head -50` bug. The lead
-  fixed that and ran the whole step end to end. The independent review and
-  the Codex review are still owed.
+- **Also found by the review (older, now tracked):** **#127** (high). A deploy
+  using an SSH key uploads nothing, because lftp waits for a password that
+  never comes. The server's identity isn't checked, and a failed login retries
+  for hours.
+- Built by a Sonnet builder; the lead fixed the review's findings. Stand-in
+  review: done (5 findings, all handled). Codex review still owed.
 
 ### Fixed - Review round 1 of the owed catch-up review: wrong docs, a test check that could pass with no tests, vendored files re-minified (2026-09-25, #103)
 

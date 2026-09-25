@@ -111,6 +111,11 @@ jobs:
           echo "📦 Copying server-wide shared folders..."
           if [[ -d "web/" ]]; then
             for item in web/*/; do
+              # 🛡️ If the folder has NO subfolders, bash hands the pattern
+              #    through as literal text ("…/*/"), and the copy below would
+              #    fail on a path that doesn't exist. Skip that non-folder.
+              #    (Found by the #124 review: the old `|| true` used to hide it.)
+              [[ -d "$item" ]] || continue
               dir_name=$(basename "$item")
 
               # ⏭️ Skip the site-specific directories (handled separately)
@@ -126,8 +131,9 @@ jobs:
               #    using bash's default globbing — and by default `*` does
               #    NOT match a name starting with a dot. That silently
               #    skipped every top-level dotfile in the folder, including
-              #    `.htaccess` (deny-all protection, or full security headers
-              #    for the shared server-wide folders), on 16 of the repo's
+              #    `.htaccess` (for the shared server-wide folders that is the
+              #    deny-all protection; the security headers live in
+              #    public_html/.htaccess, copied in Part B), on 16 of the repo's
               #    18 `.htaccess` files. `cp -R "$item". "<dest>/"` copies the
               #    CONTENTS of "$item" — the trailing `/.` means "everything
               #    in this directory, dotfiles included" — rather than the
@@ -156,6 +162,11 @@ jobs:
           echo "📦 Processing web/CueRCode.net/..."
           if [[ -d "web/CueRCode.net/" ]]; then
             for item in web/CueRCode.net/*/; do
+              # 🛡️ If the folder has NO subfolders, bash hands the pattern
+              #    through as literal text ("…/*/"), and the copy below would
+              #    fail on a path that doesn't exist. Skip that non-folder.
+              #    (Found by the #124 review: the old `|| true` used to hide it.)
+              [[ -d "$item" ]] || continue
               dir_name=$(basename "$item")
 
               if [[ "$dir_name" == *"public_html"* ]] || [[ "$dir_name" == *"private_html"* ]]; then
@@ -200,9 +211,14 @@ jobs:
             done
 
             # 📄 Also copy any root-level files in web/CueRCode.net/ (README, CHANGELOG, etc.)
+            # 🛡️ Make sure the destination folder exists first: if this site
+            #    folder has no subfolders, nothing above created it, and the
+            #    copy below would fail. (Found 2026-09-25 testing the #124
+            #    follow-up - the old `2>/dev/null || true` used to hide it.)
+            mkdir -p "$STAGING_DIR/web/CueRCode.net"
             find "web/CueRCode.net/" -maxdepth 1 -type f | while read -r file; do
               echo "  📄 Copying $(basename "$file")"
-              cp "$file" "$STAGING_DIR/web/CueRCode.net/" 2>/dev/null || true
+              cp "$file" "$STAGING_DIR/web/CueRCode.net/"
             done
           fi
 
@@ -214,6 +230,11 @@ jobs:
           echo "📦 Processing web/QRmy.Link/..."
           if [[ -d "web/QRmy.Link/" ]]; then
             for item in web/QRmy.Link/*/; do
+              # 🛡️ If the folder has NO subfolders, bash hands the pattern
+              #    through as literal text ("…/*/"), and the copy below would
+              #    fail on a path that doesn't exist. Skip that non-folder.
+              #    (Found by the #124 review: the old `|| true` used to hide it.)
+              [[ -d "$item" ]] || continue
               dir_name=$(basename "$item")
 
               if [[ "$dir_name" == *"public_html"* ]] || [[ "$dir_name" == *"private_html"* ]]; then
@@ -244,8 +265,13 @@ jobs:
             done
 
             # 📄 Root-level files in web/QRmy.Link/
+            # 🛡️ Make sure the destination folder exists first: if this site
+            #    folder has no subfolders, nothing above created it, and the
+            #    copy below would fail. (Found 2026-09-25 testing the #124
+            #    follow-up - the old `2>/dev/null || true` used to hide it.)
+            mkdir -p "$STAGING_DIR/web/QRmy.Link"
             find "web/QRmy.Link/" -maxdepth 1 -type f | while read -r file; do
-              cp "$file" "$STAGING_DIR/web/QRmy.Link/" 2>/dev/null || true
+              cp "$file" "$STAGING_DIR/web/QRmy.Link/"
             done
           else
             echo "  ℹ️ web/QRmy.Link/ does not exist yet — skipping"
@@ -305,13 +331,19 @@ jobs:
 
           if [[ "$HAS_FILES" == "true" ]]; then
             echo "📊 Staging area contents (first 50 files):"
-            # ⚠️ NOT `| head -50`: head stops reading after 50 lines, find is
-            #    then killed mid-write (SIGPIPE, exit 141), and because GitHub
-            #    runs this step with `bash -e -o pipefail` that failure stopped
-            #    the WHOLE deploy whenever more than ~50 files were staged -
-            #    i.e. every production deploy (~967 files). sed reads to the
-            #    end, so nothing is cut off. (Found 2026-09-25 while fixing #124;
-            #    proven locally: head → exit 141, sed → exit 0.)
+            # 🛡️ Defensive: `sed -n '1,50p'` rather than `head -50`. head stops
+            #    reading after 50 lines, so find can be killed mid-write
+            #    (SIGPIPE, exit 141). That is harmless TODAY: steps with no
+            #    `shell:` run as `bash -e {0}`, WITHOUT pipefail, so only the
+            #    last command of a pipe decides success. It would start
+            #    breaking the deploy if anyone ever adds `shell: bash` or
+            #    `set -o pipefail` here. sed reads to the end, so it's safe
+            #    either way. (Changed 2026-09-25 with #124. An earlier
+            #    version of this comment wrongly said pipefail was already on
+            #    and that every production deploy was failing - it wasn't;
+            #    the #124 review checked this repo's own run logs.)
+            #    NOTE, because pipefail is OFF: a failure on the LEFT of any
+            #    `find ... | while read` loop in this workflow is not caught.
             find "$STAGING_DIR" -type f | sed -n '1,50p'
             FILE_COUNT=$(find "$STAGING_DIR" -type f | wc -l)
             echo "📊 Total files staged: $FILE_COUNT"

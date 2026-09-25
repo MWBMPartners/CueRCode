@@ -27,6 +27,11 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   reports "unchanged", even while the work is busy. Point it at the real file
   instead (`ls -la` shows where a shortcut leads). The fix is `-L` on both
   `stat` calls in the script, awaiting the owner's OK.
+- **GitHub Actions shell (2026-09-25, #124).** A step with no `shell:` runs as
+  `bash -e {0}`, WITHOUT `pipefail`; only `shell: bash` adds `-o pipefail`.
+  Test `run:` scripts locally with the matching flags, and confirm any claim
+  about shell behaviour in a real run log. A wrong claim about this went into
+  commit 5e2005c's message; the CHANGELOG carries the correction.
 - **House style:** full multi-line PHP, detailed comments (emojis fine), PHP
   predefined constants, MySQLi prepared statements, no layout `<table>`,
   WCAG 2.1 AA, file headers with path + copyright (2025–current year, MWBM
