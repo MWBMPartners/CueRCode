@@ -95,6 +95,15 @@ jobs:
           PUBLIC_SUFFIX="${{ steps.target.outputs.public_html_suffix }}"
           HAS_FILES="false"
 
+          # 🗂️ Every folder copied into staging below gets one entry here
+          #    (source path → the staging path it was copied to). The
+          #    ".htaccess" verification check near the end of this step
+          #    reads these two arrays back, rather than re-working out which
+          #    folders were copied using separate logic that could drift out
+          #    of step with the copy loops themselves.
+          COPIED_SRC=()
+          COPIED_DEST=()
+
           # =================================================================
           # 📦 Part A: Server-wide shared folders
           # Everything in web/ EXCEPT web/CueRCode.net/ and web/QRmy.Link/
@@ -111,9 +120,29 @@ jobs:
               fi
 
               # ✅ Copy server-wide shared folders
+              #
+              # 🕳️ Dotfile trap (#124): "$item" always ends in "/" (it comes
+              #    from `for item in web/*/`), so the old `"$item"*` expanded
+              #    using bash's default globbing — and by default `*` does
+              #    NOT match a name starting with a dot. That silently
+              #    skipped every top-level dotfile in the folder, including
+              #    `.htaccess` (deny-all protection, or full security headers
+              #    for the shared server-wide folders), on 16 of the repo's
+              #    18 `.htaccess` files. `cp -R "$item". "<dest>/"` copies the
+              #    CONTENTS of "$item" — the trailing `/.` means "everything
+              #    in this directory, dotfiles included" — rather than the
+              #    directory itself, and it works even when the folder is
+              #    empty, so no error-suppression is needed for that case.
+              #    The old `2>/dev/null || true` also hid every OTHER copy
+              #    error (disk full, permissions, …), which would have let a
+              #    half-empty deploy go out looking like a success — it has
+              #    been removed so a genuine `cp` failure now fails this step
+              #    instead of shipping silently broken.
               echo "  ✅ Copying web/$dir_name/"
               mkdir -p "$STAGING_DIR/web/$dir_name"
-              cp -r "$item"* "$STAGING_DIR/web/$dir_name/" 2>/dev/null || true
+              cp -R "$item". "$STAGING_DIR/web/$dir_name/"
+              COPIED_SRC+=("$item")
+              COPIED_DEST+=("$STAGING_DIR/web/$dir_name")
               HAS_FILES="true"
             done
           fi
@@ -132,18 +161,40 @@ jobs:
               if [[ "$dir_name" == *"public_html"* ]] || [[ "$dir_name" == *"private_html"* ]]; then
                 # 🎯 Only copy the branch-specific public_html variant
                 if [[ "$dir_name" == "$PUBLIC_SUFFIX" ]]; then
+                  # 🕳️ Same dotfile trap as Part A above (#124) — this is the
+                  #    branch's live public_html folder, so its top-level
+                  #    .htaccess is the one carrying the rewrite rules and
+                  #    Content-Security-Policy/security headers (production)
+                  #    or the `Require all denied` block that keeps the
+                  #    alpha/beta dev sites private. `cp -R "$item". "<dest>/"`
+                  #    (trailing `/.`) copies dotfiles too; the old
+                  #    `2>/dev/null || true` is gone so a real copy failure
+                  #    fails the step instead of deploying half-empty.
                   echo "  🎯 Copying web/CueRCode.net/$dir_name/ (branch target)"
                   mkdir -p "$STAGING_DIR/web/CueRCode.net/$dir_name"
-                  cp -r "$item"* "$STAGING_DIR/web/CueRCode.net/$dir_name/" 2>/dev/null || true
+                  cp -R "$item". "$STAGING_DIR/web/CueRCode.net/$dir_name/"
+                  COPIED_SRC+=("$item")
+                  COPIED_DEST+=("$STAGING_DIR/web/CueRCode.net/$dir_name")
                   HAS_FILES="true"
                 else
                   echo "  ⏭️ Skipping web/CueRCode.net/$dir_name/ (not for this branch)"
                 fi
               else
                 # ✅ Copy private/shared folders (_functions, _includes, etc.)
+                #
+                # 🕳️ Same dotfile trap as Part A above (#124) — every one of
+                #    these folders (_auth_keys, _includes, _functions,
+                #    _libraries, _uploads, _backups) ships a deny-all
+                #    `.htaccess`, and the old `"$item"*` glob never staged
+                #    it. `cp -R "$item". "<dest>/"` (trailing `/.`) copies
+                #    dotfiles too; error-suppression removed so a real copy
+                #    failure fails the step rather than deploying quietly
+                #    without that protection.
                 echo "  ✅ Copying web/CueRCode.net/$dir_name/"
                 mkdir -p "$STAGING_DIR/web/CueRCode.net/$dir_name"
-                cp -r "$item"* "$STAGING_DIR/web/CueRCode.net/$dir_name/" 2>/dev/null || true
+                cp -R "$item". "$STAGING_DIR/web/CueRCode.net/$dir_name/"
+                COPIED_SRC+=("$item")
+                COPIED_DEST+=("$STAGING_DIR/web/CueRCode.net/$dir_name")
                 HAS_FILES="true"
               fi
             done
@@ -167,17 +218,27 @@ jobs:
 
               if [[ "$dir_name" == *"public_html"* ]] || [[ "$dir_name" == *"private_html"* ]]; then
                 if [[ "$dir_name" == "$PUBLIC_SUFFIX" ]]; then
+                  # 🕳️ Same dotfile trap as Part A above (#124) — see there
+                  #    for why `cp -R "$item". "<dest>/"` (trailing `/.`) is
+                  #    used and why the error-suppression is gone.
                   echo "  🎯 Copying web/QRmy.Link/$dir_name/ (branch target)"
                   mkdir -p "$STAGING_DIR/web/QRmy.Link/$dir_name"
-                  cp -r "$item"* "$STAGING_DIR/web/QRmy.Link/$dir_name/" 2>/dev/null || true
+                  cp -R "$item". "$STAGING_DIR/web/QRmy.Link/$dir_name/"
+                  COPIED_SRC+=("$item")
+                  COPIED_DEST+=("$STAGING_DIR/web/QRmy.Link/$dir_name")
                   HAS_FILES="true"
                 else
                   echo "  ⏭️ Skipping web/QRmy.Link/$dir_name/ (not for this branch)"
                 fi
               else
+                # 🕳️ Same dotfile trap as Part A above (#124) — see there
+                #    for why `cp -R "$item". "<dest>/"` (trailing `/.`) is
+                #    used and why the error-suppression is gone.
                 echo "  ✅ Copying web/QRmy.Link/$dir_name/"
                 mkdir -p "$STAGING_DIR/web/QRmy.Link/$dir_name"
-                cp -r "$item"* "$STAGING_DIR/web/QRmy.Link/$dir_name/" 2>/dev/null || true
+                cp -R "$item". "$STAGING_DIR/web/QRmy.Link/$dir_name/"
+                COPIED_SRC+=("$item")
+                COPIED_DEST+=("$STAGING_DIR/web/QRmy.Link/$dir_name")
                 HAS_FILES="true"
               fi
             done
@@ -191,6 +252,51 @@ jobs:
           fi
 
           # =================================================================
+          # 🔍 Verify every .htaccess made it into staging (#124)
+          #
+          # This check exists so the dotfile trap explained above the copy
+          # lines — or anything like it introduced later — can't come back
+          # quietly. Without it, a broken copy would silently ship a site
+          # missing its rewrite rules, its Content-Security-Policy/security
+          # headers, its `Require all denied` block that keeps the alpha and
+          # beta dev sites private, or the deny-all protection on the
+          # non-web _auth_keys/_includes/_functions/_libraries/_uploads/
+          # _backups folders — and nothing in this workflow's own summary
+          # would say so. It would only show up later as a live security
+          # problem on the deployed site. For every folder copied above
+          # (recorded in the COPIED_SRC/COPIED_DEST arrays as it happened),
+          # every .htaccess file that exists in the SOURCE folder must also
+          # exist at the same relative path in the STAGED copy.
+          # =================================================================
+          echo ""
+          echo "🔍 Verifying .htaccess files were staged..."
+          MISSING=0
+          HTACCESS_COUNT=0
+          for i in "${!COPIED_SRC[@]}"; do
+            src="${COPIED_SRC[$i]}"
+            dest="${COPIED_DEST[$i]}"
+
+            # 📄 List every .htaccess under this source folder as a path
+            #    relative to the folder itself (e.g. "./.htaccess" or
+            #    "./sub/.htaccess"), then confirm the identical relative
+            #    path exists in the staged destination folder.
+            while IFS= read -r rel; do
+              HTACCESS_COUNT=$((HTACCESS_COUNT + 1))
+              if [[ ! -f "$dest/$rel" ]]; then
+                echo "::error::Missing .htaccess after staging: ${src}${rel#./} (expected at $dest/$rel) — this file is site protection (rewrite rules, security headers, keeping a dev site private, or denying all access to a non-web folder); deploying without it would be a security regression, so the deploy has been stopped here. See issue #124."
+                MISSING=1
+              fi
+            done < <(cd "$src" && find . -name ".htaccess" -type f)
+          done
+
+          if [[ "$MISSING" -eq 1 ]]; then
+            echo "::error::One or more .htaccess files failed to stage — see the errors above for which ones and why they matter. Deployment stopped before upload."
+            exit 1
+          fi
+
+          echo "✅ Verified ${HTACCESS_COUNT} .htaccess file(s) staged correctly."
+
+          # =================================================================
           # 📊 Summary
           # =================================================================
           echo ""
@@ -198,8 +304,15 @@ jobs:
           echo "staging_dir=$STAGING_DIR" >> $GITHUB_OUTPUT
 
           if [[ "$HAS_FILES" == "true" ]]; then
-            echo "📊 Staging area contents:"
-            find "$STAGING_DIR" -type f | head -50
+            echo "📊 Staging area contents (first 50 files):"
+            # ⚠️ NOT `| head -50`: head stops reading after 50 lines, find is
+            #    then killed mid-write (SIGPIPE, exit 141), and because GitHub
+            #    runs this step with `bash -e -o pipefail` that failure stopped
+            #    the WHOLE deploy whenever more than ~50 files were staged -
+            #    i.e. every production deploy (~967 files). sed reads to the
+            #    end, so nothing is cut off. (Found 2026-09-25 while fixing #124;
+            #    proven locally: head → exit 141, sed → exit 0.)
+            find "$STAGING_DIR" -type f | sed -n '1,50p'
             FILE_COUNT=$(find "$STAGING_DIR" -type f | wc -l)
             echo "📊 Total files staged: $FILE_COUNT"
           else
