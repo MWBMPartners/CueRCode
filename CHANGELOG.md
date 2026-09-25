@@ -37,11 +37,14 @@ The Codex review is still owed.
   And the `actions/checkout` pin comments said `v6` for what is really v7.0.1
   (7 places).
 
-  Round 2 also found two older bugs, now tracked: **#124** (high: the deploy never
-  uploads the `.htaccess` file at the top of each folder, including the
+- **Older bugs found by round 2**, now tracked: **#124** (high: the deploy
+  never uploads the `.htaccess` file at the top of each folder, including the
   security headers and the rules that keep the alpha and beta sites private)
   and **#125** (the `/pricing` page lists features that don't exist yet as
   "Included").
+- **Round 4:** a fourth fresh agent checked round 3's fixes and found
+  **nothing**. The stand-in review loop is finished. The Codex review of the
+  whole set is still owed.
 - **CI test check could pass with the tests deleted** (`.github/workflows/ci.yml`).
   If a pull request deleted or renamed `tests/run.php`, the "Test suite" check
   still showed green. It now skips only when the whole `tests/` folder is

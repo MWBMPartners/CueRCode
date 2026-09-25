@@ -22,7 +22,7 @@
 - [ ] **GitHub Advanced Security / Code Security** for CodeQL (per-committer cost on private repos). Decision received: **"Both"** (Semgrep now + GHAS for CodeQL). After enabling, remove the two transitional `continue-on-error` lines in `.github/workflows/codeql.yml`.
 - [ ] **Vendored-library dependency coverage** (PHP libs + CDN JS have no manifest, so Dependabot can't see them). Choose: **(A)** metadata-only `composer.json`/`package.json` for advisory PRs, or **(B)** a scheduled "vendored-deps watch" Action.
 - [x] **Merge PR #72** (deps/security → `main`) — done (2026-09-23 audit: `main` now has `.github/dependabot.yml`).
-- [ ] Add **branch protection** + required status checks on `main`, `alpha`, **and** `beta` (all three receive direct pushes via `deploy.yml`).
+- [ ] Add **branch protection** + required status checks on `main`, `alpha`, `beta` **and** `release-candidate`. Checked 2026-09-25: `alpha`, `beta` and `release-candidate` only block deleting the branch, so anyone with write access can push straight to them; `main` requires a pull request, but repository admins can bypass that. "Test suite" is not a required check anywhere yet. (`main`, `alpha` and `beta` also deploy on push via `deploy.yml`.)
 - [ ] Replicate the scanning workflows (codeql/semgrep/ci) onto **`beta`** — **2026-09-23 audit update**: `codeql.yml` and `semgrep.yml` are already on `beta`. What's still missing is `ci.yml` (tests, PHP syntax check, secret scan) — it's on `work-in-progress`, `alpha` and `release-candidate` but **not** on `beta` **or `main`**.
 - [ ] **emoji-ingest.yml** (#68) only fires on its monthly schedule once it reaches `main` — GitHub only runs scheduled workflows from the default branch. Currently only on `alpha`/`work-in-progress`.
 
