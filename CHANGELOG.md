@@ -36,9 +36,14 @@ sign-up could be verified and no password-reset email ever arrived.
   off by default.
 - **Stall alarm:** if another run holds the lock while emails have been
   waiting over 10 minutes, the runner exits with code 4 so cron emails the owner.
-- **Clear output and exit codes:** one line of counts, never an email address,
-  subject, link or setting value. `--quiet` prints nothing unless something
-  needs attention; `--check` tests the set-up without sending anything.
+- **Clear output and exit codes:** one line of counts; the runner's own output
+  never includes an email address, subject, link or setting value. (One
+  exception it doesn't control: if the activity-log write fails mid-run, the
+  shared logger's fallback puts the recipient and subject into PHP's error
+  log, which cron emails. Tracked in #126.) `--quiet` prints nothing unless
+  something needs attention; `--check` tests the set-up without sending
+  anything. If PHP itself stops a run part-way (for example out of memory),
+  the runner says so and exits with PHP's code 255.
 - **Tests:** 281 new assertions in `tests/test_email_queue_runner.php`, which
   drives the whole flow with an in-memory stand-in for the queue table,
   including two runners interleaved mid-send (suite now 2466/2466 across 24

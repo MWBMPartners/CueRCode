@@ -31,7 +31,10 @@
  * Exit codes: 0 fine (including nothing to send, email switched off, another
  * run already working) | 1 could not start or crashed | 2 bad option |
  * 3 database problem | 4 sending blocked by settings/Microsoft Graph, or an
- * earlier run looks stuck | 5 gave up on at least one email.
+ * earlier run looks stuck | 5 gave up on at least one email | 255 PHP itself
+ * stopped the run part-way (a fatal error such as running out of memory; the
+ * runner prints a one-line note and any email it was sending is recovered
+ * after 10 minutes).
  *
  * 🔒 COMMAND LINE ONLY. Three layers keep it off the web:
  *   1. it lives in _includes/, next to (not inside) public_html/, so it has no
@@ -42,8 +45,13 @@
  *   3. the very first statement below refuses any run that is not the
  *      command-line PHP, before anything else is loaded.
  *
- * It never prints an email address, a subject, an email body, a one-time
- * link, a secret or a setting value - only counts and plain-English problems.
+ * Its own output never includes an email address, a subject, an email body, a
+ * one-time link, a secret or a setting value - only counts and plain-English
+ * problems. ONE exception it cannot control: if writing the activity log to
+ * the database fails mid-run, the site's shared activity logger falls back to
+ * PHP's error log, and that line includes the recipient's address and the
+ * subject. On the command line PHP's error log is the terminal, so it would
+ * appear in the cron email (tracked in #126).
  *
  * @package     CueRCode
  * @subpackage  Email
@@ -110,6 +118,19 @@ if ($parsedArguments['ok'] !== true || $parsedArguments['help'] === true) {
 // database credentials file is missing. Nothing can catch that, so a shutdown
 // function is the only way to say something useful. The exit code stays 1.
 // ==============================================================================
+//
+// The same shutdown function also covers the opposite case: the run STARTED
+// but never reached its own exit. That only happens when PHP itself stops the
+// script with a fatal error (for example running out of memory), which is not
+// an exception, so neither the try/catch in Step 8 nor the crash handler in
+// Step 7 ever sees it. PHP then exits with code 255 and, on a host whose PHP
+// error log goes to a file, the cron email would otherwise be EMPTY - silence
+// that looks like success. CUERCODE_EMAIL_RUNNER_FINISHED is defined on every
+// normal way out (Step 7 and Step 8), so this message only appears when the
+// run really was cut short. (Found by the #112 independent verification,
+// 2026-09-25: a 16 MB memory limit and a 6 MB email reproduced exit 255 with
+// no message.)
+// ==============================================================================
 register_shutdown_function(static function (): void {
     if (!defined('CUERCODE_EMAIL_RUNNER_READY')) {
         fwrite(
@@ -117,6 +138,14 @@ register_shutdown_function(static function (): void {
             'CueRCode email queue: could not start - the site start-up code stopped before the runner could run'
             . ' (usually a missing or unreadable _auth_keys/auth_creds.php). Check the PHP error log.' . PHP_EOL
         );
+    } else {
+        if (!defined('CUERCODE_EMAIL_RUNNER_FINISHED')) {
+            fwrite(
+                STDERR,
+                'CueRCode email queue: stopped part-way by a PHP fatal error (for example running out of memory)'
+                . ' - check the PHP error log. Any email it was sending is put back automatically after 10 minutes.' . PHP_EOL
+            );
+        }
     }
 });
 
@@ -152,6 +181,11 @@ set_exception_handler(static function (\Throwable $exception): void {
         logError('critical', 'Email queue runner crashed', $exception->getMessage());
     }
 
+    // 🏁 A normal (handled) way out - see the Step 4 shutdown function.
+    if (!defined('CUERCODE_EMAIL_RUNNER_FINISHED')) {
+        define('CUERCODE_EMAIL_RUNNER_FINISHED', true);
+    }
+
     exit(CUERCODE_EMAIL_RUNNER_EXIT_CRASH);
 });
 
@@ -175,5 +209,10 @@ try {
 
     $exitCode = CUERCODE_EMAIL_RUNNER_EXIT_CRASH;
 }
+
+// 🏁 The run reached its own end - the Step 4 shutdown function must NOT print
+//    the "stopped part-way" message. Defined here, immediately before exit(),
+//    so that anything which kills the script before this line still gets it.
+define('CUERCODE_EMAIL_RUNNER_FINISHED', true);
 
 exit($exitCode);
