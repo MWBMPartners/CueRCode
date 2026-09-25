@@ -23,12 +23,23 @@
  * fn_pricing.php's listPublicPlansForDisplay() docblock for the fail-safe
  * contract this relies on.
  *
+ * OWNER DECISION (2026-09-25, #125): the feature/limit grid ONLY ever shows
+ * keys on fn_pricing.php's pricingAllowedDisplayKeys() hand-maintained
+ * allow-list - never a raw, uncurated JSON key - and every row now carries a
+ * 'status' of 'available' or 'coming_soon'. A feature a plan has switched on
+ * but that is NOT built yet shows a visible "Coming soon" badge (text, never
+ * colour alone) instead of reading as "Included"; a coming-soon LIMIT always
+ * shows the same badge instead of a number nobody can actually use yet. See
+ * fn_pricing.php's pricingAllowedDisplayKeys() docblock for the full
+ * per-key evidence behind every 'available'/'coming_soon' verdict.
+ *
  * @package     CueRCode
  * @subpackage  Pages / Pricing
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
- * @since       Phase 3 (Epic E4, #56)
- * @see         _functions/fn_pricing.php  - listPublicPlansForDisplay(), pricingDisplayRowsFromPlans()
+ * @version     1.1.0
+ * @since       Phase 3 (Epic E4, #56); feature/limit allow-list + "Coming
+ *              soon" badges added Phase 4 (#125, 2026-09-25)
+ * @see         _functions/fn_pricing.php  - listPublicPlansForDisplay(), pricingDisplayRowsFromPlans(), pricingAllowedDisplayKeys()
  * @see         _functions/fn_features.php - resolveUpgradeUrl(), requireFeatureOr402()
  * @see         DEV_NOTES.md               - "Pricing page" section (owner price-edit runbook)
  */
@@ -185,17 +196,41 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <?php } ?>
 
                             <!-- ================================================
-                                 🚩 Feature rows - included/excluded is NEVER
-                                 conveyed by colour alone: a differently-shaped
-                                 icon PLUS a screen-reader-only "Included:" /
-                                 "Not included:" text prefix both carry the
-                                 meaning independently of colour.
+                                 🚩 Feature rows - included/excluded/coming-soon
+                                 is NEVER conveyed by colour alone: a
+                                 differently-shaped icon (or the "Coming soon"
+                                 badge's own visible TEXT, #125) PLUS a
+                                 screen-reader-only prefix both carry the
+                                 meaning independently of colour, in both dark
+                                 mode and every colourblind-mode palette (the
+                                 badge reuses the site's standard Bootstrap
+                                 text-bg-*-subtle tokens, which are already
+                                 re-themed for both by cuercode.css/Bootstrap
+                                 itself - no feature-specific colour is used).
                                  ================================================ -->
                             <?php if (!empty($pricingPlan['features'])) { ?>
                             <ul class="list-unstyled mb-3">
                                 <?php foreach ($pricingPlan['features'] as $pricingFeature) { ?>
-                                <li class="mb-2 <?php echo $pricingFeature['enabled'] ? '' : 'text-body-secondary'; ?>">
-                                    <?php if ($pricingFeature['enabled']) { ?>
+                                <?php
+                                    // 🚦 #125: a feature the plan has switched
+                                    // on but that is not yet BUILT (owner's
+                                    // hand-maintained 'coming_soon' status,
+                                    // see fn_pricing.php's
+                                    // pricingAllowedDisplayKeys()) must never
+                                    // read as "Included" - it gets its own
+                                    // distinct "Coming soon" treatment instead
+                                    // of the usual check/cross icon pairing.
+                                    $pricingFeatureIsComingSoon = ($pricingFeature['status'] === 'coming_soon')
+                                        && $pricingFeature['enabled'];
+                                ?>
+                                <li class="mb-2 <?php echo ($pricingFeature['enabled'] && !$pricingFeatureIsComingSoon) ? '' : 'text-body-secondary'; ?>">
+                                    <?php if ($pricingFeatureIsComingSoon) { ?>
+                                    <span class="badge text-bg-info-subtle border me-2">
+                                        <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
+                                        Coming soon
+                                    </span>
+                                    <span class="visually-hidden">- not yet available: </span>
+                                    <?php } elseif ($pricingFeature['enabled']) { ?>
                                     <i class="fa-solid fa-check text-success me-2" aria-hidden="true"></i>
                                     <span class="visually-hidden">Included: </span>
                                     <?php } else { ?>
@@ -210,6 +245,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                             <!-- ================================================
                                  🔢 Limit rows (saved codes, bulk batch size, ...)
+                                 - a limit whose underlying feature is not yet
+                                 built (#125 'coming_soon') shows the SAME
+                                 "Coming soon" badge instead of a numeric value
+                                 that nobody can actually use yet, regardless
+                                 of what the plan's own limitsJSON says.
                                  ================================================ -->
                             <?php if (!empty($pricingPlan['limits'])) { ?>
                             <ul class="list-unstyled mb-3 small text-body-secondary">
@@ -217,7 +257,14 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <li class="mb-1">
                                     <i class="fa-solid fa-gauge-high me-2" aria-hidden="true"></i>
                                     <?php echo htmlspecialchars($pricingLimit['label'], ENT_QUOTES, 'UTF-8'); ?>:
+                                    <?php if ($pricingLimit['status'] === 'coming_soon') { ?>
+                                    <span class="badge text-bg-info-subtle border">
+                                        <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
+                                        Coming soon
+                                    </span>
+                                    <?php } else { ?>
                                     <strong><?php echo htmlspecialchars($pricingLimit['value'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                                    <?php } ?>
                                 </li>
                                 <?php } ?>
                             </ul>

@@ -189,6 +189,211 @@ assertEquals([], $malformedRows[0]['limits'], 'pricingDisplayRowsFromPlans: limi
 assertEquals('£1.00', $malformedRows[0]['priceMonthlyFormatted'], 'pricingDisplayRowsFromPlans: price formatting is unaffected by the malformed JSON columns');
 
 // ==============================================================================
+// 🚦 Section 4b: #125 hand-maintained allow-list - unknown keys never leak,
+//    every emitted row is properly labelled/statused, and the known
+//    available/coming_soon verdicts come out correctly.
+// ==============================================================================
+
+// 📌 (a) A plan seeding an UNKNOWN featuresJSON/limitsJSON key (not on
+// pricingAllowedDisplayKeys()) alongside a mix of known available/coming_soon
+// keys - the unknown key must NEVER appear anywhere in the display output,
+// while the known keys still do, exactly as if the unknown key had never
+// been seeded at all.
+$allowListPlan = [
+    [
+        'planID'       => 42,
+        'planKey'      => 'allow_list_probe',
+        'planName'     => 'Allow-List Probe',
+        'description'  => '',
+        'priceMonthly' => '9.99',
+        'priceYearly'  => '99.99',
+        'currency'     => 'GBP',
+        // 🚨 'totally_made_up_feature' is NOT on the allow-list.
+        'featuresJSON' => json_encode([
+            'sso'                     => true, // ✅ available (#125)
+            'dynamic_qr'              => true, // 🚧 coming_soon (#125)
+            'totally_made_up_feature' => true, // 🚫 unknown - must never appear
+        ]),
+        // 🚨 'credit_spend_cap_monthly' is a real #70 limit key, but it is
+        // deliberately NOT on the #125 allow-list (PAYG-only, never shown on
+        // the public grid today) - proves an unknown key is dropped even
+        // when it is a genuine, meaningful column elsewhere in the codebase,
+        // not just a nonsense string.
+        'limitsJSON' => json_encode([
+            'api_keys'                 => 5,   // ✅ available (#125)
+            'dynamic_codes'            => 100, // 🚧 coming_soon (#125)
+            'credit_spend_cap_monthly' => 20,  // 🚫 unknown - must never appear
+        ]),
+    ],
+];
+
+$allowListRows = pricingDisplayRowsFromPlans($allowListPlan);
+$allowListRow  = $allowListRows[0];
+
+// 🔑 Collect just the 'key' column from each emitted row for easy searching.
+$allowListFeatureKeys = array_column($allowListRow['features'], 'key');
+$allowListLimitKeys   = array_column($allowListRow['limits'], 'key');
+
+// ------------------------------------------------------------------
+// (a) Unknown keys never appear in the display rows.
+// ------------------------------------------------------------------
+assertFalse(
+    in_array('totally_made_up_feature', $allowListFeatureKeys, true),
+    '#125 (a): an unknown featuresJSON key never appears in the emitted display rows, no matter what a plan seeds'
+);
+assertFalse(
+    in_array('credit_spend_cap_monthly', $allowListLimitKeys, true),
+    '#125 (a): an unknown limitsJSON key (even a real #70 PAYG column, just not #125-allow-listed) never appears in the emitted display rows'
+);
+assertEquals(
+    2,
+    count($allowListRow['features']),
+    '#125 (a): exactly the 2 allow-listed feature keys this plan seeded are emitted - the 1 unknown key is silently dropped, not just hidden'
+);
+assertEquals(
+    2,
+    count($allowListRow['limits']),
+    '#125 (a): exactly the 2 allow-listed limit keys this plan seeded are emitted - the 1 unknown key is silently dropped, not just hidden'
+);
+
+// ------------------------------------------------------------------
+// (b) Every emitted row has a non-empty, hand-written label and a valid status.
+// ------------------------------------------------------------------
+foreach (array_merge($allowListRow['features'], $allowListRow['limits']) as $allowListDisplayRow) {
+    assertTrue(
+        is_string($allowListDisplayRow['label']) && $allowListDisplayRow['label'] !== '',
+        '#125 (b): every emitted row (' . $allowListDisplayRow['key'] . ') has a non-empty label'
+    );
+    assertTrue(
+        in_array($allowListDisplayRow['status'], ['available', 'coming_soon'], true),
+        '#125 (b): every emitted row (' . $allowListDisplayRow['key'] . ') has a valid status (\'available\' or \'coming_soon\'), got: '
+            . var_export($allowListDisplayRow['status'], true)
+    );
+}
+
+// 🗂️ (b) continued - EVERY key on the whole allow-list (not just this one
+// fixture's keys) carries a non-empty label and a valid status - a static
+// sweep of pricingAllowedDisplayKeys() itself, independent of any plan fixture.
+foreach (pricingAllowedDisplayKeys() as $allowedKeyName => $allowedKeyMeta) {
+    assertTrue(
+        isset($allowedKeyMeta['label']) && is_string($allowedKeyMeta['label']) && $allowedKeyMeta['label'] !== '',
+        '#125 (b): pricingAllowedDisplayKeys() entry "' . $allowedKeyName . '" has a non-empty hand-written label'
+    );
+    assertTrue(
+        isset($allowedKeyMeta['status']) && in_array($allowedKeyMeta['status'], ['available', 'coming_soon'], true),
+        '#125 (b): pricingAllowedDisplayKeys() entry "' . $allowedKeyName . '" has a valid status'
+    );
+}
+
+// ------------------------------------------------------------------
+// (c) dynamic_qr / dual_function_qr / dynamic_codes are all coming_soon.
+// ------------------------------------------------------------------
+$comingSoonProbePlan = [
+    [
+        'planID'       => 43,
+        'planKey'      => 'coming_soon_probe',
+        'planName'     => 'Coming Soon Probe',
+        'description'  => '',
+        'priceMonthly' => '0.00',
+        'priceYearly'  => '0.00',
+        'currency'     => 'GBP',
+        'featuresJSON' => json_encode(['dynamic_qr' => true, 'dual_function_qr' => true]),
+        'limitsJSON'   => json_encode(['dynamic_codes' => 50]),
+    ],
+];
+$comingSoonProbeRow = pricingDisplayRowsFromPlans($comingSoonProbePlan)[0];
+
+assertEquals(
+    'coming_soon',
+    $comingSoonProbeRow['features'][array_search('dynamic_qr', array_column($comingSoonProbeRow['features'], 'key'), true)]['status'],
+    '#125 (c): dynamic_qr is classified coming_soon - no live /r/ redirect route exists for a customer to actually use it'
+);
+assertEquals(
+    'coming_soon',
+    $comingSoonProbeRow['features'][array_search('dual_function_qr', array_column($comingSoonProbeRow['features'], 'key'), true)]['status'],
+    '#125 (c): dual_function_qr is classified coming_soon - waiting on the owner\'s G-007 decision, nothing reachable'
+);
+assertEquals(
+    'coming_soon',
+    $comingSoonProbeRow['limits'][array_search('dynamic_codes', array_column($comingSoonProbeRow['limits'], 'key'), true)]['status'],
+    '#125 (c): dynamic_codes is classified coming_soon - the quota belongs to the same not-yet-wired dynamic-redirect feature'
+);
+
+// ------------------------------------------------------------------
+// (d) A key classified available comes out available (sso, chosen because
+// it is the clearest "code exists, just needs owner credentials" case).
+// ------------------------------------------------------------------
+$availableProbePlan = [
+    [
+        'planID'       => 44,
+        'planKey'      => 'available_probe',
+        'planName'     => 'Available Probe',
+        'description'  => '',
+        'priceMonthly' => '0.00',
+        'priceYearly'  => '0.00',
+        'currency'     => 'GBP',
+        'featuresJSON' => json_encode(['sso' => true, 'barcode_generation' => true]),
+        'limitsJSON'   => json_encode(['saved_codes' => 25, 'api_keys' => 5]),
+    ],
+];
+$availableProbeRow = pricingDisplayRowsFromPlans($availableProbePlan)[0];
+
+assertEquals(
+    'available',
+    $availableProbeRow['features'][array_search('sso', array_column($availableProbeRow['features'], 'key'), true)]['status'],
+    '#125 (d): sso is classified available - the OIDC login flow is fully coded and reachable, only owner credentials are needed'
+);
+assertEquals(
+    'available',
+    $availableProbeRow['features'][array_search('barcode_generation', array_column($availableProbeRow['features'], 'key'), true)]['status'],
+    '#125 (d): barcode_generation is classified available - live, reachable, router-gated via requiredFeature'
+);
+assertEquals(
+    'available',
+    $availableProbeRow['limits'][array_search('saved_codes', array_column($availableProbeRow['limits'], 'key'), true)]['status'],
+    '#125 (d): saved_codes is classified available - the saved-codes library/API is live'
+);
+assertEquals(
+    'available',
+    $availableProbeRow['limits'][array_search('api_keys', array_column($availableProbeRow['limits'], 'key'), true)]['status'],
+    '#125 (d): api_keys is classified available - self-service key management is live in /account/'
+);
+
+// ------------------------------------------------------------------
+// 🔤 Row order follows the ALLOW-LIST's own order, not plan-defined
+// first-seen order - the allow-list lists 'sso' before 'dynamic_qr', so
+// even though this fixture's JSON defines dynamic_qr's key text first
+// alphabetically, the emitted order must still be [sso, dynamic_qr].
+// ------------------------------------------------------------------
+$orderProbePlan = [
+    [
+        'planID'       => 45,
+        'planKey'      => 'order_probe',
+        'planName'     => 'Order Probe',
+        'description'  => '',
+        'priceMonthly' => '0.00',
+        'priceYearly'  => '0.00',
+        'currency'     => 'GBP',
+        // 🔀 Deliberately seeded in the OPPOSITE order to the allow-list
+        // (dynamic_qr first, sso second) to prove ordering is NOT plan-defined.
+        'featuresJSON' => json_encode(['dynamic_qr' => true, 'sso' => true]),
+        'limitsJSON'   => json_encode([]),
+    ],
+];
+$orderProbeRow = pricingDisplayRowsFromPlans($orderProbePlan)[0];
+
+assertEquals(
+    'sso',
+    $orderProbeRow['features'][0]['key'],
+    '#125: row order follows the allow-list\'s own order (sso comes before dynamic_qr there), not the plan JSON\'s key order'
+);
+assertEquals(
+    'dynamic_qr',
+    $orderProbeRow['features'][1]['key'],
+    '#125: row order follows the allow-list\'s own order (sso comes before dynamic_qr there), not the plan JSON\'s key order'
+);
+
+// ==============================================================================
 // 📋 Section 5: listPublicPlansForDisplay() - no-DB fail-safe
 // ==============================================================================
 

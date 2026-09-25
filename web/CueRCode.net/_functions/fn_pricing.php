@@ -41,8 +41,10 @@
  * @package     CueRCode
  * @subpackage  Billing
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
- * @since       Phase 3 (Epic E4, #56)
+ * @version     1.1.0
+ * @since       Phase 3 (Epic E4, #56); hand-maintained feature/limit
+ *              allow-list (pricingAllowedDisplayKeys()) + per-row 'status'
+ *              added Phase 4 (#125, 2026-09-25)
  * @see         fn_features.php               - the gating engine this page's data mirrors
  * @see         _includes/sql/seed_data.sql   - the seeded plan rows + featuresJSON/limitsJSON shape
  * @see         _includes/sql/install.sql     - the tblSubscriptionPlans CREATE TABLE
@@ -213,48 +215,249 @@ function listPublicPlansForDisplay(): array
 }
 
 // ==============================================================================
+// 🗂️ pricingAllowedDisplayKeys() - THE single hand-maintained allow-list
+// ==============================================================================
+
+/**
+ * 🗂️ THE single hand-maintained allow-list of every featuresJSON/limitsJSON
+ * key the public pricing grid is permitted to show, each with its own
+ * hand-written display label AND a hand-maintained build status.
+ *
+ * OWNER DECISION (2026-09-25, #125): the pricing grid must NEVER advertise a
+ * feature/limit as "Included" when a customer could not actually use it with
+ * the code as it stands today, and it must NEVER show an uncurated,
+ * auto-generated label for a brand-new/groundwork key an admin has started
+ * seeding ahead of the code that reads it. This function fixes BOTH problems
+ * at once:
+ *   - A key that is NOT in this array is NEVER shown on the grid, no matter
+ *     what any plan's featuresJSON/limitsJSON contains - so a future
+ *     groundwork key (e.g. a #70 PAYG-only limit, or the next dark-launched
+ *     feature flag) can never leak onto the public page before it has been
+ *     reviewed and deliberately added here.
+ *   - A key that IS in this array carries a proper, hand-written label
+ *     (never the generic snake_case-to-Title-Case fallback) AND an explicit
+ *     status:
+ *       - 'available'   = a customer could actually USE this today with the
+ *                          code exactly as it stands (switching it on via its
+ *                          own normal settings/credentials counts as built -
+ *                          e.g. SSO's OIDC login flow is fully coded and
+ *                          reachable, it only needs the OWNER's own app
+ *                          registration + client secret entering before a
+ *                          real sign-in works - see the per-key comments
+ *                          below for the evidence behind every verdict).
+ *       - 'coming_soon' = the feature is NOT built yet (no reachable route,
+ *                          no UI, schema-only groundwork, etc.) - a plan row
+ *                          that has switched this key on is display-only
+ *                          ("Coming soon" on the grid) until the code
+ *                          catches up.
+ *
+ * MAINTENANCE: adding a brand-new gated feature/limit to the app is now a
+ * two-step process - (1) start reading it via featureEnabled()/limitFor() in
+ * the new code path (fn_features.php's own convention, unchanged), THEN
+ * (2) add its key/label/status to this array once it is genuinely ready to
+ * be advertised. Forgetting step 2 simply means the new key stays invisible
+ * on /pricing - a safe default, never an accidental overclaim.
+ *
+ * Evidence for every verdict below was captured by direct code inspection on
+ * 2026-09-25 (issue #125, cross-checked against .claude/ISSUE_AUDIT_2026-09-23.md)
+ * - re-verify against the actual code before ever flipping a 'coming_soon'
+ * to 'available'.
+ *
+ * @return array<string, array{label: string, status: string}> Ordered
+ *         key => ['label' => string, 'status' => 'available'|'coming_soon'].
+ *         Iteration order is authoritative for the pricing grid's row order
+ *         (see pricingDisplayRowsFromPlans()).
+ *
+ * @see pricingHumanizeKey()          - falls back to this array's labels first
+ * @see pricingDisplayRowsFromPlans() - the consumer that filters + orders by this array
+ */
+function pricingAllowedDisplayKeys(): array
+{
+    static $allowedDisplayKeys = [
+
+        // ==========================================================================
+        // 🚩 featuresJSON keys (seed_data.sql tblSubscriptionPlans - boolean flags)
+        // ==========================================================================
+
+        // ✅ AVAILABLE - Barcode generation (1D + 2D, #69). The vendored
+        // tc-lib-barcode library is wired straight into the live generate
+        // pipeline (_functions/fn_barcode_generate.php, required by
+        // fn_api_generate.php) and the router's own `requiredFeature` gate
+        // on POST /barcode + /barcode/preview (public_html/api/v1/index.php)
+        // proves it is genuinely reachable today, not just present in code.
+        'barcode_generation' => [
+            'label'  => 'Barcode generation (1D & 2D)',
+            'status' => 'available',
+        ],
+
+        // ✅ AVAILABLE - Single sign-on (#19/#20/#55). The FULL OIDC login
+        // flow is coded and live: fn_oauth.php does state/PKCE, JWKS/RS256
+        // id_token verification and account-linking; the redirect_uri route
+        // (public_html/auth/callback/index.php) is real and reachable; the
+        // login page already renders a working "Sign in with ..." button the
+        // moment a provider is configured + enabled. This counts as built
+        // per this array's own rule above - it only needs the OWNER's own
+        // Microsoft/Google app registration and client secret entering
+        // (settings, not code) before a real visitor can sign in with it.
+        'sso' => [
+            'label'  => 'Single sign-on (SSO)',
+            'status' => 'available',
+        ],
+
+        // 🚧 COMING SOON - Expiry & scheduling (#27/#82). Schema-only
+        // groundwork: install.sql's tblQRRedirects.scheduledStartAt/
+        // expiresAt columns are explicitly commented "FG-005 hook ... the
+        // (future) /r/ route would ... (not built this stage)" - no live
+        // route reads either column yet.
+        'expiry_scheduling' => [
+            'label'  => 'Expiry & scheduling',
+            'status' => 'coming_soon',
+        ],
+
+        // 🚧 COMING SOON - Password-protected QR codes. No column, no code,
+        // anywhere in the schema or the generation/redirect pipeline.
+        'password_protected_qr' => [
+            'label'  => 'Password-protected QR codes',
+            'status' => 'coming_soon',
+        ],
+
+        // 🚧 COMING SOON - Dynamic QR codes (#27/#82). The owner-facing
+        // destination-management API exists and is reachable
+        // (fn_api_redirects.php), but its own file header calls
+        // createDynamicRedirectForOwner() "deliberately NOT wired to any
+        // live route" - there is no public /r/{uuid} redirect endpoint for a
+        // scanned code to ever resolve through, so a customer cannot
+        // actually make a "dynamic" QR code do anything dynamic yet.
+        'dynamic_qr' => [
+            'label'  => 'Dynamic QR codes (editable destination)',
+            'status' => 'coming_soon',
+        ],
+
+        // 🚧 COMING SOON - Dual-function QR (#71). Explicitly "waiting on
+        // owner" (the G-007 redirect-hosting decision) - no /r/ resolve
+        // endpoint, no approved-apps register, nothing reachable.
+        'dual_function_qr' => [
+            'label'  => 'Dual-function QR codes (app check-in)',
+            'status' => 'coming_soon',
+        ],
+
+        // 🚧 COMING SOON - Organisations (#21). "Not started": no
+        // create-organisation flow, no roles, no invitations UI - only an
+        // empty schema stub (tblOrgInvitations).
+        'organisations' => [
+            'label'  => 'Organisation accounts & roles',
+            'status' => 'coming_soon',
+        ],
+
+        // 🚧 COMING SOON - Webhooks (#54). Not built anywhere - no outbound-
+        // webhook code exists, and the scan events a webhook would fire on
+        // do not exist either (see analytics_days below).
+        'webhooks' => [
+            'label'  => 'Outbound webhooks',
+            'status' => 'coming_soon',
+        ],
+
+        // 🚧 COMING SOON - Analytics CSV/JSON export. Depends entirely on
+        // scan analytics, and #33 (scan tracking/analytics dashboard) is
+        // "Not started" - no analytics feature exists to export from.
+        'csv_export' => [
+            'label'  => 'Analytics CSV/JSON export',
+            'status' => 'coming_soon',
+        ],
+
+        // ==========================================================================
+        // 🔢 limitsJSON keys (seed_data.sql tblSubscriptionPlans - numeric caps)
+        // ==========================================================================
+
+        // ✅ AVAILABLE - Saved codes (#24/#52). The saved-codes library +
+        // /save + /manage API is live (fn_api_qrcodes.php), genuinely gated
+        // by limitFor('saved_codes').
+        'saved_codes' => [
+            'label'  => 'Saved codes',
+            'status' => 'available',
+        ],
+
+        // ✅ AVAILABLE - Bulk batch size (#32). Bulk CSV generation is live
+        // (web + API), genuinely gated by limitFor('bulk_batch_size') in
+        // fn_api_bulk.php.
+        'bulk_batch_size' => [
+            'label'  => 'Bulk batch size',
+            'status' => 'available',
+        ],
+
+        // ✅ AVAILABLE - API keys (#54). Self-service key creation/rotation
+        // is live in /account/, genuinely gated by limitFor('api_keys') in
+        // fn_api_keys.php.
+        'api_keys' => [
+            'label'  => 'API keys',
+            'status' => 'available',
+        ],
+
+        // ✅ AVAILABLE - API rate limits (#54). Genuinely enforced per-key:
+        // fn_api_auth.php reads tblAPIKeys.rateLimitPerMin/PerDay, which is
+        // set from limitFor('api_rate_limit_per_min'/'_per_day') at
+        // key-creation time in fn_api_keys.php.
+        'api_rate_limit_per_min' => [
+            'label'  => 'API rate limit (per minute)',
+            'status' => 'available',
+        ],
+        'api_rate_limit_per_day' => [
+            'label'  => 'API rate limit (per day)',
+            'status' => 'available',
+        ],
+
+        // 🚧 COMING SOON - Dynamic (editable) QR codes. The quota this limit
+        // governs belongs to the SAME not-yet-wired dynamic-redirect feature
+        // as 'dynamic_qr' above - limitFor('dynamic_codes') is only ever
+        // read by the dark createDynamicRedirectForOwner() helper.
+        'dynamic_codes' => [
+            'label'  => 'Dynamic (editable) QR codes',
+            'status' => 'coming_soon',
+        ],
+
+        // 🚧 COMING SOON - Analytics history retained. No analytics feature
+        // exists at all to retain anything for (#33 "Not started").
+        'analytics_days' => [
+            'label'  => 'Analytics history retained',
+            'status' => 'coming_soon',
+        ],
+
+    ];
+
+    return $allowedDisplayKeys;
+}
+
+// ==============================================================================
 // 🏷️ pricingHumanizeKey() - Generic feature/limit key -> human label
 // ==============================================================================
 
 /**
  * 🏷️ Turn a featuresJSON/limitsJSON key into a human-readable display label.
  *
- * A small curated map covers the keys seeded today (nicer prose than the raw
- * snake_case, e.g. spelling out "SSO" and "API" rather than title-casing them
- * as "Sso"/"Api"). Any key NOT in the curated map - i.e. a brand-new
- * feature/limit an admin adds to a plan row's JSON that this file has never
- * heard of - falls through to a generic snake_case-to-Title-Case humaniser,
- * so a new plan key renders sensibly with ZERO code change here, exactly the
- * property the issue asked for.
+ * Kept as a general-purpose text helper for any OTHER caller of this file
+ * (e.g. test fixtures) that wants a readable label for an arbitrary key -
+ * pricingDisplayRowsFromPlans() itself now sources its labels directly from
+ * pricingAllowedDisplayKeys() (the single hand-maintained allow-list, #125),
+ * and this function reads from that SAME array first so the two never drift
+ * apart. Any key NOT on that allow-list - i.e. a brand-new feature/limit an
+ * admin adds to a plan row's JSON that this file has never heard of - falls
+ * through to a generic snake_case-to-Title-Case humaniser, so a new plan key
+ * renders sensibly with ZERO code change here.
  *
  * @param string $key The raw featuresJSON/limitsJSON key (e.g. 'csv_export').
  *
- * @return string A human-readable label (e.g. 'CSV/JSON analytics export').
+ * @return string A human-readable label (e.g. 'Analytics CSV/JSON export').
+ *
+ * @see pricingAllowedDisplayKeys() - the single source of truth this reads from first
  */
 function pricingHumanizeKey(string $key): string
 {
-    // 🗂️ Curated overrides for the keys seeded in seed_data.sql today - see
-    // that file's header comment for the authoritative key list/meanings.
-    static $curatedLabels = [
-        // 🚩 featuresJSON keys
-        'expiry_scheduling'      => 'Expiry & scheduling',
-        'password_protected_qr'  => 'Password-protected QR codes',
-        'sso'                    => 'Single sign-on (SSO)',
-        'organisations'          => 'Organisation accounts & roles',
-        'webhooks'                => 'Outbound webhooks',
-        'csv_export'             => 'Analytics CSV/JSON export',
-        // 🔢 limitsJSON keys
-        'saved_codes'            => 'Saved codes',
-        'bulk_batch_size'        => 'Bulk batch size',
-        'dynamic_codes'          => 'Dynamic (editable) QR codes',
-        'api_keys'               => 'API keys',
-        'analytics_days'         => 'Analytics history retained',
-        'api_rate_limit_per_min' => 'API rate limit (per minute)',
-        'api_rate_limit_per_day' => 'API rate limit (per day)',
-    ];
+    // 🗂️ #125: read the curated label from the single hand-maintained
+    // allow-list first - see that function's docblock for the full rationale.
+    $allowedDisplayKeys = pricingAllowedDisplayKeys();
 
-    if (array_key_exists($key, $curatedLabels)) {
-        return $curatedLabels[$key];
+    if (array_key_exists($key, $allowedDisplayKeys)) {
+        return $allowedDisplayKeys[$key]['label'];
     }
 
     // 🔧 Generic fallback: snake_case/kebab-case -> "Title Case" - e.g. an
@@ -492,6 +695,16 @@ function pricingFindPricePointByInterval(array $pricePoints, string $billingInte
  * the correct comparison-table behaviour and matches featureEnabled()'s /
  * limitFor()'s own fail-closed semantics for an absent key.
  *
+ * OWNER DECISION (2026-09-25, #125): that union is additionally FILTERED to
+ * only the keys present on pricingAllowedDisplayKeys() (the single
+ * hand-maintained allow-list) - a key seen in some plan's JSON that is NOT
+ * on that allow-list is silently dropped and never generates a row, and the
+ * row order follows the ALLOW-LIST's own order (not first-seen-across-plans
+ * order). Every emitted feature/limit row also carries a new 'status' field
+ * ('available'|'coming_soon', copied straight from the allow-list) alongside
+ * its existing fields - purely additive, every pre-#125 caller/test that
+ * only reads 'key'/'label'/'enabled'/'value' keeps working unchanged.
+ *
  * #70 flexible-pricing branch: when a plan row carries a non-empty
  * 'pricePoints' array (listPublicPlansForDisplay()'s additive query, ONLY
  * populated when billing_price_points_enabled=1 and rows exist),
@@ -521,16 +734,20 @@ function pricingFindPricePointByInterval(array $pricePoints, string $billingInte
  *       'priceYearlyFormatted'  => string,
  *       'currency'              => string,
  *       'isZeroPrice'           => bool,
- *       'features' => [ ['key'=>string,'label'=>string,'enabled'=>bool], ... ],
- *       'limits'   => [ ['key'=>string,'label'=>string,'value'=>string], ... ],
+ *       'features' => [ ['key'=>string,'label'=>string,'enabled'=>bool,
+ *                         'status'=>'available'|'coming_soon'], ... ],  // #125
+ *       'limits'   => [ ['key'=>string,'label'=>string,'value'=>string,
+ *                         'status'=>'available'|'coming_soon'], ... ],  // #125
  *       'pricePoints' => [ ['priceKey'=>string,'billingInterval'=>string,
  *                            'intervalCount'=>int,'amountFormatted'=>string,
  *                            'currency'=>string,'grants'=>array,
  *                            'isDefault'=>bool], ... ],  // #70, [] when none
  *   ]
- *   Empty array when given an empty (or non-plan-shaped) input.
+ *   Empty array when given an empty (or non-plan-shaped) input. A plan whose
+ *   JSON contains NO allow-listed key at all (#125) still produces its own
+ *   display row - just with empty 'features'/'limits' sub-arrays.
  *
- * @see pricingHumanizeKey(), pricingFormatPrice(), pricingFormatLimit(), pricingFindPricePointByInterval()
+ * @see pricingAllowedDisplayKeys(), pricingHumanizeKey(), pricingFormatPrice(), pricingFormatLimit(), pricingFindPricePointByInterval()
  */
 function pricingDisplayRowsFromPlans(array $plans): array
 {
@@ -540,12 +757,22 @@ function pricingDisplayRowsFromPlans(array $plans): array
 
     // ------------------------------------------------------------------
     // 🔄 Pass 1: decode every plan's featuresJSON/limitsJSON up front, and
-    // collect the UNION of feature/limit keys (first-seen order preserved)
-    // so every card ends up with an identical row set.
+    // collect the UNION of feature/limit keys ACTUALLY SEEN across every
+    // given plan - as two simple presence SETS here, NOT an ordered list;
+    // the final, allow-list-filtered + allow-list-ordered lists are built
+    // straight after this loop (see the block immediately below it).
     // ------------------------------------------------------------------
     $decodedPlans    = [];
-    $featureKeyOrder = [];
-    $limitKeyOrder   = [];
+    $seenFeatureKeys = [];
+    $seenLimitKeys   = [];
+
+    // 🚦 #125 owner decision (2026-09-25): THE single hand-maintained
+    // allow-list - only a key present here can EVER reach the display
+    // output, in THIS array's order, with ITS label/status - never a raw
+    // JSON key, never the auto-humanised fallback label, never plan-defined
+    // first-seen order. See pricingAllowedDisplayKeys()'s own docblock for
+    // the full rationale + the evidence behind every key's status.
+    $allowedDisplayKeys = pricingAllowedDisplayKeys();
 
     foreach ($plans as $planRow) {
         if (isset($planRow['featuresJSON'])) {
@@ -622,21 +849,41 @@ function pricingDisplayRowsFromPlans(array $plans): array
         ];
 
         foreach (array_keys($featuresDecoded) as $featureKey) {
-            if (!in_array($featureKey, $featureKeyOrder, true)) {
-                $featureKeyOrder[] = $featureKey;
-            }
+            $seenFeatureKeys[$featureKey] = true;
         }
 
         foreach (array_keys($limitsDecoded) as $limitKey) {
-            if (!in_array($limitKey, $limitKeyOrder, true)) {
-                $limitKeyOrder[] = $limitKey;
-            }
+            $seenLimitKeys[$limitKey] = true;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 🔒 #125: build the FINAL feature/limit key order by walking the
+    // allow-list (never plan-defined first-seen order) and keeping only the
+    // keys that are BOTH allow-listed AND actually present on at least one
+    // given plan's decoded JSON:
+    //   - a key that is allow-listed but genuinely absent from every given
+    //     plan's JSON still generates no row (nothing to compare/display);
+    //   - a key present in some plan's JSON but NOT on the allow-list is
+    //     silently dropped - the core fix this issue asked for, so a future
+    //     groundwork key can never leak onto the public page.
+    // ------------------------------------------------------------------
+    $featureKeyOrder = [];
+    $limitKeyOrder   = [];
+
+    foreach (array_keys($allowedDisplayKeys) as $allowedKey) {
+        if (isset($seenFeatureKeys[$allowedKey])) {
+            $featureKeyOrder[] = $allowedKey;
+        }
+
+        if (isset($seenLimitKeys[$allowedKey])) {
+            $limitKeyOrder[] = $allowedKey;
         }
     }
 
     // ------------------------------------------------------------------
     // 🔄 Pass 2: build the final display row for each plan against the
-    // shared key union computed above.
+    // shared, allow-list-filtered key order computed above.
     // ------------------------------------------------------------------
     $displayRows = [];
 
@@ -655,6 +902,13 @@ function pricingDisplayRowsFromPlans(array $plans): array
                 'key'     => $featureKey,
                 'label'   => pricingHumanizeKey($featureKey),
                 'enabled' => $isEnabled,
+                // 🚦 #125: 'available'|'coming_soon' from the allow-list -
+                // $featureKey is only ever a key already proven to exist in
+                // $allowedDisplayKeys (it came FROM that array's own key
+                // order above), but the null-coalesce is a harmless,
+                // fail-safe belt-and-braces default matching this file's
+                // house convention of never trusting an array lookup blindly.
+                'status'  => $allowedDisplayKeys[$featureKey]['status'] ?? 'coming_soon',
             ];
         }
 
@@ -670,6 +924,10 @@ function pricingDisplayRowsFromPlans(array $plans): array
                 'key'   => $limitKey,
                 'label' => pricingHumanizeKey($limitKey),
                 'value' => pricingFormatLimit($limitValue),
+                // 🚦 #125: 'available'|'coming_soon' from the allow-list -
+                // see the matching comment on $featureRows above for why the
+                // null-coalesce fallback is present (belt-and-braces only).
+                'status' => $allowedDisplayKeys[$limitKey]['status'] ?? 'coming_soon',
             ];
         }
 
