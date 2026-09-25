@@ -213,3 +213,6 @@ logs/
 
 # dev-team autopilot transient lock
 .dev-team/loop.lock/
+
+# 🌳 Private working copies made by AI helper agents (git worktrees) - never commit these
+.claude/worktrees/

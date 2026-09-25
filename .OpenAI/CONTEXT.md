@@ -34,6 +34,7 @@ review once it's available again. Record every review outcome in
 ## Owner preferences (short)
 - Plain English, no jargon, in all feedback.
 - Progress shown as a table of queued tasks with a status for each.
+- Decisions asked as proper questions: options described, recommended first, and why.
 - Work autonomously; ask questions up front; keep the handoff up to the minute.
 - Watchdog every step that finishes later (CI, merges, deploys, background
   work): don't move to a dependent step until it has really finished and the

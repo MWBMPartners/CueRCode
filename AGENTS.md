@@ -10,4 +10,5 @@ Key rules: plain-English feedback; commit and push only to `work-in-progress`;
 no stacked PRs; keep `.claude/HANDOFF.md` up to the minute; cross-review with
 the other AI tool until no issues remain; set a watchdog on anything that
 finishes later (CI, merges, deploys, background work) and don't move on until
-it has really finished (#116).
+it has really finished (#116); ask the owner every decision as a proper
+question (options described, recommendation first, and why).

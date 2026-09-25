@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Owner decisions recorded; #121 fix applied to `main`; dynamic QR approved for alpha (2026-09-25, #121, #125, #122, #27/#71/#33) - PROCESS/CI
+
+The owner answered 12 open decisions (asked as proper questions, with a
+recommendation and the reason for each). Every answer is recorded in
+`.claude/HANDOFF.md` §0, and the launch ones are ticked in `LAUNCH_DECISIONS.md`.
+
+- **#121 on `main` (`e45b490`)** - the prepared fix to the automatic job that
+  copies security fixes to the other branches is now on `main`, with the owner's
+  permission. The job no longer reports "success" when a copy actually failed.
+  Checked again before pushing: the file parses, and actionlint and shellcheck
+  report no problems. The saved patch file was removed from `.claude/plans/`.
+  GitHub Actions still isn't starting jobs (billing), so the runs this push
+  triggered haven't really run yet.
+- **Dynamic QR + dual-function QR** (gate G-007, decisions O-1 to O-11) -
+  approved for the **alpha test group**; the public switch-on waits for the
+  anti-abuse must-haves. They must reuse **Go2My.Link's short-link system** on the
+  **QRmy.Link** address. Destination links are checked with **Google Web Risk**,
+  with **Safe Browsing** as the fallback and room for other providers (for
+  example Microsoft's). Queued as the next big task.
+- **Email records (#122)** - 30 days for sent/skipped and 90 for given-up
+  confirmed as the defaults, and a Global Admin must be able to change them
+  (requirement added to the admin dashboard, #31). Given-up emails keep their
+  one-time link for 24 hours, so they can be re-sent by hand.
+- **Rules** (`.claude/CLAUDE.md`, both memories, `AGENTS.md`): decisions are
+  now asked as proper questions; when Codex runs out of allowance, reviews go
+  in small pieces, with an Opus stand-in if a piece stays stuck, and Codex
+  re-checks it later.
+- `beta` keeps waiting for normal promotion to bring its `ci.yml`. The watchdog
+  script fix (`-L`) is approved for both copies (Mac and WebMS-Intra).
+
 ### Reviewed - Codex cross-system review of the 2026-09-23 to 25 work: 3 of 4 parts clean (2026-09-25, #103)
 
 The project's rule is that another AI system reviews Claude's work. Codex

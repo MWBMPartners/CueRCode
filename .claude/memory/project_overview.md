@@ -39,4 +39,6 @@ must be deleted via the GitHub UI. Full detail + current branch tips live in
 
 **Current state (2026-09-23 night):** see `.claude/HANDOFF.md` §0 and `.claude/ISSUE_AUDIT_2026-09-23.md` (code-verified status of all 67 issues). Done today: #108 rules, #109 (main), #110 (RC), #111 Swagger/CSP, issue audit and docs refresh. Top open bug #112 (email queue never sent → sign-ups can't verify). Follow-ups #113/#114/#115. BLOCKER: GitHub Actions not starting jobs since ~20:20 UTC 2026-09-23 (owner to check billing/minutes).
 
+**2026-09-25 afternoon:** owner answered 12 decisions (HANDOFF §0). #121 fix is on `main` (`e45b490`). **Dynamic QR + dual-function QR APPROVED for the alpha test group** — next big task (HANDOFF task 7j): must reuse Go2My.Link's short-code system on the QRmy.Link address; Web Risk → Safe Browsing → pluggable link checkers. Remaining launch decisions to be asked as questions at the start of the next session.
+
 **How to apply:** Always audit issues against codebase before closing. Check PROJECT_STATUS.md for current status. Never assume prior completion claims are accurate. Cut new work from `work-in-progress`; promote via `work-in-progress → alpha`.

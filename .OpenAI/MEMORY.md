@@ -26,13 +26,15 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   following symbolic links (shortcuts). Point it at a shortcut and it always
   reports "unchanged", even while the work is busy. Point it at the real file
   instead (`ls -la` shows where a shortcut leads). The fix is `-L` on both
-  `stat` calls in the script, awaiting the owner's OK.
+  `stat` calls in the script — approved by the owner 2026-09-25 (Mac session to apply).
 - **GitHub Actions shell (2026-09-25, #124).** A step with no `shell:` runs as
   `bash -e {0}`, WITHOUT `pipefail`; only `shell: bash` adds `-o pipefail`.
   Test `run:` scripts locally with the matching flags, and confirm any claim
   about shell behaviour in a real run log. A wrong claim about this went into
   commit 5e2005c's message; the CHANGELOG carries the correction.
-- **Codex allowance (2026-09-25).** A whole-branch review ran out of allowance in about 3 minutes, before writing any finding. Review in chunks (`.claude/plans/codex-review-chunk-*.md`), read only the named functions, and write each finding as soon as it is found.
+- **Codex allowance (2026-09-25).** A whole-branch review ran out of allowance in about 3 minutes, before writing any finding. Review in chunks (`.claude/plans/codex-review-chunk-*.md`), read only the named functions, and write each finding as soon as it is found. **Owner decision (2026-09-25 pm):** keep reviewing in small pieces and retry after each reset; if a piece is still stuck, an Opus reviewer fills in as a recorded *stand-in*, and Codex re-checks that piece later. No extra spend without asking.
+- **Ask decisions as proper questions (2026-09-25).** Every owner decision goes to the owner as a real question: options described in plain English, the recommended one first, and why. Record answers at once in `.claude/HANDOFF.md` §0.
+- **Dynamic + dual-function QR approved for alpha (2026-09-25).** Next big task (HANDOFF task 7j). Must reuse Go2My.Link's short-code system on the QRmy.Link address; link checks: Google Web Risk, then Safe Browsing, then pluggable providers (e.g. Microsoft).
 - **House style:** full multi-line PHP, detailed comments (emojis fine), PHP
   predefined constants, MySQLi prepared statements, no layout `<table>`,
   WCAG 2.1 AA, file headers with path + copyright (2025–current year, MWBM

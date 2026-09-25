@@ -123,12 +123,14 @@ Re-order and bundle the above steps as sensible to work efficiently.
 
 ### 🤖 Autonomy
 Work through everything autonomously. Only stop when an EXPLICIT decision or approval is needed from the owner — say clearly, in simple words, what is needed and why. Raise all questions/decisions **up front**, not as they crop up. After asking, carry on with ALL other queued tasks.
+- **Ask decisions as proper questions (owner request, 2026-09-25):** put every decision or clarification to the owner as a real question (use the question tool, in batches), not buried in prose. Describe each option in plain English, put the **recommended option first**, and say **why** it is recommended, so the owner can simply pick an answer. Record every answer straight away in `.claude/HANDOFF.md` §0 (and `LAUNCH_DECISIONS.md` where relevant).
 
 ### 📊 Progress updates
 Give frequent progress updates as a **table of queued tasks with the status of each**.
 
 ### 🔍 Code review loop
 All code goes through review by Codex. Issues it finds get fixed automatically, then Codex reviews again — repeat until it finds nothing. (If Codex isn't available in the current environment, e.g. a cloud container without the Codex CLI, record the review as owed in the handoff and run it at the next opportunity.)
+- **When Codex runs out of allowance (owner decision, 2026-09-25):** split the review into small pieces and retry each after the allowance resets. If a piece is still stuck, a separate Opus reviewer fills in — recorded as a *stand-in*, not the usual cross-system review — and Codex re-checks that piece later. Don't buy extra allowance without asking the owner.
 
 ### 🚫 No PR stacking
 Don't create multiple pull requests. Commit everything to `work-in-progress`; ONE pull request `work-in-progress → alpha` gets created later. This avoids merge race conditions between PRs. (Dependabot's own PRs are the exception — they're automatic.)
