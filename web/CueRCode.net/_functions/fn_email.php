@@ -1784,9 +1784,14 @@ function formatEmailQueueRunReport(array $result, float $seconds): array
     }
 
     if ((int) $result['recordFailures'] > 0) {
+        // 📝 One count covers two cases (#122 verification): a SENT email whose
+        //    "sent" could not be recorded (recovery may send it again), and an
+        //    email being SKIPPED whose "skipped" could not be recorded (recovery
+        //    re-checks it and skips it again - it is never sent). Say both.
         $lines[] = 'Could not record the result for ' . (int) $result['recordFailures']
-            . ' email(s); they may be sent again after ' . (int) $result['stuckMinutes']
-            . ' minutes (details are in the error log).';
+            . ' email(s) (details are in the error log). After ' . (int) $result['stuckMinutes']
+            . ' minutes they are checked again: one that had actually been sent may be sent a second time;'
+            . ' one that was being skipped is simply skipped again.';
     }
 
     // 🛑 #122: claimed emails that can never be sent (details removed, link missing).
@@ -4139,7 +4144,9 @@ function emailQueueProductionEnvironment(): array
  *                 page-shutdown budget).
  *
  * @return array{processed: int, sent: int, failed: int, skipped: int}
- *         failed = retrying + given up; skipped = not claimed or put back.
+ *         failed = retrying + given up; skipped = not claimed, put back, or
+ *         unsendable (details removed or link missing - #122). Expired-link
+ *         emails (#123) are not counted here.
  *
  * @see runEmailQueueBatch()
  * @see maybeProcessEmailQueueOnShutdown()

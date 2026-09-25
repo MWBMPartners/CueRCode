@@ -31,12 +31,16 @@
  * can be loaded without bootstrap.php, and require_once works from the file's
  * real path, so the repeat loads do nothing.
  *
- * ⚠️ What it CANNOT do: it recognises plain ASCII addresses only. An address
- * with non-English letters before the "@" may be left partly visible (the
- * letters before the first ASCII one). A Unicode-aware pattern was rejected
- * because preg_replace() fails on any invalid UTF-8 byte, which would blank
- * whole log lines. It does not recognise other personal data or secrets -
- * callers must still never log bodies, links, tokens or passwords.
+ * ⚠️ What it CANNOT do: it does not recognise other personal data or secrets -
+ * callers must still never log bodies, links, tokens or passwords. Addresses
+ * with non-English letters ARE masked: the pattern also accepts any byte from
+ * 0x80 to 0xFF (the building blocks of every non-English letter in UTF-8), so
+ * "jösé@example.com" and "alice@münchen.de" become "[address]" whole. (The
+ * first version accepted plain ASCII only and left such addresses fully or
+ * partly visible - found by the #122/#123/#126 independent verification,
+ * 2026-09-25.) A true Unicode pattern (the /u flag) is still NOT used, because
+ * preg_replace() fails on any invalid UTF-8 byte, which would blank whole log
+ * lines; working on raw bytes can never fail that way.
  *
  * @package     CueRCode
  * @subpackage  Logging
@@ -64,17 +68,20 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 // ==============================================================================
 
 /**
- * @var string The address pattern - unchanged from emailQueueSafeDetail() (#112),
- * so its tests stay green. Plain ASCII on purpose (no /u flag): with /u,
+ * @var string The address pattern - emailQueueSafeDetail()'s (#112) rule, widened
+ * to bytes 0x80-0xFF so non-English addresses are masked too (the ASCII cases,
+ * and their tests, are unchanged). No /u flag on purpose: with /u,
  * preg_replace() returns null for any invalid UTF-8 byte, which would blank a
- * whole log line; without it, the pattern can never fail on odd bytes.
+ * whole log line; on raw bytes the pattern can never fail. Because it only
+ * ever consumes whole runs of 0x80-0xFF bytes, it never cuts a character in
+ * half.
  *
  * It deliberately matches "something@something" loosely rather than following
  * the full address rules: in a log line, hiding a little too much is harmless,
  * while missing a real address is the fault this file exists to prevent.
  */
 if (!defined('CUERCODE_LOG_MASK_EMAIL_PATTERN')) {
-    define('CUERCODE_LOG_MASK_EMAIL_PATTERN', '/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+/');
+    define('CUERCODE_LOG_MASK_EMAIL_PATTERN', '/[A-Za-z0-9._%+\-\x80-\xFF]+@[A-Za-z0-9.\-\x80-\xFF]+/');
 }
 
 /**
@@ -102,7 +109,7 @@ if (!defined('CUERCODE_LOG_MASK_EMAIL_REPLACEMENT')) {
  * string rather than the raw text. A blank log line is better than a leaked
  * address.
  *
- * ⚠️ What it CANNOT do: see the file header - plain ASCII addresses only.
+ * ⚠️ What it CANNOT do: see the file header (other personal data and secrets).
  * Note also that "user@host" pairs such as a database login quoted with
  * separate quote marks ('cuercode'@'localhost') are NOT address-shaped (the
  * quote marks break the pattern) and are left alone; those carry a database

@@ -61,7 +61,7 @@ set.
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 132 |
 | `test_features.php` | 91 |
-| `test_log_mask.php` | 46 |
+| `test_log_mask.php` | 51 |
 | `test_oauth.php` | 135 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -69,7 +69,7 @@ set.
 | `test_pricing_flex.php` | 50 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| **Total** | **2707** |
+| **Total** | **2712** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 

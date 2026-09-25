@@ -293,7 +293,7 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
 - Graph's `202 Accepted` means accepted, not delivered; bounces are not tracked.
 - The named lock relies on MySQL named locks working on DreamHost's MySQL servers - not verified live, but four existing features already rely on the same feature, and the row claim is the independent backstop.
 - A given-up email keeps its one-time link for 24 hours after it was queued - deliberately, so it can still be re-sent after an outage (#122, owner decision).
-- The clean-up needs the queue lock, so it runs at most once a minute, and each clean-up step handles at most 500 rows per run (the rest follow on the next run).
+- The clean-up needs the queue lock, so only one run does it at a time: once per cron run (every minute), plus on page visits if the off-by-default page-shutdown fallback is switched on. Each clean-up step handles at most 500 rows per run (the rest follow on the next run). One edge case: if a run is cut off mid-send and email is then switched off, that email keeps its details until sending is switched back on, because stuck-row recovery only runs when sending is on.
 - It does not touch the activity log (`tblActivityLog`), which still keeps email events with recipients' addresses and no time limit (a separate follow-up).
 - On existing installs the live table's column comments keep their old wording (including the wrong "never stores secrets" note on `paramsJSON`) until the upgrade mechanism exists (#113). The code never reads those comments.
 
@@ -350,7 +350,7 @@ What stays on a finished row, for support: the recipient's address and name, the
   ```
 
 - **The live column comment** on `paramsJSON` (which wrongly says it never stores secrets) is unchanged on existing installs. It is documentation only - no code reads it - and is tracked for the upgrade mechanism (#113). Fresh installs get the corrected comment.
-- **Limits:** email addresses in PHP's error log are masked by a plain-ASCII pattern (`_functions/fn_log_mask.php`, #126), so an address with non-English letters before the `@` may be left partly visible there. The activity log (`tblActivityLog`) still keeps email events with the recipient's address and no time limit, and deleting an account does not touch those rows or the queue (a follow-up).
+- **Limits:** email addresses in PHP's error log are masked (`_functions/fn_log_mask.php`, #126), including ones with non-English letters. Other personal data is not recognised, so nothing else personal may be logged. The activity log (`tblActivityLog`) still keeps email events with the recipient's address and no time limit, and deleting an account does not touch those rows or the queue (a follow-up).
 
 **Testing:** `tests/test_email_queue_runner.php` (part of `php tests/run.php`) drives the whole flow with an in-memory stand-in for the table, including two runners interleaved mid-send with and without the lock, and (since #122/#123) the clean-up, the expired-link checks and the "never send a cleared email" guard. `tests/test_log_mask.php` proves the four error-log fallbacks hide addresses (#126), running each for real in a separate PHP process. The optional `tests/integration/email_queue_real_mysql.php` proves the real SQL, the real lock and two real runner processes against a throwaway MySQL or MariaDB container - including, since #122/#123, the real clean-up updates and deletes (scenarios 9-14 and 10b) - see `tests/README.md`.
 

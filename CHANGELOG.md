@@ -43,11 +43,23 @@ the token tables themselves only ever store a scrambled (hashed) copy.
   `logError()`'s) now go through one new helper,
   `_functions/fn_log_mask.php`, which replaces every address with
   `[address]`. On the command line that log is the cron email.
-- **Tests:** 2707/2707 assertions across 25 test files (195 new in
-  `tests/test_email_queue_runner.php`, 46 in the new `tests/test_log_mask.php`;
+- **Tests:** 2712/2712 assertions across 25 test files (195 new in
+  `tests/test_email_queue_runner.php`, 51 in the new `tests/test_log_mask.php`;
   every earlier assertion passes unedited). The real-database check passed
   every scenario, including the new ones (9-14 and 10b), on MySQL 8.4 and
   8.0 and MariaDB 10.11 and 10.6.
+- **Independent verification** (a fresh Opus agent standing in for Codex):
+  no way found to lose an email that still needs sending, or to send one
+  with a missing or expired link. It re-ran every check and made 13
+  deliberate breaks of its own, all caught. Its three low findings are fixed:
+  - Addresses with non-English letters (`jösé@…`, `…@münchen.de`) were
+    missed by the first, plain-ASCII masking pattern. The pattern now also
+    accepts bytes 0x80-0xFF, still without the `/u` flag, so a broken
+    character can't blank a log line. 5 new tests.
+  - A "could not record the result" line wrongly suggested a *skipped* email
+    might be re-sent. It now explains both cases.
+  - A leftover "(number to be added)" in SECURITY.md.
+  - Wording nits in DEV_NOTES and a docblock were also fixed.
 - **Existing installs:** no database change is needed - the defaults apply
   without the two new setting rows. `DEV_NOTES.md` ("Email queue clean-up and
   privacy") has the SQL to add them so the periods can be changed. The live

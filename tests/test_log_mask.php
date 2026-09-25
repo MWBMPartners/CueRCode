@@ -66,6 +66,14 @@ assertEquals('To: [address] | Subject: Hi', maskEmailAddresses('To: alice.o+tag@
 assertEquals('two: [address], [address]', maskEmailAddresses('two: a@b.com, c@d.org'), 'maskEmailAddresses: every address in the text');
 assertEquals('no address here', maskEmailAddresses('no address here'), 'maskEmailAddresses: text with no address is unchanged');
 assertEquals('', maskEmailAddresses(''), 'maskEmailAddresses: empty text stays empty');
+// 🌍 Non-English addresses are masked whole (fixed after the independent
+//    verification, 2026-09-25 - the first, ASCII-only pattern left these
+//    fully or partly visible).
+assertEquals('To: [address]', maskEmailAddresses("To: j\u{00F6}s\u{00E9}@example.com"), 'maskEmailAddresses: non-English letters before the @ (jösé@example.com) are masked whole');
+assertEquals('To: [address]', maskEmailAddresses("To: j\u{00F6}se@example.com"), 'maskEmailAddresses: a non-English letter inside the name (jöse@example.com) is masked whole');
+assertEquals('[address]', maskEmailAddresses("alice@m\u{00FC}nchen.de"), 'maskEmailAddresses: a non-English domain (alice@münchen.de) is masked whole');
+assertEquals("bad \xC3\x28 [address]", maskEmailAddresses("bad \xC3\x28 bob@example.com"), 'maskEmailAddresses: an invalid UTF-8 byte never blanks the line');
+assertEquals("user 'cuercode'@'localhost'", maskEmailAddresses("user 'cuercode'@'localhost'"), 'maskEmailAddresses: a quoted database user (not an address) is left alone');
 
 // 📌 Documents a known limit on purpose: a database login quoted as
 //    'user'@'host' is NOT address-shaped (the quote marks break the pattern),
