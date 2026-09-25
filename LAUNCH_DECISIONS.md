@@ -69,7 +69,7 @@
 ## E1. New items from the 2026-09-23 issue audit
 
 - [ ] **A way to enter encrypted credentials** — either the admin screen (#31) or, as a stop-gap before that exists, a one-off `setConfig()` script run by hand on the live server. Needed to switch on email (#29), SSO (#55), bot protection and PayPal (#26). Follow-up #115.
-- [ ] **A scheduled job for the email queue** (#29; bug #112) — nothing currently empties `tblEmailQueue`; without a cron-style runner, no sign-up/reset email will ever actually send, even once Microsoft 365 is configured.
+- [ ] **Add the DreamHost cron job for the email queue runner** (#112, built 2026-09-25) — without it no sign-up or reset email is sent. Steps: DEV_NOTES.md → 'Email queue runner'. Then do a live test send.
 - [ ] **`install.sql` re-run safety and an upgrade script** (#70/#11; follow-up #113) — running `install.sql` a second time currently fails with a "duplicate column" error partway through (the flexible-pricing `ALTER TABLE ADD COLUMN` statements have no existence guard), and there is no upgrade script for a database installed before recent schema changes. Needed before the first real database test.
 - [ ] **#48 — contrast warning vs block**: should the Accessible-QR contrast check only warn (as now) between 3:1 and 4.5:1, or refuse to generate?
 - [ ] **#40 — JPEG XL**: needs another host/VPS capable of writing it, or a decision to drop the format for good.

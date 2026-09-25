@@ -187,6 +187,8 @@ $functionFiles = [
     // bug caught during this stage's scratch-DB verification: without this,
     // the no-JS registration path silently created the account but never
     // queued a verification email (queueEmail() was undefined on that page).
+    // It also provides the email queue runner functions (#112) used by
+    // _includes/cron/process_email_queue.php and by Step 7 below.
     'fn_email.php',
     'fn_auth.php',           // 🔐 currentUser()/requireAuth()/session engine (Epic E3)
     'fn_features.php',       // 💳 planForUser()/limitFor()/featureEnabled() (Epic E4 framework, used by the account dashboard + generator "Save" gating)
@@ -307,6 +309,32 @@ if (function_exists('isDebugMode') && isDebugMode()) {
 ini_set('log_errors', '1');
 
 // ==============================================================================
+// 📬 Step 7: Optional page-shutdown email sending (OFF by default, #112)
+// ==============================================================================
+// The dependable way to send queued emails is the command-line runner
+// _includes/cron/process_email_queue.php, run by a DreamHost cron job every
+// minute. This hook is a FALLBACK for hosts without cron: when the owner sets
+// BOTH `email_queue_autoprocess` and `email_enabled` to 1, it sends up to 2
+// queued emails at the end of a page request.
+//
+// 🔌 WHY it is wired in here: before #112 nothing called it, so setting
+//    email_queue_autoprocess to 1 silently did nothing - a documented switch
+//    that does nothing is the worst kind of failure.
+// 🚫 WHY it is still OFF by default: it adds work to ordinary page visits,
+//    only runs when people visit (so retries stall on a quiet site), and on a
+//    server without fastcgi_finish_request() the visitor waits while emails
+//    send. When off it costs one cached settings read per request.
+// 🌐 WHY web requests only: command-line scripts (including the cron runner
+//    itself) must never pick up extra work from a shutdown hook.
+// It is safe alongside cron: both use the same locked, duplicate-proof batch.
+// @see fn_email.php - maybeProcessEmailQueueOnShutdown()
+// ==============================================================================
+
+if (php_sapi_name() !== 'cli' && function_exists('maybeProcessEmailQueueOnShutdown')) {
+    maybeProcessEmailQueueOnShutdown();
+}
+
+// ==============================================================================
 // ✅ Bootstrap Complete
 // ==============================================================================
 // The application is now fully initialised with:
@@ -316,6 +344,7 @@ ini_set('log_errors', '1');
 //   - Session started with secure settings
 //   - Timezone configured
 //   - Error reporting configured
+//   - Optional page-shutdown email sending registered (only when switched on, #112)
 //
 // Entry points can now use any function or class from the application.
 // ==============================================================================

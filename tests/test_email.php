@@ -53,6 +53,10 @@
  *     mocking layer this dependency-free harness does not have; the
  *     credential-absent short-circuit path (tested here) IS the behaviour
  *     that matters for an out-of-the-box, unconfigured install.
+ *   📝 Since #112 the claim / settle / stuck-row recovery LOGIC is covered by
+ *     tests/test_email_queue_runner.php (using an in-memory stand-in for the
+ *     table), and the real SQL by the optional
+ *     tests/integration/email_queue_real_mysql.php (needs a throwaway MySQL).
  *
  * @package     CueRCode
  * @subpackage  Tests
@@ -340,3 +344,6 @@ assertEquals(
 //     computeEmailBackoffMinutes() delay applied to nextAttemptAt on failure.
 //   - settleEmailQueueSuccess()/settleEmailQueueFailure() UPDATE statements.
 //   - The concurrent-claim guard (affected_rows check preventing a double-send).
+// 📝 Since #112 that claim / settle / recovery LOGIC is covered by
+//    tests/test_email_queue_runner.php (in-memory stand-in for the table), and
+//    the real SQL by the optional tests/integration/email_queue_real_mysql.php.

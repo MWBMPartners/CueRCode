@@ -239,11 +239,70 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
    - `graph_sender_mailbox` - the shared mailbox address from step 3.
    - `email_from_name` - the display name recipients see (e.g. "CueRCode Notifications").
 6. **Flip `email_enabled` to `1`** once the above is verified working (e.g. via a manual `sendEmailNow()` smoke test).
-7. **Choose a queue-processing strategy** - `email_queue_autoprocess` (0 = OFF by default):
-   - **Recommended: Dreamhost panel cron** (no SSH needed) - Dreamhost's panel → Cron Jobs → add a job that runs a small PHP script (e.g. `_includes/cron/process_email_queue.php`, to be added when the queue starts carrying real traffic) calling `processEmailQueue()` on a schedule (e.g. every 5 minutes). **This script does not exist yet, and nothing else in this codebase calls `processEmailQueue()` or `maybeProcessEmailQueueOnShutdown()` outside the test suite** - until it (or the opportunistic alternative below) is actually wired up, every queued email stays `queued`/`pending` forever and is never sent, regardless of whether `email_enabled` is on.
-   - **Alternative: opportunistic shutdown-hook** - set `email_queue_autoprocess=1` and call `maybeProcessEmailQueueOnShutdown()` from an entry point AFTER `fn_email.php` is loaded (NOT wired into `bootstrap.php` by default, so the core request path is untouched unless this is deliberately opted into). Processes ≤2 emails per request, after the response has already been sent - fail-open, never surfaces an error to the client.
+7. **Set up the queue runner (required)** - the site only ever *queues* emails; nothing is sent until this job exists (#112). *The DreamHost menu names, the PHP path and the shortest cron interval below are **not checked against the live panel/server - confirm when setting up**.*
+   - In the DreamHost panel: **Advanced → Cron Jobs → Add New Cron Job**. Choose the site's shell user, give it a title such as "CueRCode email queue", and pick **Custom → every minute** (if the shortest interval the panel offers is longer, emails simply wait up to that long).
+   - Command (use the command-line `php`, never `./file` - the deploy does not keep execute permissions; adjust `php84` to the site's PHP version):
+     `/usr/local/php84/bin/php /home/<user>/<path>/CueRCode.net/_includes/cron/process_email_queue.php --quiet`
+   - Set **"Email output"** to your own address. With `--quiet`, the job prints nothing on a normal run, so you only get an email when something needs attention. While sending is blocked (exit code 4) that means **an email every minute** - an intended outage alarm; pause the job while you fix the cause if it gets too noisy.
+   - If the panel offers **"Use locking"** (or "prevent overlapping"), **leave it unticked**. The runner has its own lock, and the panel's lock would stop a new run from even starting - so the runner could never report that an earlier run is stuck.
+   - **Run it once by hand with `--check` first** (from SSH, or as a one-off cron job): it tests the database and the settings and shows the queue counts, without sending anything.
+   - Fallback for a host without cron: set `email_queue_autoprocess=1`. Since #112 this really works - `bootstrap.php` calls `maybeProcessEmailQueueOnShutdown()` on web requests only - and it sends up to 2 emails at the end of an ordinary page visit, using the same duplicate-proof code as the cron job. It is OFF by default because it adds work to page visits, only runs when people visit (retries stall on a quiet site), and on a server without `fastcgi_finish_request()` the visitor's page keeps loading while the emails send. It is safe (just pointless) to leave it on alongside cron.
 
-**Queue + retry:** `queueEmail()` inserts a `tblEmailQueue` row (status `queued`, `nextAttemptAt = NOW()`); `processEmailQueue($max=2)` claims due rows (`status IN ('queued','failed')`, `nextAttemptAt <= NOW()`, `attempts < maxAttempts`), re-renders the template fresh (never trusts a stored, possibly-stale rendered body), and calls `sendEmailNow()`. On success the row becomes `sent`; on failure, `attempts` increments and the row is rescheduled with **exponential backoff** (`nextAttemptAt = NOW() + 2^attempts MINUTES`, computed by the pure, unit-tested `computeEmailBackoffMinutes()`) until `maxAttempts` (default 5) is reached, at which point the row is marked permanently `failed`. **Caveat:** a row queued while `email_enabled=0` (or otherwise unconfigured) will burn through its retry budget (~62 cumulative minutes at the default schedule/maxAttempts) and land on `failed` even though the "failure" was really just "not configured yet" - don't queue anything meaningful before `email_enabled=1` is set.
+**Queue + retry (#112):** `queueEmail()` inserts a `tblEmailQueue` row (status `queued`, `nextAttemptAt = NOW()`). The runner (`runEmailQueueBatch()`, reached from the cron script or from `processEmailQueue()`) then:
+
+- **Claims each due row with one guarded `UPDATE`** that re-checks *everything* at the same moment - still `queued`/`failed`, due now (`nextAttemptAt <= NOW()`), attempts left (`attempts < maxAttempts`). Before #112 the claim checked only the status, so a runner working from an out-of-date list could re-send an email another runner had just rescheduled (ignoring the back-off and losing its attempt count).
+- **Re-reads the row after claiming** and uses only those values, re-renders the template fresh (never trusts a stored body), and calls `sendEmailNow()`.
+- **Records the result only while the row is still `sending`**: `sent`, or back to `queued` with **exponential backoff** (`nextAttemptAt = NOW() + 2^attempts MINUTES`, via the unit-tested `computeEmailBackoffMinutes()`), or `failed` once `maxAttempts` (default 5) is used up. With the defaults the waits are 2, 4, 8 and 16 minutes, so an email that keeps failing is **given up about 30 minutes after its first failure** (the old "~62 minutes" figure was wrong).
+- **Puts back stuck rows**: a row left `sending` for more than **10 minutes** (the runner died part-way) is put back and **counted as one attempt**, because we cannot know whether Microsoft accepted it.
+- **"Sending is blocked" problems no longer use up attempts.** The switch being off, missing settings, no Graph token, Graph answering 401/403/404 (bad credentials, missing permission, wrong sender mailbox) or curl not starting: the email is put back unchanged, the run stops, and the runner exits with code 4. (Before #112, every queued email burned through its retries while email was "not configured yet" and ended up permanently `failed`.)
+- **Temporary Graph trouble** (HTTP 429, 408, 5xx, a network error or timeout) uses an attempt with back-off and **stops the run early**, so a struggling service is not hammered. Problems with one message (e.g. HTTP 400, a template that will not render) use an attempt and the run carries on.
+- **Takes a named database lock** (`GET_LOCK`, one per database) so only one runner works at a time, and raises a **stall alarm** (exit 4) if the lock is held while emails have been waiting more than 10 minutes.
+- **Stays inside its minute**: at most 20 emails per run (`--limit`, 1-50) and no new email is claimed after 45 seconds.
+
+#### Email queue runner (`_includes/cron/process_email_queue.php`, #112)
+
+**What it is:** a thin command-line wrapper around `emailQueueRunnerMain()` in `fn_email.php`, where all of the logic and its tests live. It refuses to run under anything but the command-line PHP (a web request, or `php-cgi`, gets `403 Access denied.`) before it loads anything; it also lives in `_includes/`, which has no web address and is deny-all.
+
+**How it stops duplicates, in plain English (three layers):**
+
+1. **The row claim** - the real guarantee. Marking a row "I am sending this" re-checks every condition in one statement, and MySQL makes two simultaneous claims of the same row queue up, so only one can win. Every later update only applies while the row is still "sending", so only the runner that claimed a row can finish it. This works even with no lock.
+2. **One lock per database** - a MySQL named lock (`cuercode_emailq:` + a hash of the database name, because lock names are shared by every database on a shared MySQL server). A second run that finds it taken reports "another run is working" and stops. MySQL lets go of the lock by itself if the process dies.
+3. **Stuck-row recovery** - uses the existing `updatedAt` column as "claimed at" (no schema change), after 10 minutes.
+
+**Options:** `--quiet` / `-q` (print nothing unless something needs attention - use this in cron), `--limit=N` (1-50, default 20), `--check` (test the database and settings and show queue counts; sends and claims nothing), `--help` / `-h`.
+
+**Exit codes** (when several apply, the most serious wins: 3 > 4 > 5 > 0):
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Finished normally - including nothing to send, email switched off, and another run already working. |
+| 1 | Could not start (for example a missing `_auth_keys/auth_creds.php`) or stopped by an unexpected error. |
+| 2 | Bad command-line option. |
+| 3 | Database problem (cannot connect, queue table unreadable, lock error). |
+| 4 | Sending is blocked by the settings or by Microsoft Graph, or an earlier run seems stuck ("stalled"). |
+| 5 | Finished, but gave up on at least one email after all its attempts. |
+
+**What it prints:** one summary line of counts only, for example `CueRCode email queue: sent 3, will retry 1, gave up on 0, 5 still waiting (2.4 seconds).`, plus a plain-English line for anything unusual. With `--quiet` it prints nothing unless the exit code is not 0, stuck emails were put back (they may arrive twice), or a result could not be recorded - those go to the error stream so cron emails them. **It never prints** an email address, subject, body, one-time link, secret, setting value or anybody's ID; every line also passes through an address-masking helper as a backstop. (When the database itself is down, the site's existing error logger falls back to the PHP error log, which on the command line may also appear in the cron email - that comes from the start-up code, not the runner.)
+
+**What it cannot do:**
+
+- It is **"at least once", not "exactly once"**: if Microsoft accepts an email but the runner dies (or the database fails) before recording "sent", the row is recovered after 10 minutes and sent again. Recovery counts that as an attempt, so repeats are capped - in practice at most one extra copy.
+- Graph's `202 Accepted` means accepted, not delivered; bounces are not tracked.
+- The named lock relies on MySQL named locks working on DreamHost's MySQL servers - not verified live, but four existing features already rely on the same feature, and the row claim is the independent backstop.
+- It does not check whether a link inside a queued email has expired (verification links last 24 hours, reset links 60 minutes), so after a long outage it may send dead links.
+- It does not delete old rows or clear the stored template parameters (which include the one-time links) - see SECURITY.md's 2026-09-25 open items.
+
+**Re-sending emails that were given up** (phpMyAdmin → the site's database → SQL):
+
+```sql
+UPDATE tblEmailQueue
+SET status = 'queued', attempts = 0, nextAttemptAt = NULL, lastError = NULL
+WHERE status = 'failed' AND createdAt > UTC_TIMESTAMP() - INTERVAL 1 DAY;
+```
+
+`nextAttemptAt = NULL` means "due now", and `UTC_TIMESTAMP()` is used because the site stores times in UTC while phpMyAdmin's `NOW()` uses the server's own time zone. Verification links last 24 hours and reset links 60 minutes, so re-sending older emails is pointless - the person needs to ask for a new one.
+
+**Testing:** `tests/test_email_queue_runner.php` (part of `php tests/run.php`) drives the whole flow with an in-memory stand-in for the table, including two runners interleaved mid-send with and without the lock. The optional `tests/integration/email_queue_real_mysql.php` proves the real SQL, the real lock and two real runner processes against a throwaway MySQL container - see `tests/README.md`.
 
 **Templates:** `_includes/email_templates/{key}.php` (currently `verification`, `password_reset`, `invitation`, `receipt` - the allowlist enforced by `isValidEmailTemplateKey()`) each `return [$subject, $htmlBody];` and use the shared `emailRenderShell()` wrapper for consistent branding. Every interpolated parameter is escaped via `emailEscape()` (`htmlspecialchars(..., ENT_QUOTES, 'UTF-8')`) - proven by an XSS-injection test per template. **These templates use nested `<table>` layout - a deliberate, EMAIL-ONLY exception** to the project's no-`<table>`-for-layout house rule: email clients (Outlook desktop's Word rendering engine especially) have extremely limited CSS support and effectively require table layout for reliable cross-client rendering. This does not relax the rule anywhere else in the codebase.
 
@@ -329,7 +388,7 @@ The browser UI over stage 1 (accounts) and stage 2a (saved codes) - `public_html
 
 Every mutating statement above runs inside ONE MySQL transaction (`getDB()->begin_transaction()`/`commit()`/`rollback()`) - a partial failure rolls back everything, never leaving a half-anonymized account. The anonymizing `UPDATE`'s `WHERE` clause re-checks `status != 'deleted'` in the SAME statement (a concurrent double-erase attempt affects 0 rows and is reported `409 ALREADY_ERASED`, not silently re-run or thrown).
 
-**Owner-run hard-purge runbook (NOT automated - a deliberate, separate, manual step).** This codebase does not schedule or auto-run a job that permanently deletes anonymized rows - per the Dreamhost shared-hosting "no CLI/cron guarantee" constraint already documented under "Email Subsystem (Microsoft Graph)" above, and because an irreversible bulk-delete of financial-adjacent rows deserves a conscious, logged, owner-initiated action rather than a silent background timer. Once a confirmed retention window has elapsed (**owner/counsel to set the exact number of days - see privacy.php Section 7.1's `[TEMPLATE]` marker**), the owner runs the following via the Dreamhost panel's phpMyAdmin (or an equivalent authenticated MySQL client - never exposed as a public endpoint):
+**Owner-run hard-purge runbook (NOT automated - a deliberate, separate, manual step).** This codebase does not schedule or auto-run a job that permanently deletes anonymized rows. DreamHost's panel cron is now used for the email queue (#112), but this purge deliberately stays a manual step, because an irreversible bulk-delete of financial-adjacent rows deserves a conscious, logged, owner-initiated action rather than a silent background timer. Once a confirmed retention window has elapsed (**owner/counsel to set the exact number of days - see privacy.php Section 7.1's `[TEMPLATE]` marker**), the owner runs the following via the Dreamhost panel's phpMyAdmin (or an equivalent authenticated MySQL client - never exposed as a public endpoint):
 
 ```sql
 -- 1. Preview which rows a purge would affect (READ ONLY - run this first)
@@ -351,7 +410,7 @@ WHERE u.status = 'deleted'
   AND s.subscriptionID IS NULL;
 ```
 
-This is intentionally a runbook, not code, for this stage - if a future stage automates it (e.g. a panel-cron-triggered maintenance endpoint, mirroring the `fn_email.php` queue-processor's own "opportunistic on request-shutdown + documented panel-cron alternative" pattern), it must reuse this exact eligibility predicate (`status = 'deleted' AND erasedAt < <retention window> AND no remaining tblSubscriptions/tblPayments dependency`) and must itself be logged to `tblActivityLog` before any row is removed.
+This is intentionally a runbook, not code, for this stage - if a future stage automates it (e.g. mirroring the email queue runner (`_includes/cron/process_email_queue.php`, #112): a command-line script run by DreamHost's panel cron, protected by a named database lock), it must reuse this exact eligibility predicate (`status = 'deleted' AND erasedAt < <retention window> AND no remaining tblSubscriptions/tblPayments dependency`) and must itself be logged to `tblActivityLog` before any row is removed.
 
 **Why the UI requires a TYPED confirmation phrase on top of the password.** `eraseUserAccount()`'s own contract only requires `confirm: true` (a single boolean) - the account dashboard's no-JS `<form>` additionally requires ticking an "I understand this is irreversible" checkbox AND typing the literal word `DELETE` (case-sensitive, enforced BOTH client-side via the `pattern="DELETE"` HTML5 attribute on a `required` input, which blocks submission even with JavaScript disabled, AND server-side in `public_html/account/index.php`'s own POST handler before `eraseUserAccount()` is ever called) - the SAME "UI adds its own extra friction on top of the engine's minimal contract" pattern the account page already uses for "new passwords match" before calling `changeUserPassword()`. The JSON API's documented contract deliberately stays password + `confirm: true` only - the typed-phrase friction is a UI/UX safety net for a human clicking through a web page, not a security control the API needs to additionally enforce for a programmatic caller who already had to supply the correct password.
 
@@ -875,7 +934,7 @@ Pushing a version tag creates a GitHub Release (`release.yml`):
 ### Known documentation-level gaps
 
 See `PROJECT_STATUS.md` for the up-to-date list of what is built vs. still
-outstanding (admin UI, email queue cron, deploy activation, etc.) - this file
+outstanding (admin UI, deploy activation, etc.) - this file
 covers HOW things work technically, not the current project status.
 
 ### Predefined-logo PNG generation (#65)

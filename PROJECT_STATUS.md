@@ -13,7 +13,7 @@
 
 **Built but switched off** (code exists, kill-switches are off until the owner acts):
 - SSO (Microsoft 365 #19, Google #20) — needs the owner to register OAuth apps and enter credentials.
-- Email sending (Microsoft Graph, #29) — needs owner M365 setup, **and** nothing empties the send queue yet (no scheduled job, #112), so verification emails can't reach anyone on a live site.
+- Email sending (Microsoft Graph, #29) — needs the owner's M365 setup and the DreamHost cron job for the new queue runner (#112, built 2026-09-25); not yet live-tested.
 - Flexible pricing (price points, discounts, lifetime plans, PAYG credits, #70) — tables and helpers built, three kill-switches seeded off.
 - Dynamic-redirect QR codes (Stage S0/S1, #27/#71/#33) — database and per-code destination API exist, but the public `/r/{uuid}` route does not, so no dynamic code actually redirects anyone yet.
 - Barcode generation (#69) — live via the API, but gated behind `barcode_generation` (currently on for every plan by default) and has no web UI tab yet.
@@ -24,7 +24,7 @@
 
 ## 🕳️ Known gaps found in the 2026-09-23 audit
 
-- Nothing sends the email queue yet. There is no scheduled job and the auto-process hook is not wired, so email sign-ups can't be verified on a live site (#112; also #29/#52).
+- The email queue runner exists (#112) but has never run on the live server - the owner still needs to add the DreamHost cron job and do a test send.
 - There is no admin screen to enter encrypted settings (#31/#115).
 - Predefined logos have no PNG copies (#65).
 - `install.sql` can't safely run twice, and there is no upgrade script (#113; also #70/#11).
@@ -148,7 +148,7 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 | [#70](https://github.com/MWBMPartners/CueRCode/issues/70) | Extensible pricing model: multi price-points, discounts, lifetime & PAYG (built-but-disabled) | 🔄 Partly done (2026-09-23 audit) — new tables (price points, discounts, discount redemptions, one-off purchases, PAYG credit ledger) plus extra columns on subscriptions/payments, four helper functions in `fn_features.php`, and three kill-switches all seeded off; `tests/test_pricing_flex.php` shows a lifetime plan, a time-limited discount and a credit pack can be set up with data only. Gaps: the SQL has never run against a real database, running `install.sql` a second time is NOT clean (the two `ALTER TABLE ADD COLUMN` blocks have no existence guard, so a re-run fails with "duplicate column"), and there is no upgrade script for a database installed before this change |
 | [#71](https://github.com/MWBMPartners/CueRCode/issues/71) | Dual-function QR — browser→web, sanctioned app→in-app action | 📋 Blocked on the owner (2026-09-23 audit) — only shared groundwork exists (spare columns on `tblQRRedirects`, a `dual_function_qr` plan switch (seeded on only for the Business plan; nothing is gated on it yet, but the public `/pricing` grid shows it as Included on Business, a bug tracked in #125), the link-safety checker). Everything specific to this feature (public `/r/{uuid}` redirect, app "resolve" endpoint, approved-apps register, gating, docs, tests) is blocked on the owner's G-007 decision and on agreeing the ProjectEPass app contract |
 
-**Note:** #29 (email) is prioritised early as it's needed by Phase 2 (registration, password reset, invitations) - code-complete and inert pending owner M365 setup; not yet live-server verified (needs #13/#18 style verification once deployed). Critical gap (2026-09-23 audit): nothing ever empties the email send queue — there is no scheduled job and the optional "process on page load" hook is never switched on — so queued emails (including sign-up verification) will not be sent even after the owner finishes the Microsoft 365 setup. Tracked as #112 (high-priority bug).
+**Note:** #29 (email) is prioritised early as it's needed by Phase 2 (registration, password reset, invitations) - code-complete and inert pending owner M365 setup; not yet live-server verified (needs #13/#18 style verification once deployed). Critical gap (2026-09-23 audit): nothing ever empties the email send queue — there is no scheduled job and the optional "process on page load" hook is never switched on — so queued emails (including sign-up verification) will not be sent even after the owner finishes the Microsoft 365 setup. Tracked as #112 (high-priority bug). Update 2026-09-25: queue runner built (#112); remaining: M365 setup, cron job, live test send.
 
 ---
 

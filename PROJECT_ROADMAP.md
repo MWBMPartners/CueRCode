@@ -23,7 +23,7 @@
 > - **E5** (accessibility) — built.
 > - **E6** (developer portal) — built; the portal's API-key text was corrected 2026-09-23 (it used to say keys were "coming with accounts"/admin-issued, which is no longer true).
 > - **E7** (platform-grade API, stage 1) — built; idempotency keys and webhooks are not built yet.
-> - **E8** (email) — built, but nothing empties the send queue yet (no scheduled runner, bug #112), so verification emails can't reach anyone on a live site.
+> - **E8** (email) — built; the queue runner was added 2026-09-25 (#112). Needs M365 setup, the DreamHost cron job and a live test.
 > - **E9** — not started.
 > - **E10** — not run (needs the live server).
 > - **E11** (analytics) — schema only, nothing writes to it yet.
@@ -261,7 +261,7 @@ Rationale: E8 (email) is the true root dependency of Phase 2 — registration ve
 ### E8 — Microsoft Graph email (root Phase-2 dependency)
 
 - **Goal:** Transactional email via M365 shared mailbox with Send-As (ProjectBrief §13 — explicitly NOT `mail()`); blocks E3 stages 3/6 and E4 receipts (#29; FG-028/G-005).
-- **Approach:** `_functions/fn_email.php`: OAuth2 client-credentials grant against Microsoft identity platform (tenant + client ID + secret in tblSettings isSensitive), token cache (tblSettings, expiry-aware), `POST /v1.0/users/{mailbox}/sendMail` via curl; responsive HTML templates in `_includes/email_templates/` (verification, reset, invitation, receipt); send log in tblActivityLog; **queue+retry:** `tblEmailQueue(emailID, toAddr, template, paramsJSON, attempts, nextAttemptAt, status)` — ⚠️ Dreamhost constraint: brief says no CLI, so process the queue opportunistically on request-shutdown (`register_shutdown_function`, ≤2 sends/request) AND document the Dreamhost panel cron option for the owner to enable (owner decision — panel cron exists on shared hosting even without SSH).
+- **Approach:** `_functions/fn_email.php`: OAuth2 client-credentials grant against Microsoft identity platform (tenant + client ID + secret in tblSettings isSensitive), token cache (tblSettings, expiry-aware), `POST /v1.0/users/{mailbox}/sendMail` via curl; responsive HTML templates in `_includes/email_templates/` (verification, reset, invitation, receipt); send log in tblActivityLog; **queue+retry:** `tblEmailQueue(emailID, toAddr, template, paramsJSON, attempts, nextAttemptAt, status)` — ⚠️ Dreamhost constraint: brief says no CLI, so process the queue opportunistically on request-shutdown (`register_shutdown_function`, ≤2 sends/request) AND document the Dreamhost panel cron option for the owner to enable (owner decision — panel cron exists on shared hosting even without SSH). *(Update 2026-09-25, #112: the queue is emptied by a command-line runner from a DreamHost panel cron job every minute; the request-shutdown hook is an off-by-default fallback, now actually wired in.)*
 - **Dependencies:** owner: M365 tenant app registration (Mail.Send application permission, shared mailbox, DKIM/DMARC on sending domain). Nothing in-repo.
 - **Blast radius:** Low-Medium (new subsystem, no existing-code changes). **Effort:** M. **Model:** Sonnet.
 - **DRAFT ISSUE:**

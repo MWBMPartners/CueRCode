@@ -50,7 +50,7 @@ CueRCode/
 │   ├── _backups/                   ← 💾 Server-wide backups
 │   └── CueRCode.net/              ← 🌐 Main CueRCode.net website
 │       ├── _auth_keys/             ← 🔐 Site-specific credentials
-│       ├── _includes/              ← 📦 Site-specific includes (bootstrap, SQL, templates)
+│       ├── _includes/              ← 📦 Site-specific includes (bootstrap, SQL, templates, cron jobs)
 │       ├── _functions/             ← ⚙️ Site-specific functions (QR engine, API handlers)
 │       ├── _libraries/             ← 📚 Third-party libraries (chillerlan, FPDF, tecnickcom)
 │       ├── _uploads/               ← 📤 User uploads (logos, generated QR codes)
@@ -126,6 +126,8 @@ CueRCode/
 
 5. **🌍 Point your web server** to `web/CueRCode.net/public_html/` as the document root.
 
+6. **⏱️ Set up the email queue job (once email is configured):** add the DreamHost cron job described under "⏱️ The email queue job (DreamHost cron)" below. Without it, sign-up and password-reset emails are queued but never sent.
+
 ### 🧪 Development Environments
 
 | Environment | Directory | Access |
@@ -183,9 +185,22 @@ curl -X POST https://cuercode.net/api/v1/generate \
 
 Registration verification, password resets, and organisation invitations are sent via the **Microsoft Graph API** (client-credentials grant, M365 shared mailbox Send-As) - never PHP's `mail()`. The whole subsystem (`_functions/fn_email.php`) is **inert by default**: the `email_enabled` kill-switch seeds to `0` and every Graph credential seeds empty, so no email can be sent (and no network call is attempted) until an owner completes the M365 app registration and fills in the settings. See [DEV_NOTES.md](DEV_NOTES.md#email-subsystem-microsoft-graph---epic-e8-29) for the full setup runbook. Google Workspace (#30) is a future driver slot behind the same `email_provider` setting.
 
-> ⚠️ **Two things are not built yet, even once M365 is configured and `email_enabled` is on:**
+> ⚠️ **Two things to know, even once M365 is configured and `email_enabled` is on:**
 > 1. There is no admin screen for entering the Microsoft credentials (#31) - they currently have to be set from a one-off script (see DEV_NOTES.md).
-> 2. There is no scheduled job that sends queued emails yet (#29) - so verification and password-reset emails are queued but will NOT actually go out until that job exists.
+> 2. Emails are only ever *queued* by the site. They are sent by the email queue runner (#112), which **must be set up as a DreamHost cron job** (below). Without that job, no verification or password-reset email is ever sent, so nobody can finish signing up.
+
+### ⏱️ The email queue job (DreamHost cron)
+
+The queue runner is `web/CueRCode.net/_includes/cron/process_email_queue.php`. It is a command-line script (it refuses web requests) that sends the waiting emails - up to 20 a run - and never sends the same email twice, even if two runs overlap. Add it in the DreamHost panel as a cron job that runs **every minute**:
+
+```bash
+/usr/local/php84/bin/php /home/<user>/<path>/CueRCode.net/_includes/cron/process_email_queue.php --quiet
+```
+
+- Run it once by hand with `--check` first: it tests the database and the email settings and shows the queue counts, without sending anything.
+- `--quiet` means it prints nothing unless something needs attention, so cron only emails you about problems.
+- Exit codes: `0` fine · `1` could not start or crashed · `2` bad option · `3` database problem · `4` sending blocked by the settings or Microsoft Graph, or an earlier run looks stuck · `5` gave up on at least one email.
+- The PHP path and the DreamHost menu names have **not** been checked against the live server yet - confirm them when setting up. Full steps: [DEV_NOTES.md → "Email queue runner"](DEV_NOTES.md#email-queue-runner-_includescronprocess_email_queuephp-112).
 
 ## 🔐 User Accounts (Epic E3 stages 1, 2a & 2b)
 
@@ -230,7 +245,9 @@ AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.cl
 php tests/run.php
 ```
 
-runs the full dependency-free characterization suite - 2185 assertions across 23 test files, no database or Composer required.
+runs the full dependency-free characterization suite - 2466 assertions across 24 test files, no database or Composer required.
+
+There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL container - see [tests/README.md](tests/README.md).
 
 ## 📄 License
 

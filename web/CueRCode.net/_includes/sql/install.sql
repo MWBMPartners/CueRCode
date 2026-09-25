@@ -422,24 +422,34 @@ CREATE TABLE IF NOT EXISTS `tblOrganisations` (
 -- 📋 Table 11: tblEmailQueue (Epic E8, #29)
 -- ==============================================================================
 -- Outbound transactional email queue with retry/backoff support. Emails are
--- NEVER sent synchronously inline with a user-facing request beyond the
--- opportunistic ≤2-per-request shutdown hook (see fn_email.php
--- maybeProcessEmailQueueOnShutdown() - gated OFF by default via the
--- email_queue_autoprocess setting; a Dreamhost panel cron job hitting a
--- small processor script is the recommended production path).
+-- NEVER sent synchronously inline with a user-facing request.
+--
+-- 📬 Who sends the queue (#112): the command-line runner
+-- _includes/cron/process_email_queue.php, run by a DreamHost panel cron job
+-- every minute. The page-shutdown hook (fn_email.php
+-- maybeProcessEmailQueueOnShutdown(), up to 2 per request) is an OFF-by-default
+-- fallback, switched on by the email_queue_autoprocess setting.
 --
 -- Rows are inserted by queueEmail() (fn_email.php) and consumed by
--- processEmailQueue(), which claims due rows (status queued/failed AND
--- nextAttemptAt <= NOW() AND attempts < maxAttempts), attempts a Microsoft
--- Graph sendMail call, then transitions status:
+-- runEmailQueueBatch(), which claims each due row with ONE guarded UPDATE that
+-- re-checks everything at once (status queued/failed AND nextAttemptAt <= NOW()
+-- AND attempts < maxAttempts), attempts a Microsoft Graph sendMail call, then
+-- transitions status. Every final update requires status = 'sending', so only
+-- the runner that claimed a row can finish it:
 --   queued  -> sending -> sent              (success)
 --   queued  -> sending -> queued (backoff)   (failure, attempts < maxAttempts)
 --   queued  -> sending -> failed             (failure, attempts reaches maxAttempts)
+--   sending -> queued (put back unchanged when sending is blocked by settings/Graph problems - no attempt used)
+--   sending -> queued/failed (left 'sending' > 10 minutes, e.g. the runner stopped mid-send - counted as one attempt)
+--
+-- updatedAt doubles as "claimed at" for stuck-row detection: it is refreshed
+-- on every change, so for a row in 'sending' it records when it was claimed.
 --
 -- Backoff schedule: nextAttemptAt = NOW() + (2 ^ attempts) MINUTES, computed by
 -- the pure/unit-tested computeEmailBackoffMinutes() helper in fn_email.php.
 --
--- @see fn_email.php - queueEmail(), processEmailQueue(), computeEmailBackoffMinutes()
+-- @see fn_email.php - queueEmail(), runEmailQueueBatch(), computeEmailBackoffMinutes()
+-- @see _includes/cron/process_email_queue.php - the scheduled runner (#112)
 -- @see https://dev.mysql.com/doc/refman/8.0/en/enum.html ENUM type
 -- @see https://dev.mysql.com/doc/refman/8.0/en/json.html JSON column type
 -- ==============================================================================

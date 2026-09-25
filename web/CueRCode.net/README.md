@@ -7,7 +7,7 @@ This directory contains all files for the CueRCode QR code generation service.
 | Directory | Purpose |
 | --- | --- |
 | `_auth_keys/` | Site-specific database credentials and API keys (outside web root) |
-| `_includes/` | Shared PHP includes (bootstrap, DB connection, HTML templates, SQL scripts) |
+| `_includes/` | Shared PHP includes (bootstrap, DB connection, HTML templates, SQL scripts) and `cron/` (command-line jobs, e.g. the email queue runner) |
 | `_functions/` | PHP function files (QR engine, API handlers, utilities) |
 | `_libraries/` | Third-party PHP libraries (chillerlan/php-qrcode, FPDF, tecnickcom barcode) |
 | `_uploads/` | User-uploaded files (custom logos, generated QR codes) |
@@ -34,3 +34,12 @@ This directory contains all files for the CueRCode QR code generation service.
 
 Point your web server document root to `public_html/` for production,
 or `public_html_dev_beta/` / `public_html_dev_alpha/` for testing environments.
+
+## Scheduled jobs
+
+`_includes/cron/process_email_queue.php` sends the emails the site queues
+(sign-up verification, password reset). Once email is set up it **must** be
+run by a DreamHost cron job every minute - without it no email is ever sent
+(#112). It is command-line only and refuses web requests. See the root
+[README.md](../../README.md) ("The email queue job (DreamHost cron)") for the
+exact command.

@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-09-23, #103)
+## Current suite (2026-09-25, #112)
 
 | File | Assertions |
 | --- | --- |
@@ -57,6 +57,7 @@ set.
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
+| `test_email_queue_runner.php` | 281 |
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 132 |
 | `test_features.php` | 91 |
@@ -67,9 +68,53 @@ set.
 | `test_pricing_flex.php` | 50 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| **Total** | **2185** |
+| **Total** | **2466** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+## Optional real-database check (email queue)
+
+`tests/test_email_queue_runner.php` proves the email queue runner's logic
+with an in-memory stand-in for the queue table. The real SQL, the real MySQL
+named lock, and two real runner processes working on one queue at the same
+time can only be proven against a real database, so there is a separate,
+optional script for that: `tests/integration/email_queue_real_mysql.php`.
+`run.php` does not run it (it only picks up `tests/test_*.php`), but CI still
+syntax-checks it.
+
+**Rules - it deletes rows:**
+
+- Use a **throwaway container only**, named after the work, started with
+  `--rm` so the container *and* its data are removed when it stops.
+- The database name **must start with `cuercode_it_`** - the script refuses
+  (exit 2) to touch anything else.
+- **Remove the container afterwards**, and check nothing was left behind.
+- It never sends real email: every scenario uses a stand-in sender, and the
+  test addresses use the reserved `.invalid` domain.
+
+```bash
+REPO="/path/to/CueRCode"   # quote it - the path may contain spaces
+BEFORE=$(docker volume ls -q -f dangling=true | wc -l | tr -d ' ')
+docker run --rm -d --name p112-emailq-mysql \
+  -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -e MYSQL_DATABASE=cuercode_it_p112 \
+  -p 127.0.0.1:33112:3306 mysql:8.0 --default-authentication-plugin=mysql_native_password
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33112 CUERCODE_IT_DB_NAME=cuercode_it_p112 \
+CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  php "$REPO/tests/integration/email_queue_real_mysql.php" --load-schema; echo "exit=$?"
+docker stop p112-emailq-mysql          # --rm removes the container AND its unnamed data volume
+docker ps -a --filter name=p112-emailq-mysql --format '{{.Names}}'     # must print nothing
+AFTER=$(docker volume ls -q -f dangling=true | wc -l | tr -d ' '); echo "dangling before=$BEFORE after=$AFTER"   # must be equal
+```
+
+The script waits for the database by itself (up to 120 seconds), loads
+`install.sql` and `seed_data.sql` when `--load-schema` is given, runs eight
+scenarios (claim rules, two runner processes with and without the lock,
+retry with back-off, stuck-row recovery, blocked sending, busy/stalled, and
+counts), deletes its own rows and prints PASS/FAIL per scenario. Exit code 0
+means every scenario passed. For MariaDB, use
+`mariadb:10.11 -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 -e MARIADB_DATABASE=cuercode_it_p112`
+(and no authentication-plugin option). Last run 2026-09-25: all scenarios
+passed on MySQL 8.0.46 and MariaDB 10.11.19.
 
 ## Syntax-checking the harness
 
@@ -88,6 +133,8 @@ tests/
 ├── bootstrap.php      # test-only constants + requireFn() loader (NEVER opens a DB)
 ├── lib/
 │   └── assert.php     # tiny assertion library + global results collector
+├── integration/       # OPTIONAL checks that need a real (throwaway) database - NOT run by run.php
+│   └── email_queue_real_mysql.php
 └── test_*.php         # individual characterization test files (added per cycle)
 ```
 

@@ -43,9 +43,9 @@ Phase-0 audited the following surfaces in depth. For each surface the trust boun
 
 ### 6. HTTP headers, transport, installer & directory protection
 
-**Files:** `public_html/.htaccess`, `public_html/api/v1/.htaccess`, `_*/.htaccess` (6 deny-all files), `public_html/install/index.php`, `sw.js`, `robots.txt`
+**Files:** `public_html/.htaccess`, `public_html/api/v1/.htaccess`, `_*/.htaccess` (6 deny-all files), `public_html/install/index.php`, `sw.js`, `robots.txt`, `_includes/cron/process_email_queue.php`
 **Trust boundary:** Network perimeter (HTTP/HTTPS) → Apache → PHP.
-**Audited:** HSTS, HTTP→HTTPS redirect, `session.cookie_secure` vs bootstrap dynamic detection, CSP `unsafe-inline`, SRI on CDN assets, CORS default in `.htaccess`, installer re-run protection via `.installed.lock`, `robots.txt` advertising `/install/`, directory deny-all coverage, service-worker scope, security headers (`X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`).
+**Audited:** HSTS, HTTP→HTTPS redirect, `session.cookie_secure` vs bootstrap dynamic detection, CSP `unsafe-inline`, SRI on CDN assets, CORS default in `.htaccess`, installer re-run protection via `.installed.lock`, `robots.txt` advertising `/install/`, directory deny-all coverage, service-worker scope, security headers (`X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`); email queue runner refuses any non-command-line run (403) before loading anything; lives outside the web root under deny-all `_includes/`.
 **PoC method:** Static analysis; `.htaccess` and `robots.txt` read directly.
 
 ### 7. SSO / OAuth2-OIDC client (Epic E2, #55/#19/#20/#28, 2026-07-10)
@@ -273,3 +273,17 @@ Owner directive: fix ALL syntax/lint/security findings regardless of severity/ag
 - **Auth events are not in the activity log** — email/password sign-ups, logins, failed logins, logouts and password resets are not recorded as their own events in `tblActivityLog` (#12/#14/#15; follow-up #114) — API-route requests leave only a generic `api_call` row with no user or outcome, and the no-JavaScript form paths leave nothing — so there is currently no useful audit trail of authentication activity to review after an incident. (SSO sign-ups/links and password changes are logged.)
 
 **Correction to a prior claim:** any earlier text in this register implying an `auth_creds.example.php` template is currently present/tracked in the repo should be read as historical only (it describes a past working-tree state during the #47 deep-sweep pass). As of 2026-09-23, `git ls-files` and a full filesystem search confirm **no `auth_creds.example.php` file exists anywhere in the tree, tracked or untracked** — `.gitignore`'s `**/_auth_keys/*.php` rule means no template can ever be committed. The owner must create `_auth_keys/auth_creds.example.php`'s real counterpart, `_auth_keys/auth_creds.php`, by hand on the live server (see `LAUNCH_DECISIONS.md` §E; template gap tracked in #113).
+
+## 2026-09-25 — email queue runner (#112)
+
+**What was checked (self-review at build time; independent review pending):**
+
+- **Command line only.** `_includes/cron/process_email_queue.php` refuses any run that is not the command-line PHP with `403 Access denied.` as its very first statement, before it loads any other file (proven by running it under `php-cgi`: only `Access denied.` is printed, and no database or start-up code runs). It also sits in `_includes/`, which has no web address and is covered by the existing deny-all `.htaccess`.
+- **No addresses or secrets in output.** The runner prints counts and plain-English problems only - never an email address, subject, body, one-time link, secret or setting value, and it names problem settings by name only, never by value. Every printed line and every stored `lastError` also passes through `emailQueueSafeDetail()`, which strips control characters (no forged extra lines) and masks anything shaped like an email address. Database driver messages go to the error log, never to the runner's own output.
+- **No duplicate sends.** The claim `UPDATE` re-checks status, "due now" and "attempts left" in one statement; every later update requires `status = 'sending'`; a per-database MySQL named lock keeps to one runner at a time. Every query is a prepared statement through `dbQuery()`; the only text joined into SQL is the fixed lock-name expression constant, which contains no input.
+- **Scan evidence:** `php tests/run.php` - **2466/2466 assertions pass** across 24 test files (281 new in `tests/test_email_queue_runner.php`). `php -l` - all 78 web PHP files and 28 test PHP files clean. The optional real-database check (`tests/integration/email_queue_real_mysql.php`) passed every scenario on MySQL 8.0 and MariaDB 10.11, including two real runner processes on one queue with and without the lock (16 emails, none sent twice).
+
+**New open items (not fixed by #112 - tracked in [#122](https://github.com/MWBMPartners/CueRCode/issues/122); related: [#123](https://github.com/MWBMPartners/CueRCode/issues/123) stops expired links being sent after an outage):**
+
+- **(a)** `tblEmailQueue.paramsJSON` holds the full one-time verification and password-reset links **in plain text**. That contradicts the column's own comment ("NEVER stores ... secrets") and the hash-only design of `tblEmailVerifications`/`tblPasswordResets`: anyone who can read the queue table can use a still-valid link.
+- **(b)** Sent rows are never deleted, so recipient email addresses are kept in `tblEmailQueue` indefinitely.

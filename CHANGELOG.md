@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Emails now actually get sent: new scheduled email queue runner (2026-09-25, #112)
+
+Until now the site only ever *queued* emails. Nothing sent them, so no
+sign-up could be verified and no password-reset email ever arrived.
+
+- **New runner:** `web/CueRCode.net/_includes/cron/process_email_queue.php`.
+  A DreamHost cron job runs it every minute. It sends up to 20 waiting emails
+  per run and stops claiming new ones after 45 seconds. It is command-line
+  only: a web request (or `php-cgi`) is refused before anything loads.
+- **No duplicates:** marking an email "being sent" now re-checks, in the same
+  database statement, that it is still waiting, due now and has attempts left.
+  Every later update only applies while the email is still "being sent". A
+  database lock (one per database) lets only one run work at a time. Two runs
+  at once can no longer send the same email twice, or re-send one early and
+  lose its retry count.
+- **Stuck emails are recovered:** an email left "being sent" for more than 10
+  minutes (the run died part-way) is put back and counted as one attempt.
+- **Set-up problems no longer use up retries:** when sending is blocked for
+  every email (switched off, settings missing, Microsoft refusing our
+  credentials), the email is put back unchanged and the run stops with exit
+  code 4. Before, every queued email ended up permanently failed after about
+  30 minutes of "not set up yet". Temporary Microsoft trouble (busy, timeouts)
+  uses an attempt and stops the run early instead of hammering the service.
+- **The "send at the end of a page visit" fallback now works:** setting
+  `email_queue_autoprocess` to 1 used to do nothing, because nothing called
+  it. It is now wired into `bootstrap.php` for web requests only, and is still
+  off by default.
+- **Stall alarm:** if another run holds the lock while emails have been
+  waiting over 10 minutes, the runner exits with code 4 so cron emails the owner.
+- **Clear output and exit codes:** one line of counts, never an email address,
+  subject, link or setting value. `--quiet` prints nothing unless something
+  needs attention; `--check` tests the set-up without sending anything.
+- **Tests:** 281 new assertions in `tests/test_email_queue_runner.php`, which
+  drives the whole flow with an in-memory stand-in for the queue table,
+  including two runners interleaved mid-send (suite now 2466/2466 across 24
+  files). A new optional real-database check,
+  `tests/integration/email_queue_real_mysql.php`, passed on MySQL 8.0 and
+  MariaDB 10.11 with two real runner processes (16 emails, none sent twice).
+- **Owner action needed:** add the DreamHost cron job - see DEV_NOTES.md,
+  "Email queue runner". Nothing is sent until it exists.
+- Review: independent Opus verification and Codex review pending (Codex out of credit at build time)
+
 ### Fixed - The deploy would have shipped the site without its `.htaccess` files, and every production deploy would have failed (2026-09-25, #124)
 
 Nothing is deployed today (SFTP deploy is switched off), so neither bug has
