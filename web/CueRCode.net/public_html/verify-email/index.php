@@ -97,6 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['verify_submit'])) {
 
 $pageTitle       = 'Verify Your Email';
 $pageDescription = 'Confirm your email address to activate your CueRCode account.';
+$pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-account page-verify-email';
 $pageCSS         = [];
 $pageJS          = ['/assets/js/cuercode-account.js'];

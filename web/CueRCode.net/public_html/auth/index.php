@@ -140,6 +140,7 @@ if ($providerIsValid) {
 
 $pageTitle       = ($errorMessage !== null) ? 'Sign-In Error' : 'Link ' . $providerDisplayName;
 $pageDescription = 'CueRCode single sign-on.';
+$pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-account page-auth';
 $pageCSS         = [];
 $pageJS          = [];

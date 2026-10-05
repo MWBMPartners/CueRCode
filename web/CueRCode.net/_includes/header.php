@@ -17,6 +17,8 @@
  *   $pageDescription (string) Meta description for this page
  *   $bodyClass       (string) Additional CSS classes for <body> tag
  *   $pageCSS         (array)  Additional CSS file paths to include
+ *   $pageNoIndex     (bool)   true = keep the page out of search results
+ *                             (noindex, no canonical link) - #137
  *
  * @package     CueRCode
  * @subpackage  Templates
@@ -53,14 +55,14 @@ if (function_exists('getConfig')) {
 }
 
 if (function_exists('getConfig')) {
-    $result = getConfig('site_tagline', 'Professional QR Code Generator');
+    $result = getConfig('site_tagline', 'Advanced QR Code Generator');
     if (isset($result)) {
         $siteTagline = $result;
     } else {
-        $siteTagline = 'Professional QR Code Generator';
+        $siteTagline = 'Advanced QR Code Generator';
     }
 } else {
-    $siteTagline = 'Professional QR Code Generator';
+    $siteTagline = 'Advanced QR Code Generator';
 }
 
 if (function_exists('getConfig')) {
@@ -116,6 +118,41 @@ if (isset($pageCSS)) {
     // $pageCSS already set
 } else {
     $pageCSS = [];
+}
+
+// ==============================================================================
+// 🔗 Canonical address for this page (#137)
+// ==============================================================================
+// Built from the request PATH only. The query string is dropped so one-time
+// tokens (reset-password, verify-email) and tracking tags never end up in the
+// canonical link, og:url or a social share preview. Web addresses on this site
+// never end in ".php", so a direct "/privacy.php" request still canonicalises
+// to "/privacy", and "/developers/index.php" to "/developers/".
+// ==============================================================================
+if (isset($_SERVER['REQUEST_URI'])) {
+    $canonicalPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+} else {
+    $canonicalPath = '/';
+}
+if (!is_string($canonicalPath) || $canonicalPath === '') {
+    $canonicalPath = '/';
+}
+if (str_ends_with($canonicalPath, '/index.php')) {
+    // 📂 "/x/index.php" → "/x/"
+    $canonicalPath = substr($canonicalPath, 0, -strlen('index.php'));
+} elseif (str_ends_with($canonicalPath, '.php')) {
+    // 📄 "/privacy.php" → "/privacy"
+    $canonicalPath = substr($canonicalPath, 0, -strlen('.php'));
+}
+$canonicalURL = rtrim($siteURL, '/') . $canonicalPath;
+
+// 🚫 Keep this page out of search results? Pages set $pageNoIndex = true before
+//    including this header (error pages, the account area, one-time-link pages).
+//    Such pages get <meta name="robots" content="noindex"> and no canonical link.
+if (isset($pageNoIndex) && $pageNoIndex === true) {
+    $pageNoIndex = true;
+} else {
+    $pageNoIndex = false;
 }
 
 // 🔤 CSRF meta tag for AJAX requests
@@ -192,24 +229,26 @@ if ($headerCurrentUser !== null) {
          🔗 Canonical URL and Open Graph
          @see https://ogp.me/
          ==================================================================== -->
-    <link rel="canonical" href="<?php
-    if (isset($_SERVER['REQUEST_URI'])) {
-        $requestUri = $_SERVER['REQUEST_URI'];
-    } else {
-        $requestUri = '/';
-    }
-    echo htmlspecialchars($siteURL . $requestUri, ENT_QUOTES, 'UTF-8');
-    ?>">
+<?php if ($pageNoIndex === true) { ?>
+    <meta name="robots" content="noindex">
+<?php } else { ?>
+    <link rel="canonical" href="<?php echo htmlspecialchars($canonicalURL, ENT_QUOTES, 'UTF-8'); ?>">
+<?php } ?>
+    <meta property="og:site_name" content="<?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>">
     <meta property="og:title" content="<?php echo htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8'); ?>">
     <meta property="og:description" content="<?php echo htmlspecialchars($pageDescription, ENT_QUOTES, 'UTF-8'); ?>">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="<?php echo htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8'); ?>">
-    <meta property="og:image" content="<?php echo htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8'); ?>/assets/img/branding/og-image.png">
+    <meta property="og:url" content="<?php echo htmlspecialchars($canonicalURL, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:image" content="<?php echo htmlspecialchars(rtrim($siteURL, '/'), ENT_QUOTES, 'UTF-8'); ?>/assets/img/branding/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="<?php echo htmlspecialchars($siteName . ' - ' . $siteTagline, ENT_QUOTES, 'UTF-8'); ?>">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="<?php echo htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8'); ?>">
     <meta name="twitter:description" content="<?php echo htmlspecialchars($pageDescription, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta name="twitter:image" content="<?php echo htmlspecialchars(rtrim($siteURL, '/'), ENT_QUOTES, 'UTF-8'); ?>/assets/img/branding/og-image.png">
 
     <!-- ====================================================================
          🖼️ Favicon and Icons
@@ -235,7 +274,7 @@ if ($headerCurrentUser !== null) {
          public_html_landing/index.php (same pinned version, bootstrap@5.3.3) -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           rel="stylesheet"
-          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YcnS/1Wtrhbf+PbQz4jN4dVFTJOPHcR1VVIwQ"
+          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
           crossorigin="anonymous"
           id="bootstrap-css">
     <script>
@@ -280,6 +319,41 @@ if ($headerCurrentUser !== null) {
           rel="stylesheet"
           crossorigin="anonymous"
           id="fontawesome-css">
+    <script>
+        /* 🔄 FontAwesome CSS CDN fallback to local copy (#119, #137) -
+           same approach as the Bootstrap check above: if the CDN stylesheet
+           loaded, an icon element's font-family names "Font Awesome"; if
+           not, load the committed copy in /assets/vendor/fontawesome/. */
+        (function() {
+            var testIcon = document.createElement('i');
+            testIcon.className = 'fa-solid fa-check';
+            testIcon.setAttribute('aria-hidden', 'true');
+            testIcon.style.position = 'absolute';
+            testIcon.style.left = '-9999px';
+            if (document.body) {
+                document.body.appendChild(testIcon);
+            } else {
+                document.addEventListener('DOMContentLoaded', function() {
+                    document.body.appendChild(testIcon);
+                });
+            }
+            setTimeout(function() {
+                var iconStyle;
+                if (window.getComputedStyle) {
+                    iconStyle = window.getComputedStyle(testIcon);
+                } else {
+                    iconStyle = testIcon.currentStyle;
+                }
+                if (!iconStyle || String(iconStyle.fontFamily).indexOf('Font Awesome') === -1) {
+                    var faLink = document.createElement('link');
+                    faLink.rel = 'stylesheet';
+                    faLink.href = '/assets/vendor/fontawesome/css/all.min.css';
+                    document.head.appendChild(faLink);
+                }
+                if (testIcon.parentNode) { testIcon.parentNode.removeChild(testIcon); }
+            }, 3000);
+        })();
+    </script>
 
     <!-- ====================================================================
          🎨 CSS: Custom CueRCode Styles
@@ -340,8 +414,12 @@ if ($headerCurrentUser !== null) {
          style="background: linear-gradient(135deg, #2c7a7b, #38a89d);">
         <div class="container">
             <!-- 🏠 Brand / Logo -->
-            <a class="navbar-brand fw-bold" href="/">
-                <span class="me-1">&#x25A3;</span>
+            <a class="navbar-brand fw-bold d-inline-flex align-items-center" href="/">
+                <?php /* 🏷️ Real logo mark (#137) - decorative (alt=""), because the
+                         site name follows as text. Sits on a white tile so the
+                         navy/cyan mark stays readable on the teal navbar. */ ?>
+                <img src="/assets/img/branding/logo-mark.svg" alt=""
+                     width="28" height="28" class="navbar-logo-mark me-2">
                 <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>
             </a>
 

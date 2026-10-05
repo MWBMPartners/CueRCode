@@ -188,6 +188,7 @@ if ($successResult !== null) {
 
 $pageTitle       = 'Sign-In Error';
 $pageDescription = 'CueRCode single sign-on.';
+$pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-account page-auth-callback';
 $pageCSS         = [];
 $pageJS          = [];

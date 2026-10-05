@@ -592,6 +592,7 @@ $accountHasPasswordSet = userHasPasswordSet($currentUserId);
 
 $pageTitle       = 'My Account';
 $pageDescription = 'Manage your CueRCode profile, saved QR codes, and account security.';
+$pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-account page-account-dashboard';
 $pageCSS         = [];
 $pageJS          = ['/assets/js/cuercode-account-dashboard.js'];

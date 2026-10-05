@@ -91,6 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_submit'])) {
 
 $pageTitle       = 'Reset Password';
 $pageDescription = 'Set a new password for your CueRCode account.';
+$pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-account page-reset-password';
 $pageCSS         = [];
 $pageJS          = ['/assets/js/cuercode-account.js'];

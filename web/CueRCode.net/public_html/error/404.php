@@ -43,6 +43,7 @@ http_response_code(404);
 
 $pageTitle       = '404 - Page Not Found';
 $pageDescription = 'The requested page could not be found.';
+$pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-error page-404';
 $pageCSS         = [];
 $pageJS          = [];

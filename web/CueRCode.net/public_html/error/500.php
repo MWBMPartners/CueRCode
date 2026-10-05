@@ -52,6 +52,7 @@ http_response_code(500);
 
 $pageTitle       = '500 - Server Error';
 $pageDescription = 'An internal server error has occurred.';
+$pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-error page-500';
 $pageCSS         = [];
 $pageJS          = [];

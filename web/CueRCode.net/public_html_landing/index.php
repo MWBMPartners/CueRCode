@@ -20,7 +20,7 @@
 // ⚙️ Page configuration
 // ==============================================================================
 $siteName    = 'CueRCode';
-$tagline     = 'Professional QR Code Generator';
+$tagline     = 'Advanced QR Code Generator';
 $description = 'Create beautiful, customisable QR codes for any purpose. '
     . 'URL links, vCards, Wi-Fi, payments, social media and more. Coming soon!';
 $launchYear  = 2026;
@@ -48,7 +48,7 @@ $launchYear  = 2026;
     <!-- @see https://getbootstrap.com/docs/5.3/getting-started/introduction/ -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           rel="stylesheet"
-          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YcnS/1Wtrhbf+PbQz4jN4dVFTJOPHcR1VVIwQ"
+          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
           crossorigin="anonymous">
 
     <style>

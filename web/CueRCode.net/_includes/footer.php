@@ -308,12 +308,11 @@ if (function_exists('isDebugMode')) {
                     for details.
                 </p>
                 <div class="cuercode-cookie-actions">
+                    <?php /* ✅ One button only (#137): the notice is information,
+                             not a choice - "Got it" and a second "Dismiss" button
+                             both did exactly the same thing. */ ?>
                     <button type="button" class="btn btn-sm" id="cuercode-cookie-accept">
                         Got it
-                    </button>
-                    <button type="button" class="btn btn-sm btn-link text-body-secondary"
-                            id="cuercode-cookie-close" aria-label="Dismiss cookie notice">
-                        Dismiss
                     </button>
                 </div>
             </div>

@@ -23,7 +23,7 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 -- 🌐 General Settings
 ('general', 'site_name', 'CueRCode', 'string', 0, 1, 'The public-facing name of the service'),
 ('general', 'site_url', 'https://cuercode.net', 'url', 0, 1, 'The base URL of the website'),
-('general', 'site_tagline', 'Professional QR Code Generator', 'string', 0, 1, 'Tagline displayed alongside the site name'),
+('general', 'site_tagline', 'Advanced QR Code Generator', 'string', 0, 1, 'Tagline displayed alongside the site name'),
 ('general', 'site_description', 'Create beautiful, customisable QR codes for any purpose.', 'string', 0, 1, 'Meta description for SEO'),
 ('general', 'site_email', 'hello@cuercode.net', 'email', 0, 1, 'Primary contact email address'),
 ('general', 'site_timezone', 'UTC', 'string', 0, 1, 'Default timezone (PHP timezone identifier)'),

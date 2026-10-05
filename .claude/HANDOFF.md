@@ -33,6 +33,15 @@
     duplicated rules** + **out-of-date facts**; automatic check = **script in
     `tools/` + run on every push in CI + standing rule** (no monthly Claude
     run).
+  - **Owner answers, round 2 (2026-10-05, #137):** (1) **fix the wrong
+    Bootstrap CSS SRI hash** in `_includes/header.php` + `public_html_landing/
+    index.php` (official v5.3.3 value from twbs/bootstrap `hugo.yml` =
+    `sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH`,
+    matches the npm file) **and add FontAwesome's SRI** once checked against
+    two sources; (2) tagline everywhere = **"Advanced QR Code Generator"**
+    (matches the logo/OG image; change the settings default + manifest);
+    (3) **commit the Bootstrap/FontAwesome/jQuery fallback copies** into
+    `assets/vendor/` like Swagger UI.
 - **2026-09-25 afternoon (cloud session).** The owner answered
   12 open decisions (all recorded in "❓ Owner decisions" below and in
   `LAUNCH_DECISIONS.md` §H). Done on them: the #121 fix is on `main`

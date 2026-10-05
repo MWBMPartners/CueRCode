@@ -37,14 +37,12 @@ web/**/_backups/*
 !web/**/_backups/.htaccess
 
 # ==============================================================================
-# 🌐 CDN fallback vendor libraries (downloaded separately)
+# 🌐 CDN fallback vendor libraries
 # ==============================================================================
-web/CueRCode.net/public_html/assets/vendor/bootstrap/*
-!web/CueRCode.net/public_html/assets/vendor/bootstrap/.gitkeep
-web/CueRCode.net/public_html/assets/vendor/fontawesome/*
-!web/CueRCode.net/public_html/assets/vendor/fontawesome/.gitkeep
-web/CueRCode.net/public_html/assets/vendor/jquery/*
-!web/CueRCode.net/public_html/assets/vendor/jquery/.gitkeep
+# Bootstrap 5.3.3, FontAwesome 6.5.1 and jQuery 3.7.1 local fallbacks under
+# public_html/assets/vendor/ are COMMITTED (owner decision 2026-10-05, #137),
+# like the Swagger UI fallback (#111), so the automatic deploy uploads them and
+# the site still works when a CDN is slow or blocked. Nothing to ignore here.
 
 # ==============================================================================
 # ⚙️ Environment files

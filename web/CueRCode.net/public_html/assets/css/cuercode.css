@@ -146,6 +146,17 @@ a:hover {
 }
 
 /**
+ * 🏷️ Logo mark in the navbar brand (#137). A small white tile keeps the
+ * navy/cyan mark legible on the teal gradient in both light and dark mode.
+ */
+.navbar-logo-mark {
+    background-color: #ffffff;
+    border-radius: 6px;
+    padding: 2px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/**
  * 🔗 Navbar link hover effect - subtle underline offset.
  */
 .navbar .nav-link {
@@ -240,7 +251,7 @@ a:hover {
  */
 .qr-type-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.5rem;
 }
 
@@ -283,10 +294,13 @@ a:hover {
  */
 .qr-type-btn span {
     display: block;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     max-width: 100%;
+    /* ↩️ Long labels ("vCard (Business Card)", "GS1 Product (Digital Link)")
+       wrap onto a second line instead of being cut off with "…" (#137). */
+    white-space: normal;
+    overflow-wrap: break-word;
+    text-align: center;
+    line-height: 1.25;
 }
 
 /**
@@ -346,7 +360,7 @@ a:hover {
  * Mobile default: 3 per row.
  */
 .pattern-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 /**
@@ -354,14 +368,14 @@ a:hover {
  * Mobile default: 4 per row (markers are smaller, 4 fits comfortably).
  */
 .marker-grid {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 /**
  * 🖼️ Logo grid: 3 per row on mobile (see responsive overrides for larger).
  */
 .logo-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 /**
@@ -376,7 +390,7 @@ a:hover {
  * @see https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_overflow/Overflow
  */
 .logo-grid.emoji-grid {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     max-height: 18rem;
     overflow-y: auto;
     overflow-x: hidden;
@@ -530,7 +544,7 @@ a:hover {
  */
 .frame-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.5rem;
 }
 
@@ -1476,12 +1490,12 @@ footer a:hover {
 @media (min-width: 576px) {
     /* 📱 QR type grid: 3 columns on small tablets */
     .qr-type-grid {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     /* 🖼️ Frame grid: 4 columns on small tablets */
     .frame-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 }
 
@@ -1492,27 +1506,27 @@ footer a:hover {
 @media (min-width: 768px) {
     /* 📱 QR type grid: 3 columns on tablet */
     .qr-type-grid {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     /* 🔲 Pattern grid: 6 columns on tablet */
     .pattern-grid {
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(6, minmax(0, 1fr));
     }
 
     /* 🖼️ Logo grid: 4 columns on tablet */
     .logo-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
     /* 🙂 Emoji grid: 7 columns on tablet (Issue #67) */
     .logo-grid.emoji-grid {
-        grid-template-columns: repeat(7, 1fr);
+        grid-template-columns: repeat(7, minmax(0, 1fr));
     }
 
     /* 🖼️ Frame grid: 4 columns on tablet (unchanged but explicit) */
     .frame-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 }
 
@@ -1524,22 +1538,22 @@ footer a:hover {
 @media (min-width: 992px) {
     /* 📱 QR type grid: 4 columns on desktop */
     .qr-type-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
     /* 🖼️ Logo grid: 5 columns on desktop */
     .logo-grid {
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(5, minmax(0, 1fr));
     }
 
     /* 🙂 Emoji grid: 8 columns on desktop (Issue #67) */
     .logo-grid.emoji-grid {
-        grid-template-columns: repeat(8, 1fr);
+        grid-template-columns: repeat(8, minmax(0, 1fr));
     }
 
     /* 🖼️ Frame grid: 4 columns on desktop (unchanged but explicit) */
     .frame-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
     /* 👁️ Preview container minimum height is larger on desktop */
