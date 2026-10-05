@@ -23,6 +23,10 @@
 #   SFTP_HOST, SFTP_PORT, SFTP_USER, SFTP_KEY, SFTP_PASSWORD,
 #   SFTP_REMOTE_BASE, SFTP_KNOWN_HOSTS
 #
+#   SFTP_REMOTE_BASE (#138): the full path of the server folder that
+#   holds the CueRCode.net folder (usually the DreamHost home folder).
+#   Both upload steps refuse to run if it is empty, relative or "/".
+#
 #   SFTP_KNOWN_HOSTS (#127): one or more lines in OpenSSH known_hosts
 #   format, e.g. the output of `ssh-keyscan -p <port> <host>` run from a
 #   trusted machine, with the printed fingerprint checked against
@@ -510,7 +514,19 @@ jobs:
           #    expression inside the script itself, so it can't end up
           #    pasted into the runner's expanded command log.
           if [[ -z "$SFTP_KNOWN_HOSTS" ]]; then
-            echo "::error::Deploy stopped: the server's SSH identity (host key) is not pinned, so there is no safe way to tell the real server from an impostor. To fix: from a trusted machine run 'ssh-keyscan -p ${SFTP_PORT} ${SFTP_HOST}', check the fingerprint it prints against DreamHost's own records for this server, then save that output as the repository secret SFTP_KNOWN_HOSTS."
+            echo "::error::Deploy stopped: the server's SSH identity (host key) is not pinned, so there is no safe way to tell the real server from an impostor. To fix: from a trusted machine run 'ssh-keyscan -p ${SFTP_PORT} ${SFTP_HOST}', check the fingerprint it prints against DreamHost's own records for this server, then save that output as the secret SFTP_KNOWN_HOSTS (organisation level, next to SFTP_HOST, or repository level)."
+            exit 1
+          fi
+
+          # 📁 Refuse to deploy unless the upload target is a real, full
+          #    folder path (#138). An empty SFTP_REMOTE_BASE would make
+          #    lftp's mirror upload into whatever folder the login starts in
+          #    (the whole site in the wrong place), a relative path depends
+          #    on that same starting folder, and "/" would aim at the
+          #    server's root. Same fail-closed approach as the host-key check
+          #    above. The value itself is never printed.
+          if [[ -z "$REMOTE_BASE" || "$REMOTE_BASE" != /* || "$REMOTE_BASE" == "/" ]]; then
+            echo "::error::Deploy stopped: SFTP_REMOTE_BASE is missing or isn't a full folder path, so the upload has nowhere safe to go. To fix: save the server folder that holds the CueRCode.net folder (usually your DreamHost home folder, for example /home/your-dreamhost-user) as the repository secret SFTP_REMOTE_BASE. It must start with / and can't be just /."
             exit 1
           fi
 
@@ -591,7 +607,19 @@ jobs:
           #    reaches this script via `env:` above, never written inline as
           #    a workflow expression.
           if [[ -z "$SFTP_KNOWN_HOSTS" ]]; then
-            echo "::error::Deploy stopped: the server's SSH identity (host key) is not pinned, so there is no safe way to tell the real server from an impostor. To fix: from a trusted machine run 'ssh-keyscan -p ${SFTP_PORT} ${SFTP_HOST}', check the fingerprint it prints against DreamHost's own records for this server, then save that output as the repository secret SFTP_KNOWN_HOSTS."
+            echo "::error::Deploy stopped: the server's SSH identity (host key) is not pinned, so there is no safe way to tell the real server from an impostor. To fix: from a trusted machine run 'ssh-keyscan -p ${SFTP_PORT} ${SFTP_HOST}', check the fingerprint it prints against DreamHost's own records for this server, then save that output as the secret SFTP_KNOWN_HOSTS (organisation level, next to SFTP_HOST, or repository level)."
+            exit 1
+          fi
+
+          # 📁 Refuse to deploy unless the upload target is a real, full
+          #    folder path (#138). An empty SFTP_REMOTE_BASE would make
+          #    lftp's mirror upload into whatever folder the login starts in
+          #    (the whole site in the wrong place), a relative path depends
+          #    on that same starting folder, and "/" would aim at the
+          #    server's root. Same fail-closed approach as the host-key check
+          #    above. The value itself is never printed.
+          if [[ -z "$REMOTE_BASE" || "$REMOTE_BASE" != /* || "$REMOTE_BASE" == "/" ]]; then
+            echo "::error::Deploy stopped: SFTP_REMOTE_BASE is missing or isn't a full folder path, so the upload has nowhere safe to go. To fix: save the server folder that holds the CueRCode.net folder (usually your DreamHost home folder, for example /home/your-dreamhost-user) as the repository secret SFTP_REMOTE_BASE. It must start with / and can't be just /."
             exit 1
           fi
 

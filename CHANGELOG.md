@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Deploy refuses to run without a safe upload folder (2026-10-05, #138) - CI/DEPLOY
+
+`deploy.yml` uploaded the site to `SFTP_REMOTE_BASE` without checking that
+secret exists, and it doesn't exist yet. With deploys switched on, the whole
+site would have gone into whatever folder the login starts in. Both upload
+steps (key and password) now stop with a plain-English message unless
+`SFTP_REMOTE_BASE` is set, is a full path (starts with `/`), and isn't just
+`/`. This is the same fail-closed approach as the host-key check from #127.
+The #127 message now also says that `SFTP_KNOWN_HOSTS` can be an organisation
+or repository secret. Checked locally:
+- actionlint + shellcheck: 25 info/style notes before and after the change
+  (none new, none in the changed steps; tracked in #118).
+- The guard tested under `bash -e` (as GitHub runs it) in 5 cases, all passing:
+  empty, relative path and `/` stop; real folders go.
+
+Deploys are still switched off; no deploy has run. Codex review is owed.
+
 ### Fixed - Pricing page no longer advertises features that aren't built yet (2026-09-25, #125)
 
 `/pricing` used to list every key in every plan's settings. So features that
