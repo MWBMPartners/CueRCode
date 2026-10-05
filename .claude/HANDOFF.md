@@ -13,7 +13,26 @@
 > **#103** (the umbrella for the current programme of work).
 
 ### 🧭 Where we are, in plain English
-- **2026-09-25 afternoon (cloud session) — READ THIS FIRST.** The owner answered
+- **2026-10-05 (cloud session) — NEWEST, READ THIS FIRST.** The owner added
+  three tasks that run **before** picking the old queue back up (task 7j and
+  the launch-decision questions wait until these are done):
+  - **N1 — #136 instruction audit (report only, nothing changed).** Review
+    `.claude/CLAUDE.md`, `AGENTS.md`, `DEVICE_WIDE_RULES.md`, memory, agents,
+    skills and the Codex briefs against Anthropic's *current* guidance (two
+    requests bundled: "think-more / step-by-step / needless confirmation" and
+    the line-by-line DELETE/KEEP/REWRITE audit). Output:
+    `.claude/INSTRUCTION_AUDIT_2026-10-05.md`. **Do not edit the instruction
+    files until the owner approves the report.** The owner's linked blog posts
+    (`claude.dev/blog/…`) are blocked by this container's network settings →
+    NOT RUN; `platform.claude.com` and `code.claude.com` docs were used.
+  - **N2 — #137 "looks AI-made" polish sweep** of the public site: find AND
+    fix, then add a standing rule (project + device-wide) and an automatic
+    check.
+  - **Owner answers (2026-10-05):** the cut-off "Also find…" = **clashing or
+    duplicated rules** + **out-of-date facts**; automatic check = **script in
+    `tools/` + run on every push in CI + standing rule** (no monthly Claude
+    run).
+- **2026-09-25 afternoon (cloud session).** The owner answered
   12 open decisions (all recorded in "❓ Owner decisions" below and in
   `LAUNCH_DECISIONS.md` §H). Done on them: the #121 fix is on `main`
   (`e45b490`, task 8a); #125 pricing "Coming soon" (task 7h). **Approved and
