@@ -71,6 +71,10 @@ These instructions MUST be followed for EVERY prompt/action:
 - AJAX with graceful JS-disabled fallback
 - Bot protection: Cloudflare Turnstile > reCAPTCHA > hCaptcha (based on available API keys)
 
+### Product principles
+
+- **Flexibility in everything commercial (owner directive, 2026-10-05):** every tier and pricing mechanism must be highly flexible and configurable by a **Global Admin** — plans, features and limits per plan, prices in any currency and billing period, VAT display, discounts and codes, lifetime deals, trials, pay-as-you-go, price promises. Today's plans may not be the plans in 12 months or 5 years: **never hard-code a commercial rule in code**; store it as admin-editable data, with sensible defaults.
+
 ### CI/CD & GitHub Actions
 
 - **Runners:** ALL GitHub Actions workflow jobs MUST use `runs-on: ubuntu-latest` — including the SFTP deploy (`.github/workflows/deploy.yml`) and any future deploy/build/test workflows. Do NOT introduce macOS, Windows, or self-hosted runners without an explicit, documented reason.

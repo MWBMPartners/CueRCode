@@ -12,3 +12,5 @@ the other AI tool until no issues remain; set a watchdog on anything that
 finishes later (CI, merges, deploys, background work) and don't move on until
 it has really finished (#116); ask the owner every decision as a proper
 question (options described, recommendation first, and why).
+Commercial rules (tiers, prices, discounts, trials, lifetime deals, PAYG, VAT)
+are always Global-Admin-editable data, never hard-coded.

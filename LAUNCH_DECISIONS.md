@@ -20,7 +20,8 @@
 - [ ] Enable **Dependabot alerts** + **Dependabot security updates**.
 - [ ] Enable **Secret scanning** + **push protection**.
 - [ ] **GitHub Advanced Security / Code Security** for CodeQL (per-committer cost on private repos). Decision received: **"Both"** (Semgrep now + GHAS for CodeQL). After enabling, remove the two transitional `continue-on-error` lines in `.github/workflows/codeql.yml`.
-- [ ] **Vendored-library dependency coverage** (PHP libs + CDN JS have no manifest, so Dependabot can't see them). Choose: **(A)** metadata-only `composer.json`/`package.json` for advisory PRs, or **(B)** a scheduled "vendored-deps watch" Action.
+- [x] **Vendored-library dependency coverage** (PHP libs + CDN JS have no manifest, so Dependabot can't see them). Choose: **(A)** metadata-only `composer.json`/`package.json` for advisory PRs, or **(B)** a scheduled "vendored-deps watch" Action.
+      → **Answered 2026-10-05: a monthly scheduled watch job (option B)** — HANDOFF task 7p.
 - [x] **Merge PR #72** (deps/security → `main`) — done (2026-09-23 audit: `main` now has `.github/dependabot.yml`).
 - [ ] Add **branch protection** + required status checks on `main`, `alpha`, `beta` **and** `release-candidate`. Checked 2026-09-25: `alpha`, `beta` and `release-candidate` only block deleting the branch, so anyone with write access can push straight to them; `main` requires a pull request, but repository admins can bypass that. "Test suite" is not a required check anywhere yet. (`main`, `alpha` and `beta` also deploy on push via `deploy.yml`.)
 - [ ] Replicate the scanning workflows (codeql/semgrep/ci) onto **`beta`** — **2026-09-23 audit update**: `codeql.yml` and `semgrep.yml` are already on `beta`. What's still missing is `ci.yml` (tests, PHP syntax check, secret scan) — it's on `work-in-progress`, `alpha` and `release-candidate` but **not** on `beta` **or `main`**.
@@ -28,19 +29,34 @@
 
 ## B. Pricing & billing  — see `Pricing_Strategy.md`, issues #25 / #53 / #70
 
-- [ ] **Final GBP price points** (DRAFT): Pro £6.99/mo · £49.99/yr; Business £24.99/mo · £199.99/yr; Enterprise floor ~£99/mo.
-- [ ] **Currency** at launch: GBP-only vs +USD/EUR price points (schema supports multi-currency per price-point).
-- [ ] **VAT** display + registration treatment on `/pricing/`.
-- [ ] **Launch discount**: automatic 25% off ×12 months, end 2026-12-31 — go/no-go.
-- [ ] **Founder Lifetime** deal: £119.99 one-off, 500-redemption cap, 60-day window — go/no-go.
-- [ ] **Education / non-profit** discount: 50% forever + verification method.
-- [ ] **PAYG**: at launch or post-launch; pack prices (£4.99/£19.99/£59.99); monthly spend cap (£20).
-- [ ] **Trial stance**: freemium-only vs card-free 14-day Pro trial.
-- [ ] **Minimum sellable Pro**: gate charging on the E1a dynamic-QR + analytics MVP shipping (don't sell "dynamic codes" that don't exist yet).
-- [ ] **Refund / cancellation** terms (30-day money-back? cooling-off?) → `terms.php`.
-- [ ] **Grandfathering** commitment wording for early adopters.
-- [ ] Confirm **accessibility outputs stay free** at all tiers (recommended differentiator).
-- [ ] **Barcode generation** tier placement (#69): Anonymous vs Free-and-up.
+> **Owner design rule (2026-10-05): flexibility in EVERYTHING commercial.** Every tier, price, discount, trial, lifetime deal, PAYG pack and feature placement must be editable by a Global Admin — today's plans may look completely different in 1–5 years. Today's answers are the starting defaults, not fixed rules.
+
+- [x] **Final GBP price points** (DRAFT): Pro £6.99/mo · £49.99/yr; Business £24.99/mo · £199.99/yr; Enterprise floor ~£99/mo.
+      → **Answered 2026-10-05: start with the draft prices — but every plan and price must be editable by a Global Admin** (task 7n).
+- [x] **Currency** at launch: GBP-only vs +USD/EUR price points (schema supports multi-currency per price-point).
+      → **Answered 2026-10-05: £, $ and € from launch** ($/€ amounts set in the admin screens).
+- [x] **VAT** display + registration treatment on `/pricing/`.
+      → **Answered 2026-10-05: prices include VAT, with an admin switch to change the display if rules/circumstances change.** Accountant check on registration + EU digital-sales VAT still advised.
+- [x] **Launch discount**: automatic 25% off ×12 months, end 2026-12-31 — go/no-go.
+      → **Answered 2026-10-05: yes, until 31 Dec 2026 — plus a flexible discount system (general, limited-use and single-customer codes; editable periods).**
+- [x] **Founder Lifetime** deal: £119.99 one-off, 500-redemption cap, 60-day window — go/no-go.
+      → **Answered 2026-10-05: yes — Founders Lifetime first (£119.99 / 500 / 60 days as starting values), and more lifetime deals later (e.g. Black Friday); price, plan, own limits and time/quantity availability all admin-adjustable.**
+- [x] **Education / non-profit** discount: 50% forever + verification method.
+      → **Answered 2026-10-05: 50% off, checked by hand.**
+- [x] **PAYG**: at launch or post-launch; pack prices (£4.99/£19.99/£59.99); monthly spend cap (£20).
+      → **Answered 2026-10-05: at launch** (packs, prices and monthly cap admin-adjustable).
+- [x] **Trial stance**: freemium-only vs card-free 14-day Pro trial.
+      → **Answered 2026-10-05: an admin switch/settings to offer Pro trials.**
+- [x] **Minimum sellable Pro**: gate charging on the E1a dynamic-QR + analytics MVP shipping (don't sell "dynamic codes" that don't exist yet).
+      → **Answered 2026-10-05: yes — no charging until dynamic QR is live.**
+- [x] **Refund / cancellation** terms (30-day money-back? cooling-off?) → `terms.php`.
+      → **Answered 2026-10-05: 30-day money-back, cancel anytime** (wording via legal review #38).
+- [x] **Grandfathering** commitment wording for early adopters.
+      → **Answered 2026-10-05: yes, with an adjustable option — "while subscribed" or a set period.**
+- [x] Confirm **accessibility outputs stay free** at all tiers (recommended differentiator).
+      → **Answered 2026-10-05: SOME PAID — basics free, some extras on paid plans; exact split set in the admin plan editor** (proposal: free = accessible preset, contrast check, print-size calculator; paid = Braille caption, tactile frame, Avery PDFs).
+- [x] **Barcode generation** tier placement (#69): Anonymous vs Free-and-up.
+      → **Answered 2026-10-05: everyone, including visitors not signed in (as now).**
 
 ## C. Payments & external providers
 
@@ -70,14 +86,20 @@
 
 ## E1. New items from the 2026-09-23 issue audit
 
-- [ ] **A way to enter encrypted credentials** — either the admin screen (#31) or, as a stop-gap before that exists, a one-off `setConfig()` script run by hand on the live server. Needed to switch on email (#29), SSO (#55), bot protection and PayPal (#26). Follow-up #115.
+- [x] **A way to enter encrypted credentials** — either the admin screen (#31) or, as a stop-gap before that exists, a one-off `setConfig()` script run by hand on the live server. Needed to switch on email (#29), SSO (#55), bot protection and PayPal (#26). Follow-up #115.
+      → **Answered 2026-10-05: the admin settings screen (part of #31), built FIRST (task 7n).**
 - [ ] **Add the DreamHost cron job for the email queue runner** (#112, built 2026-09-25) — without it no sign-up or reset email is sent. Steps: DEV_NOTES.md → 'Email queue runner'. Then do a live test send.
 - [ ] **`install.sql` re-run safety and an upgrade script** (#70/#11; follow-up #113) — running `install.sql` a second time currently fails with a "duplicate column" error partway through (the flexible-pricing `ALTER TABLE ADD COLUMN` statements have no existence guard), and there is no upgrade script for a database installed before recent schema changes. Needed before the first real database test.
-- [ ] **#48 — contrast warning vs block**: should the Accessible-QR contrast check only warn (as now) between 3:1 and 4.5:1, or refuse to generate?
-- [ ] **#40 — JPEG XL**: needs another host/VPS capable of writing it, or a decision to drop the format for good.
-- [ ] **Image-based foreground/background fill** (ProjectBrief §3): now tracked in #115 — scope it there, or decide to drop it — it's currently missing from both the UI and the API.
-- [ ] **#16 — WebAuthn/passkeys**: go-ahead for gate **G-006**.
-- [ ] **#34 — internationalisation (i18n)**: go-ahead to start building the translation framework.
+- [x] **#48 — contrast warning vs block**: should the Accessible-QR contrast check only warn (as now) between 3:1 and 4.5:1, or refuse to generate?
+      → **Answered 2026-10-05: keep warning only between 3:1 and 4.5:1 (below 3:1 is refused).**
+- [x] **#40 — JPEG XL**: needs another host/VPS capable of writing it, or a decision to drop the format for good.
+      → **Answered 2026-10-05: keep it — on the build list; planning must find a way to produce JPEG XL that DreamHost can't.**
+- [x] **Image-based foreground/background fill** (ProjectBrief §3): now tracked in #115 — scope it there, or decide to drop it — it's currently missing from both the UI and the API.
+      → **Answered 2026-10-05: build it (#115) — on the build list.**
+- [x] **#16 — WebAuthn/passkeys**: go-ahead for gate **G-006**.
+      → **Answered 2026-10-05: go-ahead (gate G-006) — on the build list.**
+- [x] **#34 — internationalisation (i18n)**: go-ahead to start building the translation framework.
+      → **Answered 2026-10-05: go-ahead — on the build list.**
 
 ## F. Architecture gates (owner go/no-go)
 
@@ -89,7 +111,8 @@
 
 - [x] **Emoji asset set** (#67): decided in practice — Twemoji v17.0.3 curated ~400 starter set shipped (SVG+PNG); #67 closed 2026-09-23. Growing to the full ~3,700 set remains optional.
 - [x] **Emoji-ingest** automation (#68): built as a **diff-report issue** (bot-PR mode is a documented future opt-in). It only runs once it's on `main`.
-- [ ] **Barcode library** (#69): confirm vendoring `tecnickcom/tc-lib-barcode` (LGPL-3) for 1D+2D.
+- [x] **Barcode library** (#69): confirm vendoring `tecnickcom/tc-lib-barcode` (LGPL-3) for 1D+2D.
+      → **Answered 2026-10-05: keep tc-lib-barcode.**
 
 ## H. Dynamic + dual-function QR (gated) — issues #27 / #71 / #33, gate G-007
 
