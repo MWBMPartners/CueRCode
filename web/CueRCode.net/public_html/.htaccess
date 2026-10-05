@@ -37,7 +37,7 @@
     RewriteRule "(^|/)\." - [F]
 
     # 🚫 Block access to sensitive file types
-    RewriteRule \.(htaccess|htpasswd|ini|log|sh|sql|bak|config|dist|fla|inc|psd|swp|git|svn)$ - [F]
+    RewriteRule \.(htaccess|htpasswd|ini|log|sh|sql|bak|config|dist|fla|inc|psd|swp|git|svn|md)$ - [F]
 
     # 📄 Remove .php extension from URLs (clean URLs)
     # Checks if the requested URL without .php exists as a file
@@ -250,5 +250,6 @@ AddDefaultCharset UTF-8
 # 🔧 Custom Error Pages
 # @see https://httpd.apache.org/docs/2.4/custom-error.html
 # ==============================================================================
+ErrorDocument 403 /error/403.php
 ErrorDocument 404 /error/404.php
 ErrorDocument 500 /error/500.php

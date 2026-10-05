@@ -93,7 +93,7 @@ if (function_exists('getConfig')) {
 
 $pageTitle       = 'Pricing';
 $pageDescription = 'Compare ' . $siteName . '\'s QR code generation plans - '
-    . 'what is included free, and what unlocks on Pro and Business.';
+    . 'what is included free, and what Pro and Business will add.';
 $bodyClass       = 'page-pricing';
 $pageCSS         = [];
 $pageJS          = [];
@@ -105,29 +105,28 @@ $pageJS          = [];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          💷 Pricing / Plan Comparison Content
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center mb-4">
                 <div class="col-lg-8 text-center">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-tags me-2" aria-hidden="true"></i>
                         Plans &amp; Pricing
                     </h1>
                     <p class="text-body-secondary mb-0">
-                        Generate QR codes instantly with no account at all, or create a free
-                        account to save your codes and unlock more as you need it.
+                        Make QR codes straight away with no account at all, or create a free
+                        account to save your codes and create an API key.
                     </p>
                 </div>
             </div>
 
             <?php if (empty($pricingDisplayPlans)) { ?>
-            <!-- ============================================================
+            <?php /* ============================================================
                  🚨 Fail-safe panel - plan data could not be loaded (no DB,
                  or a query error). Still a valid 200 page, no PHP warnings.
-                 ============================================================ -->
+                 ============================================================ */ ?>
             <div class="row justify-content-center">
                 <div class="col-lg-8">
                     <div class="alert alert-warning" role="alert">
@@ -139,17 +138,17 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             We could not load current plan details right now. This does not
                             affect the QR code generator itself - you can still
                             <a href="/">generate a code</a> with no account needed. Please try
-                            this page again shortly, or
-                            <a href="/developers/">contact us via the developer portal</a>
+                            this page again shortly, or email
+                            <a href="mailto:hello@cuercode.net">hello@cuercode.net</a>
                             if the problem persists.
                         </p>
                     </div>
                 </div>
             </div>
             <?php } else { ?>
-            <!-- ============================================================
+            <?php /* ============================================================
                  💷 Introductory-pricing disclaimer (shown above the grid)
-                 ============================================================ -->
+                 ============================================================ */ ?>
             <div class="row justify-content-center">
                 <div class="col-lg-8 text-center mb-4">
                     <p class="text-body-secondary small mb-0">
@@ -160,10 +159,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
 
-            <!-- ============================================================
+            <?php /* ============================================================
                  🃏 Plan comparison card grid (CSS grid via Bootstrap's
                  flexbox row/col utilities - never a &lt;table&gt; for layout)
-                 ============================================================ -->
+                 ============================================================ */ ?>
             <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 justify-content-center">
                 <?php foreach ($pricingDisplayPlans as $pricingPlan) { ?>
                 <div class="col">
@@ -192,10 +191,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 billed yearly
                             </p>
                             <?php } else { ?>
-                            <p class="mb-3">&nbsp;</p>
+                            <?php // 🆓 A real line in the slot the "billed yearly" text uses on paid plans, so the cards line up without a blank spacer ?>
+                            <p class="text-body-secondary small mb-3">No payment details needed</p>
                             <?php } ?>
 
-                            <!-- ================================================
+                            <?php /* ================================================
                                  🚩 Feature rows - included/excluded/coming-soon
                                  is NEVER conveyed by colour alone: a
                                  differently-shaped icon (or the "Coming soon"
@@ -207,7 +207,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                  text-bg-*-subtle tokens, which are already
                                  re-themed for both by cuercode.css/Bootstrap
                                  itself - no feature-specific colour is used).
-                                 ================================================ -->
+                                 ================================================ */ ?>
                             <?php if (!empty($pricingPlan['features'])) { ?>
                             <ul class="list-unstyled mb-3">
                                 <?php foreach ($pricingPlan['features'] as $pricingFeature) { ?>
@@ -225,7 +225,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 ?>
                                 <li class="mb-2 <?php echo ($pricingFeature['enabled'] && !$pricingFeatureIsComingSoon) ? '' : 'text-body-secondary'; ?>">
                                     <?php if ($pricingFeatureIsComingSoon) { ?>
-                                    <span class="badge text-bg-info-subtle border me-2">
+                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle me-2">
                                         <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
                                         Coming soon
                                     </span>
@@ -243,14 +243,14 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </ul>
                             <?php } ?>
 
-                            <!-- ================================================
+                            <?php /* ================================================
                                  🔢 Limit rows (saved codes, bulk batch size, ...)
                                  - a limit whose underlying feature is not yet
                                  built (#125 'coming_soon') shows the SAME
                                  "Coming soon" badge instead of a numeric value
                                  that nobody can actually use yet, regardless
                                  of what the plan's own limitsJSON says.
-                                 ================================================ -->
+                                 ================================================ */ ?>
                             <?php if (!empty($pricingPlan['limits'])) { ?>
                             <ul class="list-unstyled mb-3 small text-body-secondary">
                                 <?php foreach ($pricingPlan['limits'] as $pricingLimit) { ?>
@@ -258,7 +258,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <i class="fa-solid fa-gauge-high me-2" aria-hidden="true"></i>
                                     <?php echo htmlspecialchars($pricingLimit['label'], ENT_QUOTES, 'UTF-8'); ?>:
                                     <?php if ($pricingLimit['status'] === 'coming_soon') { ?>
-                                    <span class="badge text-bg-info-subtle border">
+                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
                                         <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
                                         Coming soon
                                     </span>
@@ -272,21 +272,21 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                             <div class="mt-auto">
                                 <?php if ($pricingPlan['isZeroPrice']) { ?>
-                                <!-- 🆓 Zero-price plan: a real, working CTA to
-                                     account registration. -->
+                                <?php /* 🆓 Zero-price plan: a real, working CTA to
+                                     account registration. */ ?>
                                 <a href="/register/" class="btn btn-primary w-100">
                                     <i class="fa-solid fa-user-plus me-1" aria-hidden="true"></i>
                                     Create free account
                                 </a>
                                 <p class="small text-body-secondary mt-2 mb-0">
                                     No account needed to generate a QR code right now -
-                                    <a href="/">use the generator</a>. Registering unlocks
-                                    saved codes and the extras listed above.
+                                    <a href="/">use the generator</a>. A free account adds
+                                    saved codes and an API key.
                                 </p>
                                 <?php } else { ?>
-                                <!-- 💳 Paid plan: checkout is owner-gated and not
+                                <?php /* 💳 Paid plan: checkout is owner-gated and not
                                      yet built (Epic E4 payments stage) - a
-                                     disabled control, never an invented flow. -->
+                                     disabled control, never an invented flow. */ ?>
                                 <button type="button" class="btn btn-outline-secondary w-100" disabled aria-disabled="true">
                                     Coming soon
                                 </button>

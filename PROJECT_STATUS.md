@@ -7,7 +7,10 @@
 
 ---
 
-## 🧭 Current position at a glance (2026-09-23)
+## 🧭 Current position at a glance (2026-09-23; polish update 2026-10-05)
+
+**2026-10-05 (#137):** a "does it look AI-made?" sweep fixed the blocked Bootstrap stylesheet (wrong SRI hash), the clipped QR-type grid, the missing logo, share/canonical tags, invisible "Coming soon" badges, contrast failures, internal notes on developer pages and error/empty states; `tools/check_site_polish.php` now runs in CI. **Still needs the owner:** the nine `[TEMPLATE: ...]` gaps in Terms/Privacy, the live database's tagline/description/plan-blurb settings, and switching on the HTTPS redirect at go-live.
+
 
 **What's built (in code, tests passing):** the whole QR engine (26 QR types + 11 barcode types, 6 output formats), the responsive/accessible web UI (dark/light mode, colourblind palettes, skip links), the full REST API (30 OpenAPI paths, 93 catalogued error codes), accounts (registration, login, password reset, sessions, saved codes, self-service API keys, data export/erasure), a subscription/plan gating engine, Microsoft 365 + Google SSO, the developer portal, and CI scanning (CodeQL/Semgrep/actionlint/Dependabot) on all four tier branches. All 2185 automated tests pass and all 77 tracked web PHP files pass `php -l`.
 

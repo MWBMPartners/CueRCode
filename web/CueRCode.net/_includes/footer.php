@@ -71,6 +71,25 @@ if (function_exists('getConfig')) {
     $copyrightYear = date('Y');
 }
 
+// ==============================================================================
+// 📅 Copyright range (#137)
+// ==============================================================================
+// The stored copyright_year setting is a single fixed year (seeded "2026"),
+// which goes stale every 1 January. Show "start–current" instead, using the
+// stored year as the start when it is a sensible four-digit year (2025 is the
+// company's first year, as in every file header), so it never needs editing.
+// ==============================================================================
+$copyrightStartYear = 2025;
+if (preg_match('/^[0-9]{4}$/', (string) $copyrightYear) === 1 && (int) $copyrightYear < $copyrightStartYear) {
+    $copyrightStartYear = (int) $copyrightYear;
+}
+$copyrightCurrentYear = (int) date('Y');
+if ($copyrightCurrentYear > $copyrightStartYear) {
+    $copyrightYear = $copyrightStartYear . '–' . $copyrightCurrentYear;
+} else {
+    $copyrightYear = (string) $copyrightStartYear;
+}
+
 if (isset($pageJS)) {
     // $pageJS already set
 } else {
@@ -85,17 +104,17 @@ if (function_exists('isDebugMode')) {
 ?>
 
     </main>
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📄 End of Main Content
-         ==================================================================== -->
+         ==================================================================== */ ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🦶 Footer
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <footer class="mt-5 py-4 border-top">
         <div class="container">
             <div class="row align-items-center">
-                <!-- 📝 Copyright -->
+                <?php /* 📝 Copyright */ ?>
                 <div class="col-md-6 text-center text-md-start mb-2 mb-md-0">
                     <small class="text-body-secondary">
                         &copy; <?php echo htmlspecialchars($copyrightYear, ENT_QUOTES, 'UTF-8'); ?>
@@ -104,70 +123,71 @@ if (function_exists('isDebugMode')) {
                     </small>
                 </div>
 
-                <!-- 🔗 Footer Links -->
+                <?php /* 🔗 Footer Links */ ?>
                 <div class="col-md-6 text-center text-md-end">
                     <small>
                         <a href="/terms" class="text-body-secondary text-decoration-none me-3">Terms of Use</a>
                         <a href="/privacy" class="text-body-secondary text-decoration-none me-3">Privacy Policy</a>
-                        <a href="/accessibility" class="text-body-secondary text-decoration-none me-3">Accessibility</a>
-                        <a href="/attributions" class="text-body-secondary text-decoration-none me-3">Attributions</a>
+                        <a href="/accessibility/" class="text-body-secondary text-decoration-none me-3">Accessible printing</a>
+                        <a href="/attributions/" class="text-body-secondary text-decoration-none me-3">Attributions</a>
                         <a href="/developers/" class="text-body-secondary text-decoration-none me-3">Developers</a>
-                        <a href="/api/docs" class="text-body-secondary text-decoration-none me-3">API</a>
-                        <a href="/pricing/" class="text-body-secondary text-decoration-none">Pricing</a>
+                        <a href="/api/docs/" class="text-body-secondary text-decoration-none me-3">API</a>
+                        <a href="/pricing/" class="text-body-secondary text-decoration-none me-3">Pricing</a>
+                        <a href="mailto:hello@cuercode.net" class="text-body-secondary text-decoration-none">Contact</a>
                     </small>
                 </div>
             </div>
         </div>
     </footer>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📦 JavaScript: jQuery (CDN with local fallback)
          @see https://jquery.com/
-         ==================================================================== -->
-    <!-- TODO F-004: capture SRI hash for jquery@3.7.1 at live deploy —
+         ==================================================================== */ ?>
+    <?php /* TODO F-004: capture SRI hash for jquery@3.7.1 at live deploy —
          public_html_landing/index.php does not reference jQuery, so no
          existing verified hash can be safely copied for this version. Do NOT
-         guess a hash: an incorrect integrity value BLOCKS the resource. -->
+         guess a hash: an incorrect integrity value BLOCKS the resource. */ ?>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
             crossorigin="anonymous"></script>
     <script>
-        /* 🔄 jQuery CDN fallback to local copy */
+        <?php /* 🔄 jQuery CDN fallback to local copy */ ?>
         if (typeof jQuery === 'undefined') {
             document.write('<script src="/assets/vendor/jquery/jquery.min.js"><\/script>');
         }
     </script>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📦 JavaScript: Bootstrap 5.3 Bundle (CDN with local fallback)
          @see https://getbootstrap.com/docs/5.3/getting-started/javascript/
-         ==================================================================== -->
-    <!-- 🔒 F-004 (SRI, DS-4): hash copied verbatim from
-         public_html_landing/index.php (same pinned version, bootstrap@5.3.3) -->
+         ==================================================================== */ ?>
+    <?php /* 🔒 F-004 (SRI, DS-4): hash copied verbatim from
+         public_html_landing/index.php (same pinned version, bootstrap@5.3.3) */ ?>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
             integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
             crossorigin="anonymous"></script>
     <script>
-        /* 🔄 Bootstrap JS CDN fallback to local copy */
+        <?php /* 🔄 Bootstrap JS CDN fallback to local copy */ ?>
         if (typeof bootstrap === 'undefined') {
             document.write('<script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"><\/script>');
         }
     </script>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📦 JavaScript: CueRCode Common Utilities
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <script src="/assets/js/cuercode-common.js"></script>
 
-    <!-- 📦 Additional page-specific JavaScript -->
+    <?php /* 📦 Additional page-specific JavaScript */ ?>
     <?php foreach ($pageJS as $jsFile) { ?>
     <script src="<?php echo htmlspecialchars($jsFile, ENT_QUOTES, 'UTF-8'); ?>"></script>
     <?php } ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🌙 Dark/Light Mode Toggle Script
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <script>
-        /* 🌙 Theme toggle functionality */
+        <?php /* 🌙 Theme toggle functionality */ ?>
         (function() {
             var toggleBtn = document.getElementById('theme-toggle');
             if (toggleBtn) {
@@ -182,18 +202,18 @@ if (function_exists('isDebugMode')) {
                     document.documentElement.setAttribute('data-bs-theme', newTheme);
                     localStorage.setItem('cuercode-theme', newTheme);
 
-                    /* Update toggle icon */
+                    <?php /* Update toggle icon */ ?>
                     var icon = this.querySelector('i');
                     if (icon) {
                         if (newTheme === 'dark') {
                             icon.className = 'fa-solid fa-sun';
                         } else {
-                            icon.className = 'fa-solid fa-circle-half-stroke';
+                            icon.className = 'fa-solid fa-moon';
                         }
                     }
                 });
 
-                /* Set initial icon based on current theme */
+                <?php /* Set initial icon based on current theme */ ?>
                 var currentTheme = document.documentElement.getAttribute('data-bs-theme');
                 var icon = toggleBtn.querySelector('i');
                 if (icon && currentTheme === 'dark') {
@@ -203,25 +223,25 @@ if (function_exists('isDebugMode')) {
         })();
     </script>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📱 PWA Service Worker Registration
          @see https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerContainer/register
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <script>
-        /* 📱 Register service worker for offline support and caching */
+        <?php /* 📱 Register service worker for offline support and caching */ ?>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function() {
                 navigator.serviceWorker.register('/sw.js').catch(function() {
-                    /* ⚠️ Service worker registration failed - not critical */
+                    <?php /* ⚠️ Service worker registration failed - not critical */ ?>
                 });
             });
         }
     </script>
 
     <?php if ($isDebug) { ?>
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🐛 Debug Panel (visible only in debug mode)
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <div class="container mt-3 mb-3">
         <div class="card border-warning">
             <div class="card-header bg-warning text-dark">
@@ -286,7 +306,7 @@ if (function_exists('isDebugMode')) {
     </div>
     <?php } ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🍪 Cookie / Storage Consent Notice (FG-026)
          A dismissible, non-modal banner (role="region") shown until the
          user acknowledges it. Gated on the 'cuercode-consent' localStorage
@@ -295,7 +315,7 @@ if (function_exists('isDebugMode')) {
          so users who have already dismissed it never see a flash. It does
          NOT trap focus and the rest of the page stays usable.
          @see https://www.w3.org/WAI/ARIA/apg/patterns/
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <div id="cuercode-cookie-banner" role="region" aria-label="Cookie notice" hidden>
         <div class="container">
             <div class="cuercode-cookie-inner">

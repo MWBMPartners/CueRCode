@@ -1,13 +1,13 @@
 {
     "name": "CueRCode - QR Code Generator",
     "short_name": "CueRCode",
-    "description": "Create beautiful, customisable QR codes for any purpose. URL links, vCards, Wi-Fi, payments, social media and more.",
+    "description": "Free QR codes and barcodes with your own logo, colours and frames, plus print-ready accessible and tactile versions.",
     "start_url": "/",
     "display": "standalone",
     "orientation": "any",
     "background_color": "#ffffff",
     "theme_color": "#2c7a7b",
-    "lang": "en",
+    "lang": "en-GB",
     "dir": "ltr",
     "categories": [
         "utilities",
@@ -19,13 +19,13 @@
             "src": "/assets/img/branding/logo-192.png",
             "sizes": "192x192",
             "type": "image/png",
-            "purpose": "any maskable"
+            "purpose": "any"
         },
         {
             "src": "/assets/img/branding/logo-512.png",
             "sizes": "512x512",
             "type": "image/png",
-            "purpose": "any maskable"
+            "purpose": "any"
         },
         {
             "src": "/assets/img/branding/favicon.svg",

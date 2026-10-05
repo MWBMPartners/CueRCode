@@ -72,11 +72,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                 <div class="col-lg-9">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-key me-2" aria-hidden="true"></i>
                         Authentication
                     </h1>
                     <p class="text-body-secondary mb-4">
-                        Every protected endpoint accepts EITHER of two credential types - there is no
+                        Every protected endpoint accepts either of two credential types - there is no
                         "primary" mode, both are first-class.
                     </p>
 
@@ -93,9 +92,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </ul>
                         </nav>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. The two modes
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="modes" class="h5 mt-4 mb-3">1. The Two Authentication Modes</h2>
 
                         <h3 class="h6 mt-3">Mode A - API key (<code>X-API-Key</code> header)</h3>
@@ -110,13 +109,12 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             your raw key - only an HMAC-SHA256 hash of it - so a leaked database backup does
                             not expose usable keys, and a lost key cannot be recovered (only reissued).
                             An invalid or inactive key is rejected with <code>401 INVALID_API_KEY</code>
-                            immediately - it does NOT silently fall back to anonymous access.
+                            immediately - it does <strong>not</strong> silently fall back to anonymous access.
                         </p>
                         <p>
                             Each key carries its own per-minute and per-day rate limits (independent of the
                             anonymous/CSRF defaults - see <a href="/developers/errors/">Errors &amp; Rate
-                            Limits</a>), and every successful use updates a <code>lastUsedAt</code> timestamp
-                            for the key.
+                            Limits</a>), and the time each key was last used is shown in your account.
                         </p>
 
                         <h3 class="h6 mt-3">Mode B - Session CSRF token (<code>X-CSRF-Token</code> header)</h3>
@@ -135,9 +133,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> page).
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. Anonymous access
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="anonymous" class="h5 mt-4 mb-3">2. Anonymous Access and Its Limits</h2>
                         <p>
                             Four endpoints work with <strong>no credentials at all</strong>:
@@ -150,7 +148,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <p>
                             <code>POST /generate</code>, <code>POST /preview</code>,
                             <code>POST /barcode</code>, <code>POST /barcode/preview</code>, and
-                            <code>GET /download/{uuid}</code> are NEVER anonymous - one of the two modes
+                            <code>GET /download/{uuid}</code> are never anonymous - one of the two modes
                             above is always required, returning <code>401 AUTH_REQUIRED</code> otherwise.
                             The same is true of the saved-codes routes -
                             <code>POST /save</code>, <code>GET /qrcodes</code>,
@@ -181,9 +179,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             limit picture on <a href="/developers/errors/">Errors &amp; Rate Limits</a>.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Getting a key
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="getting-a-key" class="h5 mt-4 mb-3">3. Getting an API Key</h2>
                         <p>
                             API keys are self-service - there is no waiting on the
@@ -208,9 +206,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             light/experimental use without a key at all.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              4. Managing your keys
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="self-service" class="h5 mt-4 mb-3">4. Managing Your Keys (Rotate / Revoke / Scopes)</h2>
                         <p>
                             The account dashboard's API keys section lists every key you own (name, prefix,
@@ -266,9 +264,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             create a new key or remove the old one.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              5. Which mode?
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="which-mode" class="h5 mt-4 mb-3">5. Which Mode Should I Use?</h2>
                         <ul class="mb-0">
                             <li><strong>Building a server-side integration, script, or app?</strong> Use an

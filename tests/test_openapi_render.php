@@ -311,9 +311,9 @@ assertEquals(
     'oapiPropertyTypeLabel() renders a declared format'
 );
 assertEquals(
-    'integer OR string',
+    'integer or string',
     oapiPropertyTypeLabel(['oneOf' => [['type' => 'integer'], ['type' => 'string']]]),
-    'oapiPropertyTypeLabel() renders a oneOf as "X OR Y" (Customization.logo shape)'
+    'oapiPropertyTypeLabel() renders a oneOf as "X or Y" (Customization.logo shape)'
 );
 assertEquals(
     'array of object',

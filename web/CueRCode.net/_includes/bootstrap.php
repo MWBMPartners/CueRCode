@@ -144,7 +144,32 @@ if (file_exists($dbConnectPath)) {
     // Cannot proceed without database connection capabilities
     if (php_sapi_name() !== 'cli') {
         header('HTTP/1.1 503 Service Unavailable');
-        echo '<h1>Service Unavailable</h1><p>Database configuration is missing.</p>';
+
+        // 🛟 Show the small self-contained fallback page (inline CSS only, no
+        // database or config needed). The real reason is in the error_log()
+        // line above, never on screen. If the helper cannot load, a minimal
+        // inline page is printed instead.
+        $fallbackHelper = CUERCODE_INCLUDES_DIR . 'fallback_page.php';
+        if (is_file($fallbackHelper)) {
+            require_once $fallbackHelper;
+        }
+
+        if (function_exists('cuercodeFallbackPageHtml')) {
+            echo cuercodeFallbackPageHtml(
+                'Technical problem',
+                'We\'re having a technical problem',
+                'Please try again in a few minutes.'
+            );
+        } else {
+            echo '<!DOCTYPE html><html lang="en-GB"><head><meta charset="UTF-8">'
+                . '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                . '<title>Technical problem | CueRCode</title></head>'
+                . '<body><h1>We\'re having a technical problem</h1>'
+                . '<p>Please try again in a few minutes.</p>'
+                . '<p><a href="/">Go to the CueRCode home page</a></p>'
+                . '<p>If this keeps happening, email <a href="mailto:hello@cuercode.net">hello@cuercode.net</a>.</p>'
+                . '</body></html>';
+        }
     }
     exit(1);
 }

@@ -109,9 +109,9 @@ $pageJS          = ['/assets/js/cuercode-account.js'];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          ✅ Email Verification
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
@@ -119,7 +119,6 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <div class="card shadow-sm">
                         <div class="card-body p-4 text-center">
                             <h1 class="h3 fw-bold mb-3">
-                                <i class="fa-solid fa-envelope-circle-check me-2" aria-hidden="true"></i>
                                 Verify your email
                             </h1>
 
@@ -155,7 +154,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     your account.
                                 </p>
 
-                                <!-- 🔔 Live region for JS-driven (AJAX) status messages -->
+                                <?php /* 🔔 Live region for JS-driven (AJAX) status messages */ ?>
                                 <div id="verify-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
 
                                 <form method="POST" action="/verify-email/" id="verify-form">

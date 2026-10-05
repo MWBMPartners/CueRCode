@@ -399,7 +399,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['qr_type'])) {
 $pageTitle       = 'QR Code Generator';
 $pageDescription = 'Create beautiful, customisable QR codes for URLs, text, email, phone, vCard, Wi-Fi, and more. Free online QR code generator with logo, colours, and frame customisation.';
 $bodyClass       = 'page-generator';
-$pageCSS         = ['/assets/css/cuercode.css'];
+$pageCSS         = []; // 🎨 cuercode.css is already loaded by the shared header (#137)
 $pageJS          = ['/assets/js/cuercode-generator.js'];
 
 // ==============================================================================
@@ -409,34 +409,35 @@ $pageJS          = ['/assets/js/cuercode-generator.js'];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🎯 QR Code Generator - Hero Section
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-4">
         <div class="container">
             <div class="text-center mb-4">
                 <h1 class="h3 fw-bold">
-                    <i class="fa-solid fa-qrcode me-2" style="color: var(--cuercode-primary);" aria-hidden="true"></i>QR Code Generator
+                    QR Code Generator
                 </h1>
                 <p class="text-body-secondary mb-0">
-                    Create beautiful, customisable QR codes for any purpose
+                    Free QR codes and barcodes with your own logo, colours and frames &ndash;
+                    plus print-ready accessible and tactile versions. No sign-up needed.
                 </p>
             </div>
 
-            <!-- ============================================================
+            <?php /* ============================================================
                  📱 Two-Column Layout (Desktop) / Stacked (Mobile)
                  @see https://getbootstrap.com/docs/5.3/layout/grid/
-                 ============================================================ -->
+                 ============================================================ */ ?>
             <div class="row g-4">
 
-                <!-- ========================================================
+                <?php /* ========================================================
                      📝 Left Column: Type + Content + Customisation
-                     ======================================================== -->
+                     ======================================================== */ ?>
                 <div class="col-lg-7">
 
-                    <!-- ====================================================
+                    <?php /* ====================================================
                          📱 QR Code Type Selector
-                         ==================================================== -->
+                         ==================================================== */ ?>
                     <div class="card mb-4 shadow-sm" id="qr-type-card">
                         <div class="card-header bg-transparent">
                             <h2 class="h6 mb-0">
@@ -481,9 +482,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </div>
                     </div>
 
-                    <!-- ====================================================
+                    <?php /* ====================================================
                          📝 Content Form (Dynamic Fields)
-                         ==================================================== -->
+                         ==================================================== */ ?>
                     <div class="card mb-4 shadow-sm" id="qr-content-card">
                         <div class="card-header bg-transparent">
                             <h2 class="h6 mb-0">
@@ -496,9 +497,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <?php if (function_exists('csrfField')) { echo csrfField(); } ?>
                                 <input type="hidden" name="qr_type" id="qr-type-input" value="url">
 
-                                <!-- 📌 Dynamic form fields container -->
+                                <?php /* 📌 Dynamic form fields container */ ?>
                                 <div id="qr-form-fields">
-                                    <!-- Default: URL type fields (rendered server-side for no-JS) -->
+                                    <?php /* Default: URL type fields (rendered server-side for no-JS) */ ?>
                                     <div class="mb-3">
                                         <label for="field-url" class="form-label">Website URL</label>
                                         <input type="url"
@@ -515,10 +516,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </div>
                     </div>
 
-                    <!-- ====================================================
+                    <?php /* ====================================================
                          🎨 Customisation Tabs
                          @see https://getbootstrap.com/docs/5.3/components/navs-tabs/
-                         ==================================================== -->
+                         ==================================================== */ ?>
                     <div class="card shadow-sm" id="qr-customize-card">
                         <div class="card-header bg-transparent p-0">
                             <ul class="nav nav-tabs card-header-tabs px-2 pt-2" id="customize-tabs" role="tablist">
@@ -528,7 +529,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                             aria-controls="tab-colors" aria-selected="true"
                                             aria-label="Colors">
                                         <i class="fa-solid fa-palette me-1" aria-hidden="true"></i>
-                                        <span class="d-none d-sm-inline">Colors</span>
+                                        <span class="d-none d-sm-inline">Colours</span>
                                     </button>
                                 </li>
                                 <li class="nav-item" role="presentation">
@@ -572,11 +573,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <div class="card-body">
                             <div class="tab-content" id="customize-tab-content">
 
-                                <!-- ============================================
+                                <?php /* ============================================
                                      🎨 Colors Tab
-                                     ============================================ -->
+                                     ============================================ */ ?>
                                 <div class="tab-pane fade show active" id="tab-colors" role="tabpanel" aria-labelledby="tab-colors-btn">
-                                    <!-- Foreground Colour -->
+                                    <?php /* Foreground Colour */ ?>
                                     <div class="mb-3">
                                         <label for="opt-fg-color" class="form-label">
                                             <i class="fa-solid fa-fill-drip me-1" aria-hidden="true"></i> Foreground Colour
@@ -594,7 +595,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </div>
                                     </div>
 
-                                    <!-- Background Colour -->
+                                    <?php /* Background Colour */ ?>
                                     <div class="mb-3">
                                         <label for="opt-bg-color" class="form-label">
                                             <i class="fa-solid fa-fill me-1" aria-hidden="true"></i> Background Colour
@@ -612,7 +613,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </div>
                                     </div>
 
-                                    <!-- Marker (Finder Pattern) Colour -->
+                                    <?php /* Marker (Finder Pattern) Colour */ ?>
                                     <div class="mb-3">
                                         <label for="opt-marker-color" class="form-label">
                                             <i class="fa-solid fa-vector-square me-1" aria-hidden="true"></i> Marker Colour
@@ -631,7 +632,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </div>
                                     </div>
 
-                                    <!-- Transparent Background Toggle -->
+                                    <?php /* Transparent Background Toggle */ ?>
                                     <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" role="switch"
                                                id="opt-transparent" name="transparent_bg"
@@ -642,11 +643,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </div>
                                 </div>
 
-                                <!-- ============================================
+                                <?php /* ============================================
                                      🔲 Design Tab (Patterns & Markers)
-                                     ============================================ -->
+                                     ============================================ */ ?>
                                 <div class="tab-pane fade" id="tab-design" role="tabpanel" aria-labelledby="tab-design-btn">
-                                    <!-- Module Pattern -->
+                                    <?php /* Module Pattern */ ?>
                                     <div class="mb-4">
                                         <span class="form-label d-block fw-semibold">
                                             <i class="fa-solid fa-border-all me-1" aria-hidden="true"></i> Module Pattern
@@ -684,7 +685,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         <input type="hidden" name="pattern" id="opt-pattern" value="<?php echo htmlspecialchars($defaults['pattern'], ENT_QUOTES, 'UTF-8'); ?>">
                                     </div>
 
-                                    <!-- Marker Border Shape -->
+                                    <?php /* Marker Border Shape */ ?>
                                     <div class="mb-4">
                                         <span class="form-label d-block fw-semibold">
                                             <i class="fa-solid fa-vector-square me-1" aria-hidden="true"></i> Marker Border
@@ -714,7 +715,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         <input type="hidden" name="marker_border" id="opt-marker-border" value="<?php echo htmlspecialchars($defaults['marker_border'], ENT_QUOTES, 'UTF-8'); ?>">
                                     </div>
 
-                                    <!-- Marker Centre Shape -->
+                                    <?php /* Marker Centre Shape */ ?>
                                     <div class="mb-3">
                                         <span class="form-label d-block fw-semibold">
                                             <i class="fa-solid fa-circle me-1" aria-hidden="true"></i> Marker Centre
@@ -745,11 +746,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </div>
                                 </div>
 
-                                <!-- ============================================
+                                <?php /* ============================================
                                      🖼️ Logo Tab
-                                     ============================================ -->
+                                     ============================================ */ ?>
                                 <div class="tab-pane fade" id="tab-logo" role="tabpanel" aria-labelledby="tab-logo-btn">
-                                    <!-- Logo Upload -->
+                                    <?php /* Logo Upload */ ?>
                                     <div class="mb-4">
                                         <label for="opt-logo-upload" class="form-label fw-semibold">
                                             <i class="fa-solid fa-upload me-1" aria-hidden="true"></i> Upload Custom Logo
@@ -759,7 +760,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         <small class="text-body-secondary">
                                             PNG, JPG, GIF, SVG, or WEBP. Max <?php echo number_format($defaults['max_logo_size'] / 1048576, 0); ?>MB.
                                         </small>
-                                        <!-- Logo Preview -->
+                                        <?php /* Logo Preview */ ?>
                                         <div id="logo-upload-preview" class="mt-2 d-none">
                                             <img id="logo-upload-img" src="" alt="Logo preview" class="img-thumbnail" style="max-height: 80px;">
                                             <button type="button" class="btn btn-sm btn-outline-danger ms-2" id="btn-remove-logo">
@@ -768,7 +769,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </div>
                                     </div>
 
-                                    <!-- Logo Size -->
+                                    <?php /* Logo Size */ ?>
                                     <div class="mb-4">
                                         <label for="opt-logo-size" class="form-label">
                                             Logo Size: <span id="logo-size-value"><?php echo $defaults['logo_size']; ?></span>%
@@ -778,15 +779,15 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                                value="<?php echo $defaults['logo_size']; ?>">
                                     </div>
 
-                                    <!-- Predefined Logos Separator -->
+                                    <?php /* Predefined Logos Separator */ ?>
                                     <hr>
                                     <span class="form-label d-block fw-semibold mb-3">
                                         <i class="fa-solid fa-icons me-1" aria-hidden="true"></i> Or Choose a Predefined Logo
                                     </span>
 
-                                    <!-- Predefined Logo Grid -->
+                                    <?php /* Predefined Logo Grid */ ?>
                                     <div class="logo-grid" id="predefined-logo-grid">
-                                        <!-- No Logo Option -->
+                                        <?php /* No Logo Option */ ?>
                                         <button type="button" class="logo-btn active" data-logo="" title="No Logo">
                                             <i class="fa-solid fa-ban fa-lg text-body-secondary" aria-hidden="true"></i>
                                             <span>None</span>
@@ -795,15 +796,17 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         <button type="button" class="logo-btn"
                                                 data-logo="<?php echo (int) $logo['logoID']; ?>"
                                                 title="<?php echo htmlspecialchars($logo['logoLabel'], ENT_QUOTES, 'UTF-8'); ?>">
+                                            <?php /* ♿ alt="" - the visible label below already names the button,
+                                                     so screen readers no longer announce it twice (#137). */ ?>
                                             <img src="/assets/img/logos/<?php echo htmlspecialchars($logo['logoFileName'], ENT_QUOTES, 'UTF-8'); ?>"
-                                                 alt="<?php echo htmlspecialchars($logo['logoLabel'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                 alt=""
                                                  loading="lazy" width="32" height="32">
                                             <span><?php echo htmlspecialchars($logo['logoLabel'], ENT_QUOTES, 'UTF-8'); ?></span>
                                         </button>
                                         <?php } ?>
                                     </div>
 
-                                    <!-- ========================================
+                                    <?php /* ========================================
                                          🙂 Emoji Centre-Icon Picker (Issue #67)
                                          A native, vector-first emoji picker built
                                          from the curated Twemoji starter set
@@ -812,16 +815,16 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                          predefined logo grid above, via the
                                          'emoji:<codepoint-seq>' discriminator
                                          getLogoPath() resolves server-side.
-                                         ======================================== -->
+                                         ======================================== */ ?>
                                     <hr>
                                     <span class="form-label d-block fw-semibold mb-2" id="emoji-picker-label">
                                         <i class="fa-solid fa-face-smile me-1" aria-hidden="true"></i> Or Pick an Emoji
                                     </span>
 
-                                    <!-- ⛔ No-JS fallback: every emoji button below is a REAL, working
+                                    <?php /* ⛔ No-JS fallback: every emoji button below is a REAL, working
                                          button even without JavaScript (a standard form POST submits the
                                          page-load value of #opt-logo) - search/category filtering is the
-                                         only JS-enhanced convenience, so this note simply explains that. -->
+                                         only JS-enhanced convenience, so this note simply explains that. */ ?>
                                     <noscript>
                                         <div class="alert alert-info py-2 px-3 small" role="note">
                                             <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
@@ -857,7 +860,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         No emoji match your search.
                                     </div>
 
-                                    <!-- Emoji Grid (keyboard-accessible: native <button> elements, Tab/Enter/Space work with no extra script) -->
+                                    <?php /* Emoji Grid (keyboard-accessible: native <button> elements, Tab/Enter/Space work with no extra script) */ ?>
                                     <div class="logo-grid emoji-grid" id="emoji-logo-grid" role="group" aria-labelledby="emoji-picker-label">
                                         <?php foreach ($emojiIndex as $emojiEntry) {
                                             $emojiSeq      = isset($emojiEntry['seq']) ? (string) $emojiEntry['seq'] : '';
@@ -895,11 +898,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <input type="hidden" name="logo" id="opt-logo" value="">
                                 </div>
 
-                                <!-- ============================================
+                                <?php /* ============================================
                                      🖼️ Frame Tab
-                                     ============================================ -->
+                                     ============================================ */ ?>
                                 <div class="tab-pane fade" id="tab-frame" role="tabpanel" aria-labelledby="tab-frame-btn">
-                                    <!-- Frame Style -->
+                                    <?php /* Frame Style */ ?>
                                     <div class="mb-4">
                                         <span class="form-label d-block fw-semibold">
                                             <i class="fa-solid fa-border-all me-1" aria-hidden="true"></i> Frame Style
@@ -955,7 +958,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         <input type="hidden" name="frame_style" id="opt-frame-style" value="none">
                                     </div>
 
-                                    <!-- Frame Label Text (shown when frame has label) -->
+                                    <?php /* Frame Label Text (shown when frame has label) */ ?>
                                     <div class="mb-3" id="frame-label-group" style="display: none;">
                                         <label for="opt-frame-label" class="form-label">
                                             <i class="fa-solid fa-tag me-1" aria-hidden="true"></i> Frame Label Text
@@ -964,7 +967,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                                name="frame_label" placeholder="Scan Me!" maxlength="30">
                                     </div>
 
-                                    <!-- Frame Colour (shown when frame selected) -->
+                                    <?php /* Frame Colour (shown when frame selected) */ ?>
                                     <div class="mb-3" id="frame-color-group" style="display: none;">
                                         <label for="opt-frame-color" class="form-label">
                                             <i class="fa-solid fa-palette me-1" aria-hidden="true"></i> Frame Colour
@@ -982,11 +985,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </div>
                                 </div>
 
-                                <!-- ============================================
+                                <?php /* ============================================
                                      ⚙️ Options Tab (Format, Size, ECC)
-                                     ============================================ -->
+                                     ============================================ */ ?>
                                 <div class="tab-pane fade" id="tab-options" role="tabpanel" aria-labelledby="tab-options-btn">
-                                    <!-- Output Format -->
+                                    <?php /* Output Format */ ?>
                                     <div class="mb-4">
                                         <label for="opt-format" class="form-label fw-semibold">
                                             <i class="fa-solid fa-file-image me-1" aria-hidden="true"></i> Output Format
@@ -1001,13 +1004,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </select>
                                     </div>
 
-                                    <!-- ================================================
+                                    <?php /* ================================================
                                          ♿ PDF print layout (E5 / #49) - shown only when
                                          Output Format above is "pdf". Braille-caption /
                                          tactile-frame / Avery label-sheet print templates.
                                          Visibility toggled by handleFormatChange() in
                                          cuercode-generator.js.
-                                         ================================================ -->
+                                         ================================================ */ ?>
                                     <div class="mb-4 d-none" id="pdf-layout-panel">
                                         <label for="opt-pdf-layout" class="form-label fw-semibold">
                                             <i class="fa-solid fa-braille me-1" aria-hidden="true"></i> PDF Print Layout
@@ -1024,12 +1027,12 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                             Unicode font). Avery layouts fill one label on a full printable sheet
                                             template; use <code>/api/v1/bulk-generate</code> with the same
                                             <code>pdf_layout</code> to fill a whole sheet from multiple codes. See the
-                                            <a href="/accessibility">accessible/tactile printing guide</a> for
+                                            <a href="/accessibility/">accessible/tactile printing guide</a> for
                                             best-practice sizing, placement and embossing workflow.
                                         </small>
                                     </div>
 
-                                    <!-- Output Size -->
+                                    <?php /* Output Size */ ?>
                                     <div class="mb-4">
                                         <label for="opt-size" class="form-label fw-semibold">
                                             <i class="fa-solid fa-expand me-1" aria-hidden="true"></i> Output Size:
@@ -1044,7 +1047,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </div>
                                     </div>
 
-                                    <!-- Error Correction Level -->
+                                    <?php /* Error Correction Level */ ?>
                                     <div class="mb-4">
                                         <span class="form-label d-block fw-semibold" id="ecc-level-label">
                                             <i class="fa-solid fa-shield-halved me-1" aria-hidden="true"></i> Error Correction Level
@@ -1071,7 +1074,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </small>
                                     </div>
 
-                                    <!-- Quiet Zone -->
+                                    <?php /* Quiet Zone */ ?>
                                     <div class="form-check form-switch mb-4">
                                         <input class="form-check-input" type="checkbox" role="switch"
                                                id="opt-quiet-zone" name="quiet_zone" checked>
@@ -1080,7 +1083,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </label>
                                     </div>
 
-                                    <!-- QR Version (module grid size) — B-055 -->
+                                    <?php /* QR Version (module grid size) — B-055 */ ?>
                                     <div class="mb-4">
                                         <label for="opt-version" class="form-label fw-semibold">
                                             <i class="fa-solid fa-table-cells me-1" aria-hidden="true"></i> QR Version
@@ -1103,13 +1106,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         </small>
                                     </div>
 
-                                    <!-- ================================================
+                                    <?php /* ================================================
                                          ♿ Accessible QR preset (E5 / #48)
                                          ISO/IEC 18004 + WCAG 2.1 accessibility enforcement:
                                          forced ECC H, forced quiet zone, auto-minimised
                                          version, WCAG contrast validation, and a physical
                                          print-size calculator (10:1 scan-distance rule).
-                                         ================================================ -->
+                                         ================================================ */ ?>
                                     <div class="mb-2 p-3 border rounded" id="accessible-qr-panel">
                                         <div class="form-check form-switch mb-2">
                                             <input class="form-check-input" type="checkbox" role="switch"
@@ -1128,8 +1131,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                             while enabled.
                                         </small>
 
-                                        <!-- 🎨 Live WCAG contrast read-out (always visible - useful even before enabling
-                                             the toggle, mirrors the roadmap's "standalone" framing for the contrast check). -->
+                                        <?php /* 🎨 Live WCAG contrast read-out (always visible - useful even before enabling
+                                             the toggle, mirrors the roadmap's "standalone" framing for the contrast check). */ ?>
                                         <div class="mb-3">
                                             <span class="form-label d-block fw-semibold mb-1" id="contrast-readout-label">
                                                 <i class="fa-solid fa-circle-half-stroke me-1" aria-hidden="true"></i> Foreground/background contrast
@@ -1141,7 +1144,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                             <div id="contrast-warning" class="alert alert-warning py-1 px-2 mt-2 mb-0 small d-none" role="alert"></div>
                                         </div>
 
-                                        <!-- 📏 Physical print-size calculator (10:1 scan-distance rule) -->
+                                        <?php /* 📏 Physical print-size calculator (10:1 scan-distance rule) */ ?>
                                         <div>
                                             <label for="opt-scan-distance" class="form-label fw-semibold">
                                                 <i class="fa-solid fa-ruler me-1" aria-hidden="true"></i> Intended scan distance (cm)
@@ -1163,9 +1166,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                 </div>
 
-                <!-- ========================================================
+                <?php /* ========================================================
                      👁️ Right Column: Preview + Download
-                     ======================================================== -->
+                     ======================================================== */ ?>
                 <div class="col-lg-5">
                     <div class="card shadow-sm sticky-lg-top" id="preview-card" style="top: 80px;">
                         <div class="card-header bg-transparent">
@@ -1177,9 +1180,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                         </div>
                         <div class="card-body text-center p-4">
-                            <!-- QR Preview Container -->
+                            <?php /* QR Preview Container */ ?>
                             <div id="qr-preview-container" class="qr-preview-container" aria-live="polite" role="status">
-                                <!-- Placeholder (shown before generation) -->
+                                <?php /* Placeholder (shown before generation) */ ?>
                                 <div id="qr-preview-placeholder">
                                     <i class="fa-solid fa-qrcode fa-5x text-body-secondary opacity-25" aria-hidden="true"></i>
                                     <p class="mt-3 text-body-secondary mb-0">
@@ -1187,7 +1190,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </p>
                                 </div>
 
-                                <!-- Loading Spinner -->
+                                <?php /* Loading Spinner */ ?>
                                 <div id="qr-preview-loading" class="d-none">
                                     <div class="spinner-border text-primary" role="status">
                                         <span class="visually-hidden">Generating...</span>
@@ -1195,11 +1198,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <p class="mt-2 text-body-secondary mb-0">Generating preview...</p>
                                 </div>
 
-                                <!-- Generated QR Image -->
+                                <?php /* Generated QR Image */ ?>
                                 <img id="qr-preview-image" src="" alt="QR Code Preview"
                                      class="img-fluid d-none" style="max-width: 300px;">
 
-                                <!-- Error Message -->
+                                <?php /* Error Message */ ?>
                                 <div id="qr-preview-error" class="d-none">
                                     <i class="fa-solid fa-triangle-exclamation fa-3x text-warning" aria-hidden="true"></i>
                                     <p class="mt-2 text-danger mb-0" id="qr-preview-error-text"></p>
@@ -1207,7 +1210,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
 
                             <?php if ($generatedResult !== null && $generatedResult['success']) { ?>
-                            <!-- Server-side generated result (no-JS fallback) -->
+                            <?php /* Server-side generated result (no-JS fallback) */ ?>
                             <div id="qr-server-result" class="mt-3">
                                 <img src="<?php echo htmlspecialchars($generatedResult['data'], ENT_QUOTES, 'UTF-8'); ?>"
                                      alt="Generated QR Code" class="img-fluid" style="max-width: 300px;">
@@ -1226,12 +1229,12 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <?php } ?>
                         </div>
                         <div class="card-footer bg-transparent">
-                            <!-- Download + Save Controls -->
+                            <?php /* Download + Save Controls */ ?>
                             <div class="d-grid gap-2">
                                 <button type="button" class="btn btn-primary btn-lg" id="btn-download" disabled>
                                     <i class="fa-solid fa-download me-1" aria-hidden="true"></i> Download QR Code
                                 </button>
-                                <!-- ============================================================
+                                <?php /* ============================================================
                                      💾 "Save to my account" (Epic E3 stage 2b, #52/#24)
                                      Claims the next-generated code into the visitor's account via
                                      POST /api/v1/save. Anonymous visitors are prompted to sign in
@@ -1239,7 +1242,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                      the aria-disabled upgrade prompt below rather than failing
                                      silently. Disabled (not hidden) until a preview exists, mirroring
                                      #btn-download's own gating so both controls behave consistently.
-                                     ============================================================ -->
+                                     ============================================================ */ ?>
                                 <button type="button" class="btn btn-outline-primary btn-lg" id="btn-save-account" disabled
                                         aria-describedby="save-account-status">
                                     <i class="fa-solid fa-bookmark me-1" aria-hidden="true"></i>
@@ -1248,13 +1251,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </span>
                                 </button>
                                 <div id="save-account-status" class="form-text text-center d-none" role="status" aria-live="polite"></div>
-                                <!-- ♿ Upgrade prompt: rendered disabled-looking but NEVER hidden
+                                <?php /* ♿ Upgrade prompt: rendered disabled-looking but NEVER hidden
                                      when the caller's saved_codes plan limit is reached (a 402
                                      response from POST /save) - see cuercode-generator.js
-                                     handleSaveToAccount(). -->
+                                     handleSaveToAccount(). */ ?>
                                 <div id="save-account-upgrade" class="alert alert-warning d-none d-flex justify-content-between align-items-center flex-wrap gap-2 mb-0 mt-2" role="alert">
                                     <span>You've reached your plan's saved-codes limit.</span>
-                                    <a href="/pricing" id="save-account-upgrade-link" class="btn btn-sm btn-warning">Upgrade plan</a>
+                                    <a href="/pricing/" id="save-account-upgrade-link" class="btn btn-sm btn-outline-primary">See plans</a>
                                 </div>
                             </div>
                             <div class="text-center mt-2">
@@ -1271,7 +1274,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
         </div>
     </section>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📦 Bulk Generate Panel (FG-003) - CSV / JSON -> ZIP download
          ====================================================================
          A simple, accessible panel for generating many QR codes at once.
@@ -1279,7 +1282,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
          preview, then submit to download a ZIP. The endpoint is synchronous and
          anonymous-capable (POST /api/v1/bulk-generate). Without JavaScript the
          panel degrades to an explanatory note plus a documentation link.
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-4 border-top" id="bulk-section" aria-labelledby="bulk-heading">
         <div class="container">
             <div class="row justify-content-center">
@@ -1299,7 +1302,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <code>items</code> array.
                             </p>
 
-                            <!-- ⛔ No-JS fallback: explain the API directly. -->
+                            <?php /* ⛔ No-JS fallback: explain the API directly. */ ?>
                             <noscript>
                                 <div class="alert alert-info" role="note">
                                     <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
@@ -1311,7 +1314,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 </div>
                             </noscript>
 
-                            <!-- 📥 Input mode + file upload row -->
+                            <?php /* 📥 Input mode + file upload row */ ?>
                             <div class="row g-3 align-items-end mb-3">
                                 <div class="col-sm-4">
                                     <label for="bulk-input-mode" class="form-label">
@@ -1352,7 +1355,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 </div>
                             </div>
 
-                            <!-- 📝 Data textarea -->
+                            <?php /* 📝 Data textarea */ ?>
                             <div class="mb-2">
                                 <label for="bulk-data" class="form-label">
                                     <i class="fa-solid fa-pen-to-square me-1" aria-hidden="true"></i> Bulk data
@@ -1368,7 +1371,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 </div>
                             </div>
 
-                            <!-- 🔢 Count preview + status (polite live region) -->
+                            <?php /* 🔢 Count preview + status (polite live region) */ ?>
                             <div id="bulk-count" class="small text-body-secondary mb-3" aria-live="polite" role="status">
                                 No items detected yet.
                             </div>
@@ -1393,15 +1396,15 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
         </div>
     </section>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📊 QR Types Data (passed to JavaScript)
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <script>
-        /**
+        <?php /**
          * 📊 QR Code Types Data - Loaded from database
          * Used by cuercode-generator.js for dynamic form field rendering.
          * @see tblQRCodeTypes
-         */
+         */ ?>
         var CueRCodeConfig = {
             types: <?php echo json_encode($qrTypes, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
             logos: <?php echo json_encode($predefinedLogos, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
@@ -1414,9 +1417,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 echo json_encode('');
             }
             ?>,
-            /* 👤 Epic E3 stage 2b (#52/#24): whether the visitor already has an
+            <?php /* 👤 Epic E3 stage 2b (#52/#24): whether the visitor already has an
                authenticated account session - drives the "Save to my account"
-               button's behaviour (save directly vs. prompt to sign in). */
+               button's behaviour (save directly vs. prompt to sign in). */ ?>
             isLoggedIn: <?php echo json_encode(function_exists('currentUser') && currentUser() !== null); ?>
         };
     </script>

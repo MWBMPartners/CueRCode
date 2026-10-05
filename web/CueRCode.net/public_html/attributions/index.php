@@ -63,15 +63,14 @@ $pageJS          = [];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🙏 Third-Party Attributions Content
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
                 <div class="col-lg-8">
                     <h1 class="h2 fw-bold mb-4">
-                        <i class="fa-solid fa-hands-holding-heart me-2" aria-hidden="true"></i>
                         Third-Party Attributions
                     </h1>
                     <p class="text-body-secondary mb-4">
@@ -82,9 +81,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                     <div class="legal-content">
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              😀 Twemoji (required attribution - CC-BY-4.0)
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="twemoji" class="h5 mt-4 mb-3">Emoji Graphics: Twemoji</h2>
                         <p>
                             The emoji centre-icon picker (Logo tab) uses graphics from
@@ -103,9 +102,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             form.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              📚 Other vendored open-source libraries
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="libraries" class="h5 mt-4 mb-3">Open-Source Libraries</h2>
                         <p class="text-body-secondary">
                             Listed for completeness and goodwill - the permissive licences below (MIT,

@@ -370,6 +370,60 @@
     // 📚 Saved codes - delete
     // ==========================================================================
 
+    /**
+     * 📭 Tidy the saved-codes library after one card has been removed.
+     *
+     * - Lowers the "N / limit saved" number in the badge by one.
+     * - If that was the LAST saved code, hides the (now empty) grid and
+     *   reveals the server-rendered empty state (#saved-codes-empty - the same
+     *   message and "Create a QR code" button visitors see on a fresh page
+     *   load), so there is no blank gap and no need to reload.
+     * - If this page of results is now empty but other pages still hold codes,
+     *   reloads so the visitor lands on a page that has something on it.
+     */
+    function afterSavedCodeRemoved() {
+        /* 🔢 Keep the usage badge honest (total saved, across all pages) */
+        var $count = $('#saved-codes-count');
+        var remainingTotal = null;
+        if ($count.length > 0) {
+            var current = parseInt($count.text(), 10);
+            if (!isNaN(current)) {
+                remainingTotal = Math.max(0, current - 1);
+                $count.text(String(remainingTotal));
+            }
+        }
+
+        /* 🔍 How many cards are still on this page? */
+        var remainingOnPage = $('#saved-codes-list > .col').length;
+        if (remainingTotal === null) {
+            /* 📌 No badge number to read - fall back to this page's cards */
+            remainingTotal = remainingOnPage;
+        }
+
+        if (remainingOnPage > 0) {
+            return;
+        }
+
+        if (remainingTotal > 0) {
+            /* 📄 This page is empty but later/earlier pages are not */
+            window.location.reload();
+            return;
+        }
+
+        /* 📭 Nothing left at all: swap the empty grid for the empty state */
+        $('#saved-codes-list').remove();
+        $('#library-section nav[aria-label="Saved codes pagination"]').remove();
+
+        var $empty = $('#saved-codes-empty');
+        if ($empty.length > 0) {
+            $empty.removeClass('d-none');
+            /* ♿ The focused Delete button just disappeared - move focus to the
+               empty-state block so keyboard and screen-reader users are not
+               dropped back at the top of the page. */
+            $empty.trigger('focus');
+        }
+    }
+
     function wireDeleteQrForms() {
         $(document).on('submit', '.delete-qr-form', function (event) {
             event.preventDefault();
@@ -393,7 +447,10 @@
                 method: 'DELETE',
                 success: function (response) {
                     showAlert('library-ajax-alert', response.message, 'success');
-                    $form.closest('.col').fadeOut(200, function () { $(this).remove(); });
+                    $form.closest('.col').fadeOut(200, function () {
+                        $(this).remove();
+                        afterSavedCodeRemoved();
+                    });
                 },
                 error: function (xhr, status) {
                     if (status === 'abort') {
@@ -456,6 +513,32 @@
     }
 
     /**
+     * 📭 The "no API keys yet" empty state, as an HTML string.
+     *
+     * Matches the block account/index.php renders on the server (icon, two
+     * lines of text and - when the "Create key" form is on the page - a primary
+     * button that jumps to the key-name field). It holds only fixed text, no
+     * server-supplied values, so building it as a string is safe.
+     *
+     * @returns {string}
+     */
+    function apiKeysEmptyStateHtml() {
+        var html = '<div class="text-center py-4" id="api-keys-list-empty">'
+            + '<p class="mb-3"><i class="fa-solid fa-key fa-2x text-cuercode-primary opacity-75" aria-hidden="true"></i></p>'
+            + '<p class="fw-semibold mb-1">You have not created any API keys yet.</p>'
+            + '<p class="text-body-secondary mb-3">An API key lets your own software create QR codes through the CueRCode API.</p>';
+
+        /* 📌 Only offer the button if there is a form to jump to (not at the plan limit) */
+        if ($('#api-key-create-form').length > 0) {
+            html += '<a href="#api-key-name" class="btn btn-primary">'
+                + '<i class="fa-solid fa-plus me-1" aria-hidden="true"></i> Name your first key</a>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    /**
      * 🖼️ Render the API-keys list from a JSON keys array (fully escaped - no
      * raw HTML from the server is ever inserted directly).
      *
@@ -467,7 +550,7 @@
 
         if (keys.length === 0) {
             if ($list.length > 0) {
-                $list.replaceWith('<p class="text-body-secondary mb-0" id="api-keys-list-empty">You have not created any API keys yet.</p>');
+                $list.replaceWith(apiKeysEmptyStateHtml());
             }
             return;
         }
@@ -505,7 +588,7 @@
                 $scopes.append($('<span class="badge text-bg-light border text-body-secondary">No scopes granted</span>'));
             } else {
                 key.scopes.forEach(function (scope) {
-                    $scopes.append($('<span class="badge text-bg-info-subtle border me-1"></span>').text(scope));
+                    $scopes.append($('<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle me-1"></span>').text(scope));
                 });
             }
 

@@ -76,7 +76,6 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                 <div class="col-lg-9">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-bolt me-2" aria-hidden="true"></i>
                         Quickstart
                     </h1>
                     <p class="text-body-secondary mb-4">
@@ -86,9 +85,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                     <div class="legal-content">
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. The fastest anonymous path
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 class="h5 mt-4 mb-3">1. Generate a PNG anonymously (curl)</h2>
                         <p>
                             <code>POST /api/v1/generate</code> (the "single code" endpoint) always requires
@@ -115,9 +114,9 @@ open qr-output/001-url.png   # macOS; use "xdg-open" on Linux, "start" on Window
                             item at the default PNG format, that is <code>001-url.png</code>.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. Same thing in Python
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 class="h5 mt-4 mb-3">2. The same request in Python</h2>
                         <pre class="bg-body-tertiary p-3 rounded"><code>import io
 import zipfile
@@ -135,9 +134,9 @@ with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
 
 print("Saved qr-output/001-url.png")</code></pre>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Anonymous vs API key
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 class="h5 mt-4 mb-3">3. Anonymous vs. API key - what changes</h2>
                         <p>
                             The request above ran with <strong>zero credentials</strong>. That works because

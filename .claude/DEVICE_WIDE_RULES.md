@@ -2,7 +2,8 @@
 
 > **Why this file exists:** the owner asked (2026-09-23, #108) for the AI-tool
 > fallback rule to apply to ALL projects on their device, not just CueRCode.
-> The watchdog rule was added the same way on 2026-09-24 (#116).
+> The watchdog rule was added the same way on 2026-09-24 (#116), and the
+> "polish check: no AI-made tells" rule on 2026-10-05 (#137).
 > This session runs in a temporary cloud container, so anything written to its
 > home folder is thrown away when the session ends. Copy the block below into
 > each AI tool's device-wide instruction file on your own computer:
@@ -65,3 +66,30 @@ the meantime.
 - **Never leave anything running unwatched.** Before stopping or handing
   over, write down in the handoff document anything still in progress and how
   it's being watched, so the next session or tool can take over the watch.
+
+## 🔍 Polish check: no "AI-made" tells (added 2026-10-05, CueRCode #137)
+
+For every project with a website or app that people see, check regularly, and
+always before a release, for the small details that make it look unfinished or
+machine-made, and fix them:
+
+- No default, preview or development addresses anywhere (hosting-provider
+  preview domains, `localhost`, staging links).
+- Every page has its own title, description, favicon, share image, canonical
+  address and a working social-share preview.
+- The "boring" parts exist and are helpful: real 404/403/500 pages, loading
+  states, empty states and error messages that say what went wrong and what to do.
+- Headings in order, alt text on images, a real sitemap and robots file.
+- No console errors, leftover `console.log`, exposed development files or
+  oversized scripts; CDN integrity hashes checked against the real file.
+- It works on phones, tablets and odd screen sizes, with very long text, empty
+  data and error states.
+- Spacing, fonts, buttons, corner rounding, icons and components stay
+  consistent from page to page.
+- Every button and link really works.
+- Nothing visitors can see, including "View source", contains developer notes,
+  ticket numbers, TODOs or stock marketing phrases.
+
+Automate what can be automated: a check script in the repo, run in CI on every
+push. Do the rest by eye in a real browser at several screen sizes. Record what
+you checked and what you couldn't.

@@ -182,9 +182,9 @@ $pageJS          = ['/assets/js/cuercode-account.js'];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🚪 Sign In Form
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
@@ -192,7 +192,6 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <div class="card shadow-sm">
                         <div class="card-body p-4">
                             <h1 class="h3 fw-bold mb-3 text-center">
-                                <i class="fa-solid fa-right-to-bracket me-2" aria-hidden="true"></i>
                                 Sign in
                             </h1>
 
@@ -210,15 +209,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                             <?php } ?>
 
-                            <!-- 🔔 Live region for JS-driven (AJAX) error/status messages -->
+                            <?php /* 🔔 Live region for JS-driven (AJAX) error/status messages */ ?>
                             <div id="login-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
-
-                            <noscript>
-                                <div class="alert alert-info" role="note">
-                                    <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
-                                    JavaScript is disabled - this form will submit normally and reload the page.
-                                </div>
-                            </noscript>
 
                             <form method="POST" action="/login/<?php echo $nextUrl !== '/account/' ? '?next=' . rawurlencode($nextUrl) : ''; ?>" id="login-form" novalidate
                                   data-next-url="<?php echo htmlspecialchars($nextUrl, ENT_QUOTES, 'UTF-8'); ?>">
@@ -250,9 +242,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </form>
 
                             <?php if (!empty($ssoLoginProviders)) { ?>
-                            <!-- ================================================
+                            <?php /* ================================================
                                  🔐 SSO sign-in buttons (Epic E2, #55/#19/#20/#28)
-                                 ================================================ -->
+                                 ================================================ */ ?>
                             <div class="d-flex align-items-center my-3" role="separator" aria-label="or">
                                 <hr class="flex-grow-1">
                                 <span class="px-2 text-body-secondary small">or</span>

@@ -583,6 +583,36 @@
     // ==========================================================================
 
     /**
+     * 🗣️ Pick the most useful error text out of an API error body.
+     *
+     * The API sends its explanation in `message` (errorResponse() in
+     * fn_response.php). Some older code paths used `error`, so that is read
+     * second. If neither holds readable text the caller's plain fallback is
+     * used. Always returns a string.
+     *
+     * @param {Object|undefined} body     Parsed JSON body (xhr.responseJSON), if any
+     * @param {string}           fallback Plain-English text to use when the body has none
+     * @returns {string} The text to show the visitor
+     */
+    function getApiErrorText(body, fallback) {
+        if (body && typeof body.message === 'string' && body.message !== '') {
+            return body.message;
+        }
+        if (body && typeof body.error === 'string' && body.error !== '') {
+            return body.error;
+        }
+        return fallback;
+    }
+
+    /**
+     * 🌐 Plain-English text for a request that never got an answer
+     * (offline, dropped connection). Used when xhr.status is 0.
+     *
+     * @type {string}
+     */
+    var UNREACHABLE_TEXT = 'We couldn\'t reach CueRCode just now. Check your connection and try again.';
+
+    /**
      * 👁️ Execute the live preview AJAX call
      *
      * Sends the current form data and customisation options to the preview
@@ -655,13 +685,8 @@
                         $('#preview-status').addClass('d-none');
                     }, 2000);
                 } else {
-                    /* 📌 API returned an error in the response */
-                    var errorMsg;
-                    if (response && response.error) {
-                        errorMsg = response.error;
-                    } else {
-                        errorMsg = 'Failed to generate preview.';
-                    }
+                    /* 📌 API returned an error in the response (text is in `message`) */
+                    var errorMsg = getApiErrorText(response, 'We couldn\'t create a preview. Please try again.');
                     showPreviewError(errorMsg);
                     previewReady = false;
                     $('#btn-download').prop('disabled', true);
@@ -677,10 +702,12 @@
                 }
 
                 /* 📌 Show error state in preview panel */
-                var errorMsg = 'Failed to generate preview. Please try again.';
-                if (xhr.responseJSON && xhr.responseJSON.error) {
-                    errorMsg = xhr.responseJSON.error;
+                var errorMsg = 'We couldn\'t create a preview. Please try again.';
+                if (xhr.status === 0) {
+                    errorMsg = UNREACHABLE_TEXT;
                 }
+                /* 🐛 The API's explanation is in `message`, not `error` */
+                errorMsg = getApiErrorText(xhr.responseJSON, errorMsg);
                 showPreviewError(errorMsg);
                 previewReady = false;
                 $('#btn-download').prop('disabled', true);
@@ -689,7 +716,7 @@
                 /* 📌 Update status badge to error */
                 $('#preview-status').removeClass('d-none bg-secondary bg-success')
                     .addClass('bg-danger')
-                    .text('Error');
+                    .text('Not generated');
             }
         });
     }
@@ -779,7 +806,7 @@
         /* 📌 Update status badge to error state */
         $('#preview-status').removeClass('d-none bg-secondary bg-success')
             .addClass('bg-danger')
-            .text('Error');
+            .text('Not generated');
     }
 
     // ==========================================================================
@@ -1406,13 +1433,8 @@
 
                     CueRCode.notify('QR code downloaded successfully!', 'success');
                 } else {
-                    /* 📌 API returned an error */
-                    var errorMsg;
-                    if (response && response.error) {
-                        errorMsg = response.error;
-                    } else {
-                        errorMsg = 'Failed to generate QR code.';
-                    }
+                    /* 📌 API returned an error (text is in `message`) */
+                    var errorMsg = getApiErrorText(response, 'We couldn\'t create your QR code. Please try again.');
                     CueRCode.notify(errorMsg, 'danger');
                 }
             },
@@ -1422,10 +1444,12 @@
                     return;
                 }
 
-                var errorMsg = 'Failed to generate QR code. Please try again.';
-                if (xhr.responseJSON && xhr.responseJSON.error) {
-                    errorMsg = xhr.responseJSON.error;
+                var errorMsg = 'We couldn\'t create your QR code. Please try again.';
+                if (xhr.status === 0) {
+                    errorMsg = UNREACHABLE_TEXT;
                 }
+                /* 🐛 The API's explanation is in `message`, not `error` */
+                errorMsg = getApiErrorText(xhr.responseJSON, errorMsg);
                 CueRCode.notify(errorMsg, 'danger');
             },
             complete: function () {
@@ -1741,6 +1765,26 @@
     }
 
     /**
+     * 🗣️ Plain-English text for a failed bulk request, chosen by HTTP status.
+     * Visitors never see a raw status number.
+     *
+     * @param {number} status The HTTP status of the failed response
+     * @returns {string} A short sentence saying what happened and what to do
+     */
+    function bulkErrorTextForStatus(status) {
+        if (status === 413) {
+            return 'That is too many rows to create in one go. Split your list into smaller batches and try again.';
+        }
+        if (status === 429) {
+            return 'Too many requests just now. Please wait a minute and try again.';
+        }
+        if (status >= 500) {
+            return 'Something went wrong on our side while creating your ZIP. Please try again in a few minutes.';
+        }
+        return 'We couldn\'t create your ZIP. Please check your data and try again.';
+    }
+
+    /**
      * 📦 Submit the bulk request and trigger a ZIP download.
      *
      * Uses the native fetch() API because the response is a binary ZIP blob
@@ -1812,18 +1856,22 @@
                 });
             }
 
-            /* 📌 Error: try to parse a JSON error body for a useful message. */
+            /* 📌 Error: try to parse a JSON error body for a useful message.
+               Two statuses always get a plain-English sentence of our own
+               (too many rows / too many requests); everything else shows the
+               server's own explanation when there is one, else a generic line. */
             return response.json().then(function (data) {
-                var message = 'Bulk generation failed (HTTP ' + response.status + ').';
-                if (data && data.message) {
-                    message = data.message;
+                var message = bulkErrorTextForStatus(response.status);
+                if (response.status !== 413 && response.status !== 429) {
+                    message = getApiErrorText(data, message);
                 }
                 showBulkError(message);
             }).catch(function () {
-                showBulkError('Bulk generation failed (HTTP ' + response.status + ').');
+                /* 📌 The error body was not JSON - use the status-based sentence */
+                showBulkError(bulkErrorTextForStatus(response.status));
             });
         }).catch(function () {
-            showBulkError('Network error — could not reach the bulk endpoint.');
+            showBulkError('We couldn\'t reach CueRCode to create your ZIP. Check your connection and try again.');
         }).then(function () {
             $btn.prop('disabled', false).html(originalHtml);
         });
@@ -2097,10 +2145,8 @@
                 var defaultFields = JSON.parse(defaultFieldsJSON);
                 renderFormFields(defaultFields);
             } catch (e) {
-                /* 📌 Keep the server-rendered fields if JSON parsing fails */
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn('CueRCode: Using server-rendered default fields.');
-                }
+                /* 📌 Keep the server-rendered fields if JSON parsing fails.
+                   This is a normal fallback, so nothing is written to the console. */
             }
 
             /* 📌 Update the content header label */

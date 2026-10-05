@@ -604,17 +604,16 @@ $pageJS          = ['/assets/js/cuercode-account-dashboard.js'];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          👤 Account Dashboard
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-4">
         <div class="container">
             <h1 class="h3 fw-bold mb-4">
-                <i class="fa-solid fa-user me-2" aria-hidden="true"></i>
                 My account
             </h1>
 
-            <!-- 📑 On-page section navigation (mirrors the accessibility guide's convention) -->
+            <?php /* 📑 On-page section navigation (mirrors the accessibility guide's convention) */ ?>
             <nav aria-label="Account sections" class="mb-4">
                 <ul class="nav nav-pills">
                     <li class="nav-item"><a class="nav-link" href="#profile-section">Profile</a></li>
@@ -626,9 +625,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </ul>
             </nav>
 
-            <!-- ================================================================
+            <?php /* ================================================================
                  📝 Profile Section
-                 ================================================================ -->
+                 ================================================================ */ ?>
             <div class="card shadow-sm mb-4" id="profile-section">
                 <div class="card-header bg-transparent">
                     <h2 class="h5 mb-0"><i class="fa-solid fa-id-card me-2" aria-hidden="true"></i>Profile</h2>
@@ -695,15 +694,16 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
 
-            <!-- ================================================================
+            <?php /* ================================================================
                  📚 Saved Codes Library Section
-                 ================================================================ -->
+                 ================================================================ */ ?>
             <div class="card shadow-sm mb-4" id="library-section">
                 <div class="card-header bg-transparent d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <h2 class="h5 mb-0"><i class="fa-solid fa-layer-group me-2" aria-hidden="true"></i>Saved codes</h2>
                     <span class="badge <?php echo $atSavedCodesCap ? 'text-bg-warning' : 'text-bg-secondary'; ?>" id="saved-codes-usage-badge">
+                        <?php // 🔢 The number sits in its own span so the dashboard script can lower it after a delete ?>
+                        <span id="saved-codes-count"><?php echo htmlspecialchars((string) $savedCodesCount, ENT_QUOTES, 'UTF-8'); ?></span>
                         <?php
-                        echo htmlspecialchars((string) $savedCodesCount, ENT_QUOTES, 'UTF-8');
                         echo ' / ';
                         echo $savedCodesLimit === -1
                             ? 'Unlimited'
@@ -722,24 +722,43 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <div id="library-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
 
                     <?php if ($atSavedCodesCap) { ?>
-                    <!-- ♿ Upgrade prompt: visible/announced, never silently hidden -->
+                    <?php /* ♿ Upgrade prompt: visible/announced, never silently hidden */ ?>
                     <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2" role="alert">
                         <span>
                             <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
                             You have reached your plan's saved-codes limit.
                         </span>
-                        <a href="<?php echo htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-sm btn-warning">
-                            Upgrade plan
+                        <a href="<?php echo htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-sm btn-outline-primary">
+                            See plans
                         </a>
                     </div>
                     <?php } ?>
 
-                    <?php if (empty($savedCodes)) { ?>
-                    <p class="text-body-secondary mb-0">
-                        You haven't saved any QR codes yet. Generate one on the
-                        <a href="/">main page</a> and use the "Save to my account" button.
-                    </p>
-                    <?php } else { ?>
+                    <?php
+                    // 📭 Empty state for the library. It is ALWAYS in the page: visible
+                    // when there are no saved codes, hidden (d-none) otherwise. That way
+                    // cuercode-account-dashboard.js can reveal this very same block the
+                    // moment the LAST code is deleted, with no reload and no second copy
+                    // of the wording to keep in step.
+                    $savedCodesEmptyClass = 'text-center py-4';
+                    if (!empty($savedCodes)) {
+                        $savedCodesEmptyClass = $savedCodesEmptyClass . ' d-none';
+                    }
+                    ?>
+                    <div class="<?php echo $savedCodesEmptyClass; ?>" id="saved-codes-empty" tabindex="-1">
+                        <p class="mb-3">
+                            <i class="fa-solid fa-qrcode fa-3x text-cuercode-primary opacity-75" aria-hidden="true"></i>
+                        </p>
+                        <p class="fw-semibold mb-1">You haven't saved any QR codes yet.</p>
+                        <p class="text-body-secondary mb-3">
+                            Make one on the generator and choose "Save to my account" to keep it here.
+                        </p>
+                        <a href="/" class="btn btn-primary">
+                            <i class="fa-solid fa-qrcode me-1" aria-hidden="true"></i> Create a QR code
+                        </a>
+                    </div>
+
+                    <?php if (!empty($savedCodes)) { ?>
                     <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3" id="saved-codes-list">
                         <?php foreach ($savedCodes as $savedCode) { ?>
                         <div class="col">
@@ -798,9 +817,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
 
-            <!-- ================================================================
+            <?php /* ================================================================
                  🔐 Security / Sessions Section
-                 ================================================================ -->
+                 ================================================================ */ ?>
             <div class="card shadow-sm mb-4" id="security-section">
                 <div class="card-header bg-transparent">
                     <h2 class="h5 mb-0"><i class="fa-solid fa-shield-halved me-2" aria-hidden="true"></i>Security</h2>
@@ -894,9 +913,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
 
-            <!-- ================================================================
+            <?php /* ================================================================
                  🔗 Linked Accounts / SSO Section (Epic E2, #55/#19/#20/#28)
-                 ================================================================ -->
+                 ================================================================ */ ?>
             <div class="card shadow-sm mb-4" id="sso-section">
                 <div class="card-header bg-transparent">
                     <h2 class="h5 mb-0"><i class="fa-solid fa-link me-2" aria-hidden="true"></i>Linked accounts</h2>
@@ -904,7 +923,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 <div class="card-body">
                     <p class="text-body-secondary">
                         Sign in faster by linking a Microsoft 365 or Google account. Every SSO identity is linked to
-                        THIS CueRCode account only - it is never used to auto-link a different account, even if the
+                        <strong>this</strong> CueRCode account only - it is never used to auto-link a different account, even if the
                         email addresses match.
                     </p>
 
@@ -977,9 +996,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
 
-            <!-- ================================================================
+            <?php /* ================================================================
                  🔑 API Keys Section (Epic E7 stage 1, #54)
-                 ================================================================ -->
+                 ================================================================ */ ?>
             <div class="card shadow-sm mb-4" id="api-keys-section">
                 <div class="card-header bg-transparent d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <h2 class="h5 mb-0"><i class="fa-solid fa-key me-2" aria-hidden="true"></i>API keys</h2>
@@ -1010,7 +1029,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <div id="api-key-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
 
                     <?php if ($oneTimeApiKeySecret !== null) { ?>
-                    <!-- ♿ role="alert": a one-time secret must be impossible to miss and is NEVER retrievable again. -->
+                    <?php /* ♿ role="alert": a one-time secret must be impossible to miss and is NEVER retrievable again. */ ?>
                     <div class="alert alert-warning" role="alert" id="api-key-one-time-secret">
                         <p class="fw-bold mb-1">
                             <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
@@ -1034,14 +1053,14 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <?php } ?>
 
                     <?php if ($atApiKeysCap) { ?>
-                    <!-- ♿ Upgrade prompt: visible/announced, never silently hidden -->
+                    <?php /* ♿ Upgrade prompt: visible/announced, never silently hidden */ ?>
                     <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2" role="alert">
                         <span>
                             <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
                             You have reached your plan's API key limit.
                         </span>
-                        <a href="<?php echo htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-sm btn-warning">
-                            Upgrade plan
+                        <a href="<?php echo htmlspecialchars($upgradeUrl, ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-sm btn-outline-primary">
+                            See plans
                         </a>
                     </div>
                     <?php } else { ?>
@@ -1080,7 +1099,22 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                     <h3 class="h6 fw-bold">Your keys</h3>
                     <?php if (empty($userApiKeys)) { ?>
-                    <p class="text-body-secondary mb-0" id="api-keys-list-empty">You have not created any API keys yet.</p>
+                    <?php /* 📭 Empty state. cuercode-account-dashboard.js renders the same markup
+                             (renderApiKeysList) if the list ever becomes empty again. */ ?>
+                    <div class="text-center py-4" id="api-keys-list-empty">
+                        <p class="mb-3">
+                            <i class="fa-solid fa-key fa-2x text-cuercode-primary opacity-75" aria-hidden="true"></i>
+                        </p>
+                        <p class="fw-semibold mb-1">You have not created any API keys yet.</p>
+                        <p class="text-body-secondary mb-3">
+                            An API key lets your own software create QR codes through the CueRCode API.
+                        </p>
+                        <?php if (!$atApiKeysCap) { ?>
+                        <a href="#api-key-name" class="btn btn-primary">
+                            <i class="fa-solid fa-plus me-1" aria-hidden="true"></i> Name your first key
+                        </a>
+                        <?php } ?>
+                    </div>
                     <?php } else { ?>
                     <div class="d-flex flex-column gap-2" id="api-keys-list">
                         <?php foreach ($userApiKeys as $apiKeyItem) { ?>
@@ -1113,7 +1147,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         <span class="badge text-bg-light border text-body-secondary">No scopes granted</span>
                                         <?php } else { ?>
                                         <?php foreach ($apiKeyItem['scopes'] as $grantedScope) { ?>
-                                        <span class="badge text-bg-info-subtle border me-1"><?php echo htmlspecialchars($grantedScope, ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle me-1"><?php echo htmlspecialchars($grantedScope, ENT_QUOTES, 'UTF-8'); ?></span>
                                         <?php } ?>
                                         <?php } ?>
                                     </div>
@@ -1146,9 +1180,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
 
-            <!-- ================================================================
+            <?php /* ================================================================
                  📦 Your Data Section (GDPR/CCPA data-subject rights, #37/#52)
-                 ================================================================ -->
+                 ================================================================ */ ?>
             <div class="card shadow-sm mb-4" id="data-section">
                 <div class="card-header bg-transparent">
                     <h2 class="h5 mb-0"><i class="fa-solid fa-database me-2" aria-hidden="true"></i>Your data</h2>
@@ -1157,13 +1191,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <p class="text-body-secondary">
                         Under GDPR, CCPA, and similar privacy laws you have the right to access a copy of your
                         data and to have your account erased. See our
-                        <a href="/privacy.php#rights">Privacy Policy</a> for the full details, including the
+                        <a href="/privacy#rights">Privacy Policy</a> for the full details, including the
                         limited retention exceptions for financial/audit records described below.
                     </p>
 
-                    <!-- ============================================================
+                    <?php /* ============================================================
                          📤 Download my data (access / export / portability)
-                         ============================================================ -->
+                         ============================================================ */ ?>
                     <h3 class="h6 fw-bold">Download my data</h3>
                     <p class="text-body-secondary">
                         Get a complete, machine-readable (JSON) copy of your profile, saved QR codes,
@@ -1175,9 +1209,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <i class="fa-solid fa-download me-1" aria-hidden="true"></i> Download my data
                     </a>
 
-                    <!-- ============================================================
+                    <?php /* ============================================================
                          🗑️ Delete my account (erasure)
-                         ============================================================ -->
+                         ============================================================ */ ?>
                     <h3 class="h6 fw-bold text-danger">Delete my account</h3>
 
                     <?php if ($eraseMessage !== null) { ?>
@@ -1199,7 +1233,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             API key; unlinks every SSO provider (Microsoft&nbsp;365, Google); and removes every
                             saved QR code from your library. Subscription and payment records are kept
                             (detached from your identity) for the legally-required financial/audit retention
-                            period - see <a href="/privacy.php#retention">Section&nbsp;7 of our Privacy Policy</a>.
+                            period - see <a href="/privacy#retention">Section&nbsp;7 of our Privacy Policy</a>.
                         </p>
                     </div>
 
@@ -1217,7 +1251,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <input class="form-check-input" type="checkbox" id="erase-acknowledge"
                                    name="erase_acknowledge" value="1" required>
                             <label class="form-check-label" for="erase-acknowledge">
-                                I understand this action is irreversible and permanently anonymizes my account.
+                                I understand this action is irreversible and permanently anonymises my account.
                             </label>
                         </div>
 
@@ -1240,9 +1274,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
 
-            <!-- ================================================================
+            <?php /* ================================================================
                  🚪 Logout
-                 ================================================================ -->
+                 ================================================================ */ ?>
             <form method="POST" action="/account/">
                 <?php echo csrfField(); ?>
                 <input type="hidden" name="logout_submit" value="1">
@@ -1254,7 +1288,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
     </section>
 
     <script>
-        /* 📊 Config for cuercode-account-dashboard.js */
+        <?php /* 📊 Config for cuercode-account-dashboard.js */ ?>
         var CueRCodeAccountConfig = {
             apiBase: '/api/v1',
             savedCodesLimit: <?php echo json_encode($savedCodesLimit); ?>,

@@ -115,17 +115,18 @@ $pageJS          = [];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🔒 Privacy / Data Protection & Cookies Policy Content
          ⚠️ TEMPLATE — review by qualified legal counsel before production launch.
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
                 <div class="col-lg-8">
                     <h1 class="h2 fw-bold mb-4">Privacy &amp; Data Protection Policy</h1>
                     <p class="text-body-secondary mb-2">
-                        <strong>Last updated:</strong> <?php echo date('F j, Y'); ?>
+                        <?php // 📅 Fixed on purpose: change this date ONLY when the wording of this page changes (it used to print today's date) ?>
+                        <strong>Last updated:</strong> 4 August 2026
                     </p>
                     <p class="text-body-secondary mb-4">
                         <strong>Applies to:</strong> the
@@ -135,9 +136,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                     <div class="legal-content">
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              📑 Contents / on-page navigation
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <nav aria-label="Privacy policy contents" class="mb-4">
                             <h2 class="h5 mt-4 mb-3">Contents</h2>
                             <ul>
@@ -158,9 +159,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </ul>
                         </nav>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. Introduction & scope
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="intro" class="h5 mt-4 mb-3">1. Who We Are &amp; Scope</h2>
                         <p>
                             <?php echo htmlspecialchars($copyrightHolder, ENT_QUOTES, 'UTF-8'); ?>
@@ -188,9 +189,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             region.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. Information we collect
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="data-collected" class="h5 mt-4 mb-3">2. Information We Collect</h2>
 
                         <h3 class="h6 mt-3 mb-2">2.1 QR Code Content You Provide</h3>
@@ -244,9 +245,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             agreement with us (see Section&nbsp;12.3).
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Purposes & lawful bases
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="purposes" class="h5 mt-4 mb-3">3. Purposes &amp; Lawful Bases</h2>
                         <p>We process personal data for the following purposes and, under the GDPR/UK&nbsp;GDPR and similar laws, on the following lawful bases:</p>
                         <ul>
@@ -280,9 +281,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </li>
                         </ul>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              4. Cookies & localStorage
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="cookies" class="h5 mt-4 mb-3">4. Cookies, localStorage &amp; Similar Technologies</h2>
 
                         <h3 class="h6 mt-3 mb-2">4.1 Strictly-Necessary Session Cookie</h3>
@@ -317,9 +318,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             Global Privacy Control (GPC) where required by law.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              5. How we share information
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="sharing" class="h5 mt-4 mb-3">5. How We Share Information</h2>
                         <p>
                             We do not sell your personal data, and we do not &ldquo;share&rdquo; it for
@@ -345,9 +346,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </li>
                         </ul>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              6. International transfers
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="transfers" class="h5 mt-4 mb-3">6. International Data Transfers</h2>
                         <p>
                             We may process and store data in countries other than your own. Where we
@@ -359,9 +360,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             You may contact us for details of the safeguards in place.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              7. Retention
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="retention" class="h5 mt-4 mb-3">7. Data Retention</h2>
                         <p>
                             We keep personal data only for as long as necessary for the purposes set out in
@@ -407,9 +408,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             per counsel and applicable financial-record-keeping law.]</em>
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              8. Security
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="security" class="h5 mt-4 mb-3">8. Data Security</h2>
                         <p>We implement appropriate technical and organisational measures, including:</p>
                         <ul>
@@ -425,9 +426,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             protect your data, we cannot guarantee absolute security.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              9. Breach notification
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="breach" class="h5 mt-4 mb-3">9. Breach Notification</h2>
                         <p>
                             In the event of a personal data breach that is likely to result in a risk to
@@ -441,9 +442,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             notification to state attorneys-general).
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              10. Children's data
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="children" class="h5 mt-4 mb-3">10. Children&rsquo;s Data</h2>
                         <p>
                             The Service is intended for general audiences and is not directed at children. We
@@ -456,9 +457,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             take steps to delete it.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              11. Your rights
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="rights" class="h5 mt-4 mb-3">11. Your Rights &amp; How to Exercise Them</h2>
                         <p>
                             Depending on where you live, you may have some or all of the following rights in
@@ -523,9 +524,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             details in Section&nbsp;14 instead.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              12. Region-specific disclosures
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="regional" class="h5 mt-4 mb-3">12. Region-Specific Disclosures</h2>
 
                         <h3 class="h6 mt-3 mb-2">12.1 European Union &mdash; GDPR</h3>
@@ -654,9 +655,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             complain to the Information Regulator.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              13. Changes
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="changes" class="h5 mt-4 mb-3">13. Changes to This Policy</h2>
                         <p>
                             We may update this policy from time to time. Material changes will be highlighted
@@ -664,9 +665,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             your consent or provide advance notice.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              14. Contact & DPO
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="contact" class="h5 mt-4 mb-3">14. Contact &amp; Data Protection Officer</h2>
                         <p>
                             For privacy enquiries or to exercise your rights, contact our Data Protection

@@ -11,6 +11,9 @@
  *   - Cache-first for static assets (CSS, JS, images, fonts)
  *   - Runtime caching for CDN resources (Bootstrap, FontAwesome, jQuery)
  *   - API requests (/api/) are NEVER cached
+ *   - Private and one-time pages (account, sign-in, registration, password
+ *     reset, e-mail verification, /auth and any address with a `token`
+ *     query parameter) are NEVER cached - they always go to the network
  *   - Offline fallback page when network unavailable and no cache hit
  *
  * Lifecycle:
@@ -41,9 +44,12 @@
 /**
  * 📌 Cache version identifier.
  * Change this value to bust all caches on next service worker activation.
+ * v3: bumped so every older cache is deleted - the old pages cache may hold
+ * copies of private pages (account, reset-password, verify-email) that earlier
+ * versions of this worker stored.
  * @type {string}
  */
-var CACHE_VERSION = 'cuercode-v2';
+var CACHE_VERSION = 'cuercode-v3';
 
 /**
  * 📌 Static assets cache name.
@@ -89,6 +95,23 @@ var PRECACHE_ASSETS = [
     '/assets/img/branding/logo-mark.svg',
     '/assets/img/branding/logo.svg',
     '/offline.html'
+];
+
+/**
+ * 🔒 Path prefixes of private or one-time pages.
+ * Anything whose path STARTS WITH one of these is never read from or written
+ * to a cache: it always goes straight to the network. This keeps signed-in
+ * account details and one-time links from reappearing on a shared computer.
+ * @type {string[]}
+ */
+var PRIVATE_PATH_PREFIXES = [
+    '/account',
+    '/login',
+    '/register',
+    '/forgot-password',
+    '/reset-password',
+    '/verify-email',
+    '/auth'
 ];
 
 /**
@@ -166,7 +189,6 @@ self.addEventListener('activate', function (event) {
                     })
                     .map(function (cacheName) {
                         /* 📌 Delete the outdated cache */
-                        console.log('[CueRCode SW] Deleting old cache:', cacheName);
                         return caches.delete(cacheName);
                     })
             );
@@ -185,6 +207,7 @@ self.addEventListener('activate', function (event) {
 // Intercepts all network requests from controlled pages and applies the
 // appropriate caching strategy based on the request type:
 //
+//   0. Private pages  -> Always go to network (never cached)
 //   1. API requests   -> Always go to network (never cached)
 //   2. HTML pages     -> Network-first, fall back to cache, then offline page
 //   3. CDN resources  -> Cache-first, fall back to network
@@ -219,6 +242,31 @@ self.addEventListener('fetch', function (event) {
 
     if (url.pathname.indexOf('/api/') !== -1) {
         /* 📌 Let API requests pass through to the network unmodified */
+        return;
+    }
+
+    // --------------------------------------------------------------------------
+    // 🔒 Private / one-time pages - Never cache, straight to the network
+    // --------------------------------------------------------------------------
+    // The account area, sign-in and registration, password reset, e-mail
+    // verification and /auth routes (and any address carrying a `token` query
+    // parameter) can show personal details or one-time links. They are never
+    // stored and never served from a cache. If the visitor is offline, page
+    // navigations get the generic offline page (which holds nothing private);
+    // every other kind of request just uses the network as normal.
+    // @see https://developer.mozilla.org/en-US/docs/Web/API/URL/searchParams
+    // --------------------------------------------------------------------------
+
+    if (isPrivateRequest(url)) {
+        if (isNavigationRequest(request)) {
+            event.respondWith(
+                fetch(request).catch(function () {
+                    return caches.match('/offline.html');
+                })
+            );
+        }
+        /* 📌 Non-navigation requests: no respondWith(), so the browser handles
+           them directly on the network without this worker touching them */
         return;
     }
 
@@ -363,6 +411,35 @@ self.addEventListener('fetch', function (event) {
 // Utility functions used by the fetch event handler to classify requests
 // and manage cache updates.
 // ==============================================================================
+
+/**
+ * 🔒 Check if a request is for a private or one-time page
+ *
+ * True when the path starts with one of PRIVATE_PATH_PREFIXES, or when the
+ * address has a `token` query parameter (password-reset and e-mail
+ * verification links). Such requests must never be cached.
+ *
+ * @param {URL} url - The parsed URL object to check
+ * @returns {boolean} True if the request must go straight to the network
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams/has
+ */
+function isPrivateRequest(url) {
+    /* 📌 Any address with a token parameter is a one-time link */
+    if (url.searchParams.has('token')) {
+        return true;
+    }
+
+    /* 📌 Compare the lower-cased path against each private prefix */
+    var pathname = url.pathname.toLowerCase();
+    for (var i = 0; i < PRIVATE_PATH_PREFIXES.length; i++) {
+        if (pathname.indexOf(PRIVATE_PATH_PREFIXES[i]) === 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 /**
  * 🌍 Check if a URL points to a known CDN host

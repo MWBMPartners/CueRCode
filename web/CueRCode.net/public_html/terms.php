@@ -104,24 +104,25 @@ $pageJS          = [];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📜 Terms of Use Content
          ⚠️ TEMPLATE — review by qualified legal counsel before production launch.
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
                 <div class="col-lg-8">
                     <h1 class="h2 fw-bold mb-4">Terms of Use</h1>
                     <p class="text-body-secondary mb-4">
-                        <strong>Last updated:</strong> <?php echo date('F j, Y'); ?>
+                        <?php // 📅 Fixed on purpose: change this date ONLY when the wording of this page changes (it used to print today's date) ?>
+                        <strong>Last updated:</strong> 4 August 2026
                     </p>
 
                     <div class="legal-content">
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              📑 Contents / on-page navigation
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <nav aria-label="Terms of use contents" class="mb-4">
                             <h2 class="h5 mt-4 mb-3">Contents</h2>
                             <ul>
@@ -143,9 +144,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </ul>
                         </nav>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. Acceptance
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="acceptance" class="h5 mt-4 mb-3">1. Acceptance of Terms</h2>
                         <p>
                             By accessing or using
@@ -159,9 +160,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             Service.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. Description of the Service
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="description" class="h5 mt-4 mb-3">2. Description of the Service</h2>
                         <p>
                             <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> provides an
@@ -171,9 +172,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             and a RESTful API.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Eligibility & accounts
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="eligibility" class="h5 mt-4 mb-3">3. Eligibility &amp; Accounts</h2>
                         <p>
                             You must be of the age of majority in your jurisdiction (or have parental/guardian
@@ -183,9 +184,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             account. Notify us promptly of any unauthorised use.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              4. Acceptable use
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="acceptable-use" class="h5 mt-4 mb-3">4. Acceptable Use</h2>
                         <p>You agree not to use the Service to:</p>
                         <ul>
@@ -203,9 +204,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             terminating access, for any suspected violation.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              5. Your content & responsibilities
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="user-content" class="h5 mt-4 mb-3">5. Your Content &amp; Responsibilities</h2>
                         <p>
                             You retain ownership of the content you submit (such as the data you encode and
@@ -215,9 +216,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             necessary to submit it and to encode any third-party or personal data it contains.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              6. Intellectual property & copyright
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="ip" class="h5 mt-4 mb-3">6. Intellectual Property &amp; Copyright</h2>
                         <p>
                             QR codes you generate using the Service are yours to use freely, subject to these
@@ -237,9 +238,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             derivative works from the Service without our prior written consent.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              7. API usage
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="api" class="h5 mt-4 mb-3">7. API Usage Terms</h2>
                         <p>
                             Use of the API is subject to the following, in addition to the rest of these
@@ -254,9 +255,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <li>Where paid API tiers are offered, the applicable fees, billing and refund terms will be set out at the point of purchase and form part of these terms.</li>
                         </ul>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              8. Availability, changes & termination
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="availability" class="h5 mt-4 mb-3">8. Availability, Changes &amp; Termination</h2>
                         <p>
                             We may modify, suspend or discontinue all or part of the Service at any time, and
@@ -267,9 +268,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             and governing law) will survive.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              9. Disclaimer of warranties
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="warranties" class="h5 mt-4 mb-3">9. Disclaimer of Warranties</h2>
                         <p>
                             The Service is provided &ldquo;as is&rdquo; and &ldquo;as available&rdquo; without
@@ -283,9 +284,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             that cannot be limited under applicable consumer-protection law.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              10. Limitation of liability
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="liability" class="h5 mt-4 mb-3">10. Limitation of Liability</h2>
                         <p>
                             To the fullest extent permitted by law,
@@ -303,9 +304,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             for death or personal injury caused by negligence, or fraud).
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              11. Indemnification
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="indemnity" class="h5 mt-4 mb-3">11. Indemnification</h2>
                         <p>
                             You agree to indemnify and hold harmless
@@ -316,9 +317,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             of any law or third-party right.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              12. Governing law & disputes
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="governing-law" class="h5 mt-4 mb-3">12. Governing Law &amp; Disputes</h2>
                         <p>
                             These terms are governed by, and construed in accordance with, the laws of
@@ -330,9 +331,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             by this clause.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              13. General provisions
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="general" class="h5 mt-4 mb-3">13. General Provisions</h2>
                         <p>
                             These terms, together with the Privacy Policy and any terms presented at the point
@@ -343,9 +344,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             acquisition or sale of assets. Headings are for convenience only.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              14. Changes to terms
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="changes" class="h5 mt-4 mb-3">14. Changes to These Terms</h2>
                         <p>
                             We may modify these terms at any time. Changes will be posted on this page with an
@@ -354,9 +355,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             the revised terms.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              15. Contact
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="contact" class="h5 mt-4 mb-3">15. Contact</h2>
                         <p>
                             For questions about these terms, contact us at

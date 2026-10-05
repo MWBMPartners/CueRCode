@@ -43,6 +43,23 @@
     (matches the logo/OG image; change the settings default + manifest);
     (3) **commit the Bootstrap/FontAwesome/jQuery fallback copies** into
     `assets/vendor/` like Swagger UI.
+  - **N1 status:** ✅ report pushed (`51ad222`), awaiting the owner's decisions;
+    nothing in the instruction files changed except the #137 polish rule the
+    owner asked for (CLAUDE.md, DEVICE_WIDE_RULES, memory, AGENTS, .OpenAI).
+  - **N2 status (#137):** first batch pushed `43cee39` (SRI fix, real logo,
+    grid clipping, canonical/share tags, noindex, committed fallbacks, cookie
+    button). Done locally, not yet pushed: header/footer/CSS (brand buttons
+    site-wide, AA-contrast navbar, nav "you are here", en-GB, copyright
+    2025–now, Contact link), homepage copy, manifest, robots.txt +
+    sitemap.xml, landing page, `tools/check_site_polish.php` + CI job
+    `site-polish`, the standing rule. **In flight (watchdog = background-task
+    notifications):** two Sonnet builders — A: developer pages + openapi.json
+    wording; B: 403/404/500/fallback pages, sw.js privacy, JS error messages,
+    account/pricing/register wording, legal "Last updated". **Then:** move HTML
+    and inline-JS comments to PHP comments (script in the session scratchpad,
+    verify by static + rendered comparison), drop icons from page `<h1>`s,
+    re-run the browser sweep, docs, push. Local test setup: MariaDB +
+    `php -S` router (see `.claude/memory/feedback_polish_check.md`).
 - **2026-09-25 afternoon (cloud session).** The owner answered
   12 open decisions (all recorded in "❓ Owner decisions" below and in
   `LAUNCH_DECISIONS.md` §H). Done on them: the #121 fix is on `main`

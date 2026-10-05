@@ -122,6 +122,14 @@ Some steps don't finish straight away: CI (automatic checks) runs, pull-request 
 ### 📚 Thorough documentation update (standing task)
 Keep ALL documentation current: every `.md` file, in-app help, guides and the developer portal, and all Claude info in `.claude/`. Update the OpenAPI/Swagger spec (`web/CueRCode.net/public_html/api/v1/openapi.json`) for every API change. Swagger UI is already included (`/api/docs/`) — it must work on shared hosting with no Docker, which means it needs a **local copy of Swagger UI as a fallback** when the CDN can't be reached (still outstanding — see #103 item 2d).
 
+### 🔍 Polish check: no "AI-made" tells (standing task, owner request 2026-10-05, #137)
+The public site must never look unfinished or machine-made. After any change to pages, templates, CSS or JS, and before every `work-in-progress → alpha` PR:
+1. Run `php tools/check_site_polish.php` (CI also runs it on every push). It checks addresses, titles and share tags, CDN integrity hashes, debug leftovers, alt text, links, sitemap, error pages, comments and wording shipped to visitors, en-GB and CSS grid overflow.
+2. Do the human-eye part the script can't: open each changed page in a real browser at 320, 375, 768, 1024, 1366 and 1920 px, in light and dark mode, with very long text, empty data and error states. Check that spacing, fonts, buttons, corner rounding, icons and components match the rest of the site, and click every new or changed button and link.
+3. Note in the task's issue what you checked and anything you couldn't.
+
+Done = the script reports 0 problems and the human-eye pass is recorded. Anything you can't fix goes into an issue. A device-wide copy of this rule is in `.claude/DEVICE_WIDE_RULES.md`.
+
 ### ⚡ Efficient/smart processing
 Re-order and bundle the above steps as sensible to work efficiently.
 

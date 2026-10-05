@@ -1,22 +1,8 @@
-# ==============================================================================
-# 🤖 CueRCode - Robots.txt
-# ==============================================================================
-# Controls which pages search engine crawlers can access.
-# @see https://developers.google.com/search/docs/crawling-indexing/robots/intro
-# ==============================================================================
+# CueRCode - https://cuercode.net/
 
 User-agent: *
-
-# ✅ Allow all public pages
 Allow: /
-
-# 🚫 Disallow private/API paths
-# 🔒 NOTE: /install/ is intentionally NOT listed here (F-020). A robots.txt
-#    Disallow entry is publicly readable and would advertise the installer path
-#    to scanners. The directory is instead blocked at the HTTP layer by
-#    install/.htaccess (Require all denied) and should be deleted post-setup.
-Disallow: /api/
+Disallow: /api/v1/
 Disallow: /error/
 
-# 📍 Sitemap location (uncomment when sitemap is available)
-# Sitemap: https://cuercode.net/sitemap.xml
+Sitemap: https://cuercode.net/sitemap.xml

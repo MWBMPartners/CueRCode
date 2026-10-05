@@ -3,6 +3,14 @@
 > Copyright (c) 2025-2026 MWBM Partners Ltd. Report only. **No instruction file
 > has been changed.** The owner decides what to apply.
 
+> **Line numbers:** `CLAUDE.md` references are to the file as of commit `51ad222`.
+> A parallel session's commit `8b1cd55` (same day) then inserted a 4-line
+> "Product principles" section after line 72, so **add 4 to any CLAUDE.md line
+> number of 73 or above**. Verdict on that new rule ("Flexibility in everything
+> commercial… never hard-code a commercial rule"): **KEEP**. It is product
+> context only the owner knows (PA: "Context is never cruft"), and it agrees with
+> everything else in the file.
+
 ## 0. What was checked, against what
 
 **Anthropic sources, fetched live on 2026-10-05** (not from memory):

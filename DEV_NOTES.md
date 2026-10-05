@@ -740,6 +740,41 @@ Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destinati
 
 ---
 
+## 🔍 Site Polish Check & Template Comments (2026-10-05, #137)
+
+- **`php tools/check_site_polish.php`** - source-only (no database, no web
+  server). CI job `site-polish` runs it on every push; exit 1 = a problem.
+  Warnings (exit 0) are things only the owner can fix, today the nine
+  `[TEMPLATE: ...]` legal placeholders in `terms.php`/`privacy.php`.
+- **CDN integrity hashes are verified against the committed copies** in
+  `public_html/assets/vendor/` (Bootstrap 5.3.3, jQuery 3.7.1, FontAwesome
+  6.5.1, Swagger UI 5.33.0). When you bump a library, update the copy and the
+  `integrity="..."` value together; the check fails if they disagree. Never type
+  or "remember" a hash: compute it (`openssl dgst -sha384 -binary FILE | openssl
+  base64 -A`) or copy it from the project's own published value. A wrong hash
+  silently blocks the file in every browser (this is what left the site
+  unstyled before #137). FontAwesome has no `integrity` yet - add it once the
+  value is confirmed from two sources.
+- **Comments in page templates are PHP comments** (`<?php /* ... */ ?>`), not
+  HTML `<!-- -->` or JS comments inside inline `<script>` blocks, which ship to
+  every visitor's "View source". The check fails on any HTML comment in a
+  template. Note that a PHP `//` comment ends at `?>`, so never put `?>` inside one.
+- **Bootstrap 5.3 class names:** there is no `text-bg-*-subtle`; use
+  `bg-*-subtle text-*-emphasis` (the made-up class rendered white-on-white).
+- **CSS grids:** use `repeat(N, minmax(0, 1fr))`, never `repeat(N, 1fr)` - the
+  latter lets long labels push columns out of their card (it clipped the QR-type
+  grid on every screen size).
+- **Page variables:** every page sets `$pageTitle` and `$pageDescription`;
+  private, one-time and error pages also set `$pageNoIndex = true` (noindex, no
+  canonical). Public pages belong in `public_html/sitemap.xml`.
+- **Seeing the real pages in a cloud session:** install MariaDB, load
+  `_includes/sql/install.sql` + `seed_data.sql` into a test database, write a
+  local-only `_auth_keys/auth_creds.php` (git-ignored), and serve
+  `public_html` with `php -S` plus a small router that mimics `.htaccess`
+  (clean URLs, API/auth routes, custom 404). jsDelivr/cdnjs may be blocked by
+  the container's proxy; route them to the committed vendor copies in
+  Playwright. Check widths 320/375/540/768/1024/1366/1920, light and dark.
+
 ## 🧪 Testing
 
 A dependency-free PHP characterization test harness lives under `tests/` at the repo root. It requires no Composer or external packages and can be run on any machine with PHP 8.4+.

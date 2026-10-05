@@ -67,7 +67,6 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
 
                 <div class="col-lg-9">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-code me-2" aria-hidden="true"></i>
                         Code Samples
                     </h1>
                     <p class="text-body-secondary mb-4">
@@ -89,9 +88,9 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
                             </ul>
                         </nav>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. Generate
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="generate" class="h5 mt-4 mb-3">1. Generate a QR Code</h2>
                         <p><code>POST /api/v1/generate</code> - requires an API key or CSRF token; returns
                             a base64 data-URI image, a <code>uuid</code>, and a <code>download_url</code>.</p>
@@ -188,12 +187,12 @@ if response.ok and result["success"]:
 else:
     print(f"Error [{result.get('error_code')}]: {result.get('message')}")</code></pre>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. Preview
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="preview" class="h5 mt-4 mb-3">2. Live Preview</h2>
                         <p><code>POST /api/v1/preview</code> - same auth and request shape as
-                            <code>/generate</code>, but always returns a 300px PNG and is NOT saved to the
+                            <code>/generate</code>, but always returns a 300px PNG and is <strong>not</strong> saved to the
                             database or filesystem (no <code>uuid</code>/<code>download_url</code> in the
                             response). Ideal for a live "as-you-type" preview widget.</p>
 
@@ -229,7 +228,7 @@ $result = json_decode((string) curl_exec($curlHandle), true, 512, JSON_THROW_ON_
 // No curl_close() needed: PHP 8.0+ frees the handle automatically (and PHP 8.5 warns if you call it).
 
 if ($result['success'] === true) {
-    echo $result['data']['image']; // base64 data URI - use directly as an <img src>
+    echo $result['data']['image']; // base64 data URI - use directly as an &lt;img src&gt;
 }</code></pre>
 
                         <h3 class="h6 mt-3">JavaScript (fetch)</h3>
@@ -271,12 +270,12 @@ result = response.json()
 if result["success"]:
     data_uri = result["data"]["image"]  # base64 data URI (always PNG, 300px)</code></pre>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Download
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="download" class="h5 mt-4 mb-3">3. Download a Generated QR Code by UUID</h2>
                         <p><code>GET /api/v1/download/{uuid}</code> - requires an API key or CSRF token;
-                            returns the RAW image/PDF bytes (not JSON) with a
+                            returns the raw image/PDF bytes (not JSON) with a
                             <code>Content-Disposition: attachment</code> header, using the <code>uuid</code>
                             returned by a prior <code>/generate</code> call.</p>
 
@@ -346,15 +345,15 @@ with open("downloaded-qr.png", "wb") as output_file:
     for chunk in response.iter_content(chunk_size=8192):
         output_file.write(chunk)</code></pre>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              4. Bulk generate
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="bulk" class="h5 mt-4 mb-3">4. Bulk Generate (Anonymous OK)</h2>
                         <p><code>POST /api/v1/bulk-generate</code> - the only generation endpoint that
-                            allows anonymous access (still rate limited). Provide EITHER an
-                            <code>items</code> array OR a <code>csv</code> string (see
+                            allows anonymous access (still rate limited). Provide either an
+                            <code>items</code> array or a <code>csv</code> string (see
                             <a href="/developers/recipes/">Integration Recipes</a> for the CSV/spreadsheet
-                            workflow). Returns a ZIP archive by default, UNLESS the shared
+                            workflow). Returns a ZIP archive by default, unless the shared
                             <code>customization</code> requests <code>format: pdf</code> with
                             <code>pdf_layout: avery_5160</code>/<code>avery_l7160</code>, in which case it
                             returns a single combined <code>application/pdf</code> label sheet instead - always
@@ -462,9 +461,9 @@ else:
     error = response.json()
     print(f"Error [{error.get('error_code')}]: {error.get('message')}")</code></pre>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              5. Non-QR barcode
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="barcode" class="h5 mt-4 mb-3">5. Non-QR Barcode</h2>
                         <p><code>POST /api/v1/barcode</code> - requires an API key or CSRF token (same
                             <code>generate</code> scope as <code>/generate</code>); generates a non-QR

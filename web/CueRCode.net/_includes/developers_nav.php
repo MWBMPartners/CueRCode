@@ -61,7 +61,7 @@ $devNavLinks = [
     'errors'         => ['Errors &amp; Rate Limits', '/developers/errors/',       'fa-solid fa-triangle-exclamation'],
     'samples'        => ['Code Samples',           '/developers/samples/',        'fa-solid fa-code'],
     'recipes'        => ['Integration Recipes',    '/developers/recipes/',        'fa-solid fa-flask'],
-    'partners'       => ['Partner Guide',          '/developers/partners/',       'fa-solid fa-handshake'],
+    'partners'       => ['Planned integrations',   '/developers/partners/',       'fa-solid fa-handshake'],
 ];
 ?>
 <nav aria-label="Developer portal sections" class="mb-4 mb-lg-0">

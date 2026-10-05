@@ -79,7 +79,6 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
 
                 <div class="col-lg-9">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-flask me-2" aria-hidden="true"></i>
                         Integration Recipes
                     </h1>
                     <p class="text-body-secondary mb-4">
@@ -100,9 +99,9 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
                             </ul>
                         </nav>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. QR for your website / CMS
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="website" class="h5 mt-4 mb-3">1. QR for Your Website or CMS</h2>
                         <p>
                             The lowest-effort way to put a live QR code on a page you control: generate it
@@ -113,7 +112,7 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
                         <pre class="bg-body-tertiary p-3 rounded"><code>&lt;?php
 declare(strict_types=1);
 
-// Run this ONCE (e.g. when the page/post is saved in your CMS), not per page view.
+// Run this once (e.g. when the page/post is saved in your CMS), not per page view.
 $curlHandle = curl_init('<?php echo $siteURLEscaped; ?>/api/v1/generate');
 curl_setopt_array($curlHandle, [
     CURLOPT_POST           => true,
@@ -141,15 +140,15 @@ $result = json_decode((string) curl_exec($curlHandle), true, 512, JSON_THROW_ON_
                             full <code>Customization</code> schema (colours, patterns, logos, frames).
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. Bulk from spreadsheet
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="spreadsheet" class="h5 mt-4 mb-3">2. Bulk Generate From a Spreadsheet (CSV &rarr; ZIP)</h2>
                         <p>
                             <code>/bulk-generate</code> accepts a raw CSV body directly - export your
                             spreadsheet to CSV and post it as-is, no client-side parsing required. The
                             header row must include a <code>type</code> column and at least one input
-                            column; any column NOT recognised as a shared customisation field (see the
+                            column; any column that is not recognised as a shared customisation field (see the
                             reserved-column list on <a href="/developers/reference/">Endpoint Reference</a>
                             under <code>BulkGenerateRequest.csv</code>) becomes an <code>input.&lt;field&gt;</code>
                             value for that row.
@@ -178,16 +177,16 @@ cat codes-output/manifest.txt   # per-row success/failure detail</code></pre>
                             equivalent, and easier to validate client-side before sending.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Accessible QR via API
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="accessible" class="h5 mt-4 mb-3">3. Accessible QR via the API (<code>preset=accessible</code>)</h2>
                         <p>
                             Set <code>customization.preset</code> to <code>accessible</code> to
                             automatically enforce ECC level H, force the quiet zone on, and drop any pinned
                             QR version so the smallest auto-fit version is used (ISO/IEC 18004 + WCAG 2.1
                             practice). The request is validated server-side: a foreground/background pair
-                            below WCAG's 3:1 minimum contrast is REJECTED with <code>422
+                            below WCAG's 3:1 minimum contrast is rejected with <code>422
                             ACCESSIBLE_CONTRAST_TOO_LOW</code>; a pair between 3:1 and 4.5:1 is allowed but
                             flagged as a non-blocking <code>contrast_warning</code> in the response.
                         </p>
@@ -222,40 +221,29 @@ cat codes-output/manifest.txt   # per-row success/failure detail</code></pre>
     }
 }</code></pre>
                         <p class="mb-0">
-                            For PRINT output, pair this with <code>customization.format = "pdf"</code> and
+                            For print output, pair this with <code>customization.format = "pdf"</code> and
                             <code>pdf_layout = "accessible_caption"</code> or <code>"tactile"</code> to add a
                             large-print + Braille caption and a tactile locator-frame page - see the
                             <a href="/accessibility/">Accessible &amp; Tactile QR Printing Guide</a> for the
                             full print/embossing workflow those layouts are designed for.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              4. Dynamic QR - coming soon
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="dynamic" class="h5 mt-4 mb-3">4. Dynamic QR via API</h2>
                         <div class="alert alert-secondary" role="note">
-                            <p>
-                                <i class="fa-solid fa-hourglass-half me-1" aria-hidden="true"></i>
-                                <strong>Coming soon</strong> - a QR code whose PRINTED image never changes
-                                while its destination stays editable.
-                            </p>
                             <p class="mb-0">
-                                The foundation for this is already BUILT but switched off: the database
-                                tables, the destination-check rules, and an owner-only
-                                <code>GET</code>/<code>PATCH /api/v1/qrcodes/{uuid}/destination</code> API all
-                                exist today (see the Endpoint Reference). What's still missing is the PUBLIC
-                                redirect itself - a <code>/r/{uuid}</code> route and the <code>dynamic_url</code>
-                                QR type are not yet enabled - pending an owner approval decision (gate
-                                G-007). A future, optional Go2My.Link-backed driver is also tracked, waiting
-                                on their public short-link API
-                                (<a href="https://github.com/MWBMPartners/Go2My.Link/issues/137" class="alert-link" rel="noopener noreferrer">Go2My.Link&nbsp;#137</a>).
-                                This recipe will be filled in once the redirect route is switched on.
+                                <i class="fa-solid fa-hourglass-half me-1" aria-hidden="true"></i>
+                                <strong>Coming soon</strong> - dynamic QR codes, whose destination you can
+                                change after the code has been printed. This recipe will be added when they
+                                are available.
                             </p>
                         </div>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              5. Non-QR barcodes via the API
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="barcode" class="h5 mt-4 mb-3">5. Non-QR Barcodes via the API</h2>
                         <p>
                             Need a traditional 1D or 2D barcode (not a QR code) - e.g. a product barcode for
@@ -266,7 +254,7 @@ cat codes-output/manifest.txt   # per-row success/failure detail</code></pre>
                             (<code>datamatrix</code>, <code>pdf417</code>, <code>aztec</code>). It needs
                             authentication the same way as <code>/generate</code> (API key or CSRF token,
                             <code>generate</code> scope), and the generated barcode is saved and downloadable
-                            through the SAME <code>/download/{uuid}</code> endpoint as a QR code.
+                            through the same <code>/download/{uuid}</code> endpoint as a QR code.
                         </p>
                         <pre class="bg-body-tertiary p-3 rounded"><code>curl -X POST <?php echo $siteURLEscaped; ?>/api/v1/barcode \
   -H "Content-Type: application/json" \
@@ -277,7 +265,7 @@ cat codes-output/manifest.txt   # per-row success/failure detail</code></pre>
         "options": { "format": "svg" }
       }'</code></pre>
                         <p class="mb-0">
-                            Check digits are verified server-side: EAN-13/EAN-8/UPC-A codes with a WRONG
+                            Check digits are verified server-side: EAN-13/EAN-8/UPC-A codes with a wrong
                             check digit are rejected with <code>422 GENERATION_FAILED</code> naming the
                             specific problem, never silently coerced. For <code>pdf417</code> codes containing
                             long runs of digits, the server's PHP <code>bcmath</code> extension is required

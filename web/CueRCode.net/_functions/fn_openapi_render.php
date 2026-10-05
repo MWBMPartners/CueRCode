@@ -417,7 +417,7 @@ function oapiFormatDescription(string $text): string
  * 🏷️ Build a compact, human-readable type label for a property schema
  *
  * Examples of output: 'string', 'integer (100-4000)', 'string (max 120 chars)',
- * 'boolean', 'array of object', 'integer OR string' (for a `oneOf` leaf).
+ * 'boolean', 'array of object', 'integer or string' (for a `oneOf` leaf).
  *
  * @param array $propSchema A single property's schema definition
  *
@@ -436,7 +436,7 @@ function oapiPropertyTypeLabel(array $propSchema): string
         }
 
         if (count($parts) > 0) {
-            return implode(' OR ', $parts);
+            return implode(' or ', $parts);
         }
 
         return 'oneOf';
@@ -647,11 +647,11 @@ function oapiRenderAuthSummary(array $security): string
 
     if (count($parts) > 0 && $anonymousAllowed) {
         return 'Anonymous requests are allowed (rate limited more strictly); '
-            . 'authenticate with ' . implode(' OR ', $parts) . ' for higher rate limits.';
+            . 'authenticate with ' . implode(' or ', $parts) . ' for higher rate limits.';
     }
 
     if (count($parts) > 0) {
-        return 'Authentication required: ' . implode(' OR ', $parts) . '.';
+        return 'Authentication required: ' . implode(' or ', $parts) . '.';
     }
 
     if ($anonymousAllowed) {

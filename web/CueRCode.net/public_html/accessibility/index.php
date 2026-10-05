@@ -61,15 +61,14 @@ $pageJS          = [];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          ♿ Accessible & Tactile QR Printing Guide Content
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
                 <div class="col-lg-8">
                     <h1 class="h2 fw-bold mb-4">
-                        <i class="fa-solid fa-universal-access me-2" aria-hidden="true"></i>
                         Accessible &amp; Tactile QR Printing Guide
                     </h1>
                     <p class="text-body-secondary mb-4">
@@ -82,9 +81,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                     <div class="legal-content">
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              📑 Contents / on-page navigation
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <nav aria-label="Guide contents" class="mb-4">
                             <h2 class="h5 mt-4 mb-3">Contents</h2>
                             <ul>
@@ -96,18 +95,18 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <li><a href="#tactile-layer">6. The tactile locator-frame layer</a></li>
                                 <li><a href="#label-sheets">7. Avery label sheets (bulk printing)</a></li>
                                 <li><a href="#workflow">8. Swell-paper &amp; embosser workflow</a></li>
-                                <li><a href="#scope">9. What this does NOT cover</a></li>
+                                <li><a href="#scope">9. What this does not cover</a></li>
                             </ul>
                         </nav>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. Basics
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="basics" class="h5 mt-4 mb-3">1. The Basics: What Makes a QR Code Accessible</h2>
                         <p>
                             A standard QR code is entirely visual - a blind or low-vision person has no
                             way to know a code is even present, let alone where it is or which way up it
-                            faces. A phone's camera can decode the DATA once pointed at the code, but a
+                            faces. A phone's camera can decode the data once pointed at the code, but a
                             person still needs to <em>find</em> the code first. Accessible QR printing
                             addresses that "finding" problem with three complementary, independently
                             useful layers:
@@ -123,7 +122,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </li>
                             <li>
                                 <strong>A tactile locator frame</strong> - a raised border around the code
-                                itself, so a blind user can locate the code by touch BEFORE reaching for
+                                itself, so a blind user can locate the code by touch before reaching for
                                 their phone to scan it.
                             </li>
                         </ul>
@@ -133,9 +132,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             ordinary print-quality standards.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. Sizing / 10:1 rule
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="sizing" class="h5 mt-4 mb-3">2. Minimum Size &amp; the 10:1 Scan-Distance Rule</h2>
                         <p>
                             Two sizing rules apply, and the larger of the two wins:
@@ -162,16 +161,16 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             version (larger, more scan-friendly modules at a given print size).
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Quiet zone / contrast
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="quiet-zone" class="h5 mt-4 mb-3">3. Quiet Zone &amp; Contrast</h2>
                         <p>
                             Per ISO/IEC&nbsp;18004, a QR code needs a "quiet zone" - a clear margin of at
                             least 4 modules on every side, free of any other printed content (text,
                             borders, logos, or the tactile frame described in Section&nbsp;6). Never disable
                             the quiet zone or crop tightly around the code, and keep the tactile frame's
-                            margin (Section&nbsp;6) OUTSIDE the quiet zone, not overlapping it.
+                            margin (Section&nbsp;6) outside the quiet zone, not overlapping it.
                         </p>
                         <p>
                             Foreground/background colour contrast matters for low-vision users even though
@@ -181,14 +180,14 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             choice for any accessibility-focused code.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              4. Placement / height / lighting
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="placement" class="h5 mt-4 mb-3">4. Placement, Height &amp; Lighting</h2>
                         <ul>
                             <li>
                                 <strong>Consistent height:</strong> in a series of signs/labels (e.g. a
-                                museum trail, a row of shelf labels), place codes at the SAME height each
+                                museum trail, a row of shelf labels), place codes at the same height each
                                 time so a returning visitor's hand or cane learns where to expect them.
                             </li>
                             <li>
@@ -208,9 +207,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </li>
                         </ul>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              5. Braille-caption layer
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="braille-layer" class="h5 mt-4 mb-3">5. The Braille-Caption Print Layout</h2>
                         <p>
                             Selecting <strong>PDF Print Layout: Accessible caption</strong> (Options tab,
@@ -221,7 +220,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <p>
                             <strong>Grade-1 only:</strong> this covers the standard a-z alphabet, 0-9
                             digits (with the Braille number sign), a small common-punctuation set, and a
-                            single-letter capital indicator. Grade-2 CONTRACTED Braille (whole-word
+                            single-letter capital indicator. Grade-2 contracted Braille (whole-word
                             shorthand, e.g. a single cell standing in for "the") is intentionally out of
                             scope - it needs a large, locale-specific contraction dictionary that a short
                             caption line does not warrant. Any character outside this subset renders as a
@@ -231,26 +230,26 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <strong>Dot geometry:</strong> dots are drawn at approximately
                             1.5&nbsp;mm diameter, on a 2.5&nbsp;mm intra-cell pitch, with a 6.0&nbsp;mm
                             cell-to-cell pitch and a 10&nbsp;mm line pitch - commonly-cited approximate
-                            print/embossing figures ("Marburg Medium"-style spacing). Always PRINT OR
-                            EMBOSS AT 100% SCALE - a "fit to page" or "shrink to fit" print setting will
+                            print/embossing figures ("Marburg Medium"-style spacing). Always <strong>print or
+                            emboss at 100% scale</strong> - a "fit to page" or "shrink to fit" print setting will
                             distort the dot spacing below a comfortably readable size.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              6. Tactile frame layer
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="tactile-layer" class="h5 mt-4 mb-3">6. The Tactile Locator-Frame Layer</h2>
                         <p>
                             Selecting <strong>PDF Print Layout: Tactile frame</strong> generates
-                            everything in Section&nbsp;5's caption layout PLUS a second, clearly-labelled
+                            everything in Section&nbsp;5's caption layout plus a second, clearly-labelled
                             page containing <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>'s
                             own tactile locator frame design: a raised square border around the QR
                             code's position, four corner registration marks, and a single raised
                             "orientation" dot below the frame marking the bottom/start.
                         </p>
                         <p>
-                            <strong>How to use it:</strong> the frame page is deliberately a SEPARATE page
-                            from the caption page, sized and positioned to REGISTER exactly against it
+                            <strong>How to use it:</strong> the frame page is deliberately a separate page
+                            from the caption page, sized and positioned to line up exactly against it
                             (same paper size, same QR position, no scaling). Reproduce the frame as a
                             raised/tactile layer using one of:
                         </p>
@@ -265,7 +264,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 mode, embossing the frame directly.
                             </li>
                             <li>
-                                <strong>A UV-varnish or raised-ink print pass</strong> over the SAME sheet
+                                <strong>A UV-varnish or raised-ink print pass</strong> over the same sheet
                                 as the caption page, if your printer/print shop offers spot-UV or raised
                                 (thermographic) printing.
                             </li>
@@ -273,29 +272,29 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <p>
                             A blind user runs their fingers along the frame's edge to locate the code by
                             touch, uses the corner marks to judge the code's extent, and the single bottom
-                            dot to judge orientation - all BEFORE reaching for a phone to scan. This is an
+                            dot to judge orientation - all before reaching for a phone to scan. This is an
                             original CueRCode frame design, not a reproduction of any third-party
                             patented tactile-locator design.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              7. Avery label sheets
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="label-sheets" class="h5 mt-4 mb-3">7. Avery Label Sheets (Bulk Printing)</h2>
                         <p>
                             Selecting <strong>PDF Print Layout: Avery 5160</strong> (US Letter, 3&times;10
                             labels/sheet) or <strong>Avery L7160</strong> (A4, 3&times;7 labels/sheet)
                             tiles the generated code onto a standard, commercially available address-label
-                            sheet. Generating a SINGLE code fills exactly one label, leaving the rest of
+                            sheet. Generating a single code fills exactly one label, leaving the rest of
                             the sheet blank as a reusable, printable template with light guide outlines
                             for every label position.
                         </p>
                         <p>
-                            For BULK printing (many different codes, one per label), use the
+                            For bulk printing (many different codes, one per label), use the
                             <code>/api/v1/bulk-generate</code> endpoint with the same request-level
                             <code>format: "pdf"</code> + <code>pdf_layout</code> setting: every item in the
                             batch is tiled into successive labels, spanning as many sheet pages as needed.
-                            See the <a href="/api/docs">API documentation</a> for the full request shape.
+                            See the <a href="/api/docs/">API documentation</a> for the full request shape.
                         </p>
                         <p>
                             Always print label sheets at 100% scale and verify alignment against a
@@ -304,23 +303,23 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             printer/stock combination.
                         </p>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              8. Swell-paper / embosser workflow
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="workflow" class="h5 mt-4 mb-3">8. Swell-Paper &amp; Embosser Workflow (End-to-End)</h2>
                         <ol>
                             <li>Generate the code with the <strong>Accessible QR</strong> preset enabled (Section&nbsp;2-3 sizing/contrast rules applied automatically).</li>
                             <li>Choose PDF format with print layout <strong>Tactile frame</strong> (this includes the caption layout automatically).</li>
-                            <li>Print (or emboss) BOTH pages at 100% scale, on the same physical sheet size.</li>
+                            <li>Print (or emboss) both pages at 100% scale, on the same physical sheet size.</li>
                             <li>Apply your chosen tactile process (swell paper, embosser, or UV-varnish pass) to the frame page, registered against the printed caption page.</li>
-                            <li>Laminate with a MATTE finish if the sheet will be handled repeatedly or exposed to weather - avoid glossy laminate (Section&nbsp;4).</li>
+                            <li>Laminate with a matte finish if the sheet will be handled repeatedly or exposed to weather - avoid glossy laminate (Section&nbsp;4).</li>
                             <li>Mount at a consistent, reachable height, with the quiet zone and tactile frame both left completely unobstructed.</li>
                         </ol>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              9. Scope / what this does not cover
-                             ============================================================ -->
-                        <h2 id="scope" class="h5 mt-4 mb-3">9. What This Does NOT Cover</h2>
+                             ============================================================ */ ?>
+                        <h2 id="scope" class="h5 mt-4 mb-3">9. What This Does Not Cover</h2>
                         <ul>
                             <li>
                                 <strong>Grade-2 (contracted) Braille</strong> - see Section&nbsp;5. Use a

@@ -50,8 +50,8 @@ if (function_exists('getConfig')) {
 }
 
 $pageTitle       = 'Developer Portal';
-$pageDescription = 'Build on the ' . $siteName . ' API: quickstart, authentication, a live '
-    . 'endpoint reference generated from openapi.json, code samples, and integration recipes.';
+$pageDescription = 'Build on the ' . $siteName . ' API: quickstart, authentication, an '
+    . 'endpoint reference, code samples, and integration recipes.';
 $bodyClass       = 'page-developers page-developers-overview';
 $pageCSS         = [];
 $pageJS          = [];
@@ -65,27 +65,21 @@ $developersActive = 'overview';
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📚 Developer Portal Landing Content
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
 
-            <!-- 📌 Hero -->
+            <?php /* 📌 Hero */ ?>
             <div class="row justify-content-center mb-4">
                 <div class="col-lg-9">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-code me-2" aria-hidden="true"></i>
                         <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> Developer Portal
                     </h1>
                     <p class="lead text-body-secondary">
-                        <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> is API-first: the
-                        web generator you can use at
-                        <a href="/">/</a> is built <strong>entirely on top of</strong> the same public
-                        REST API documented here. Every option the UI exposes - every QR code type,
-                        every colour/pattern/logo/frame customisation, every output format - is
-                        available to you as a direct API call. There is no "UI-only" feature held back
-                        from integrators.
+                        Add QR code generation to your own website, app or workflow with our REST API.
+                        Try the <a href="/">generator on our homepage</a> to see what it can do.
                     </p>
                     <div class="d-flex flex-wrap gap-2 mt-3">
                         <a href="/developers/quickstart/" class="btn btn-primary">
@@ -101,43 +95,19 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
             </div>
 
             <div class="row justify-content-center">
-                <!-- 🧭 Left-nav to the sub-pages -->
+                <?php /* 🧭 Left-nav to the sub-pages */ ?>
                 <div class="col-lg-3">
                     <?php require_once CUERCODE_INCLUDES_DIR . 'developers_nav.php'; ?>
                 </div>
 
-                <!-- 📖 Main content -->
+                <?php /* 📖 Main content */ ?>
                 <div class="col-lg-6">
 
-                    <div class="card mb-4">
-                        <div class="card-header">
-                            <h2 class="h5 mb-0">
-                                <i class="fa-solid fa-diagram-project me-2" aria-hidden="true"></i>
-                                The API-first / UI-parity principle
-                            </h2>
-                        </div>
-                        <div class="card-body">
-                            <p>
-                                Per the project brief, <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>'s
-                                web UI is just <em>one client</em> of the public API - not a privileged
-                                first-party surface with extra capabilities. That means:
-                            </p>
-                            <ul class="mb-0">
-                                <li>Anything you can build in the web generator, you can automate via
-                                    <code>POST /api/v1/generate</code> - same 26 QR code types, same colours/
-                                    patterns/marker shapes/logos/frames/gradients, same 6 output formats.</li>
-                                <li>The API is never a "reduced" surface: it is a strict <strong>superset</strong>
-                                    of what the UI exposes, including advanced options the UI doesn't have a
-                                    control for yet (e.g. SVG gradients).</li>
-                                <li>The OpenAPI 3.0.3 specification at
-                                    <code>/api/v1/openapi.json</code> is the single source of truth for the
-                                    API surface. The <a href="/developers/reference/">Endpoint Reference</a>
-                                    page on this portal, and the <a href="/api/docs/">Swagger UI</a>, are both
-                                    generated FROM that file at request time - nothing here is a hand-copied,
-                                    driftable duplicate.</li>
-                            </ul>
-                        </div>
-                    </div>
+                    <?php /* 📌 One plain sentence in place of the old long explanation */ ?>
+                    <p class="mb-4">
+                        Everything you can do on the <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>
+                        website you can also do through the API.
+                    </p>
 
                     <div class="card mb-4">
                         <div class="card-header">
@@ -164,7 +134,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <a href="/developers/reference/" class="fw-semibold text-decoration-none">
                                         <i class="fa-solid fa-list-check me-1" aria-hidden="true"></i>Endpoint Reference</a>
                                     <div class="small text-body-secondary">Every path, method, parameter,
-                                        request/response schema, and error - rendered LIVE from openapi.json.</div>
+                                        request/response schema, and error - always up to date with the API.</div>
                                 </li>
                                 <li>
                                     <a href="/developers/errors/" class="fw-semibold text-decoration-none">
@@ -187,24 +157,24 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 </li>
                                 <li>
                                     <a href="/developers/partners/" class="fw-semibold text-decoration-none">
-                                        <i class="fa-solid fa-handshake me-1" aria-hidden="true"></i>Partner Guide</a>
-                                    <div class="small text-body-secondary">Status of the Go2My.Link and
-                                        SIGNula partner integration contracts.</div>
+                                        <i class="fa-solid fa-handshake me-1" aria-hidden="true"></i>Planned integrations</a>
+                                    <div class="small text-body-secondary">What we are planning with
+                                        Go2My.Link and SIGNula, and dynamic QR codes (coming soon).</div>
                                 </li>
                             </ul>
                         </div>
                     </div>
 
-                    <!-- ========================================================
+                    <?php /* ========================================================
                          ✅ Self-service API keys (Epic E7 stage 1, #54)
-                         ======================================================== -->
+                         ======================================================== */ ?>
                     <div class="alert alert-success" role="note">
                         <h2 class="h6 alert-heading">
                             <i class="fa-solid fa-key me-1" aria-hidden="true"></i>
                             Get your own API key
                         </h2>
                         <p class="mb-0">
-                            Create a free account at <a href="/register/" class="alert-link">/register/</a>,
+                            <a href="/register/" class="alert-link">Create a free account</a>,
                             then create, name, scope, rotate, and revoke your own keys from
                             <a href="/account/#api-keys-section" class="alert-link">Account &gt; API Keys</a>.
                             The free plan includes 1 API key. See

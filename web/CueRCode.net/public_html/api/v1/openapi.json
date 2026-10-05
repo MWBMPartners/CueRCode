@@ -2,7 +2,7 @@
     "openapi": "3.0.3",
     "info": {
         "title": "CueRCode API",
-        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode web UI is built ON TOP OF this API, so the API is the contract and the UI is just one client: every feature available in the UI is available here.\n\nThe API supports 26 QR code types plus 11 non-QR barcode types (via `/barcode` - see the Non-QR Barcodes section below), and 6 output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. API keys are self-service: sign in and open Account > API Keys (`/account/#api-keys-section`), or call `POST /keys` directly. The full key is shown/returned exactly ONCE at creation (or rotation) time and can never be retrieved again - store it safely.\n2. **CSRF Token** - For web UI AJAX requests, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/barcode`, `/barcode/preview`, `/download/{uuid}`, `/save`, `/qrcodes`, `/qrcodes/{uuid}`, `/qrcodes/{uuid}/destination`) require ONE of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited. `/account/*` and `/keys*` accept the CSRF/session method ONLY - an `X-API-Key` request is refused with `403 ACCOUNT_MANAGEMENT_FORBIDDEN` on `/account/*` and `403 API_KEY_MANAGEMENT_FORBIDDEN` on `/keys*` (two different error codes for the two different route groups); the `/auth/*` JSON routes accept a CSRF token or an API key.\n\n## Saved-Codes Library (Epic E3 stage 2a)\n\n`POST /save` claims a previously-generated QR code (by its `uuid`) into the authenticated caller's account, subject to the caller's plan `saved_codes` limit (`402 SAVED_CODES_LIMIT_REACHED` at/over the cap). `GET /qrcodes` lists ONLY the caller's own saved codes (paginated, optionally filtered by `type`). `GET/PATCH/DELETE /qrcodes/{uuid}` operate on a single saved code: ownership is re-checked on every request from the caller's authenticated identity, never from a client-supplied field. A code that is neither owned by the caller nor marked `is_public` is reported as `404` (never `403`) to avoid disclosing that a private UUID belonging to someone else exists. `DELETE` soft-deletes (frees a `saved_codes` slot; the row is retained for audit purposes). `is_public: true` (opt-in; default `false`) grants read/download access to any authenticated caller but never write access - only the owner may `PATCH`/`DELETE`.\n\n## Self-Service API Keys & Scopes (Epic E7 stage 1, #54)\n\nAuthenticated users (session/CSRF only - see below) can self-service manage their own API keys under `/keys`. `POST /keys` creates a key (caller-chosen `name` + an optional `scopes` array from the allowlist below) subject to the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap) and returns the FULL raw key EXACTLY ONCE in the response body (`data.api_key`) - it is never retrievable again, only its HMAC-SHA256 hash is stored. `GET /keys` lists ONLY the caller's own keys (id, prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at`, `expires_at` - NEVER the secret or its hash). `POST /keys/{id}/rotate` issues a NEW secret for a key the caller OWNS (returned once, exactly like create) and immediately invalidates the old one; `DELETE /keys/{id}` soft-revokes (`isActive = 0`) a key the caller OWNS. Every `{id}` operation re-derives the caller's identity server-side and re-checks ownership in the same query as any mutation - a key that is not owned by the caller (or does not exist) is reported as `404` (never `403`, avoiding existence disclosure).\n\n**Owner/design decision:** an X-API-Key-authenticated request to ANY `/keys*` endpoint is refused with `403 API_KEY_MANAGEMENT_FORBIDDEN`, regardless of that key's own scopes - only a CSRF/session-authenticated caller (the account dashboard) may create/list/rotate/revoke keys. This closes a self-escalation path: without it, a compromised low-scope key (e.g. only `generate`) could mint itself a brand-new key with EVERY scope.\n\n**Scope allowlist:** `generate`, `preview`, `download`, `bulk`, `qrcodes:read`, `qrcodes:write`, `save`. A key with no scopes granted can authenticate but cannot access any scoped endpoint. Every scoped endpoint below documents its `requiredScope` in its own description. Scope enforcement applies ONLY to `X-API-Key` authentication - a session/CSRF-authenticated web UI request is NEVER scope-limited (full user rights). A key missing a route's required scope gets `403 INSUFFICIENT_SCOPE`, with the missing scope named in both the `message` and a `required_scope` field alongside the standard error shape.\n\n## Rate Limiting\n\nAll endpoints, including `/health`, are rate limited by the same per-key/per-IP mechanism (no route is exempt). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements. Every XML response also includes an `<?xml-stylesheet type=\"text/xsl\" href=\"/assets/xsl/api-response.xsl\"?>` processing instruction; that stylesheet file does not exist yet, so a browser opening the raw XML directly may show a stylesheet-not-found warning - this does not affect programs/scripts reading the XML, which simply ignore the instruction.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) host limitation:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is NOT an accepted `format` value on this deployment. The QR generation library / GD build on the Dreamhost host does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above. For a modern, well-compressed raster format, **WebP** is the recommended alternative — it is widely supported, typically smaller than PNG, and is an accepted `format` value.\n\n## Non-QR Barcodes (#69)\n\n`POST /barcode` and `POST /barcode/preview` generate NON-QR barcode symbologies alongside the QR engine above, via the vendored tecnickcom/tc-lib-barcode library: 8 linear/1D types (`code128`, `code39`, `ean13`, `ean8`, `upca`, `upce`, `itf`, `codabar`) and 3 matrix/2D types (`datamatrix`, `pdf417`, `aztec`). These are DELIBERATELY separate endpoints from `/generate`/`/preview` - most QR customisation (colours, module/marker patterns, logos, frames) does not apply to a barcode symbol - accepting a small, symbology-appropriate `options` object instead (`format`: svg/png only, `scale`, `height`, `show_text`, `ecc`). STRICT server-side validation runs before rendering: EAN-13/EAN-8/UPC-A check digits are computed or independently verified and REJECTED if wrong, UPC-E is expanded to UPC-A for check-digit verification, Code39's charset and ITF's even-length-digits-only rule are enforced - an invalid `data` value is rejected with `422 GENERATION_FAILED` naming the specific problem, never silently coerced. A generated barcode is saved to `tblQRCodes` and is retrievable via the SAME `/download/{uuid}` endpoint, saved-codes library, and `GET /types` (`typeCategory: \"barcode\"`) as a QR code. Reuses the `generate`/`preview` scopes (not new ones) and is gated on the `barcode_generation` featuresJSON flag - seeded `true` on every current plan, so this is a framework-readiness gate for future tiering rather than a live restriction today.\n\n## Versioning & Deprecation Policy\n\nThe API is versioned in the URL path (`/api/v1/`). The current version is **v1** (`info.version` 1.0.0). `/api/v1/openapi.json` is the source of truth and always reflects the deployed contract.\n\n**Additive, backwards-compatible changes** are made within v1 without a version bump: new endpoints, new optional request fields, new response fields, and new enum/catalogue values (e.g. new QR types and new error codes in the `x-error-codes` catalogue). Clients MUST tolerate unknown response fields and previously-unseen enum/error-code values.\n\n**Breaking changes are never made to v1** (removing or renaming a field/endpoint, changing a field's type or meaning, or tightening validation). Any such change would ship under a new path version (`/api/v2/`) running alongside v1.\n\n**Deprecation:** a field or endpoint slated for future removal is marked `deprecated: true` in this spec and announced with reasonable notice; deprecated features keep working for the life of v1.",
+        "description": "REST API for generating, customising, and downloading QR codes. The CueRCode website uses this same API, so everything you can do on the site you can do through the API.\n\nThe API supports 26 QR code types plus 11 non-QR barcode types (via `/barcode` - see the Non-QR Barcodes section below), and 6 output formats (PNG, JPG, GIF, WebP, SVG, PDF), custom colours and gradients, module and finder-pattern (marker) shapes, logo overlays, decorative frames with labels, error-correction selection, sizing, and an optional quiet zone.\n\n## Authentication\n\nThe API supports two authentication methods (either satisfies a protected endpoint):\n\n1. **API Key** - Include your API key in the `X-API-Key` header. Format: `cuercode_` followed by 40 hexadecimal characters. API keys are self-service: sign in and open Account > API Keys (`/account/#api-keys-section`), or call `POST /keys` directly. The full key is shown/returned exactly once at creation (or rotation) time and can never be retrieved again - store it safely.\n2. **CSRF Token** - For AJAX requests made from the website, include the session CSRF token in the `X-CSRF-Token` header.\n\nProtected endpoints (`/generate`, `/preview`, `/barcode`, `/barcode/preview`, `/download/{uuid}`, `/save`, `/qrcodes`, `/qrcodes/{uuid}`, `/qrcodes/{uuid}/destination`) require one of the above. Anonymous endpoints (`/bulk-generate`, `/types`, `/formats`, `/health`) require no authentication but are still rate limited. `/account/*` and `/keys*` accept the CSRF/session method only - an `X-API-Key` request is refused with `403 ACCOUNT_MANAGEMENT_FORBIDDEN` on `/account/*` and `403 API_KEY_MANAGEMENT_FORBIDDEN` on `/keys*` (two different error codes for the two different route groups); the `/auth/*` JSON routes accept a CSRF token or an API key.\n\n## Saved-Codes Library\n\n`POST /save` claims a previously-generated QR code (by its `uuid`) into the authenticated caller's account, subject to the caller's plan `saved_codes` limit (`402 SAVED_CODES_LIMIT_REACHED` at/over the cap). `GET /qrcodes` lists only the caller's own saved codes (paginated, optionally filtered by `type`). `GET/PATCH/DELETE /qrcodes/{uuid}` operate on a single saved code: ownership is re-checked on every request from the caller's authenticated identity, never from a client-supplied field. A code that is neither owned by the caller nor marked `is_public` is reported as `404` (never `403`) to avoid disclosing that a private UUID belonging to someone else exists. `DELETE` soft-deletes (frees a `saved_codes` slot; the row is retained for audit purposes). `is_public: true` (opt-in; default `false`) grants read/download access to any authenticated caller but never write access - only the owner may `PATCH`/`DELETE`.\n\n## Self-Service API Keys & Scopes\n\nAuthenticated users (session/CSRF only - see below) can self-service manage their own API keys under `/keys`. `POST /keys` creates a key (caller-chosen `name` + an optional `scopes` array from the allowlist below) subject to the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap) and returns the full raw key exactly once in the response body (`data.api_key`) - it is never retrievable again, only its HMAC-SHA256 hash is stored. `GET /keys` lists only the caller's own keys (id, prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at`, `expires_at` - never the secret or its hash). `POST /keys/{id}/rotate` issues a new secret for a key the caller owns (returned once, exactly like create) and immediately invalidates the old one; `DELETE /keys/{id}` revokes (deactivates) a key the caller owns. Ownership is re-checked server-side on every `{id}` operation - a key that is not owned by the caller (or does not exist) is reported as `404` (never `403`, avoiding existence disclosure).\n\n**Session-only key management:** an `X-API-Key`-authenticated request to any `/keys*` endpoint is refused with `403 API_KEY_MANAGEMENT_FORBIDDEN`, regardless of that key's own scopes - only a CSRF/session-authenticated caller (such as the account page on the website) may create, list, rotate or revoke keys. This stops a compromised low-scope key (for example one that only has `generate`) from creating a new key with every scope.\n\n**Scope allowlist:** `generate`, `preview`, `download`, `bulk`, `qrcodes:read`, `qrcodes:write`, `save`. A key with no scopes granted can authenticate but cannot access any scoped endpoint. Every scoped endpoint below documents its `requiredScope` in its own description. Scope enforcement applies only to `X-API-Key` authentication - a session/CSRF-authenticated request from the website is never scope-limited (full user rights). A key missing a route's required scope gets `403 INSUFFICIENT_SCOPE`, with the missing scope named in both the `message` and a `required_scope` field alongside the standard error shape.\n\n## Rate Limiting\n\nAll endpoints, including `/health`, are rate limited by the same per-key/per-IP mechanism (no route is exempt). Rate limit headers are included on every rate-limited response:\n- `X-RateLimit-Limit` - Maximum requests per minute\n- `X-RateLimit-Remaining` - Remaining requests in the current window\n- `X-RateLimit-Reset` - Unix epoch time (seconds) at which the window resets\n- `Retry-After` - Seconds to wait before retrying (only on `429`)\n\n## Request Body\n\nPOST request bodies must be sent with `Content-Type: application/json` (an optional charset parameter such as `; charset=utf-8` is permitted); otherwise the API responds with `415 Unsupported Media Type`. Request bodies larger than the configured maximum (256 KiB by default) are rejected with `413 Payload Too Large`. Per-field length caps also apply (type \u2264 64 chars, each input scalar \u2264 4096 chars, frame_label \u2264 120 chars) and over-long fields are rejected with `400 FIELD_TOO_LONG`.\n\n## Response Format\n\nBy default, responses are in JSON. To receive XML instead, either:\n- Set the `Accept` header to `application/xml`, or\n- Add `?format=xml` to the query string.\n\nXML responses share the same logical structure as JSON: a root `<response>` element wrapping `success`, `message`, `data`, optional `error_code`, and `timestamp`. Arrays serialise as repeated `<item>` elements. Every XML response also includes an `<?xml-stylesheet type=\"text/xsl\" href=\"/assets/xsl/api-response.xsl\"?>` processing instruction; that stylesheet file does not exist yet, so a browser opening the raw XML directly may show a stylesheet-not-found warning - this does not affect programs/scripts reading the XML, which simply ignore the instruction.\n\n## Output Formats\n\nSupported formats: **PNG**, **JPG/JPEG**, **GIF**, **WebP**, **SVG**, and **PDF**. SVG additionally supports gradients and the extended (SVG-only) module/marker shapes; PDF is vector-only and does not support transparency, logo overlay, or frames.\n\n**JPEG-XL (`jxl`) is not supported:** although the underlying schema reserves a `jxl` format value and the web server advertises the `image/jxl` MIME type, JPEG-XL is not an accepted `format` value. The server's image library does not encode JPEG-XL, so requests asking for `jxl` are coerced to `png`. Use one of the six supported formats above. For a modern, well-compressed raster format, **WebP** is the recommended alternative — it is widely supported, typically smaller than PNG, and is an accepted `format` value.\n\n## Non-QR Barcodes\n\n`POST /barcode` and `POST /barcode/preview` generate non-QR barcode symbologies alongside the QR codes above: 8 linear/1D types (`code128`, `code39`, `ean13`, `ean8`, `upca`, `upce`, `itf`, `codabar`) and 3 matrix/2D types (`datamatrix`, `pdf417`, `aztec`). These are deliberately separate endpoints from `/generate`/`/preview` - most QR customisation (colours, module/marker patterns, logos, frames) does not apply to a barcode symbol - accepting a small, symbology-appropriate `options` object instead (`format`: svg/png only, `scale`, `height`, `show_text`, `ecc`). Strict server-side validation runs before rendering: EAN-13/EAN-8/UPC-A check digits are computed or independently verified and rejected if wrong, UPC-E is expanded to UPC-A for check-digit verification, Code39's charset and ITF's even-length-digits-only rule are enforced - an invalid `data` value is rejected with `422 GENERATION_FAILED` naming the specific problem, never silently coerced. A generated barcode is saved and is retrievable via the same `/download/{uuid}` endpoint, saved-codes library, and `GET /types` (`typeCategory: \"barcode\"`) as a QR code. Reuses the `generate`/`preview` scopes (not new ones). It also depends on the `barcode_generation` plan feature, which is currently enabled on every plan, so it does not restrict anyone today.\n\n## Versioning & Deprecation Policy\n\nThe API is versioned in the URL path (`/api/v1/`). The current version is **v1** (`info.version` 1.0.0). `/api/v1/openapi.json` is the source of truth and always reflects the deployed contract.\n\n**Additive, backwards-compatible changes** are made within v1 without a version bump: new endpoints, new optional request fields, new response fields, and new enum/catalogue values (e.g. new QR types and new error codes in the `x-error-codes` catalogue). Clients must tolerate unknown response fields and previously-unseen enum/error-code values.\n\n**Breaking changes are never made to v1** (removing or renaming a field/endpoint, changing a field's type or meaning, or tightening validation). Any such change would ship under a new path version (`/api/v2/`) running alongside v1.\n\n**Deprecation:** a field or endpoint slated for future removal is marked `deprecated: true` in this spec and announced with reasonable notice; deprecated features keep working for the life of v1.",
         "version": "1.0.0",
         "contact": {
             "name": "CueRCode Support",
@@ -38,27 +38,27 @@
         },
         {
             "name": "Accounts",
-            "description": "Registration, email verification, login/session, logout, and password reset (Epic E3 stage 1)"
+            "description": "Registration, email verification, login/session, logout, and password reset"
         },
         {
             "name": "Saved Codes",
-            "description": "Claim, list, fetch, update, and delete saved QR codes - ownership-scoped (Epic E3 stage 2a, #52/#24)"
+            "description": "Claim, list, fetch, update, and delete saved QR codes - ownership-scoped"
         },
         {
             "name": "Account",
-            "description": "Own-account profile/avatar, active-session management, and password change - all own-scoped (Epic E3 stage 2b, #52/#12/#14/#23/#24)."
+            "description": "Own-account profile/avatar, active-session management, and password change - all own-scoped."
         },
         {
             "name": "API Keys",
-            "description": "Self-service API key create/list/rotate/revoke - own-scoped, CSRF/session-only (Epic E7 stage 1, #54). See the top-level description's \"Self-Service API Keys & Scopes\" section for the full model."
+            "description": "Self-service API key create/list/rotate/revoke - own-scoped, CSRF/session-only. See the top-level description's \"Self-Service API Keys & Scopes\" section for the full model."
         },
         {
             "name": "Dynamic Redirects",
-            "description": "Manage a dynamic redirect's destination - own-scoped, GET/PATCH only (Epic E1a Stage S1, #27). ⚠️ DARK: this destination-management API is real and reachable, but there is deliberately NO public /r/{uuid} redirect endpoint anywhere in this codebase yet - see the design doc referenced from LAUNCH_DECISIONS.md \"Dynamic + dual-function QR (gated)\". Stage S2 (the live redirect route) is gated on owner sign-off G-007."
+            "description": "Manage a dynamic redirect's destination - own-scoped, GET/PATCH only. Not available yet: dynamic QR codes are coming soon. These endpoints work, but there is currently no public `/r/{uuid}` redirect address, so a destination managed here is not yet used to send visitors anywhere."
         },
         {
             "name": "SSO",
-            "description": "OIDC/OAuth2 single sign-on - Microsoft 365 and Google now, SIGNula behind a flag pending upstream OIDC support (Epic E2, #55/#19/#20/#28). These are BROWSER-REDIRECT routes (302s and HTML error pages, never JSON) documented here for completeness only - they are NOT part of the versioned /api/v1 JSON contract above; see each path's per-operation `servers` override."
+            "description": "OIDC/OAuth2 single sign-on - Microsoft 365 and Google (when enabled); SIGNula is planned. These are browser-redirect routes (302 redirects and HTML error pages, never JSON) documented here for completeness only - they are not part of the versioned /api/v1 JSON contract above; see each path's per-operation `servers` override."
         }
     ],
     "paths": {
@@ -68,7 +68,7 @@
                     "Generation"
                 ],
                 "summary": "Generate a QR code",
-                "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.\n\nRequires authentication (API key OR CSRF token). requiredScope: `generate` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.\n\nRequires authentication (API key or CSRF token). requiredScope: `generate` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "generateQRCode",
                 "security": [
                     {
@@ -177,7 +177,7 @@
                                     }
                                 },
                                 "accessible_preset": {
-                                    "summary": "Accessible QR preset (E5 / #48) with a print-size recommendation",
+                                    "summary": "Accessible QR preset with a print-size recommendation",
                                     "value": {
                                         "type": "url",
                                         "input": {
@@ -192,7 +192,7 @@
                                     }
                                 },
                                 "accessible_pdf_layout": {
-                                    "summary": "Braille-caption + tactile-frame PDF print layout (E5 / #49)",
+                                    "summary": "Braille-caption + tactile-frame PDF print layout",
                                     "value": {
                                         "type": "url",
                                         "input": {
@@ -244,7 +244,7 @@
                                         }
                                     },
                                     "success_accessible": {
-                                        "summary": "JSON success with preset=accessible metadata (E5 / #48)",
+                                        "summary": "JSON success with preset=accessible metadata",
                                         "value": {
                                             "success": true,
                                             "message": "QR code generated successfully.",
@@ -344,7 +344,7 @@
                     "Generation"
                 ],
                 "summary": "Generate a QR code preview",
-                "description": "Generate a smaller (300px) PNG preview of a QR code. The preview is not saved to the database or filesystem. Use this for real-time previews in the UI before generating the final QR code. The `format` and `size` of any supplied customisation are overridden (always PNG, 300px); all other customisation is honoured.\n\nRequires authentication (API key OR CSRF token). requiredScope: `preview` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Generate a smaller (300px) PNG preview of a QR code. The preview is not saved to the database or filesystem. Use this for real-time previews before generating the final QR code. The `format` and `size` of any supplied customisation are overridden (always PNG, 300px); all other customisation is honoured.\n\nRequires authentication (API key or CSRF token). requiredScope: `preview` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "previewQRCode",
                 "security": [
                     {
@@ -461,8 +461,8 @@
                 "tags": [
                     "Generation"
                 ],
-                "summary": "Generate a NON-QR barcode (1D or 2D)",
-                "description": "Generate a full, non-QR barcode symbology - 8 linear (1D) types (code128, code39, ean13, ean8, upca, upce, itf, codabar) and 3 matrix (2D) types (datamatrix, pdf417, aztec) - via the vendored tecnickcom/tc-lib-barcode library (#69). The generated code is saved to the database and filesystem exactly like a QR code (same `tblQRCodes` row shape, same `/download/{uuid}` endpoint, same saved-codes library), returning a UUID identifier and download URL.\n\n**STRICT server-side validation** runs before any rendering: EAN-13/EAN-8/UPC-A check digits are computed (12/7/11-digit input) or independently VERIFIED and REJECTED if wrong (13/8/12-digit input); UPC-E is expanded to UPC-A for check-digit verification; Code39's charset (digits, UPPERCASE letters, space, `- . $ / + %`) and ITF's even-length-digits-only requirement are enforced. An invalid `data` value for the chosen `symbology` is rejected with `422 GENERATION_FAILED` naming the specific problem (never silently coerced).\n\nMost QR-only customisation (colours, module/marker patterns, logos, frames) does NOT apply here - see `BarcodeOptions` for the small, symbology-appropriate option set this endpoint accepts instead (`format`, `scale`, `height`, `show_text`, `ecc`).\n\nRequires authentication (API key OR CSRF token). requiredScope: `generate` (the SAME scope as `/generate` - barcode generation is the same capability from a scope-taxonomy point of view, not a new scope). Gated on the `barcode_generation` featuresJSON flag (Epic E4/#53) - seeded `true` on every current plan (anonymous/free/pro/business), so this gate is a framework-readiness placeholder for future tiering rather than a live restriction today.",
+                "summary": "Generate a non-QR barcode (1D or 2D)",
+                "description": "Generate a full, non-QR barcode symbology - 8 linear (1D) types (code128, code39, ean13, ean8, upca, upce, itf, codabar) and 3 matrix (2D) types (datamatrix, pdf417, aztec). The generated code is saved exactly like a QR code (same `/download/{uuid}` endpoint, same saved-codes library), returning a UUID identifier and download URL.\n\n**Strict server-side validation** runs before any rendering: EAN-13/EAN-8/UPC-A check digits are computed (12/7/11-digit input) or independently verified and rejected if wrong (13/8/12-digit input); UPC-E is expanded to UPC-A for check-digit verification; Code39's charset (digits, uppercase letters, space, `- . $ / + %`) and ITF's even-length-digits-only requirement are enforced. An invalid `data` value for the chosen `symbology` is rejected with `422 GENERATION_FAILED` naming the specific problem (never silently coerced).\n\nMost QR-only customisation (colours, module/marker patterns, logos, frames) does not apply here - see `BarcodeOptions` for the small, symbology-appropriate option set this endpoint accepts instead (`format`, `scale`, `height`, `show_text`, `ecc`).\n\nRequires authentication (API key or CSRF token). requiredScope: `generate` (the same scope as `/generate` - it is not a new scope). It also depends on the `barcode_generation` plan feature, which is currently enabled on every plan (anonymous/free/pro/business), so it does not restrict anyone today.",
                 "operationId": "generateBarcode",
                 "security": [
                     {
@@ -605,8 +605,8 @@
                 "tags": [
                     "Generation"
                 ],
-                "summary": "Generate a NON-QR barcode preview",
-                "description": "Generate a quick, unsaved preview of a non-QR barcode (#69). Always returns SVG (vector - no size/quality trade-off the way a raster preview would have) and is NOT saved to the database or filesystem. Accepts the SAME request body as `POST /barcode`, including the SAME strict per-symbology data validation.\n\nRequires authentication (API key OR CSRF token). requiredScope: `preview` (the SAME scope as `/preview`). Gated on `barcode_generation` exactly like `/barcode` - see that endpoint's description for the tier-placement note.",
+                "summary": "Generate a non-QR barcode preview",
+                "description": "Generate a quick, unsaved preview of a non-QR barcode. Always returns SVG (vector - no size/quality trade-off the way a raster preview would have) and is not saved to the database or filesystem. Accepts the same request body as `POST /barcode`, including the same strict per-symbology data validation.\n\nRequires authentication (API key or CSRF token). requiredScope: `preview` (the same scope as `/preview`). Depends on the `barcode_generation` plan feature exactly like `/barcode` - see that endpoint's description.",
                 "operationId": "previewBarcode",
                 "security": [
                     {
@@ -716,7 +716,7 @@
                     "Generation"
                 ],
                 "summary": "Bulk generate QR codes (ZIP, or an Avery label-sheet PDF)",
-                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide EITHER an `items` array OR a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request depends on the caller's subscription plan (`bulk_batch_size` limit, Epic E4) \u2014 anonymous callers get the `anonymous` plan's allowance (25 by default), while an authenticated user or API key resolves their own plan's allowance instead; exceeding it returns `413` with an `upgrade_url` hint. Per-item failures do NOT abort the batch \u2014 each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF (E5 / #49):** when the REQUEST-LEVEL (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a DIFFERENT shape entirely \u2014 a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout \u2014 a mixed-layout sheet is not a coherent single PDF); a per-item failure does NOT abort the sheet, but it is also NOT left as a blank slot \u2014 the failed item is OMITTED and every subsequent label shifts forward one slot to fill the gap, with the failure reflected only in the `X-Bulk-Failed` response header count (this path has no per-item manifest). See the Customization `pdf_layout` field for the full enum.\n\n**Accessible-preset parity (FG-033 / #57):** when an item's (or the shared) `customization.preset` is `accessible`, enforcement is applied PER ITEM, exactly as on `/generate` — it forces `ecc: H`, forces `quiet_zone: true`, drops any pinned `version`, and evaluates the WCAG contrast ratio of that item's `fg_color`/`bg_color`. Unlike `/generate` (which rejects a sub-3:1 ratio with a single `422 ACCESSIBLE_CONTRAST_TOO_LOW`), a `/bulk-generate` item with a sub-3:1 ratio does NOT abort the batch or the sheet: in the ZIP pipeline it becomes a per-item manifest FAILURE line (`[NNN] FAILED type=... reason=Accessible preset rejected: contrast ratio X:1 is below the WCAG minimum of 3:1.`); in the Avery label-sheet PDF mode that item is OMITTED from the sheet entirely (not left as a blank slot — subsequent labels shift forward one slot to fill the gap), contributing to `X-Bulk-Failed` (the only place this path surfaces a failure, since it has no per-item manifest), and to the existing all-failed `422 BULK_AVERY_ALL_FAILED` if every item fails. A successfully generated accessible item's ZIP manifest OK line is followed by an additional detail line, `accessible: contrast=X:1 (level)`, plus `recommended_print_size_mm=N` when that item also supplied `scan_distance_cm`.\n\nrequiredScope: `bulk` — only enforced if the caller VOLUNTARILY supplies an `X-API-Key` on this anonymous-capable endpoint; a genuinely anonymous request never reaches the scope check at all.",
+                "description": "Generate many QR codes in a single synchronous request and receive them as a ZIP archive (`application/zip`). This endpoint is anonymous-capable (no authentication required) but is rate limited and subject to the same request-body-size cap as the other POST endpoints.\n\nProvide either an `items` array or a `csv` string. An optional request-level `customization` object supplies shared defaults that each item's own customization overrides key-by-key.\n\nThe maximum number of items per request depends on the caller's subscription plan (`bulk_batch_size` limit) \u2014 anonymous callers get the `anonymous` plan's allowance (25 by default), while an authenticated user or API key resolves their own plan's allowance instead; exceeding it returns `413` with an `upgrade_url` hint. Per-item failures do not abort the batch \u2014 each item's outcome is recorded in a `manifest.txt` file inside the ZIP, and successfully generated images are named `NNN-<type>.<ext>`.\n\nIf the server's PHP `zip` extension is not installed, the endpoint returns `501 Not Implemented`.\n\n**Avery label-sheet PDF:** when the request-level (shared) `customization` sets `format: pdf` and `pdf_layout` to `avery_5160` or `avery_l7160`, the response is a different shape entirely \u2014 a single combined `application/pdf` Avery label-sheet document (not a ZIP) with each item tiled into successive label slots, spanning extra sheet pages as needed. Per-item `pdf_layout`/`format` overrides are ignored in this mode (every item is forced onto the same sheet layout \u2014 a mixed-layout sheet is not a coherent single PDF); a per-item failure does not abort the sheet, but it is also not left as a blank slot \u2014 the failed item is omitted and every subsequent label shifts forward one slot to fill the gap, with the failure reflected only in the `X-Bulk-Failed` response header count (this path has no per-item manifest). See the Customization `pdf_layout` field for the full enum.\n\n**Accessible preset:** when an item's (or the shared) `customization.preset` is `accessible`, enforcement is applied per item, exactly as on `/generate` \u2014 it forces `ecc: H`, forces `quiet_zone: true`, drops any pinned `version`, and evaluates the WCAG contrast ratio of that item's `fg_color`/`bg_color`. Unlike `/generate` (which rejects a sub-3:1 ratio with a single `422 ACCESSIBLE_CONTRAST_TOO_LOW`), a `/bulk-generate` item with a sub-3:1 ratio does not abort the batch or the sheet: in the ZIP pipeline it becomes a per-item manifest failure line (`[NNN] FAILED type=... reason=Accessible preset rejected: contrast ratio X:1 is below the WCAG minimum of 3:1.`); in the Avery label-sheet PDF mode that item is omitted from the sheet entirely (not left as a blank slot \u2014 subsequent labels shift forward one slot to fill the gap), contributing to `X-Bulk-Failed` (the only place this path surfaces a failure, since it has no per-item manifest), and to the existing all-failed `422 BULK_AVERY_ALL_FAILED` if every item fails. A successfully generated accessible item's ZIP manifest OK line is followed by an additional detail line, `accessible: contrast=X:1 (level)`, plus `recommended_print_size_mm=N` when that item also supplied `scan_distance_cm`.\n\nrequiredScope: `bulk` \u2014 only enforced if the caller voluntarily supplies an `X-API-Key` on this anonymous-capable endpoint; a genuinely anonymous request never reaches the scope check at all.",
                 "operationId": "bulkGenerateQRCodes",
                 "security": [
                     {},
@@ -773,7 +773,7 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "ZIP archive of generated QR codes (plus manifest.txt) \u2014 OR, when the shared customization requests `format: pdf` with `pdf_layout: avery_5160`/`avery_l7160` (E5 / #49), a single combined Avery label-sheet `application/pdf` document instead. See the operation description.",
+                        "description": "ZIP archive of generated QR codes (plus manifest.txt) \u2014 or, when the shared customization requests `format: pdf` with `pdf_layout: avery_5160`/`avery_l7160`, a single combined Avery label-sheet `application/pdf` document instead. See the operation description.",
                         "headers": {
                             "Content-Disposition": {
                                 "description": "Attachment filename for download (`cuercode-bulk.zip`, or `cuercode-bulk-avery_5160.pdf`/`cuercode-bulk-avery_l7160.pdf` for the Avery-sheet response)",
@@ -803,7 +803,7 @@
                                 }
                             },
                             "application/pdf": {
-                                "description": "Returned instead of application/zip when pdf_layout is avery_5160/avery_l7160 (E5 / #49).",
+                                "description": "Returned instead of application/zip when pdf_layout is avery_5160/avery_l7160.",
                                 "schema": {
                                     "type": "string",
                                     "format": "binary"
@@ -837,7 +837,7 @@
                         "$ref": "#/components/responses/InsufficientScope"
                     },
                     "413": {
-                        "description": "Too many items (exceeds the caller's plan bulk_batch_size limit - BULK_TOO_MANY_ITEMS, with `upgrade_url`/`plan_limit` alongside the standard error shape) or the request body itself exceeds the router's global size cap (PAYLOAD_TOO_LARGE, no `upgrade_url`/`plan_limit`)",
+                        "description": "Too many items (exceeds the caller's plan bulk_batch_size limit - BULK_TOO_MANY_ITEMS, with `upgrade_url`/`plan_limit` alongside the standard error shape) or the request body itself exceeds the global size cap (PAYLOAD_TOO_LARGE, no `upgrade_url`/`plan_limit`)",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -875,7 +875,7 @@
                                         }
                                     },
                                     "payload_too_large": {
-                                        "summary": "Request body exceeds the router's global size cap",
+                                        "summary": "Request body exceeds the global size cap",
                                         "value": {
                                             "success": false,
                                             "message": "Request body too large. Maximum allowed size is 262144 bytes.",
@@ -889,7 +889,7 @@
                         }
                     },
                     "422": {
-                        "description": "Avery label-sheet mode only (E5 / #49): every item failed generation, so there is nothing to place on the sheet (error_code BULK_AVERY_ALL_FAILED)",
+                        "description": "Avery label-sheet mode only: every item failed generation, so there is nothing to place on the sheet (error_code BULK_AVERY_ALL_FAILED)",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -941,7 +941,7 @@
                     "Download"
                 ],
                 "summary": "Download a generated QR code",
-                "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.\n\nRequires authentication (API key OR CSRF token). requiredScope: `download` (API-key requests only; session/CSRF requests are never scope-limited).\n\n**Owner-or-public access rule:** an UNCLAIMED (never `POST /save`d) code is downloadable by any authenticated caller. A CLAIMED code that is not marked `is_public` is downloadable ONLY by its owner. A CLAIMED code marked `is_public: true` is downloadable by any authenticated caller. In every denial case the response is an IDENTICAL `404 NOT_FOUND` (never `403`) - this is a deliberate anti-enumeration measure so a non-owner cannot distinguish \"does not exist\" from \"exists but is private\".",
+                "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.\n\nRequires authentication (API key or CSRF token). requiredScope: `download` (API-key requests only; session/CSRF requests are never scope-limited).\n\n**Owner-or-public access rule:** an unclaimed (never `POST /save`d) code is downloadable by any authenticated caller. A claimed code that is not marked `is_public` is downloadable only by its owner. A claimed code marked `is_public: true` is downloadable by any authenticated caller. In every denial case the response is an identical `404 NOT_FOUND` (never `403`) - this is a deliberate anti-enumeration measure so a non-owner cannot distinguish \"does not exist\" from \"exists but is private\".",
                 "operationId": "downloadQRCode",
                 "security": [
                     {
@@ -1032,7 +1032,7 @@
                         "$ref": "#/components/responses/InsufficientScope"
                     },
                     "404": {
-                        "description": "QR code not found - either the UUID is unknown/soft-deleted, the file is no longer present on disk, OR (see the owner-or-public rule above) the caller is not the owner of a private claimed code. All three cases return this identical shape by design.",
+                        "description": "QR code not found - either the UUID is unknown/soft-deleted, the file is no longer present on disk, or (see the owner-or-public rule above) the caller is not the owner of a private claimed code. All three cases return this identical shape by design.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -1182,7 +1182,7 @@
                     "Metadata"
                 ],
                 "summary": "List supported output formats",
-                "description": "Returns all supported QR code output formats with MIME types, file extensions, and feature support information (transparency, logo overlay, frame rendering). No authentication required.\n\nNote: JPEG-XL (`jxl`) is NOT returned here. Although the schema reserves a `jxl` value and the web server advertises `image/jxl`, the host's image library cannot encode JPEG-XL, so it is not an accepted output format on this deployment.",
+                "description": "Returns all supported QR code output formats with MIME types, file extensions, and feature support information (transparency, logo overlay, frame rendering). No authentication required.\n\nNote: JPEG-XL (`jxl`) is not returned here. Although the schema reserves a `jxl` value and the web server advertises `image/jxl`, the server's image library cannot encode JPEG-XL, so it is not an accepted output format on this deployment.",
                 "operationId": "getOutputFormats",
                 "security": [
                     {}
@@ -1305,7 +1305,7 @@
                     "System"
                 ],
                 "summary": "Health check",
-                "description": "Check the health status of the API. Returns database connectivity, application version, and PHP version. Used by monitoring systems and load balancers. No authentication required. This route IS subject to the same per-IP rate limiting as every other endpoint (no special-case exemption in the router) - monitoring/load-balancer callers should poll no more frequently than the advertised `X-RateLimit-Limit`.",
+                "description": "Check the health status of the API. Returns database connectivity, application version, and PHP version. Used by monitoring systems and load balancers. No authentication required. This route is subject to the same per-IP rate limiting as every other endpoint (no special-case exemption) - monitoring/load-balancer callers should poll no more frequently than the advertised `X-RateLimit-Limit`.",
                 "operationId": "healthCheck",
                 "security": [
                     {}
@@ -1399,7 +1399,7 @@
                     "Accounts"
                 ],
                 "summary": "Register a new account",
-                "description": "Create a new (pending) user account and queue an email-verification message. ANTI-ENUMERATION: this endpoint ALWAYS returns the same 201 response, whether the email address was brand new or already registered - the caller cannot distinguish the two outcomes. No new verification email is sent for an already-registered address. Requires a valid CSRF token (web UI) or API key.",
+                "description": "Create a new (pending) user account and queue an email-verification message. Anti-enumeration: this endpoint always returns the same 201 response, whether the email address was brand new or already registered - the caller cannot distinguish the two outcomes. No new verification email is sent for an already-registered address. Requires a valid CSRF token (website) or API key.",
                 "operationId": "authRegister",
                 "security": [
                     {
@@ -1485,7 +1485,7 @@
                     "Accounts"
                 ],
                 "summary": "Log in and establish a session",
-                "description": "Authenticate by email + password and, on success, issue a database-backed session (tblUserSessions) and regenerate the PHP session id. ANTI-ENUMERATION: every failure path (wrong password, no such account, locked account, unverified/pending account, suspended account) returns the IDENTICAL 401 response - none of these states are distinguishable from the outside. Failed attempts count towards an account lockout (security.max_login_attempts, default 5 / security.lockout_duration, default 900 seconds / 15 minutes - both configurable server settings). Requires a valid CSRF token (web UI) or API key. NOTE: the session itself is established purely via a `Set-Cookie` response header (PHP's native session cookie, rotated via `session_regenerate_id()`) - it is NOT returned as a field in the JSON body; subsequent same-origin requests rely on the browser resending that cookie automatically.",
+                "description": "Authenticate by email + password and, on success, start a session. Every failure (wrong password, no such account, locked account, unverified/pending account, suspended account) returns the identical 401 response - none of these states are distinguishable from the outside. Failed attempts count towards an account lockout (by default 5 failed attempts, locking the account for 15 minutes - both are configurable server settings). Requires a valid CSRF token (website) or API key. Note: the session itself is established purely via a `Set-Cookie` response header - it is not returned as a field in the JSON body; subsequent same-origin requests rely on the browser resending that cookie automatically.",
                 "operationId": "authLogin",
                 "security": [
                     {
@@ -1592,7 +1592,7 @@
                     "Accounts"
                 ],
                 "summary": "Log out the current session",
-                "description": "Revoke the current database-backed session (if any) and rotate the PHP session id. Idempotent - calling this with no active session is a harmless no-op that still returns 200, so a status-code difference can never be used to probe session state. Requires a valid CSRF token (web UI) or API key.",
+                "description": "Revoke the current database-backed session (if any) and rotate the PHP session id. Idempotent - calling this with no active session is a harmless no-op that still returns 200, so a status-code difference can never be used to probe session state. Requires a valid CSRF token (website) or API key.",
                 "operationId": "authLogout",
                 "security": [
                     {
@@ -1656,7 +1656,7 @@
                     "Accounts"
                 ],
                 "summary": "Verify an email address",
-                "description": "Consume a single-use, expiring email-verification token (from the link emailed by POST /auth/register) and activate the owning account. Requires a valid CSRF token (web UI) or API key.",
+                "description": "Consume a single-use, expiring email-verification token (from the link emailed by POST /auth/register) and activate the owning account. Requires a valid CSRF token (website) or API key.",
                 "operationId": "authVerifyEmail",
                 "security": [
                     {
@@ -1761,7 +1761,7 @@
                     "Accounts"
                 ],
                 "summary": "Request a password reset email",
-                "description": "Queue a password-reset email if (and only if) the address belongs to an active account. ANTI-ENUMERATION: ALWAYS returns the IDENTICAL 200 response regardless of whether the email is registered - this is a hard requirement (SECURITY.md), not an implementation detail. Requires a valid CSRF token (web UI) or API key.",
+                "description": "Queue a password-reset email if (and only if) the address belongs to an active account. Anti-enumeration: always returns the identical 200 response regardless of whether the email is registered, so the response never reveals whether an address has an account. Requires a valid CSRF token (website) or API key.",
                 "operationId": "authRequestPasswordReset",
                 "security": [
                     {
@@ -1841,7 +1841,7 @@
                     "Accounts"
                 ],
                 "summary": "Reset a password using an emailed token",
-                "description": "Consume a single-use, expiring password-reset token (from the link emailed by POST /auth/request-password-reset) and set a new password. All existing sessions for the account are revoked on success. Requires a valid CSRF token (web UI) or API key.",
+                "description": "Consume a single-use, expiring password-reset token (from the link emailed by POST /auth/request-password-reset) and set a new password. All existing sessions for the account are revoked on success. Requires a valid CSRF token (website) or API key.",
                 "operationId": "authResetPassword",
                 "security": [
                     {
@@ -1949,7 +1949,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Save a generated QR code to your account",
-                "description": "Claim a previously-generated QR code (by the `uuid` returned from POST /generate) into the authenticated caller's account, or - if the caller already owns it - update its label/visibility. Enforces the caller's plan `saved_codes` limit (`-1` = unlimited) ONLY for a genuinely NEW claim; re-saving an already-owned code never consumes a fresh slot. A code already claimed by a DIFFERENT user is reported as `404` (never `403`/`409` at this stage) to avoid disclosing that the UUID belongs to somebody else. Requires a valid CSRF token (web UI) or API key belonging to an authenticated account. requiredScope: `save` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Claim a previously-generated QR code (by the `uuid` returned from POST /generate) into the authenticated caller's account, or - if the caller already owns it - update its label/visibility. Enforces the caller's plan `saved_codes` limit (`-1` = unlimited) only for a genuinely new claim; re-saving an already-owned code never consumes a fresh slot. A code already claimed by a different user is reported as `404` (never `403`/`409` at this stage) to avoid disclosing that the UUID belongs to somebody else. Requires a valid CSRF token (website) or API key belonging to an authenticated account. requiredScope: `save` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "saveQRCode",
                 "security": [
                     {
@@ -2029,7 +2029,7 @@
                         "$ref": "#/components/responses/Forbidden"
                     },
                     "404": {
-                        "description": "The UUID does not exist, has been deleted, or is already saved to a DIFFERENT account (indistinguishable from not-found - see description above)",
+                        "description": "The UUID does not exist, has been deleted, or is already saved to a different account (indistinguishable from not-found - see description above)",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2067,7 +2067,7 @@
                         "$ref": "#/components/responses/UnsupportedMediaType"
                     },
                     "429": {
-                        "description": "Too many requests. Two distinct causes share this status code on `/save` specifically: (1) the router's generic per-key/per-IP rate limit (`RATE_LIMIT_EXCEEDED`), or (2) `SAVE_LOCK_BUSY` - the per-user `saved_codes` advisory lock (SECURITY.md F-023, closing a plan-limit TOCTOU race) timed out because another `/save` request for this SAME account is already mid-flight. Both include a `Retry-After` header; back off and retry.",
+                        "description": "Too many requests. Two distinct causes share this status code on `/save` specifically: (1) the generic per-key/per-IP rate limit (`RATE_LIMIT_EXCEEDED`), or (2) `SAVE_LOCK_BUSY` - another `/save` request for this same account was already in progress and this request timed out waiting for it. Both include a `Retry-After` header; back off and retry.",
                         "headers": {
                             "Retry-After": {
                                 "description": "Seconds to wait before retrying",
@@ -2092,7 +2092,7 @@
                                 },
                                 "examples": {
                                     "rate_limited": {
-                                        "summary": "Router-level rate limit exceeded",
+                                        "summary": "Rate limit exceeded",
                                         "value": {
                                             "success": false,
                                             "message": "Rate limit exceeded. Please wait before making another request.",
@@ -2102,7 +2102,7 @@
                                         }
                                     },
                                     "save_lock_busy": {
-                                        "summary": "Per-user saved_codes advisory-lock contention (F-023)",
+                                        "summary": "Another save for this account is already in progress",
                                         "value": {
                                             "success": false,
                                             "message": "The saved-codes service is busy processing another request for your account. Please try again shortly.",
@@ -2149,7 +2149,7 @@
                     "Saved Codes"
                 ],
                 "summary": "List your saved QR codes",
-                "description": "Lists ONLY the authenticated caller's own saved QR codes - never another user's rows, public or otherwise. Supports pagination (`page`, `per_page`, capped at 100) and an optional `type` filter matching the QR code type name. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Lists only the authenticated caller's own saved QR codes - never another user's rows, public or otherwise. Supports pagination (`page`, `per_page`, capped at 100) and an optional `type` filter matching the QR code type name. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "listQRCodes",
                 "security": [
                     {
@@ -2241,7 +2241,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Fetch one saved QR code",
-                "description": "Allowed only if the caller owns the code OR it is marked `is_public: true` - otherwise `404` (never `403`, to avoid disclosing that a private UUID belonging to someone else exists). requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Allowed only if the caller owns the code or it is marked `is_public: true` - otherwise `404` (never `403`, to avoid disclosing that a private UUID belonging to someone else exists). requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "getQRCodeItem",
                 "security": [
                     {
@@ -2319,7 +2319,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Update a saved QR code you own",
-                "description": "Update the `label`, `is_public` visibility, and/or visual `customization` of a saved code the caller OWNS. Ownership is checked BEFORE any other field is read - a non-owned code (including a PUBLIC one; `is_public` never grants write access) is reported as `404`. When `customization` is supplied, the QR image is regenerated in place from the code's existing payload (its `download_url`/`uuid` do not change) and `qrFilePath`/`qrOptions`/`qrOutputFormat` are updated. Content/destination changes are out of scope for this stage. requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Update the `label`, `is_public` visibility, and/or visual `customization` of a saved code the caller owns. Ownership is checked before any other field is read - a non-owned code (including a public one; `is_public` never grants write access) is reported as `404`. When `customization` is supplied, the QR image is regenerated in place from the code's existing payload (its `download_url`/`uuid` do not change). Content/destination changes are not supported by this endpoint. requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "patchQRCodeItem",
                 "security": [
                     {
@@ -2408,7 +2408,7 @@
                     "Saved Codes"
                 ],
                 "summary": "Delete a saved QR code you own",
-                "description": "Soft-deletes (sets `deletedAt`; the row is retained for audit purposes) a saved code the caller OWNS, freeing one `saved_codes` plan slot. Ownership is checked before any mutation; a non-owned code is reported as `404`. requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Deletes a saved code the caller owns (the record is retained for audit purposes), freeing one `saved_codes` plan slot. Ownership is checked before any mutation; a non-owned code is reported as `404`. requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "deleteQRCodeItem",
                 "security": [
                     {
@@ -2497,7 +2497,7 @@
                     "Dynamic Redirects"
                 ],
                 "summary": "Fetch a dynamic redirect's destination (owner only)",
-                "description": "Own-scoped only - a redirect not owned by the caller is reported as 404 (never 403), identically to an unknown UUID (there is no \"is_public\" concept for a redirect destination). `{uuid}` here is the redirect resource's OWN UUID (`tblQRRedirects.redirectUUID`), distinct from a `tblQRCodes.qrUUID`. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited). ⚠️ Epic E1a Stage S1 (#27): this destination-management API is real and reachable, but there is deliberately NO public `/r/{uuid}` redirect endpoint anywhere in this codebase yet for a managed destination to ever be resolved against - that is Stage S2, gated on owner sign-off G-007 (see LAUNCH_DECISIONS.md).",
+                "description": "Own-scoped only - a redirect not owned by the caller is reported as 404 (never 403), identically to an unknown UUID (there is no \"is_public\" concept for a redirect destination). `{uuid}` here is the redirect's own UUID, which is different from the UUID of the saved QR code. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited). **Not available yet:** dynamic QR codes are coming soon. This endpoint works, but there is currently no public `/r/{uuid}` redirect address for a managed destination to be used with.",
                 "operationId": "getRedirectDestination",
                 "security": [
                     {
@@ -2575,7 +2575,7 @@
                     "Dynamic Redirects"
                 ],
                 "summary": "Update a dynamic redirect's destination (owner only)",
-                "description": "Update the `destination_url` and/or `active` state of a dynamic redirect the caller OWNS. Ownership is checked BEFORE any other field is read - a non-owned redirect is reported as 404. A redirect suspended for abuse (`disabledReason='abuse'`) rejects the WHOLE patch with `409 REDIRECT_SUSPENDED`, even from the true owner - only an admin (not built this stage) may re-enable it. `destination_url` is re-validated by `validateRedirectDestination()` on every write (scheme allowlist, userinfo/private-IP/self-referential-loop rejection, IDN normalisation) and an audit-trail row (`tblActivityLog`, `activityType=redirect_destination_changed`) is written on every change. Feature gating is NOT re-checked here (editing an existing code is not a new allocation). requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Update the `destination_url` and/or `active` state of a dynamic redirect the caller owns. Ownership is checked before any other field is read - a non-owned redirect is reported as 404. A redirect suspended for abuse rejects the whole patch with `409 REDIRECT_SUSPENDED`, even from its owner - only an administrator can re-enable it. `destination_url` is re-validated on every write (allowed URL schemes only; embedded credentials, private IP addresses and self-referential redirect loops are rejected; international domain names are normalised) and every change is recorded in an audit log. Plan feature limits are not re-checked here (editing an existing code is not a new allocation). requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "patchRedirectDestination",
                 "security": [
                     {
@@ -2620,7 +2620,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid request - missing both updatable fields (error_code NO_FIELDS), an invalid UUID shape, or destination_url failed validateRedirectDestination() (error_code INVALID_DESTINATION - e.g. a disallowed scheme, embedded credentials, a private/loopback/link-local IP literal, or a self-referential redirect loop)",
+                        "description": "Invalid request - missing both updatable fields (error_code NO_FIELDS), an invalid UUID shape, or destination_url failed validation (error_code INVALID_DESTINATION - e.g. a disallowed scheme, embedded credentials, a private/loopback/link-local IP literal, or a self-referential redirect loop)",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2704,7 +2704,7 @@
                     "Account"
                 ],
                 "summary": "Update your own display name and/or avatar",
-                "description": "Own-account only - the caller's identity is resolved server-side from the CSRF session context, never from a request field. Accepts any combination of display_name, avatar_base64, and remove_avatar (see AccountProfileUpdateRequest). **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
+                "description": "Own-account only - the caller's identity is resolved server-side from the CSRF session context, never from a request field. Accepts any combination of display_name, avatar_base64, and remove_avatar (see AccountProfileUpdateRequest). **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
                 "operationId": "updateAccountProfile",
                 "security": [
                     {
@@ -2750,7 +2750,7 @@
                         "$ref": "#/components/responses/Unauthorized"
                     },
                     "403": {
-                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2795,8 +2795,8 @@
                 "tags": [
                     "Account"
                 ],
-                "summary": "List ONLY your own active sessions",
-                "description": "Returns every non-revoked, non-expired tblUserSessions row owned by the caller - the WHERE clause is unconditionally scoped to the caller's own userID; there is no parameter that widens this to another user's sessions. **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
+                "summary": "List only your own active sessions",
+                "description": "Returns every active (non-revoked, non-expired) session owned by the caller - the result is always scoped to the caller's own account; there is no parameter that widens this to another user's sessions. **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
                 "operationId": "listAccountSessions",
                 "security": [
                     {
@@ -2818,7 +2818,7 @@
                         "$ref": "#/components/responses/Unauthorized"
                     },
                     "403": {
-                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2851,7 +2851,7 @@
                     "Account"
                 ],
                 "summary": "Revoke one of your own sessions",
-                "description": "Own-account only. The UPDATE that revokes the session re-checks userID = caller in the SAME statement - a session ID that exists but belongs to a DIFFERENT user (or does not exist / is already revoked) affects zero rows and is reported as 404, never 403 (the same non-disclosure convention as DELETE /qrcodes/{uuid}). **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (this specific 403 is unrelated to the ownership-check 404 above - it fires before ownership is ever considered). NOTE: there is no special-case protection against revoking your OWN current session (the one making this very request) - doing so succeeds normally and ends that session immediately, functioning as an API-driven logout for that one device.",
+                "description": "Own-account only. Ownership is re-checked as part of the revoke itself - a session ID that exists but belongs to a different user (or does not exist / is already revoked) is reported as 404, never 403 (the same non-disclosure convention as DELETE /qrcodes/{uuid}). **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (this specific 403 is unrelated to the ownership-check 404 above - it fires before ownership is ever considered). Note: there is no special-case protection against revoking your own current session (the one making this very request) - doing so succeeds normally and ends that session immediately, functioning as an API-driven logout for that one device.",
                 "operationId": "deleteAccountSession",
                 "security": [
                     {
@@ -2863,7 +2863,7 @@
                         "name": "id",
                         "in": "path",
                         "required": true,
-                        "description": "The tblUserSessions.sessionID to revoke (64 lowercase hex characters)",
+                        "description": "The session ID to revoke (64 lowercase hex characters)",
                         "schema": {
                             "type": "string",
                             "example": "a1b2c3d4e5f6..."
@@ -2899,7 +2899,7 @@
                         "$ref": "#/components/responses/Unauthorized"
                     },
                     "403": {
-                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2942,7 +2942,7 @@
                     "Account"
                 ],
                 "summary": "Change your own password",
-                "description": "Own-account only. Re-verifies current_password server-side before accepting new_password (never trusts an existing session alone for this action), then revokes every OTHER active session for the account (the CURRENT session, i.e. the one making this request, is preserved so the caller is not immediately logged out). **F-026: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
+                "description": "Own-account only. Re-verifies current_password server-side before accepting new_password (never trusts an existing session alone for this action), then revokes every other active session for the account (the current session, i.e. the one making this request, is preserved so the caller is not immediately logged out). **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
                 "operationId": "changeAccountPassword",
                 "security": [
                     {
@@ -2985,7 +2985,7 @@
                         "$ref": "#/components/responses/BadRequest"
                     },
                     "401": {
-                        "description": "Not authenticated, OR the supplied current_password is incorrect (INVALID_CURRENT_PASSWORD)",
+                        "description": "Not authenticated, or the supplied current_password is incorrect (INVALID_CURRENT_PASSWORD)",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2995,7 +2995,7 @@
                         }
                     },
                     "403": {
-                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3053,8 +3053,8 @@
                 "tags": [
                     "Account"
                 ],
-                "summary": "Download a complete JSON export of your OWN data (GDPR/CCPA, #37)",
-                "description": "Returns a complete, machine-readable JSON export of ONLY the caller's own data: profile, saved QR codes (metadata + payload, never the rendered image blob), sessions (masked identifier + ip/user agent/times, never a replayable raw session token), subscriptions + payment ledger, linked SSO providers (provider name + masked subject + linkedAt, NEVER tokensEncrypted), and API keys (prefix/name/scopes/rate-limits only, NEVER the secret or its hash). The response is sent with `Content-Disposition: attachment; filename=\"cuercode-data-export.json\"`. **F-026 pattern: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
+                "summary": "Download a complete JSON export of your own data (GDPR/CCPA)",
+                "description": "Returns a complete, machine-readable JSON export of only the caller's own data: profile, saved QR codes (metadata + payload, never the rendered image blob), sessions (masked identifier + ip/user agent/times, never a replayable raw session token), subscriptions + payment ledger, linked SSO providers (provider name + masked subject + link date, never the provider tokens), and API keys (prefix/name/scopes/rate-limits only, never the secret or its hash). The response is sent with `Content-Disposition: attachment; filename=\"cuercode-data-export.json\"`. **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
                 "operationId": "exportAccountData",
                 "security": [
                     {
@@ -3084,7 +3084,7 @@
                         "$ref": "#/components/responses/Unauthorized"
                     },
                     "403": {
-                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3119,8 +3119,8 @@
                 "tags": [
                     "Account"
                 ],
-                "summary": "Permanently erase your OWN account by anonymization (GDPR/CCPA, #37)",
-                "description": "Erases the caller's OWN account by ANONYMIZATION, never a hard delete of the row: `email` is replaced with a non-reversible `deleted-<userID>@deleted.invalid` placeholder, `displayName` becomes 'Deleted user', `firstName`/`lastName`/`avatarPath` are cleared (the avatar FILE is also deleted), `passwordHash` is cleared (login becomes impossible), and `status` becomes 'deleted' with `erasedAt` set. ALL sessions are revoked, ALL API keys deactivated, ALL linked SSO providers unlinked, and ALL saved QR codes soft-deleted - all inside ONE database transaction. Subscription/payment rows are RETAINED (for financial/audit obligations) but carry no PII beyond the now-anonymized account reference. Requires the caller's CURRENT password (wrong password -> `401 INVALID_PASSWORD`, nothing is mutated) and an explicit `\"confirm\": true` in the request body (`400 CONFIRMATION_REQUIRED` otherwise). Ends the session on success. **F-026 pattern: session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
+                "summary": "Permanently erase your own account by anonymization (GDPR/CCPA)",
+                "description": "Erases the caller's own account by anonymization, never a hard delete of the record: the email is replaced with a non-reversible `deleted-<userID>@deleted.invalid` placeholder, the display name becomes 'Deleted user', the first name, last name and avatar are cleared (the avatar file is also deleted), the password is cleared (login becomes impossible), and the account status becomes 'deleted' with an erasure timestamp. All sessions are revoked, all API keys deactivated, all linked SSO providers unlinked, and all saved QR codes soft-deleted - all inside one database transaction. Subscription/payment records are retained (for financial/audit obligations) but carry no PII beyond the now-anonymized account reference. Requires the caller's current password (wrong password -> `401 INVALID_PASSWORD`, nothing is changed) and an explicit `\"confirm\": true` in the request body (`400 CONFIRMATION_REQUIRED` otherwise). Ends the session on success. **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
                 "operationId": "eraseAccount",
                 "security": [
                     {
@@ -3184,7 +3184,7 @@
                         }
                     },
                     "401": {
-                        "description": "Not authenticated, OR the supplied current_password is incorrect (INVALID_PASSWORD) - nothing is mutated either way",
+                        "description": "Not authenticated, or the supplied current_password is incorrect (INVALID_PASSWORD) - nothing is changed either way",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3206,7 +3206,7 @@
                         }
                     },
                     "403": {
-                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only (F-026)",
+                        "description": "Authenticated via X-API-Key rather than CSRF/session - account management is CSRF/session-only",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3274,7 +3274,7 @@
                     "API Keys"
                 ],
                 "summary": "Create a self-service API key",
-                "description": "Create a new API key for the caller's OWN account (caller-chosen `name` + an optional `scopes` array from the allowlist - see the top-level description's \"Self-Service API Keys & Scopes\" section). Enforces the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap). The FULL raw key is returned in `data.api_key` EXACTLY ONCE - it is never retrievable again (only its HMAC-SHA256 hash is stored). **Owner/design decision:** this endpoint requires CSRF/session authentication - an X-API-Key-authenticated request gets `403 API_KEY_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (closes a self-escalation path where a compromised low-scope key could mint itself a broader-scoped key).",
+                "description": "Create a new API key for the caller's own account (caller-chosen `name` + an optional `scopes` array from the allowlist - see the top-level description's \"Self-Service API Keys & Scopes\" section). Enforces the caller's plan `api_keys` cap (`402 API_KEY_LIMIT_REACHED` at/over the cap). The full raw key is returned in `data.api_key` exactly once - it is never retrievable again (only its HMAC-SHA256 hash is stored). **Session-only:** this endpoint requires CSRF/session authentication - an X-API-Key-authenticated request gets `403 API_KEY_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (closes a self-escalation path where a compromised low-scope key could mint itself a broader-scoped key).",
                 "operationId": "createApiKey",
                 "security": [
                     {
@@ -3293,7 +3293,7 @@
                 },
                 "responses": {
                     "201": {
-                        "description": "API key created - the raw key is shown here ONLY ONCE",
+                        "description": "API key created - the raw key is shown here only once",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3378,7 +3378,7 @@
                     "API Keys"
                 ],
                 "summary": "List your own API keys",
-                "description": "Lists ONLY the caller's own API keys - id, prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at`, `expires_at`. NEVER includes the full key or its hash. Includes revoked keys (`is_active: false`) alongside active ones. **Owner/design decision:** CSRF/session authentication only - see POST /keys.",
+                "description": "Lists only the caller's own API keys - id, prefix, name, scopes, rate limits, `is_active`, `last_used_at`, `created_at`, `expires_at`. Never includes the full key or its hash. Includes revoked keys (`is_active: false`) alongside active ones. **Session-only:** CSRF/session authentication only - see POST /keys.",
                 "operationId": "listApiKeys",
                 "security": [
                     {
@@ -3436,7 +3436,7 @@
                     "API Keys"
                 ],
                 "summary": "Rotate an API key you own",
-                "description": "Issues a NEW secret for a key the caller OWNS (returned once, exactly like create) and immediately invalidates the OLD one (the old raw key stops authenticating the instant this succeeds). The key's identity (id, name, scopes, rate limits) is preserved - only the secret changes. Ownership is re-checked in the SAME UPDATE statement as the mutation; a key not owned by the caller (or that does not exist, or is already revoked) is reported as `404` (never `403` - no existence disclosure). **Owner/design decision:** CSRF/session authentication only - see POST /keys.",
+                "description": "Issues a new secret for a key the caller owns (returned once, exactly like create) and immediately invalidates the old one (the old raw key stops authenticating the instant this succeeds). The key's identity (id, name, scopes, rate limits) is preserved - only the secret changes. Ownership is re-checked as part of the rotation itself; a key not owned by the caller (or that does not exist, or is already revoked) is reported as `404` (never `403` - no existence disclosure). **Session-only:** CSRF/session authentication only - see POST /keys.",
                 "operationId": "rotateApiKey",
                 "security": [
                     {
@@ -3448,7 +3448,7 @@
                         "name": "id",
                         "in": "path",
                         "required": true,
-                        "description": "The tblAPIKeys.apiKeyID to rotate (positive integer)",
+                        "description": "The numeric ID of the key to rotate (positive integer)",
                         "schema": {
                             "type": "integer",
                             "minimum": 1,
@@ -3458,7 +3458,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "API key rotated - the NEW raw key is shown here ONLY ONCE",
+                        "description": "API key rotated - the new raw key is shown here only once",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3558,7 +3558,7 @@
                     "API Keys"
                 ],
                 "summary": "Revoke an API key you own",
-                "description": "Soft-revokes (`isActive = 0`; the row is retained for audit purposes) a key the caller OWNS - a revoked key stops authenticating immediately. Ownership + `isActive = 1` are re-checked in the SAME UPDATE statement as the mutation; a key not owned by the caller (or that does not exist, or is already revoked) is reported as `404` (never `403` - no existence disclosure, and idempotent: revoking an already-revoked key also returns 404 rather than a special-cased response). **Owner/design decision:** CSRF/session authentication only - see POST /keys.",
+                "description": "Revokes (deactivates) a key the caller owns (the record is retained for audit purposes) - a revoked key stops authenticating immediately. Ownership and active status are re-checked as part of the revoke itself; a key not owned by the caller (or that does not exist, or is already revoked) is reported as `404` (never `403` - no existence disclosure, and idempotent: revoking an already-revoked key also returns 404 rather than a special-cased response). **Session-only:** CSRF/session authentication only - see POST /keys.",
                 "operationId": "deleteApiKey",
                 "security": [
                     {
@@ -3570,7 +3570,7 @@
                         "name": "id",
                         "in": "path",
                         "required": true,
-                        "description": "The tblAPIKeys.apiKeyID to revoke (positive integer)",
+                        "description": "The numeric ID of the key to revoke (positive integer)",
                         "schema": {
                             "type": "integer",
                             "minimum": 1,
@@ -3651,15 +3651,15 @@
             "servers": [
                 {
                     "url": "",
-                    "description": "Site root (NOT /api/v1) - this route lives at https://cuercode.net/auth/{provider}, outside the versioned JSON API"
+                    "description": "Site root (not /api/v1) - this route lives at https://cuercode.net/auth/{provider}, outside the versioned JSON API"
                 }
             ],
             "get": {
                 "tags": [
                     "SSO"
                 ],
-                "summary": "Begin an SSO sign-in/link attempt (BROWSER REDIRECT, not JSON)",
-                "description": "⚠️ NOT a JSON API endpoint - this is a browser-redirect route (Epic E2, #55/#19/#20/#28), documented here for completeness only. A visitor's browser navigates here directly (an <a href> on the login/register page for an anonymous sign-in); the response is an HTTP 302 redirect to the provider's own authorize URL (PKCE S256 challenge + a fresh `state`/`nonce` bound to the visitor's session), never a JSON body. If the visitor is ALREADY authenticated, a bare GET instead renders a one-click HTML confirmation page containing the CSRF-protected POST form that actually begins the \"link an additional provider\" flow (see the POST variant below) - a link never begins from a bare GET with no CSRF token. Renders an accessible HTML error page (not JSON) if the provider is unknown or not currently enabled+configured (ssoProviderIsUsable()).",
+                "summary": "Begin an SSO sign-in/link attempt (browser redirect, not JSON)",
+                "description": "**Not a JSON API endpoint** - this is a browser-redirect route, documented here for completeness only. A visitor's browser navigates here directly (an <a href> on the login/register page for an anonymous sign-in); the response is an HTTP 302 redirect to the provider's own authorize URL (PKCE S256 challenge + a fresh `state`/`nonce` bound to the visitor's session), never a JSON body. If the visitor is already authenticated, a bare GET instead renders a one-click HTML confirmation page containing the CSRF-protected POST form that actually begins the \"link an additional provider\" flow (see the POST variant below) - a link never begins from a bare GET with no CSRF token. Renders an accessible HTML error page (not JSON) if the provider is unknown or not currently enabled and configured.",
                 "operationId": "ssoBeginAuth",
                 "parameters": [
                     {
@@ -3681,7 +3681,7 @@
                         "name": "next",
                         "in": "query",
                         "required": false,
-                        "description": "Optional post-login destination - MUST be a same-site, root-relative path (validated against an allowlist via resolveSafeSameSiteRedirect(); an absolute URL, protocol-relative //host, or a javascript:/other scheme silently falls back to /account/)",
+                        "description": "Optional post-login destination - must be a same-site, root-relative path (validated against an allowlist; an absolute URL, protocol-relative //host, or a javascript:/other scheme silently falls back to /account/)",
                         "schema": {
                             "type": "string",
                             "example": "/account/"
@@ -3704,8 +3704,8 @@
                 "tags": [
                     "SSO"
                 ],
-                "summary": "Begin a \"link an additional provider\" attempt (authenticated, CSRF-protected, BROWSER REDIRECT)",
-                "description": "⚠️ NOT a JSON API endpoint. Used by the account-settings \"Link ...\" buttons (public_html/account/index.php), which render this as a real <form method=\"POST\"> with a CSRF token - required because, unlike the anonymous GET sign-in flow above, this action affects an ALREADY-authenticated account (Epic E2's \"CSRF on the initiation\" requirement). On success, 302-redirects to the provider's authorize URL exactly like the GET variant; the CALLBACK then links the verified identity onto the CURRENTLY authenticated account rather than creating/logging into a different one - see decideOAuthAccountLinkAction().",
+                "summary": "Begin a \"link an additional provider\" attempt (authenticated, CSRF-protected, browser redirect)",
+                "description": "**Not a JSON API endpoint.** Used by the \"Link ...\" buttons in the account settings, which render this as a real <form method=\"POST\"> with a CSRF token - required because, unlike the anonymous GET sign-in flow above, this action affects an already-authenticated account. On success, 302-redirects to the provider's authorize URL exactly like the GET variant; the callback then links the verified identity onto the currently authenticated account rather than creating/logging into a different one.",
                 "operationId": "ssoBeginLinkAuth",
                 "security": [
                     {
@@ -3738,7 +3738,7 @@
                                 "properties": {
                                     "csrf_token": {
                                         "type": "string",
-                                        "description": "The CSRF token from csrfField()/csrfMeta()"
+                                        "description": "The CSRF token for the visitor's session (also exposed in the `csrf-token` meta tag)"
                                     },
                                     "next": {
                                         "type": "string",
@@ -3766,15 +3766,15 @@
             "servers": [
                 {
                     "url": "",
-                    "description": "Site root (NOT /api/v1) - this is the EXACT redirect_uri every provider is registered with: https://cuercode.net/auth/callback/{provider}"
+                    "description": "Site root (not /api/v1) - this is the exact redirect_uri every provider is registered with: https://cuercode.net/auth/callback/{provider}"
                 }
             ],
             "get": {
                 "tags": [
                     "SSO"
                 ],
-                "summary": "OAuth2/OIDC callback (BROWSER REDIRECT, not JSON)",
-                "description": "⚠️ NOT a JSON API endpoint - documented here for completeness only. This is the provider's own redirect back to this app after the visitor authenticates/consents (or declines). Verifies `state` (CSRF/replay defence, single-use), exchanges `code` + the PKCE `code_verifier` for tokens at the provider's token endpoint (≤10s), cryptographically verifies the `id_token` (JWKS fetch+cache, RS256-only signature check via openssl_verify(), then iss/aud/exp/iat/nonce claim validation), then applies the account-linking decision table (create a pre-verified account / log an existing linked user in / link an additional provider onto the CURRENTLY authenticated account / refuse - see decideOAuthAccountLinkAction()'s full rationale). On a genuine sign-in outcome, issues a normal CueRCode session via the same hardened path every other login uses (PHP session ID regenerated - session-fixation mitigation). Responds with an HTTP 302 redirect to the caller's (re-validated, same-site-only) safe post-login destination on success, or an accessible HTML error page on any failure - NEVER a JSON body, and no internal error detail beyond a safe generic message.",
+                "summary": "OAuth2/OIDC callback (browser redirect, not JSON)",
+                "description": "**Not a JSON API endpoint** - documented here for completeness only. This is the provider's own redirect back to this app after the visitor authenticates/consents (or declines). Verifies `state` (CSRF/replay defence, single-use), exchanges `code` + the PKCE `code_verifier` for tokens at the provider's token endpoint (≤10s), cryptographically verifies the `id_token` (RS256 signature check against the provider's published keys, then iss/aud/exp/iat/nonce claim validation), then applies the account-linking decision table (create a pre-verified account / log an existing linked user in / link an additional provider onto the currently authenticated account / refuse). On a genuine sign-in outcome, issues a normal CueRCode session via the same hardened path every other login uses (session ID regenerated to prevent session fixation). Responds with an HTTP 302 redirect to the caller's (re-validated, same-site-only) safe post-login destination on success, or an accessible HTML error page on any failure - never a JSON body, and no internal error detail beyond a safe generic message.",
                 "operationId": "ssoCallback",
                 "parameters": [
                     {
@@ -3844,7 +3844,7 @@
                 "type": "apiKey",
                 "in": "header",
                 "name": "X-CSRF-Token",
-                "description": "CSRF token for session-based authentication (web UI AJAX requests)."
+                "description": "CSRF token for session-based authentication (AJAX requests from the website)."
             }
         },
         "headers": {
@@ -3995,7 +3995,7 @@
                                 }
                             },
                             "accessible_contrast_too_low": {
-                                "summary": "preset=accessible rejected: fg/bg contrast below WCAG 3:1 (E5 / #48)",
+                                "summary": "preset=accessible rejected: fg/bg contrast below WCAG 3:1",
                                 "value": {
                                     "success": false,
                                     "message": "Accessible preset rejected: the foreground/background contrast ratio (1.61:1) is below the WCAG minimum of 3:1 required for the accessible preset. Choose a higher-contrast foreground/background colour pair.",
@@ -4132,7 +4132,7 @@
                 }
             },
             "ServiceUnavailable": {
-                "description": "A required service dependency is temporarily unavailable (e.g. the database connection could not be obtained before the handler ran its own work). Distinct from `ServerError` (500): this is the router/handler's pre-flight `dbQuery()`-unavailable guard, always paired with `error_code: SERVICE_UNAVAILABLE`, and is retried safely by the caller after a short backoff.",
+                "description": "A required service dependency is temporarily unavailable (e.g. the database connection could not be obtained before the handler ran its own work). Distinct from `ServerError` (500): this is a pre-flight check that the database is available, always paired with `error_code: SERVICE_UNAVAILABLE`, and is safe for the caller to retry after a short backoff.",
                 "content": {
                     "application/json": {
                         "schema": {
@@ -4229,7 +4229,7 @@
                 }
             },
             "PaymentRequired": {
-                "description": "The caller's plan does not allow this action at its current usage level (Epic E4/#53 feature/limit gating). The response includes `upgrade_url` alongside the standard error shape, plus EITHER `plan_limit` (a numeric limitsJSON gate, e.g. saved_codes/api_keys) OR `feature` (a boolean featuresJSON gate via requireFeatureOr402() - #69's `barcode_generation` is the first live route to use this shape, router 'requiredFeature'), never both.",
+                "description": "The caller's plan does not allow this action at its current usage level (feature/limit gating). The response includes `upgrade_url` alongside the standard error shape, plus either `plan_limit` (a numeric plan-limit gate, e.g. saved_codes/api_keys) or `feature` (a boolean plan-feature gate - `barcode_generation` is the first route to use this shape), never both.",
                 "content": {
                     "application/json": {
                         "schema": {
@@ -4246,12 +4246,12 @@
                                         },
                                         "plan_limit": {
                                             "type": "integer",
-                                            "description": "The caller's current plan limit for this action (-1 = unlimited, so this response is unreachable at -1). Present for a LIMIT gate; absent for a FEATURE gate.",
+                                            "description": "The caller's current plan limit for this action (-1 = unlimited, so this response is unreachable at -1). Present for a limit gate; absent for a feature gate.",
                                             "example": 25
                                         },
                                         "feature": {
                                             "type": "string",
-                                            "description": "The featuresJSON key that is disabled on the caller's plan (e.g. 'barcode_generation'). Present for a FEATURE gate (requireFeatureOr402()); absent for a LIMIT gate.",
+                                            "description": "The plan feature that is disabled on the caller's plan (e.g. 'barcode_generation'). Present for a feature gate; absent for a limit gate.",
                                             "example": "barcode_generation"
                                         }
                                     }
@@ -4272,7 +4272,7 @@
                                 }
                             },
                             "api_key_limit": {
-                                "summary": "API key plan limit reached (Epic E7 stage 1, #54)",
+                                "summary": "API key plan limit reached",
                                 "value": {
                                     "success": false,
                                     "message": "You have reached your plan's API key limit (1). Upgrade your plan to create more keys.",
@@ -4284,7 +4284,7 @@
                                 }
                             },
                             "feature_not_available": {
-                                "summary": "Boolean feature disabled on the caller's plan (Epic E4/#53 requireFeatureOr402() - e.g. barcode_generation, #69)",
+                                "summary": "Boolean feature disabled on the caller's plan (e.g. barcode_generation)",
                                 "value": {
                                     "success": false,
                                     "message": "This feature (\"barcode_generation\") is not available on your current plan.",
@@ -4300,7 +4300,7 @@
                 }
             },
             "InsufficientScope": {
-                "description": "The API key authenticating this request does not carry the scope this endpoint requires (Epic E7 stage 1, #54). Only ever returned for X-API-Key authentication - a CSRF/session request is never scope-limited. The response includes `required_scope` alongside the standard error shape.",
+                "description": "The API key authenticating this request does not carry the scope this endpoint requires. Only ever returned for X-API-Key authentication - a CSRF/session request is never scope-limited. The response includes `required_scope` alongside the standard error shape.",
                 "content": {
                     "application/json": {
                         "schema": {
@@ -4409,7 +4409,7 @@
                             "pdf"
                         ],
                         "default": "png",
-                        "description": "Output image format. `jpeg` is an accepted alias of `jpg`. Note: JPEG-XL (`jxl`) is NOT accepted on this host (see the API description); an unrecognised value falls back to `png`."
+                        "description": "Output image format. `jpeg` is an accepted alias of `jpg`. Note: JPEG-XL (`jxl`) is not accepted on this host (see the API description); an unrecognised value falls back to `png`."
                     },
                     "size": {
                         "type": "integer",
@@ -4427,7 +4427,7 @@
                             "H"
                         ],
                         "default": "M",
-                        "description": "Error correction level. L=7%, M=15%, Q=25%, H=30% recovery. Higher levels tolerate more damage/obstruction. The API default is M (the web UI defaults to H). Use H when adding a logo."
+                        "description": "Error correction level. L=7%, M=15%, Q=25%, H=30% recovery. Higher levels tolerate more damage/obstruction. The API default is M (the website defaults to H). Use H when adding a logo."
                     },
                     "fg_color": {
                         "type": "string",
@@ -4465,7 +4465,7 @@
                             "extra-rounded"
                         ],
                         "default": "square",
-                        "description": "Finder pattern OUTER border shape."
+                        "description": "Finder pattern outer border shape."
                     },
                     "marker_center": {
                         "type": "string",
@@ -4476,20 +4476,20 @@
                             "diamond"
                         ],
                         "default": "square",
-                        "description": "Finder pattern CENTRE dot shape."
+                        "description": "Finder pattern centre dot shape."
                     },
                     "logo": {
                         "oneOf": [
                             {
                                 "type": "integer",
-                                "description": "Predefined logo ID from the logo library (tblPredefinedLogos)."
+                                "description": "Predefined logo ID from the logo library."
                             },
                             {
                                 "type": "string",
                                 "description": "`upload` to use a custom logo supplied via logo_data, an `emoji:<codepoint-seq>` native emoji centre-icon (e.g. `emoji:1f600`, `emoji:1f1fa-1f1f8` - see the emoji field description below), or a logo identifier/path."
                             }
                         ],
-                        "description": "Logo to overlay on the QR code centre. Using a logo automatically upgrades ECC to H. Set to `upload` and provide logo_data + logo_mime for a custom image. Set to `emoji:<codepoint-seq>` (#67) to use one of the ~400 curated, vendored Twemoji (CC-BY-4.0) starter-set icons - the codepoint sequence is lowercase hex, hyphen-joined (e.g. `1f4cd` for 📍 round pushpin, `1f1fa-1f1f8` for the US flag), matching each asset's filename under `/assets/img/emoji/`. Unknown/malformed emoji sequences are silently ignored (no logo overlay, QR still generates) rather than rejected - no upload or SVG screening applies since these are repo-controlled assets, not user-supplied content. On raster output (png/jpg/gif/webp), a predefined logo (integer `logo` ID) is currently left off the image unless the server has the PHP imagick extension, because PNG copies of the predefined logo library have not been generated yet (#65) - the QR code itself still generates successfully. SVG output and emoji centre-icons are NOT affected, since all ~400 emoji ship with PNG copies already."
+                        "description": "Logo to overlay on the QR code centre. Using a logo automatically upgrades ECC to H. Set to `upload` and provide logo_data + logo_mime for a custom image. Set to `emoji:<codepoint-seq>` to use one of the ~400 curated Twemoji (CC-BY-4.0) starter-set icons - the codepoint sequence is lowercase hex, hyphen-joined (e.g. `1f4cd` for 📍 round pushpin, `1f1fa-1f1f8` for the US flag), matching each asset's filename under `/assets/img/emoji/`. Unknown/malformed emoji sequences are silently ignored (no logo overlay, QR still generates) rather than rejected - no upload or SVG screening applies since these are our own assets, not user-supplied content. On raster output (png/jpg/gif/webp), a predefined logo (integer `logo` ID) is currently left off the image unless the server has the PHP imagick extension, because PNG copies of the predefined logo library have not been generated yet - the QR code itself still generates successfully. SVG output and emoji centre-icons are not affected, since all ~400 emoji ship with PNG copies already."
                     },
                     "logo_data": {
                         "type": "string",
@@ -4513,7 +4513,7 @@
                         "minimum": 5,
                         "maximum": 40,
                         "default": 20,
-                        "description": "Logo size as a percentage of the QR code dimensions. Clamped server-side to 5-40 (matches the UI slider's range)."
+                        "description": "Logo size as a percentage of the QR code dimensions. Clamped server-side to 5-40 (matches the slider range on the website)."
                     },
                     "frame_style": {
                         "type": "string",
@@ -4527,12 +4527,12 @@
                             "pill"
                         ],
                         "default": "none",
-                        "description": "Decorative frame style drawn around the QR code. Label/banner/pill styles render the frame_label text. Not applied to PDF output. NOTE: unlike the other enum fields in this schema, an out-of-enum value is not rejected by a dedicated allowlist at the request-parsing layer; behaviour for an unrecognised string is delegated to the frame-rendering engine."
+                        "description": "Decorative frame style drawn around the QR code. Label/banner/pill styles render the frame_label text. Not applied to PDF output. Note: unlike the other enum fields in this schema, an out-of-enum value is not rejected by a dedicated allowlist at the request-parsing layer; behaviour for an unrecognised string is delegated to the frame-rendering engine."
                     },
                     "frame_label": {
                         "type": "string",
                         "maxLength": 120,
-                        "description": "Text label for label/banner/pill frame styles (e.g. 'SCAN ME'). Maximum 120 characters (the UI limits this to 30)."
+                        "description": "Text label for label/banner/pill frame styles (e.g. 'SCAN ME'). Maximum 120 characters (the website limits this to 30)."
                     },
                     "frame_color": {
                         "type": "string",
@@ -4563,7 +4563,7 @@
                             "accessible"
                         ],
                         "default": "none",
-                        "description": "Customisation preset. `none` (default) applies no additional rules. `accessible` enforces an accessibility-focused configuration per ISO/IEC 18004 + WCAG 2.1: forces `ecc` to `H`, forces `quiet_zone` to `true`, DROPS any pinned `version` so the smallest auto-fit version is used, and evaluates the WCAG contrast ratio of `fg_color`/`bg_color`. A contrast ratio below 3:1 causes the request to be REJECTED with HTTP 422 (error_code `ACCESSIBLE_CONTRAST_TOO_LOW`); a ratio from 3:1 up to (but not including) 4.5:1 is allowed through but reported as a non-blocking warning in the response `data.metadata.contrast_warning` field. See the /generate 422 response for a worked example. On `/bulk-generate`, this same enforcement applies PER ITEM, but a sub-3:1 contrast ratio is reported via the ZIP manifest (a `[NNN] FAILED` line) or, on the Avery sheet, by omitting that item entirely (subsequent labels shift forward — it is NOT left as a blank slot; the failure is reflected only in the `X-Bulk-Failed` header count there), NOT a request-aborting 422 — see the `/bulk-generate` operation description for the exact manifest line format (FG-033 / #57)."
+                        "description": "Customisation preset. `none` (default) applies no additional rules. `accessible` enforces an accessibility-focused configuration per ISO/IEC 18004 + WCAG 2.1: forces `ecc` to `H`, forces `quiet_zone` to `true`, drops any pinned `version` so the smallest auto-fit version is used, and evaluates the WCAG contrast ratio of `fg_color`/`bg_color`. A contrast ratio below 3:1 causes the request to be rejected with HTTP 422 (error_code `ACCESSIBLE_CONTRAST_TOO_LOW`); a ratio from 3:1 up to (but not including) 4.5:1 is allowed through but reported as a non-blocking warning in the response `data.metadata.contrast_warning` field. See the /generate 422 response for a worked example. On `/bulk-generate`, this same enforcement applies per item, but a sub-3:1 contrast ratio is reported via the ZIP manifest (a `[NNN] FAILED` line) or, on the Avery sheet, by omitting that item entirely (subsequent labels shift forward — it is not left as a blank slot; the failure is reflected only in the `X-Bulk-Failed` header count there), not a request-aborting 422 — see the `/bulk-generate` operation description for the exact manifest line format."
                     },
                     "scan_distance_cm": {
                         "type": "integer",
@@ -4573,7 +4573,7 @@
                     },
                     "gradient": {
                         "type": "object",
-                        "description": "Gradient fill for the dark modules (SVG output only). Advanced feature; not exposed in the standard web UI. Ignored for non-SVG formats.",
+                        "description": "Gradient fill for the dark modules (SVG output only). Advanced feature; not available in the website's standard generator. Ignored for non-SVG formats.",
                         "properties": {
                             "type": {
                                 "type": "string",
@@ -4608,7 +4608,7 @@
                             "avery_l7160"
                         ],
                         "default": "standard",
-                        "description": "Print layout for `format: pdf` (E5 / #49). Ignored for any other format. `standard` (default) is today's unchanged QR-only PDF, byte-for-byte. `accessible_caption` adds a large-print (>=18pt) human-readable caption plus a Grade-1 (uncontracted) Braille caption line, rendered as geometric dot patterns (not a Unicode Braille font - core PDF fonts have no Braille glyphs). `tactile` includes everything in `accessible_caption` PLUS a second, clearly-delineated page containing CueRCode's own tactile locator frame overlay guide (registration marks + orientation dot), meant to be reproduced via swell paper, a Braille embosser, or a UV-varnish/raised-ink pass aligned with page 1 - this is an original design, not a reproduction of any third-party patented locator. `avery_5160` (US Letter, 3x10) and `avery_l7160` (A4, 3x7) tile the code into an Avery address-label sheet; on `/generate` a single code fills exactly ONE label with the rest of the sheet left blank as a printable template, while `/bulk-generate` (see BulkGenerateRequest) tiles MULTIPLE items across successive labels/pages when the SAME `pdf_layout` is set at the request level. See `/accessibility` on the web UI for the print/embossing best-practice guide."
+                        "description": "Print layout for `format: pdf`. Ignored for any other format. `standard` (default) is today's unchanged QR-only PDF, byte-for-byte. `accessible_caption` adds a large-print (>=18pt) human-readable caption plus a Grade-1 (uncontracted) Braille caption line, rendered as geometric dot patterns (not a Unicode Braille font - core PDF fonts have no Braille glyphs). `tactile` includes everything in `accessible_caption` plus a second, clearly-delineated page containing CueRCode's own tactile locator frame overlay guide (registration marks + orientation dot), meant to be reproduced via swell paper, a Braille embosser, or a UV-varnish/raised-ink pass aligned with page 1 - this is an original design, not a reproduction of any third-party patented locator. `avery_5160` (US Letter, 3x10) and `avery_l7160` (A4, 3x7) tile the code into an Avery address-label sheet; on `/generate` a single code fills exactly one label with the rest of the sheet left blank as a printable template, while `/bulk-generate` (see BulkGenerateRequest) tiles multiple items across successive labels/pages when the same `pdf_layout` is set at the request level. See the accessibility guide at `/accessibility` for print/embossing best practice."
                     }
                 }
             },
@@ -4646,7 +4646,7 @@
             },
             "BulkGenerateRequest": {
                 "type": "object",
-                "description": "A bulk generation request. Provide EITHER an 'items' array OR a 'csv' string - the server rejects a body with NEITHER present with `400 BULK_NO_INPUT` (see the `oneOf` requirement below; a body containing BOTH is also accepted, with 'items' taking precedence over 'csv').",
+                "description": "A bulk generation request. Provide either an 'items' array or a 'csv' string - the server rejects a body with neither present with `400 BULK_NO_INPUT` (see the `oneOf` requirement below; a body containing both is also accepted, with 'items' taking precedence over 'csv').",
                 "oneOf": [
                     {
                         "required": [
@@ -4670,7 +4670,7 @@
                     },
                     "csv": {
                         "type": "string",
-                        "description": "CSV body whose first non-empty line is the header row. The header must contain a 'type' column and at least one input column. Columns named 'input.<field>' (or any non-reserved column) become input fields; reserved columns (format, size, ecc, fg_color, bg_color, marker_color, pattern, marker_border, marker_center, logo, logo_size_pct, frame_style, frame_label, frame_color, transparent, quiet_zone, preset, scan_distance_cm, pdf_layout) fold into that row's customization, mirroring every key buildCustomizationFromRequest() recognises (FG-033 / #57). NOTE: 'version' is deliberately NOT a reserved column - it is a bare/'input.'-style input field instead, since it also names the vCard spec-version input field ('3.0'/'4.0') consumed by the vcard type; reserving it would misroute every vCard CSV row's version into customization, where it is rejected as an invalid QR-symbol-version override. Pin the QR symbol version via the JSON 'items' shape's 'customization' object instead. The boolean columns ('transparent', 'quiet_zone') accept 'true'/'false'/'1'/'0'/'yes'/'no' case-insensitively (any other non-empty value coerces to true). Mutually exclusive with 'items'.",
+                        "description": "CSV body whose first non-empty line is the header row. The header must contain a 'type' column and at least one input column. Columns named 'input.<field>' (or any non-reserved column) become input fields; reserved columns (format, size, ecc, fg_color, bg_color, marker_color, pattern, marker_border, marker_center, logo, logo_size_pct, frame_style, frame_label, frame_color, transparent, quiet_zone, preset, scan_distance_cm, pdf_layout) fold into that row's customization, mirroring every key the JSON 'customization' object recognises. Note: 'version' is deliberately not a reserved column - it is a bare/'input.'-style input field instead, since it also names the vCard spec-version input field ('3.0'/'4.0') consumed by the vcard type; reserving it would misroute every vCard CSV row's version into customization, where it is rejected as an invalid QR-symbol-version override. Pin the QR symbol version via the JSON 'items' shape's 'customization' object instead. The boolean columns ('transparent', 'quiet_zone') accept 'true'/'false'/'1'/'0'/'yes'/'no' case-insensitively (any other non-empty value coerces to true). Mutually exclusive with 'items'.",
                         "example": "type,input.url,format\nurl,https://a.com,png\nurl,https://b.com,svg"
                     },
                     "customization": {
@@ -4772,7 +4772,7 @@
             },
             "AccessibleMetadata": {
                 "type": "object",
-                "description": "Present in /generate and /preview responses ONLY when the request's customization.preset was 'accessible' (E5 / #48). Absent entirely for preset=none (the default).",
+                "description": "Present in /generate and /preview responses only when the request's customization.preset was 'accessible'. Absent entirely for preset=none (the default).",
                 "properties": {
                     "accessible": {
                         "type": "boolean",
@@ -4787,7 +4787,7 @@
                     },
                     "contrast_warning": {
                         "type": "string",
-                        "description": "Present ONLY when 3:1 <= contrast_ratio < 4.5:1 - a non-blocking accessibility warning (requests below 3:1 are rejected with HTTP 422 instead; see the /generate 422 response).",
+                        "description": "Present only when 3:1 <= contrast_ratio < 4.5:1 - a non-blocking accessibility warning (requests below 3:1 are rejected with HTTP 422 instead; see the /generate 422 response).",
                         "example": "Contrast ratio 3.5:1 is below the recommended WCAG AA level of 4.5:1. Consider a higher-contrast colour pair for maximum readability."
                     },
                     "recommended_print_size_mm": {
@@ -4800,7 +4800,7 @@
             },
             "BarcodeGenerateRequest": {
                 "type": "object",
-                "description": "Request body for POST /barcode and POST /barcode/preview (#69).",
+                "description": "Request body for POST /barcode and POST /barcode/preview.",
                 "required": [
                     "symbology",
                     "data"
@@ -4828,7 +4828,7 @@
                     "data": {
                         "type": "string",
                         "maxLength": 4096,
-                        "description": "The content to encode. STRICT, symbology-specific validation applies server-side (check digits for ean13/ean8/upca/upce, charset for code39/codabar, even-length-digits-only for itf, printable-ASCII for code128, valid UTF-8 up to 2048 characters for datamatrix/pdf417/aztec) - an invalid value is rejected with 422 GENERATION_FAILED naming the specific problem. See each symbology's GET /types formFieldsJSON hint for its exact rule.",
+                        "description": "The content to encode. Strict, symbology-specific validation applies server-side (check digits for ean13/ean8/upca/upce, charset for code39/codabar, even-length-digits-only for itf, printable-ASCII for code128, valid UTF-8 up to 2048 characters for datamatrix/pdf417/aztec) - an invalid value is rejected with 422 GENERATION_FAILED naming the specific problem. See each symbology's GET /types formFieldsJSON hint for its exact rule.",
                         "example": "HELLO123"
                     },
                     "options": {
@@ -4838,7 +4838,7 @@
             },
             "BarcodeOptions": {
                 "type": "object",
-                "description": "Rendering options for a barcode. All fields are optional; defaults are applied for missing values. Numeric fields are CLAMPED to their documented range rather than rejected (the STRICT reject-on-invalid behaviour is reserved for the `data` field's check digits/charset - see BarcodeGenerateRequest). Unknown keys are ignored.",
+                "description": "Rendering options for a barcode. All fields are optional; defaults are applied for missing values. Numeric fields are clamped to their documented range rather than rejected (the strict reject-on-invalid behaviour is reserved for the `data` field's check digits/charset - see BarcodeGenerateRequest). Unknown keys are ignored.",
                 "properties": {
                     "format": {
                         "type": "string",
@@ -4870,7 +4870,7 @@
                     "ecc": {
                         "type": "integer",
                         "nullable": true,
-                        "description": "Error-correction hint: for `pdf417`, an ECC LEVEL 0-8 (higher = more redundancy, larger symbol); for `aztec`, an ECC PERCENTAGE 1-100 (default 33). A documented no-op for every other symbology (datamatrix uses a fixed ECC200 scheme; 1D symbologies have no ECC concept).",
+                        "description": "Error-correction hint: for `pdf417`, an ECC level 0-8 (higher = more redundancy, larger symbol); for `aztec`, an ECC percentage 1-100 (default 33). A documented no-op for every other symbology (datamatrix uses a fixed ECC200 scheme; 1D symbologies have no ECC concept).",
                         "example": 3
                     }
                 }
@@ -5014,7 +5014,7 @@
                     },
                     "icon": {
                         "type": "string",
-                        "description": "FontAwesome icon class for UI rendering",
+                        "description": "FontAwesome icon class for displaying this type in a user interface",
                         "example": "fa-solid fa-link"
                     },
                     "description": {
@@ -5204,7 +5204,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, ERASE_FAILED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are the pay-as-you-go credit-consumption denial shapes returned by fn_features.php's consumeCreditsOr402() - #70, built but not yet wired to a live endpoint, and fully inert while the billing_payg_enabled kill-switch stays at its seeded 0), INVALID_DESTINATION, REDIRECT_SUSPENDED (Epic E1a Stage S1, #27 - the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates via validateRedirectDestination() and rejects an abuse-suspended row). The full, exact, machine-readable set (kept in sync with the API's real emissions by a CI drift guard, tests/test_error_catalogue.php - #58) is the x-error-codes array on this schema.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, ERASE_FAILED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are reserved for pay-as-you-go credit consumption, which is not available yet, so no endpoint returns them today), INVALID_DESTINATION, REDIRECT_SUSPENDED (the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates the destination and rejects an abuse-suspended redirect). The full, exact, machine-readable set is the x-error-codes array on this schema.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -5411,7 +5411,7 @@
             },
             "AuthGenericResponse": {
                 "type": "object",
-                "description": "Generic success envelope used by every account/auth endpoint below. register/request-password-reset deliberately return an IDENTICAL shape regardless of whether the target account exists (anti user-enumeration, see SECURITY.md).",
+                "description": "Generic success envelope used by every account/auth endpoint below. register/request-password-reset deliberately return an identical shape regardless of whether the target account exists (to prevent user enumeration).",
                 "properties": {
                     "success": {
                         "type": "boolean",
@@ -5487,7 +5487,7 @@
                     "is_public": {
                         "type": "boolean",
                         "default": false,
-                        "description": "Opt-in: when true, this code becomes readable/downloadable by ANY authenticated caller, not just the owner. Defaults to false (private) for a NEW claim; omitted on an already-owned code leaves its current visibility unchanged."
+                        "description": "Opt-in: when true, this code becomes readable/downloadable by any authenticated caller, not just the owner. Defaults to false (private) for a new claim; omitted on an already-owned code leaves its current visibility unchanged."
                     }
                 }
             },
@@ -5637,7 +5637,7 @@
             },
             "PatchQrCodeRequest": {
                 "type": "object",
-                "description": "All fields optional, but at least one of label/is_public/customization must be present (else 400 NO_FIELDS). \"customization\" fields omitted from a partial update inherit the code's EXISTING stored value.",
+                "description": "All fields optional, but at least one of label/is_public/customization must be present (else 400 NO_FIELDS). \"customization\" fields omitted from a partial update inherit the code's existing stored value.",
                 "properties": {
                     "label": {
                         "type": "string",
@@ -5695,7 +5695,7 @@
             },
             "RedirectDestinationResponse": {
                 "type": "object",
-                "description": "Response envelope for GET/PATCH /qrcodes/{uuid}/destination (Epic E1a Stage S1, #27).",
+                "description": "Response envelope for GET/PATCH /qrcodes/{uuid}/destination.",
                 "properties": {
                     "success": {
                         "type": "boolean",
@@ -5711,7 +5711,7 @@
                             "uuid": {
                                 "type": "string",
                                 "format": "uuid",
-                                "description": "The redirect resource's own UUID (tblQRRedirects.redirectUUID) - distinct from a tblQRCodes.qrUUID"
+                                "description": "The redirect resource's own UUID - distinct from the saved QR code's UUID"
                             },
                             "destination_url": {
                                 "type": "string",
@@ -5731,7 +5731,7 @@
                             },
                             "is_active": {
                                 "type": "boolean",
-                                "description": "0 would serve 410 Gone once the public /r/{uuid} route ships (Stage S2 - not built yet)"
+                                "description": "0 means a visitor would get 410 Gone once the public /r/{uuid} route is available (coming soon - not available yet)"
                             },
                             "disabled_reason": {
                                 "type": "string",
@@ -5760,7 +5760,7 @@
             },
             "PatchRedirectDestinationRequest": {
                 "type": "object",
-                "description": "All fields optional, but at least one of destination_url/active must be present (else 400 NO_FIELDS). destination_url is re-validated by validateRedirectDestination() on every PATCH (scheme allowlist, userinfo/private-IP-literal/self-referential-loop rejection, IDN normalisation).",
+                "description": "All fields optional, but at least one of destination_url/active must be present (else 400 NO_FIELDS). destination_url is re-validated on every PATCH (allowed URL schemes only; embedded credentials, private IP addresses and self-referential redirect loops are rejected; IDN normalisation).",
                 "properties": {
                     "destination_url": {
                         "type": "string",
@@ -5770,7 +5770,7 @@
                     },
                     "active": {
                         "type": "boolean",
-                        "description": "false = owner-initiated disable (disabledReason becomes 'owner'); true = re-enable, clearing a prior 'owner' disable reason. A redirect already suspended for abuse (disabledReason='abuse') rejects the WHOLE PATCH with 409 REDIRECT_SUSPENDED before this field is ever read."
+                        "description": "false = owner-initiated disable; true = re-enable a redirect you disabled yourself. A redirect already suspended for abuse rejects the whole PATCH with 409 REDIRECT_SUSPENDED before this field is ever read."
                     }
                 }
             },
@@ -5786,7 +5786,7 @@
                     },
                     "avatar_base64": {
                         "type": "string",
-                        "description": "A 'data:image/{png,jpeg,gif,webp};base64,...' data URI. SVG is explicitly rejected for avatars (self-stored-XSS mitigation - see fn_api_account.php).",
+                        "description": "A 'data:image/{png,jpeg,gif,webp};base64,...' data URI. SVG is explicitly rejected for avatars (to prevent stored cross-site scripting).",
                         "example": "data:image/png;base64,iVBORw0KGgo..."
                     },
                     "remove_avatar": {
@@ -5829,7 +5829,7 @@
                     },
                     "masked_id": {
                         "type": "string",
-                        "description": "The SAME identifier, masked for display (all but the trailing 8 characters).",
+                        "description": "The same identifier, masked for display (all but the trailing 8 characters).",
                         "example": "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022a1b2c3d4"
                     },
                     "ip": {
@@ -5852,7 +5852,7 @@
                     },
                     "is_current": {
                         "type": "boolean",
-                        "description": "True if this row is the session making THIS request."
+                        "description": "True if this row is the session making this request."
                     }
                 }
             },
@@ -5895,7 +5895,7 @@
                         "type": "string",
                         "format": "password",
                         "maxLength": 256,
-                        "description": "The caller's CURRENT password - re-verified server-side (wrong -> 401 INVALID_PASSWORD, nothing is mutated). IMPORTANT: an account that signed up via SSO only (no local password ever set) can NEVER supply a matching current_password and therefore cannot self-erase through this endpoint at all - every attempt returns 401 INVALID_PASSWORD.",
+                        "description": "The caller's current password - re-verified server-side (wrong -> 401 INVALID_PASSWORD, nothing is changed). Important: an account that signed up via SSO only (no local password ever set) can never supply a matching current_password and therefore cannot self-erase through this endpoint at all - every attempt returns 401 INVALID_PASSWORD.",
                         "example": "correct horse battery staple"
                     },
                     "confirm": {
@@ -5921,7 +5921,7 @@
                         "properties": {
                             "erased_at": {
                                 "type": "string",
-                                "description": "The UTC timestamp the anonymization transaction committed, formatted as `Y-m-d H:i:s` (space-separated, NOT RFC3339/ISO-8601 - unlike `AccountDataExportResponse.data.exported_at`, which IS ISO-8601). e.g. '2026-07-10 19:12:58'.",
+                                "description": "The UTC timestamp the anonymization transaction committed, formatted as `Y-m-d H:i:s` (space-separated, not RFC3339/ISO-8601 - unlike `AccountDataExportResponse.data.exported_at`, which is ISO-8601). e.g. '2026-07-10 19:12:58'.",
                                 "example": "2026-07-10 19:12:58"
                             }
                         }
@@ -6218,7 +6218,7 @@
                     "name": {
                         "type": "string",
                         "maxLength": 100,
-                        "description": "A caller-chosen label to tell your keys apart (matches tblAPIKeys.apiKeyName VARCHAR(100)).",
+                        "description": "A caller-chosen label to tell your keys apart (maximum 100 characters).",
                         "example": "My CMS integration"
                     },
                     "scopes": {
@@ -6227,14 +6227,14 @@
                             "type": "string",
                             "enum": ["generate", "preview", "download", "bulk", "qrcodes:read", "qrcodes:write", "save"]
                         },
-                        "description": "Scopes to grant this key, from the allowlist. Omitted/empty means the key is granted NO scopes (it can authenticate but cannot access any scoped endpoint).",
+                        "description": "Scopes to grant this key, from the allowlist. Omitted/empty means the key is granted no scopes (it can authenticate but cannot access any scoped endpoint).",
                         "example": ["generate", "download"]
                     }
                 }
             },
             "ApiKeySecretResponse": {
                 "type": "object",
-                "description": "The ONE-TIME response shape returned by POST /keys (create) and POST /keys/{id}/rotate - `data.api_key` is the ONLY time the full raw key is ever returned; it cannot be retrieved again afterward (only its hash is stored).",
+                "description": "The one-time response shape returned by POST /keys (create) and POST /keys/{id}/rotate - `data.api_key` is the only time the full raw key is ever returned; it cannot be retrieved again afterward (only its hash is stored).",
                 "properties": {
                     "success": {
                         "type": "boolean",
@@ -6249,17 +6249,17 @@
                         "properties": {
                             "id": {
                                 "type": "integer",
-                                "description": "The tblAPIKeys.apiKeyID - pass this to POST /keys/{id}/rotate or DELETE /keys/{id}.",
+                                "description": "The key's numeric ID - pass this to POST /keys/{id}/rotate or DELETE /keys/{id}.",
                                 "example": 1
                             },
                             "api_key": {
                                 "type": "string",
-                                "description": "The FULL raw API key. Shown ONLY here, ONLY ONCE - copy it now.",
+                                "description": "The full raw API key. Shown only here, only once - copy it now.",
                                 "example": "cuercode_9c5e6ef3f4f38fe4ecc1b414e27052ab390b1a5d"
                             },
                             "prefix": {
                                 "type": "string",
-                                "description": "The same key's first 12 characters, for identification in the dashboard list (this alone is NOT a usable credential).",
+                                "description": "The same key's first 12 characters, for identification in the dashboard list (this alone is not a usable credential).",
                                 "example": "cuercode_9c5"
                             },
                             "name": {
@@ -6272,12 +6272,12 @@
                                 "items": {
                                     "type": "string"
                                 },
-                                "description": "Present on CREATE only (rotate preserves the existing scopes without re-stating them in the response).",
+                                "description": "Present on create only (rotate preserves the existing scopes without re-stating them in the response).",
                                 "example": ["generate", "download"]
                             },
                             "rate_limits": {
                                 "type": "object",
-                                "description": "Present on CREATE only. Derived from the owning user's CURRENT plan at creation time.",
+                                "description": "Present on create only. Derived from the owning user's current plan at creation time.",
                                 "properties": {
                                     "per_min": {"type": "integer", "example": 30},
                                     "per_day": {"type": "integer", "example": 2000}
@@ -6285,24 +6285,24 @@
                             },
                             "is_active": {
                                 "type": "boolean",
-                                "description": "Present on CREATE only.",
+                                "description": "Present on create only.",
                                 "example": true
                             },
                             "last_used_at": {
                                 "type": "string",
                                 "format": "date-time",
                                 "nullable": true,
-                                "description": "Present on CREATE only - always null for a brand-new key."
+                                "description": "Present on create only - always null for a brand-new key."
                             },
                             "created_at": {
                                 "type": "string",
-                                "description": "Present on CREATE only."
+                                "description": "Present on create only."
                             },
                             "expires_at": {
                                 "type": "string",
                                 "format": "date-time",
                                 "nullable": true,
-                                "description": "Present on CREATE only. Self-service creation does not currently expose an expiry input (always null); the column IS enforced server-side if ever set another way."
+                                "description": "Present on create only. Self-service creation does not currently expose an expiry input (always null); the column is enforced server-side if ever set another way."
                             }
                         }
                     },
@@ -6314,7 +6314,7 @@
             },
             "ApiKeyInfo": {
                 "type": "object",
-                "description": "One item in GET /keys' list - NEVER includes the full key or its hash.",
+                "description": "One item in GET /keys' list - never includes the full key or its hash.",
                 "properties": {
                     "id": {
                         "type": "integer",

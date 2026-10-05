@@ -282,8 +282,8 @@ CueRCode.getCSRFToken = function () {
  *       method: 'POST',
  *       data: JSON.stringify({ type: 'url', url: 'https://example.com' }),
  *       contentType: 'application/json',
- *       success: function(response) { console.log(response); },
- *       error: function(xhr) { console.error(xhr.responseText); }
+ *       success: function(response) { CueRCode.notify('Preview ready.', 'success'); },
+ *       error: function(xhr) { CueRCode.notify('Preview failed.', 'danger'); }
  *   });
  */
 CueRCode.ajax = function (options) {
@@ -296,15 +296,23 @@ CueRCode.ajax = function (options) {
         },
         timeout: 30000,
         error: function (xhr, status, error) {
-            /* 📌 Default error handler */
-            if (status === 'timeout') {
-                CueRCode.notify('Request timed out. Please try again.', 'warning');
+            /* 📌 Default error handler. Each message names the problem and
+               says what to do next, in plain words (no status codes). */
+            if (status === 'abort') {
+                /* 📌 A request that was cancelled on purpose is not an error */
+                return;
+            } else if (status === 'timeout') {
+                CueRCode.notify('CueRCode took too long to answer. Check your connection and try again.', 'warning');
             } else if (xhr.status === 403) {
-                CueRCode.notify('Session expired. Please refresh the page.', 'danger');
+                CueRCode.notify('Your session has expired. Refresh the page, then try again.', 'danger');
             } else if (xhr.status === 429) {
-                CueRCode.notify('Too many requests. Please wait a moment.', 'warning');
+                CueRCode.notify('Too many requests just now. Please wait a minute and try again.', 'warning');
             } else if (xhr.status >= 500) {
-                CueRCode.notify('Server error. Please try again later.', 'danger');
+                CueRCode.notify('Something went wrong on our side. Please try again in a few minutes.', 'danger');
+            } else if (xhr.status === 0) {
+                /* 📌 Status 0 means the request never got an answer (offline,
+                   dropped connection, or the site could not be reached). */
+                CueRCode.notify('We couldn\'t reach CueRCode just now. Check your connection and try again.', 'danger');
             }
         }
     };

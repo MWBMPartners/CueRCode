@@ -131,7 +131,7 @@ if (function_exists('ssoSupportedProviders')) {
 // ==============================================================================
 
 $pageTitle       = 'Create an Account';
-$pageDescription = 'Create a free CueRCode account to save your QR codes, track your library, and unlock premium features.';
+$pageDescription = 'Create a free CueRCode account to save your QR codes and come back to download them any time.';
 $bodyClass       = 'page-account page-register';
 $pageCSS         = [];
 $pageJS          = ['/assets/js/cuercode-account.js'];
@@ -143,9 +143,9 @@ $pageJS          = ['/assets/js/cuercode-account.js'];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📝 Registration Form
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
@@ -153,15 +153,14 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <div class="card shadow-sm">
                         <div class="card-body p-4">
                             <h1 class="h3 fw-bold mb-3 text-center">
-                                <i class="fa-solid fa-user-plus me-2" aria-hidden="true"></i>
                                 Create your account
                             </h1>
                             <p class="text-body-secondary text-center mb-4">
-                                Save QR codes, track your library, and unlock premium features.
+                                Save your QR codes and come back to download them any time.
                             </p>
 
                             <?php if ($registerResult !== null && $registerResult['success']) { ?>
-                                <!-- ✅ Generic anti-enumeration success message -->
+                                <?php /* ✅ Generic anti-enumeration success message */ ?>
                                 <div class="alert alert-success" role="status">
                                     <i class="fa-solid fa-envelope-circle-check me-1" aria-hidden="true"></i>
                                     <?php echo htmlspecialchars($registerResult['message'], ENT_QUOTES, 'UTF-8'); ?>
@@ -182,20 +181,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                             <?php } ?>
 
-                            <!-- 🔔 Live region for JS-driven (AJAX) error/status messages -->
+                            <?php /* 🔔 Live region for JS-driven (AJAX) error/status messages */ ?>
                             <div id="register-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
 
-                            <noscript>
-                                <div class="alert alert-info" role="note">
-                                    <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
-                                    JavaScript is disabled - this form will submit normally and reload the page.
-                                </div>
-                            </noscript>
-
                             <?php if (!empty($ssoRegisterProviders)) { ?>
-                            <!-- ================================================
+                            <?php /* ================================================
                                  🔐 SSO sign-up buttons (Epic E2, #55/#19/#20/#28)
-                                 ================================================ -->
+                                 ================================================ */ ?>
                             <div class="d-grid gap-2 mb-3" id="sso-register-buttons">
                                 <?php foreach ($ssoRegisterProviders as $ssoProvider) { ?>
                                 <a class="btn btn-outline-secondary"
@@ -238,7 +230,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                            autocomplete="new-password" required minlength="8" maxlength="256"
                                            aria-describedby="reg-password-help reg-password-strength">
                                     <div id="reg-password-help" class="form-text">At least 8 characters. Avoid common or repeated passwords.</div>
-                                    <!-- 📊 Live password-strength hint (JS-enhanced only; harmless empty <div> without JS) -->
+                                    <?php /* 📊 Live password-strength hint (JS-enhanced only; harmless empty <div> without JS) */ ?>
                                     <div id="reg-password-strength" class="form-text" aria-live="polite"></div>
                                 </div>
 

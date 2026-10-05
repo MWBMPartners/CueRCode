@@ -138,6 +138,23 @@ a:hover {
 }
 
 /**
+ * 🎨 Brand navbar (#137). Was an inline teal gradient that ignored the
+ * colourblind palettes; now follows the palette variables. It runs from the
+ * dark to the standard primary so white text keeps >= 4.5:1 everywhere
+ * (the old light end, #38a89d, was 2.9:1), and links use near-white instead
+ * of Bootstrap's 55% white (about 2.7:1 on teal).
+ */
+.navbar.navbar-cuercode,
+.navbar.navbar-cuercode[data-bs-theme="dark"] {
+    background: linear-gradient(135deg, var(--cuercode-primary-dark), var(--cuercode-primary));
+    --bs-navbar-color: rgba(255, 255, 255, 0.92);
+    --bs-navbar-hover-color: #ffffff;
+    --bs-navbar-active-color: #ffffff;
+    --bs-navbar-brand-color: #ffffff;
+    --bs-navbar-brand-hover-color: #ffffff;
+}
+
+/**
  * 🏠 Brand text styling. Uses slightly larger weight for prominence.
  */
 .navbar-brand {
@@ -849,26 +866,28 @@ a:hover {
    ============================================================================= */
 
 /**
- * ⬇️ Primary download button uses the brand colour for a cohesive look.
+ * 🎨 Primary buttons use the brand colour on EVERY page (#137 - this used to
+ * apply only to the generator page, so sign-in, register, pricing, error and
+ * account buttons fell back to Bootstrap's stock blue).
  *
  * @see https://getbootstrap.com/docs/5.3/components/buttons/
  */
-.page-generator .btn-primary {
+.btn-primary {
     background-color: var(--cuercode-primary);
     border-color: var(--cuercode-primary);
     transition: var(--cuercode-transition);
 }
 
-.page-generator .btn-primary:hover {
+.btn-primary:hover {
     background-color: var(--cuercode-primary-dark);
     border-color: var(--cuercode-primary-dark);
 }
 
-.page-generator .btn-primary:focus-visible {
+.btn-primary:focus-visible {
     box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.4);
 }
 
-.page-generator .btn-primary:active {
+.btn-primary:active {
     background-color: var(--cuercode-primary-dark);
     border-color: var(--cuercode-primary-dark);
 }
@@ -877,7 +896,7 @@ a:hover {
  * ⬇️ Disabled download button reduced opacity and no pointer events
  * (Bootstrap handles this, but we ensure brand consistency).
  */
-.page-generator .btn-primary:disabled {
+.btn-primary:disabled {
     background-color: var(--cuercode-primary);
     border-color: var(--cuercode-primary);
     opacity: 0.55;
@@ -886,19 +905,19 @@ a:hover {
 /**
  * ⬇️ Outline variants for secondary actions.
  */
-.page-generator .btn-outline-primary {
+.btn-outline-primary {
     color: var(--cuercode-primary);
     border-color: var(--cuercode-primary);
     transition: var(--cuercode-transition);
 }
 
-.page-generator .btn-outline-primary:hover {
+.btn-outline-primary:hover {
     background-color: var(--cuercode-primary);
     border-color: var(--cuercode-primary);
     color: #fff;
 }
 
-.page-generator .btn-outline-primary:focus-visible {
+.btn-outline-primary:focus-visible {
     box-shadow: 0 0 0 0.25rem rgba(44, 122, 123, 0.4);
 }
 
@@ -1181,16 +1200,19 @@ footer a:hover {
 }
 
 /**
- * 🌙 Primary button in dark mode uses the lighter primary.
+ * 🌙 Primary button in dark mode (contrast-safe, see below).
  */
-[data-bs-theme="dark"] .page-generator .btn-primary {
-    background-color: var(--cuercode-primary-light);
-    border-color: var(--cuercode-primary-light);
-}
-
-[data-bs-theme="dark"] .page-generator .btn-primary:hover {
+[data-bs-theme="dark"] .btn-primary {
+    /* ♿ White text needs >= 4.5:1 (WCAG 2.1 AA). The lighter primary
+       (#38a89d) gave only 2.9:1, so dark mode keeps the standard primary
+       (5.0:1) and darkens on hover (#137). */
     background-color: var(--cuercode-primary);
     border-color: var(--cuercode-primary);
+}
+
+[data-bs-theme="dark"] .btn-primary:hover {
+    background-color: var(--cuercode-primary-dark);
+    border-color: var(--cuercode-primary-dark);
 }
 
 /**

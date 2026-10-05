@@ -8,7 +8,8 @@
 #   2. The dependency-free test suite (php tests/run.php) with the vendored
 #      QR/PDF libraries installed at run time (they are gitignored — "downloaded
 #      separately, not committed" — so CI fetches them, mirroring the server).
-#   3. Secret scan via the gitleaks CLI (the org-licensed gitleaks *action*
+#   3. Site polish check (php tools/check_site_polish.php, #137).
+#   4. Secret scan via the gitleaks CLI (the org-licensed gitleaks *action*
 #      silently no-ops on private repos without a licence — the CLI does not).
 #
 # @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
@@ -178,6 +179,37 @@ jobs:
       - name: Run test suite
         if: steps.suite.outputs.present == 'true'
         run: php tests/run.php
+
+  # ---------------------------------------------------------------------------
+  # 🔍 Site polish check (#137) — BLOCKING. Source-only checks for the small
+  #     details that make the site look unfinished or machine-made: preview
+  #     addresses, per-page titles/descriptions, share tags, CDN integrity
+  #     hashes vs the committed fallback copies, leftover console.log, missing
+  #     alt text, broken/".php" links, sitemap coverage, custom error pages,
+  #     HTML comments shipped to visitors, stock phrases, en-GB, CSS grid
+  #     overflow. No database or web server needed. Branches that don't have
+  #     the script yet (before promotion) skip with a notice.
+  # ---------------------------------------------------------------------------
+  site-polish:
+    name: Site polish check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Run the site polish check
+        run: |
+          if [ ! -f tools/check_site_polish.php ]; then
+            echo "::notice::tools/check_site_polish.php is not on this branch yet - skipping the polish check."
+            exit 0
+          fi
+          php tools/check_site_polish.php
 
   # ---------------------------------------------------------------------------
   # 🔐 Secret scan (gitleaks CLI) — BLOCKING. The baseline is clean under

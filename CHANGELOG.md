@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - "Does it look AI-made?" polish sweep of the public site (2026-10-05, #137)
+
+A code sweep (109 findings) plus a real-browser pass at seven screen widths.
+The biggest problems, now fixed:
+
+- **The site's styling was blocked.** The security fingerprint (SRI hash) for
+  Bootstrap's stylesheet in the shared header and on the landing page was
+  wrong - the first half right, the rest invented - so browsers refused the
+  file and pages showed unstyled. Replaced with Bootstrap's official v5.3.3
+  value (checked against two sources). Bootstrap, FontAwesome and jQuery
+  fallback copies are now committed under `assets/vendor/`, with a fallback
+  check added for FontAwesome too (#119).
+- **The QR-type grid was cut off on every screen size** (the last column hid
+  behind the card edge). Every CSS grid now uses `minmax(0, 1fr)`; long labels
+  wrap instead of ending in "...".
+- **No real logo.** The navbar and landing page showed a "▣" text character;
+  both now show the CueRCode logo mark.
+- **Share previews and search:** `og:url` was always the homepage; canonical
+  links copied the query string (including one-time reset/verify tokens).
+  Both now use the clean page address. Added `og:site_name`, image size/alt,
+  `og:locale`, `twitter:image`; private and error pages are `noindex`; a real
+  `sitemap.xml`; `robots.txt` no longer hides `/api/docs/`.
+- **Invisible badges:** "Coming soon" on /pricing and the API-key scope badges
+  used a class Bootstrap doesn't have, so the text was white on white.
+- **Contrast (WCAG 2.1 AA):** dark-mode buttons (2.9:1) and navbar links
+  (about 2.7:1) failed; both now pass. Brand teal buttons on every page, not
+  just the generator; the navbar follows the colourblind palettes.
+- **Internal notes on public pages:** the developer portal, API reference and
+  `openapi.json` descriptions no longer mention epics, tickets, approval gates
+  or internal file names; "Partner Guide" is now "Planned integrations".
+- **Error and empty states:** new 403 page; friendlier 404 (logo, useful
+  links, "Go back" only when there's somewhere to go); the 500 page no longer
+  claims "our team has been notified"; crash and database-down pages are a
+  small styled page instead of "contact the administrator"; empty states have
+  a next step; generator errors now show the server's actual reason.
+- **Privacy:** the offline helper (service worker) no longer stores account,
+  sign-in or one-time-link pages.
+- **Small tells:** a duplicate "Dismiss" button on the cookie notice; stock
+  copy ("for any purpose", "unlock premium features"); US spelling; a fixed
+  "© 2026" (now 2025-current year); "Last updated" that was always today's
+  date; icons on every page heading; ALL-CAPS emphasis; 294 developer comments
+  that were sent to every visitor (now PHP comments, so they stay in the
+  source but never reach the browser - proven by comparing every page before
+  and after).
+
+New: `tools/check_site_polish.php`, a source-only check (no database or
+server) that runs in CI on every push (job `site-polish`). It also compares
+every CDN integrity hash with the committed copy, so a wrong hash can't slip
+through again. It reports the nine unfilled `[TEMPLATE: ...]` legal
+placeholders in `terms.php`/`privacy.php` as warnings - those need the owner's
+wording. Standing rule added to `.claude/CLAUDE.md` and the device-wide rules.
+
+Tests: 2765/2765 (PHP 8.3 locally); `php -l` clean; actionlint clean.
+
+### Added - AI instruction audit report (2026-10-05, #136)
+
+`.claude/INSTRUCTION_AUDIT_2026-10-05.md` reviews every AI instruction file
+against Anthropic's current published guidance (report only - nothing in the
+rules changed until the owner decides).
+
 ### Fixed - Deploy refuses to run without a safe upload folder (2026-10-05, #138) - CI/DEPLOY
 
 `deploy.yml` uploaded the site to `SFTP_REMOTE_BASE` without checking that

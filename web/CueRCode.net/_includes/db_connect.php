@@ -78,10 +78,32 @@ if (!defined('DB_HOST') || !defined('DB_NAME') || !defined('DB_USER') || !define
     // Return a generic error to the user (do not expose credential details)
     if (php_sapi_name() !== 'cli') {
         header('HTTP/1.1 503 Service Unavailable');
-        echo '<!DOCTYPE html><html><head><title>Service Unavailable</title></head>'
-            . '<body><h1>Service Temporarily Unavailable</h1>'
-            . '<p>The service is currently unable to connect to its database. '
-            . 'Please contact the administrator.</p></body></html>';
+
+        // 🛟 Show the small self-contained fallback page (inline CSS only, no
+        // database or config needed). The real reason is in the error_log()
+        // line above, never on screen. If the helper cannot load, a minimal
+        // inline page is printed instead.
+        $fallbackHelper = __DIR__ . DIRECTORY_SEPARATOR . 'fallback_page.php';
+        if (is_file($fallbackHelper)) {
+            require_once $fallbackHelper;
+        }
+
+        if (function_exists('cuercodeFallbackPageHtml')) {
+            echo cuercodeFallbackPageHtml(
+                'Technical problem',
+                'We\'re having a technical problem',
+                'Please try again in a few minutes.'
+            );
+        } else {
+            echo '<!DOCTYPE html><html lang="en-GB"><head><meta charset="UTF-8">'
+                . '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                . '<title>Technical problem | CueRCode</title></head>'
+                . '<body><h1>We\'re having a technical problem</h1>'
+                . '<p>Please try again in a few minutes.</p>'
+                . '<p><a href="/">Go to the CueRCode home page</a></p>'
+                . '<p>If this keeps happening, email <a href="mailto:hello@cuercode.net">hello@cuercode.net</a>.</p>'
+                . '</body></html>';
+        }
     }
     exit(1);
 }

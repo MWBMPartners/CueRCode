@@ -64,3 +64,4 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — mirrors `.claude/memory/` (2026-09
   explicit file allow-list and tell them the handoff's task numbers aren't theirs.
   On 2026-09-23 two writers misread "tasks 5-6" in HANDOFF, skipped most of their
   work and edited HANDOFF against instructions.
+- **Polish check: no "AI-made" tells (2026-10-05, #137).** After any change to pages, templates, CSS or JS, and before every `work-in-progress → alpha` PR: `php tools/check_site_polish.php` must report 0 problems (CI runs it too), then check each changed page in a real browser at 320/375/768/1024/1366/1920 px, light and dark, with long text, empty data and error states, and click every new or changed button/link. The script also compares every CDN integrity (SRI) hash with the committed fallback copy, because a half-invented Bootstrap hash had silently left the live site unstyled. The Bootstrap/FontAwesome/jQuery fallbacks under `public_html/assets/vendor/` are now committed.

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">CueRCode Logo Mark</title>
+  <desc id="desc">QR-inspired symbol with finder patterns and a stylized C cue ring in the center.</desc>
+
+  <g fill="#0f172a">
+    <rect x="32" y="32" width="168" height="168" rx="22"/>
+    <rect x="312" y="32" width="168" height="168" rx="22"/>
+    <rect x="32" y="312" width="168" height="168" rx="22"/>
+
+    <rect x="68" y="68" width="96" height="96" rx="12" fill="#ffffff"/>
+    <rect x="348" y="68" width="96" height="96" rx="12" fill="#ffffff"/>
+    <rect x="68" y="348" width="96" height="96" rx="12" fill="#ffffff"/>
+
+    <rect x="96" y="96" width="40" height="40" rx="8"/>
+    <rect x="376" y="96" width="40" height="40" rx="8"/>
+    <rect x="96" y="376" width="40" height="40" rx="8"/>
+
+    <rect x="224" y="80" width="28" height="28" rx="6"/>
+    <rect x="260" y="80" width="28" height="28" rx="6"/>
+    <rect x="80" y="224" width="28" height="28" rx="6"/>
+    <rect x="80" y="260" width="28" height="28" rx="6"/>
+    <rect x="260" y="404" width="28" height="28" rx="6"/>
+    <rect x="296" y="404" width="28" height="28" rx="6"/>
+    <rect x="404" y="260" width="28" height="28" rx="6"/>
+    <rect x="404" y="296" width="28" height="28" rx="6"/>
+  </g>
+
+  <path fill="#06b6d4" d="M256 162c52.3 0 94 41.7 94 94s-41.7 94-94 94c-51.9 0-94-42.1-94-94s42.1-94 94-94zm0 42c-28.8 0-52 23.2-52 52s23.2 52 52 52c14.8 0 28.1-6.1 37.6-15.8l29.8 29.9C306.2 338.8 282.3 350 256 350c-51.9 0-94-42.1-94-94s42.1-94 94-94c26.3 0 50.2 11.2 67.4 28.9l-29.8 29.9C284.1 210.1 270.8 204 256 204z"/>
+  <circle cx="332" cy="180" r="18" fill="#06b6d4"/>
+</svg>

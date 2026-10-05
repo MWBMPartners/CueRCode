@@ -14,3 +14,5 @@ it has really finished (#116); ask the owner every decision as a proper
 question (options described, recommendation first, and why).
 Commercial rules (tiers, prices, discounts, trials, lifetime deals, PAYG, VAT)
 are always Global-Admin-editable data, never hard-coded.
+Before any alpha PR (and after page/CSS/JS changes) run `php tools/check_site_polish.php`
+(0 problems) plus a real-browser pass at several screen sizes - no "AI-made" tells (#137).

@@ -91,7 +91,6 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                 <div class="col-lg-9">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-triangle-exclamation me-2" aria-hidden="true"></i>
                         Errors &amp; Rate Limits
                     </h1>
                     <p class="text-body-secondary mb-4">
@@ -112,9 +111,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </ul>
                         </nav>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              1. Error envelope
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="envelope" class="h5 mt-4 mb-3">1. The Error Envelope</h2>
                         <p>Every error response looks like this (JSON; add <code>?format=xml</code> or an
                             <code>Accept: application/xml</code> header for the XML equivalent):</p>
@@ -131,16 +130,16 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             && is_array($openApiSpec['components']['schemas']['ErrorResponse'])
                         ) { ?>
                         <p class="small text-body-secondary">
-                            Field-by-field detail below is resolved live from the
-                            <code>ErrorResponse</code> schema in openapi.json (including the full
-                            <code>error_code</code> catalogue) - not retyped:
+                            Field-by-field detail below comes from the <code>ErrorResponse</code> schema
+                            in the API specification, including the full <code>error_code</code>
+                            catalogue:
                         </p>
                         <?php echo oapiRenderSchemaProperties($openApiSpec['components']['schemas']['ErrorResponse'], $openApiSpec); ?>
                         <?php } ?>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              2. HTTP status codes (narrative table)
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="status-codes" class="h5 mt-4 mb-3">2. HTTP Status Codes</h2>
                         <div class="table-responsive">
                             <div class="d-grid gap-2">
@@ -151,10 +150,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         ['code' => '200', 'label' => 'OK', 'kind' => 'success', 'note' => 'Request succeeded.'],
                                         ['code' => '400', 'label' => 'Bad Request', 'kind' => 'success', 'note' => 'Malformed/missing fields, invalid JSON, an over-long field, or an invalid customisation value.'],
                                         ['code' => '401', 'label' => 'Unauthorized', 'kind' => 'success', 'note' => 'Authentication required, or the supplied X-API-Key/X-CSRF-Token is missing, invalid, or expired.'],
-                                        ['code' => '402', 'label' => 'Payment Required', 'kind' => 'success', 'note' => 'Plan-based feature/limit gating (Epic E4/#53, Epic E7 stage 2/#54): FEATURE_NOT_AVAILABLE, SAVED_CODES_LIMIT_REACHED, or API_KEY_LIMIT_REACHED. The response carries upgrade_url and plan_limit alongside the standard error shape.'],
+                                        ['code' => '402', 'label' => 'Payment Required', 'kind' => 'success', 'note' => 'Plan-based feature/limit gating: FEATURE_NOT_AVAILABLE, SAVED_CODES_LIMIT_REACHED, or API_KEY_LIMIT_REACHED. The response carries upgrade_url and plan_limit alongside the standard error shape.'],
                                         ['code' => '403', 'label' => 'Forbidden', 'kind' => 'success', 'note' => 'Authenticated-but-unauthorised: INSUFFICIENT_SCOPE (an API key\'s granted scopes do not cover this action), ACCOUNT_MANAGEMENT_FORBIDDEN (an API key attempted session-only account management), API_KEY_MANAGEMENT_FORBIDDEN (an API key attempted to manage API keys), or CSRF_INVALID (missing/invalid CSRF token or API key).'],
                                         ['code' => '404', 'label' => 'Not Found', 'kind' => 'success', 'note' => 'Unknown route (ENDPOINT_NOT_FOUND), or an unrecognised QR code UUID on /download (NOT_FOUND).'],
-                                        ['code' => '405', 'label' => 'Method Not Allowed', 'kind' => 'success', 'note' => 'The HTTP method used is not supported for that route (e.g. GET on /generate). The router sets an Allow header listing the accepted methods. This is enforced by the router before any handler runs, so it is not listed per-path in openapi.json today.'],
+                                        ['code' => '405', 'label' => 'Method Not Allowed', 'kind' => 'success', 'note' => 'The HTTP method used is not supported for that route (e.g. GET on /generate). The response includes an Allow header listing the accepted methods.'],
                                         ['code' => '409', 'label' => 'Conflict', 'kind' => 'success', 'note' => 'A concurrent save collided with an in-flight save for the same QR code (SAVE_CONFLICT), or a single-use token was already consumed (VERIFICATION_ALREADY_USED / RESET_TOKEN_ALREADY_USED).'],
                                         ['code' => '413', 'label' => 'Payload Too Large', 'kind' => 'success', 'note' => 'Request body exceeds the configured maximum (256 KiB by default), or a bulk request exceeds the maximum item count (100 by default).'],
                                         ['code' => '415', 'label' => 'Unsupported Media Type', 'kind' => 'success', 'note' => 'A non-empty request body was sent without Content-Type: application/json (an optional ; charset=... parameter is tolerated).'],
@@ -190,9 +189,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                         </div>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              3. Status details resolved from openapi.json
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <?php if ($openApiSpec !== null) {
                             $namedResponseRefs = [
                                 '400' => '#/components/responses/BadRequest',
@@ -228,16 +227,15 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         ?>
                         <h2 id="status-details" class="h5 mt-4 mb-3">3. Status Code Details (from openapi.json)</h2>
                         <p class="small text-body-secondary">
-                            Descriptions and examples below are resolved live from the shared response
-                            definitions (and the two inline per-endpoint responses that aren't shared
-                            components) in openapi.json.
+                            Descriptions and examples below come from the response definitions in the
+                            API specification.
                         </p>
                         <?php echo oapiRenderResponses($statusCodesFromSpec, $openApiSpec); ?>
                         <?php } ?>
 
-                        <!-- ============================================================
+                        <?php /* ============================================================
                              4. Rate limit headers
-                             ============================================================ -->
+                             ============================================================ */ ?>
                         <h2 id="rate-limits" class="h5 mt-4 mb-3">4. Rate Limit Headers &amp; Defaults</h2>
                         <p>Every rate-limited response (success or error) carries these headers:</p>
                         <?php if ($openApiSpec !== null
@@ -275,18 +273,14 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                         <h3 class="h6 mt-3">Default limits by authentication mode</h3>
                         <p class="small text-body-secondary">
-                            These numeric defaults are operational configuration (<code>tblSettings</code>),
-                            not part of the OpenAPI document itself, so they are documented narratively here
-                            rather than resolved from the spec. An admin can change them server-side without
-                            a code deploy.
+                            These are the default limits. They are not part of the API specification
+                            itself, and they may be adjusted over time.
                         </p>
                         <ul class="mb-0">
-                            <li><strong>Anonymous</strong> (by IP address): 10 requests/minute, 100 requests/day
-                                (<code>api_rate_limit_anonymous_per_min</code> / <code>_per_day</code> settings).</li>
-                            <li><strong>Session CSRF</strong> (by session): 30 requests/minute, 1,000 requests/day
-                                (<code>api_rate_limit_csrf_per_min</code> / <code>_per_day</code> settings).</li>
-                            <li><strong>API key</strong>: each key carries its OWN <code>rateLimitPerMin</code>/
-                                <code>rateLimitPerDay</code> values (set when the key is issued - see
+                            <li><strong>Anonymous</strong> (by IP address): 10 requests/minute, 100 requests/day.</li>
+                            <li><strong>Session CSRF</strong> (by session): 30 requests/minute, 1,000 requests/day.</li>
+                            <li><strong>API key</strong>: each key carries its own per-minute and per-day limits
+                                (set when the key is issued - see
                                 <a href="/developers/authentication/">Authentication</a>), independent of the
                                 anonymous/CSRF defaults above.</li>
                         </ul>

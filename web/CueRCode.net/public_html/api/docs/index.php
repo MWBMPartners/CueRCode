@@ -70,17 +70,16 @@ $pageJS          = [];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📖 API Documentation Content
-         ==================================================================== -->
-    <div class="container-fluid py-4">
+         ==================================================================== */ ?>
+    <div class="container py-4">
         <div class="row">
             <div class="col-12">
 
-                <!-- 📌 Page heading -->
+                <?php /* 📌 Page heading */ ?>
                 <div class="mb-4">
                     <h1 class="h2">
-                        <i class="fa-solid fa-book me-2"></i>
                         <?php echo htmlspecialchars('API Documentation', ENT_QUOTES, 'UTF-8'); ?>
                     </h1>
                     <p class="text-body-secondary">
@@ -88,68 +87,25 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     </p>
                 </div>
 
-                <!-- ================================================================
-                     📌 Quick Start Guide
-                     ================================================================ -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h2 class="h5 mb-0">
-                            <i class="fa-solid fa-rocket me-2"></i>
-                            <?php echo htmlspecialchars('Quick Start', ENT_QUOTES, 'UTF-8'); ?>
-                        </h2>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <!-- Authentication -->
-                            <div class="col-md-4 mb-3 mb-md-0">
-                                <h3 class="h6">
-                                    <i class="fa-solid fa-key me-1"></i>
-                                    <?php echo htmlspecialchars('Authentication', ENT_QUOTES, 'UTF-8'); ?>
-                                </h3>
-                                <p class="small text-body-secondary mb-2">
-                                    <?php echo htmlspecialchars('Include your API key in the X-API-Key header:', ENT_QUOTES, 'UTF-8'); ?>
-                                </p>
-                                <pre class="bg-body-tertiary p-2 rounded small"><code>X-API-Key: cuercode_your_api_key_here</code></pre>
-                            </div>
+                <?php /* ================================================================
+                     📌 Pointer to the quickstart guide
+                     The step-by-step quickstart lives on its own page under the
+                     developer portal; this page only links to it so the same
+                     material is not duplicated in two places.
+                     ================================================================ */ ?>
+                <p class="mb-4">
+                    <i class="fa-solid fa-rocket me-2" aria-hidden="true"></i>
+                    New to the API? The <a href="/developers/quickstart/">quickstart guide</a> shows
+                    how to generate your first QR code.
+                </p>
 
-                            <!-- Generate a QR Code -->
-                            <div class="col-md-4 mb-3 mb-md-0">
-                                <h3 class="h6">
-                                    <i class="fa-solid fa-qrcode me-1"></i>
-                                    <?php echo htmlspecialchars('Generate a QR Code', ENT_QUOTES, 'UTF-8'); ?>
-                                </h3>
-                                <p class="small text-body-secondary mb-2">
-                                    <?php echo htmlspecialchars('POST to /api/v1/generate with JSON body:', ENT_QUOTES, 'UTF-8'); ?>
-                                </p>
-                                <pre class="bg-body-tertiary p-2 rounded small"><code>{
-  "type": "url",
-  "input": { "url": "https://example.com" }
-}</code></pre>
-                            </div>
-
-                            <!-- Rate Limits -->
-                            <div class="col-md-4">
-                                <h3 class="h6">
-                                    <i class="fa-solid fa-gauge-high me-1"></i>
-                                    <?php echo htmlspecialchars('Rate Limits', ENT_QUOTES, 'UTF-8'); ?>
-                                </h3>
-                                <p class="small text-body-secondary mb-2">
-                                    <?php echo htmlspecialchars('Check rate limit headers in responses:', ENT_QUOTES, 'UTF-8'); ?>
-                                </p>
-                                <pre class="bg-body-tertiary p-2 rounded small"><code>X-RateLimit-Limit: 60
-X-RateLimit-Remaining: 58</code></pre>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ================================================================
+                <?php /* ================================================================
                      📌 Swagger UI Container
-                     ================================================================ -->
+                     ================================================================ */ ?>
                 <div class="card">
                     <div class="card-body p-0">
 
-                        <!-- ⛔ No-JS fallback (2026-09-25 documentation-accuracy pass):
+                        <?php /* ⛔ No-JS fallback (2026-09-25 documentation-accuracy pass):
                              with JavaScript turned off, nothing below this comment ever
                              runs, so the #swagger-ui <div> stays permanently empty -
                              a visitor would see a blank card with no explanation and
@@ -163,7 +119,7 @@ X-RateLimit-Remaining: 58</code></pre>
                              literal string in both places on purpose, so a future
                              change to one is easy to spot needs making to the other
                              too. This needs no Content-Security-Policy change: it is
-                             an ordinary same-origin link, not a script or a style. -->
+                             an ordinary same-origin link, not a script or a style. */ ?>
                         <noscript>
                             <div class="alert alert-info m-3" role="note">
                                 <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
@@ -181,7 +137,7 @@ X-RateLimit-Remaining: 58</code></pre>
         </div>
     </div>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🎨 Swagger UI CSS (jsDelivr CDN, pinned 5.33.0, SRI-checked, with
          local vendored fallback)
          @see https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/
@@ -194,30 +150,30 @@ X-RateLimit-Remaining: 58</code></pre>
          the now-irrelevant integrity attribute (the local file is served
          same-origin so SRI isn't needed there), and repoints href at the
          vendored copy under /assets/vendor/swagger-ui/.
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <link rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/swagger-ui.css"
           integrity="sha384-Ov4/wv3j2bmct8cDc5X4ngJZohVPzEmc6uDPH8WeljUxO5vtoykvMEfbu9Vh6RaW"
           crossorigin="anonymous"
           onerror="this.onerror=null;this.removeAttribute('integrity');this.href='/assets/vendor/swagger-ui/swagger-ui.css';">
 
-    <!-- 🎨 Custom overrides for Swagger UI to match CueRCode theme -->
+    <?php /* 🎨 Custom overrides for Swagger UI to match CueRCode theme */ ?>
     <style>
-        /* ==================================================================
+        <?php /* ==================================================================
            📌 Override Swagger UI styles for site integration
-           ================================================================== */
+           ================================================================== */ ?>
 
-        /* Remove Swagger UI's default top bar (we have our own navbar) */
+        <?php /* Remove Swagger UI's default top bar (we have our own navbar) */ ?>
         .swagger-ui .topbar {
             display: none !important;
         }
 
-        /* Match font to Bootstrap's native font stack */
+        <?php /* Match font to Bootstrap's native font stack */ ?>
         .swagger-ui {
             font-family: var(--bs-body-font-family, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif) !important;
         }
 
-        /* Adjust headings */
+        <?php /* Adjust headings */ ?>
         .swagger-ui .info .title {
             font-size: 1.5rem !important;
         }
@@ -226,13 +182,13 @@ X-RateLimit-Remaining: 58</code></pre>
             margin: 20px 0 !important;
         }
 
-        /* Match links to CueRCode primary colour */
+        <?php /* Match links to CueRCode primary colour */ ?>
         .swagger-ui a.nostyle,
         .swagger-ui a {
             color: #2c7a7b !important;
         }
 
-        /* Button styling to match theme */
+        <?php /* Button styling to match theme */ ?>
         .swagger-ui .btn.authorize {
             border-color: #2c7a7b !important;
             color: #2c7a7b !important;
@@ -242,7 +198,7 @@ X-RateLimit-Remaining: 58</code></pre>
             fill: #2c7a7b !important;
         }
 
-        /* Operation method badges */
+        <?php /* Operation method badges */ ?>
         .swagger-ui .opblock.opblock-post .opblock-summary-method {
             background: #2c7a7b !important;
         }
@@ -251,12 +207,12 @@ X-RateLimit-Remaining: 58</code></pre>
             background: #38a89d !important;
         }
 
-        /* Ensure proper padding within the card */
+        <?php /* Ensure proper padding within the card */ ?>
         #swagger-ui {
             padding: 0 15px;
         }
 
-        /* Dark mode support */
+        <?php /* Dark mode support */ ?>
         [data-bs-theme="dark"] .swagger-ui {
             background-color: var(--bs-body-bg) !important;
             color: var(--bs-body-color) !important;
@@ -292,7 +248,7 @@ X-RateLimit-Remaining: 58</code></pre>
         }
     </style>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📦 Swagger UI JavaScript (jsDelivr CDN, pinned 5.33.0, SRI-checked,
          with local vendored fallback)
          @see https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/
@@ -303,12 +259,12 @@ X-RateLimit-Remaining: 58</code></pre>
          page. If the CDN request failed (network error, SRI mismatch, or
          CSP block), document.write() pulls in the vendored local copy
          instead, before the DOM finishes parsing.
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/swagger-ui-bundle.js"
             integrity="sha384-YDALVcy8kj8yltLBVi1vBiBAUqdxvus673gM8XKwiy6aDUJFXivF/KCufekjYbVf"
             crossorigin="anonymous"></script>
     <script>
-        /* 🔄 Swagger UI bundle CDN fallback to local vendored copy */
+        <?php /* 🔄 Swagger UI bundle CDN fallback to local vendored copy */ ?>
         if (typeof SwaggerUIBundle === 'undefined') {
             document.write('<script src="/assets/vendor/swagger-ui/swagger-ui-bundle.js"><\/script>');
         }
@@ -317,27 +273,27 @@ X-RateLimit-Remaining: 58</code></pre>
             integrity="sha384-My2aDM4r2Mbm3ybHcubKm9O9U8FEjvF/O5nGvE9YK5dzqOTbWEKa79RPJ1krdMaF"
             crossorigin="anonymous"></script>
     <script>
-        /* 🔄 Swagger UI standalone preset CDN fallback to local vendored copy */
+        <?php /* 🔄 Swagger UI standalone preset CDN fallback to local vendored copy */ ?>
         if (typeof SwaggerUIStandalonePreset === 'undefined') {
             document.write('<script src="/assets/vendor/swagger-ui/swagger-ui-standalone-preset.js"><\/script>');
         }
     </script>
 
     <script>
-        /**
+        <?php /**
          * 📌 Initialise Swagger UI
          * @see https://swagger.io/docs/open-source-tools/swagger-ui/usage/configuration/
-         */
+         */ ?>
         document.addEventListener('DOMContentLoaded', function() {
             if (typeof SwaggerUIBundle !== 'undefined') {
                 var ui = SwaggerUIBundle({
-                    /* 📌 URL to the OpenAPI specification */
+                    <?php /* 📌 URL to the OpenAPI specification */ ?>
                     url: '/api/v1/openapi.json',
 
-                    /* 📌 DOM element to render into */
+                    <?php /* 📌 DOM element to render into */ ?>
                     dom_id: '#swagger-ui',
 
-                    /* 📌 Layout and plugins */
+                    <?php /* 📌 Layout and plugins */ ?>
                     presets: [
                         SwaggerUIBundle.presets.apis,
                         SwaggerUIStandalonePreset
@@ -346,34 +302,34 @@ X-RateLimit-Remaining: 58</code></pre>
                         SwaggerUIBundle.plugins.DownloadUrl
                     ],
 
-                    /* 📌 Layout configuration */
+                    <?php /* 📌 Layout configuration */ ?>
                     layout: 'BaseLayout',
 
-                    /* 📌 Deep linking: URL fragments for specific operations */
+                    <?php /* 📌 Deep linking: URL fragments for specific operations */ ?>
                     deepLinking: true,
 
-                    /* 📌 Show request duration in responses */
+                    <?php /* 📌 Show request duration in responses */ ?>
                     displayRequestDuration: true,
 
-                    /* 📌 Default expansion level (list = collapsed, full = expanded) */
+                    <?php /* 📌 Default expansion level (list = collapsed, full = expanded) */ ?>
                     docExpansion: 'list',
 
-                    /* 📌 Default models expansion depth */
+                    <?php /* 📌 Default models expansion depth */ ?>
                     defaultModelsExpandDepth: 1,
                     defaultModelExpandDepth: 2,
 
-                    /* 📌 Sort operations alphabetically by path */
+                    <?php /* 📌 Sort operations alphabetically by path */ ?>
                     operationsSorter: 'alpha',
 
-                    /* 📌 Show the "Try it out" button by default */
+                    <?php /* 📌 Show the "Try it out" button by default */ ?>
                     tryItOutEnabled: false,
 
-                    /* 📌 Validate responses against the spec */
+                    <?php /* 📌 Validate responses against the spec */ ?>
                     validatorUrl: null,
 
-                    /* 📌 Request interceptor: auto-add API key from Authorize dialog */
+                    <?php /* 📌 Request interceptor: auto-add API key from Authorize dialog */ ?>
                     requestInterceptor: function(req) {
-                        /* If a CSRF token meta tag exists, add it as a header */
+                        <?php /* If a CSRF token meta tag exists, add it as a header */ ?>
                         var csrfMeta = document.querySelector('meta[name="csrf-token"]');
                         if (csrfMeta && csrfMeta.content) {
                             req.headers['X-CSRF-Token'] = csrfMeta.content;
@@ -382,10 +338,10 @@ X-RateLimit-Remaining: 58</code></pre>
                     }
                 });
 
-                /* 📌 Store reference globally for debugging */
+                <?php /* 📌 Store reference globally for debugging */ ?>
                 window.swaggerUI = ui;
             } else {
-                /* ❌ Swagger UI failed to load - this should be rare, since
+                <?php /* ❌ Swagger UI failed to load - this should be rare, since
                    both the jsDelivr CDN copy AND a vendored local fallback
                    copy are loaded above (see the <script> tags near the
                    bottom of this page). Point visitors at the raw
@@ -394,11 +350,11 @@ X-RateLimit-Remaining: 58</code></pre>
                    it's still emitted via json_encode() with the JSON_HEX_*
                    flags (safe inside a <script> block and an HTML
                    attribute) to stay consistent with this project's
-                   "always escape output" house rule. */
+                   "always escape output" house rule. */ ?>
                 var specPath = <?php echo json_encode('/api/v1/openapi.json', JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
                 document.getElementById('swagger-ui').innerHTML =
                     '<div class="alert alert-warning m-4">'
-                    + '<i class="fa-solid fa-triangle-exclamation me-2"></i>'
+                    + '<i class="fa-solid fa-triangle-exclamation me-2" aria-hidden="true"></i>'
                     + '<strong>Documentation Unavailable</strong><br>'
                     + 'The interactive API documentation library could not be loaded. '
                     + 'You can still view the raw API specification directly: '

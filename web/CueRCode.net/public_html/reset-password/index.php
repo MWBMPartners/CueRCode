@@ -103,9 +103,9 @@ $pageJS          = ['/assets/js/cuercode-account.js'];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🔁 Reset Password Form
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
@@ -113,7 +113,6 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <div class="card shadow-sm">
                         <div class="card-body p-4">
                             <h1 class="h3 fw-bold mb-3 text-center">
-                                <i class="fa-solid fa-rotate me-2" aria-hidden="true"></i>
                                 Reset your password
                             </h1>
 
@@ -143,15 +142,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                             <?php } ?>
 
-                            <!-- 🔔 Live region for JS-driven (AJAX) error/status messages -->
+                            <?php /* 🔔 Live region for JS-driven (AJAX) error/status messages */ ?>
                             <div id="reset-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
-
-                            <noscript>
-                                <div class="alert alert-info" role="note">
-                                    <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
-                                    JavaScript is disabled - this form will submit normally and reload the page.
-                                </div>
-                            </noscript>
 
                             <form method="POST" action="/reset-password/" id="reset-form" novalidate>
                                 <?php echo csrfField(); ?>

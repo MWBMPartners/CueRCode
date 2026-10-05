@@ -202,10 +202,34 @@ set_exception_handler(function (\Throwable $exception): void {
 
         // 📌 Only output if no content has been sent yet
         if (ob_get_level() === 0 || ob_get_length() === 0) {
-            echo '<!DOCTYPE html><html><head><title>Server Error</title></head>'
-                . '<body><h1>An unexpected error occurred</h1>'
-                . '<p>The application encountered an internal error. '
-                . 'Please try again later or contact the administrator.</p></body></html>';
+            // 🛟 Show the small self-contained fallback page (inline CSS only,
+            // no database or config needed - this code runs because something
+            // is already broken). It never prints error details; those are in
+            // the log written above. The 500 status header was sent above.
+            $fallbackHelper = dirname(__DIR__) . DIRECTORY_SEPARATOR . '_includes'
+                . DIRECTORY_SEPARATOR . 'fallback_page.php';
+
+            if (is_file($fallbackHelper)) {
+                require_once $fallbackHelper;
+            }
+
+            if (function_exists('cuercodeFallbackPageHtml')) {
+                echo cuercodeFallbackPageHtml(
+                    'Technical problem',
+                    'We\'re having a technical problem',
+                    'Please try again in a few minutes.'
+                );
+            } else {
+                // 🧯 The helper itself could not load - last-resort minimal page
+                echo '<!DOCTYPE html><html lang="en-GB"><head><meta charset="UTF-8">'
+                    . '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                    . '<title>Technical problem | CueRCode</title></head>'
+                    . '<body><h1>We\'re having a technical problem</h1>'
+                    . '<p>Please try again in a few minutes.</p>'
+                    . '<p><a href="/">Go to the CueRCode home page</a></p>'
+                    . '<p>If this keeps happening, email <a href="mailto:hello@cuercode.net">hello@cuercode.net</a>.</p>'
+                    . '</body></html>';
+            }
         }
     }
 });

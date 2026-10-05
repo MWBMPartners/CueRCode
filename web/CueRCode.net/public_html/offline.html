@@ -19,12 +19,13 @@ Supports both light and dark colour schemes via prefers-color-scheme.
 @see         https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API
 ================================================================================
 -->
-<html lang="en">
+<html lang="en-GB">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="You are offline. Check your internet connection, then try again to carry on with CueRCode.">
     <meta name="robots" content="noindex, nofollow">
-    <title>Offline - CueRCode</title>
+    <title>Offline | CueRCode</title>
 
     <!-- ====================================================================
          🎨 Inline Styles - No External Dependencies
@@ -41,7 +42,8 @@ Supports both light and dark colour schemes via prefers-color-scheme.
             --offline-bg: #f8f9fa;
             --offline-surface: #ffffff;
             --offline-text: #212529;
-            --offline-text-muted: #6c757d;
+            --offline-text-muted: #495057;
+            --offline-link: #2c7a7b;
             --offline-border: #dee2e6;
             --offline-shadow: rgba(0, 0, 0, 0.08);
         }
@@ -53,11 +55,14 @@ Supports both light and dark colour schemes via prefers-color-scheme.
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --offline-bg: #1a1a2e;
-                --offline-surface: #222240;
-                --offline-text: #e8e8f0;
-                --offline-text-muted: #9a9ab0;
-                --offline-border: #3a3a50;
+                /* 🎨 Same dark colours as the main site's Bootstrap dark mode:
+                   #212529 page background, #2b3035 card surface. */
+                --offline-bg: #212529;
+                --offline-surface: #2b3035;
+                --offline-text: #f8f9fa;
+                --offline-text-muted: #adb5bd;
+                --offline-link: #4fd1c5;
+                --offline-border: #495057;
                 --offline-shadow: rgba(0, 0, 0, 0.3);
                 --offline-primary-light: #4fd1c5;
             }
@@ -194,13 +199,18 @@ Supports both light and dark colour schemes via prefers-color-scheme.
         }
 
         .offline-brand a {
-            color: var(--offline-primary);
-            text-decoration: none;
+            color: var(--offline-link);
+            text-decoration: underline;
             font-weight: 600;
         }
 
         .offline-brand a:hover {
-            text-decoration: underline;
+            text-decoration-thickness: 2px;
+        }
+
+        .offline-brand a:focus-visible {
+            outline: 2px solid var(--offline-link);
+            outline-offset: 2px;
         }
 
         /* ==================================================================
@@ -254,7 +264,7 @@ Supports both light and dark colour schemes via prefers-color-scheme.
         <div class="offline-icon" aria-hidden="true">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-                 stroke-linejoin="round" style="color: var(--offline-primary);">
+                 stroke-linejoin="round" style="color: var(--offline-link);">
                 <!-- Wi-Fi arcs -->
                 <path d="M1 9.5A16.09 16.09 0 0 1 12 5c3.04 0 5.87.84 8.29 2.3"/>
                 <path d="M5 13.5A8.06 8.06 0 0 1 12 10c1.57 0 3.04.45 4.28 1.23"/>
@@ -282,7 +292,7 @@ Supports both light and dark colour schemes via prefers-color-scheme.
                 <polyline points="23 4 23 10 17 10"/>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
             </svg>
-            Try Again
+            Try again
         </button>
 
         <!-- 🏷️ Brand attribution -->

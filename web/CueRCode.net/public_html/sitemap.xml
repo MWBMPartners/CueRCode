@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CueRCode public sitemap (#137). Lists only public, indexable pages with their
+  canonical addresses (folders end in "/", single pages do not, never ".php").
+  Private and one-time pages (account, sign-in links, reset/verify, error pages)
+  are deliberately absent - they carry <meta name="robots" content="noindex">.
+  tools/check_site_polish.php checks this list against the pages on disk.
+  Copyright (c) 2025-2026 MWBM Partners Ltd
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://cuercode.net/</loc></url>
+  <url><loc>https://cuercode.net/pricing/</loc></url>
+  <url><loc>https://cuercode.net/developers/</loc></url>
+  <url><loc>https://cuercode.net/developers/quickstart/</loc></url>
+  <url><loc>https://cuercode.net/developers/authentication/</loc></url>
+  <url><loc>https://cuercode.net/developers/reference/</loc></url>
+  <url><loc>https://cuercode.net/developers/samples/</loc></url>
+  <url><loc>https://cuercode.net/developers/recipes/</loc></url>
+  <url><loc>https://cuercode.net/developers/errors/</loc></url>
+  <url><loc>https://cuercode.net/developers/partners/</loc></url>
+  <url><loc>https://cuercode.net/api/docs/</loc></url>
+  <url><loc>https://cuercode.net/accessibility/</loc></url>
+  <url><loc>https://cuercode.net/attributions/</loc></url>
+  <url><loc>https://cuercode.net/privacy</loc></url>
+  <url><loc>https://cuercode.net/terms</loc></url>
+  <url><loc>https://cuercode.net/register/</loc></url>
+  <url><loc>https://cuercode.net/login/</loc></url>
+</urlset>

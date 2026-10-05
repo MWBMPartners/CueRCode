@@ -155,6 +155,25 @@ if (isset($pageNoIndex) && $pageNoIndex === true) {
     $pageNoIndex = false;
 }
 
+// ==============================================================================
+// 🧭 Which main-nav link is the current page? (#137)
+// ==============================================================================
+// Worked out from the canonical path so every page gets a "you are here" cue
+// (an "active" class plus aria-current="page") without each page having to
+// set a variable. Pages outside the four nav sections highlight nothing.
+// ==============================================================================
+if ($canonicalPath === '/') {
+    $navActiveKey = 'generator';
+} elseif (str_starts_with($canonicalPath, '/developers')) {
+    $navActiveKey = 'developers';
+} elseif (str_starts_with($canonicalPath, '/api/docs')) {
+    $navActiveKey = 'apidocs';
+} elseif (str_starts_with($canonicalPath, '/pricing')) {
+    $navActiveKey = 'pricing';
+} else {
+    $navActiveKey = '';
+}
+
 // 🔤 CSRF meta tag for AJAX requests
 if (function_exists('csrfMeta')) {
     $csrfMeta = csrfMeta();
@@ -202,39 +221,39 @@ if ($headerCurrentUser !== null) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="auto">
+<html lang="en-GB" data-bs-theme="auto">
 <head>
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📄 Character Encoding and Viewport
          @see https://developer.mozilla.org/en-US/docs/Web/HTML/Element/meta
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta http-equiv="X-UA-Compatible" content="ie=edge">
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📝 Page Title and Description
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <title><?php echo htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8'); ?></title>
     <meta name="description" content="<?php echo htmlspecialchars($pageDescription, ENT_QUOTES, 'UTF-8'); ?>">
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🎨 Theme Colour (status bar colour on mobile)
          @see https://developer.mozilla.org/en-US/docs/Web/HTML/Element/meta/name/theme-color
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <meta name="theme-color" content="<?php echo htmlspecialchars($primaryColor, ENT_QUOTES, 'UTF-8'); ?>" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#1a4a4a" media="(prefers-color-scheme: dark)">
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🔗 Canonical URL and Open Graph
          @see https://ogp.me/
-         ==================================================================== -->
+         ==================================================================== */ ?>
 <?php if ($pageNoIndex === true) { ?>
     <meta name="robots" content="noindex">
 <?php } else { ?>
     <link rel="canonical" href="<?php echo htmlspecialchars($canonicalURL, ENT_QUOTES, 'UTF-8'); ?>">
 <?php } ?>
     <meta property="og:site_name" content="<?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:locale" content="en_GB">
     <meta property="og:title" content="<?php echo htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8'); ?>">
     <meta property="og:description" content="<?php echo htmlspecialchars($pageDescription, ENT_QUOTES, 'UTF-8'); ?>">
     <meta property="og:type" content="website">
@@ -244,16 +263,16 @@ if ($headerCurrentUser !== null) {
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="<?php echo htmlspecialchars($siteName . ' - ' . $siteTagline, ENT_QUOTES, 'UTF-8'); ?>">
 
-    <!-- Twitter Card -->
+    <?php /* Twitter Card */ ?>
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="<?php echo htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8'); ?>">
     <meta name="twitter:description" content="<?php echo htmlspecialchars($pageDescription, ENT_QUOTES, 'UTF-8'); ?>">
     <meta name="twitter:image" content="<?php echo htmlspecialchars(rtrim($siteURL, '/'), ENT_QUOTES, 'UTF-8'); ?>/assets/img/branding/og-image.png">
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🖼️ Favicon and Icons
          @see https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes/rel#icon
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <link rel="icon" href="/assets/img/branding/favicon.ico" sizes="any">
     <link rel="icon" href="/assets/img/branding/favicon.svg" type="image/svg+xml">
     <link rel="icon" href="/assets/img/branding/favicon-32.png" type="image/png" sizes="32x32">
@@ -261,24 +280,24 @@ if ($headerCurrentUser !== null) {
     <link rel="apple-touch-icon" href="/assets/img/branding/apple-touch-icon.png">
     <link rel="manifest" href="/manifest.json">
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🛡️ CSRF Token (for AJAX requests)
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <?php echo $csrfMeta . PHP_EOL; ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🎨 CSS: Bootstrap 5.3 (CDN with local fallback)
          @see https://getbootstrap.com/docs/5.3/getting-started/introduction/
-         ==================================================================== -->
-    <!-- 🔒 F-004 (SRI, DS-4): hash copied verbatim from
-         public_html_landing/index.php (same pinned version, bootstrap@5.3.3) -->
+         ==================================================================== */ ?>
+    <?php /* 🔒 F-004 (SRI, DS-4): hash copied verbatim from
+         public_html_landing/index.php (same pinned version, bootstrap@5.3.3) */ ?>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           rel="stylesheet"
           integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
           crossorigin="anonymous"
           id="bootstrap-css">
     <script>
-        /* 🔄 Bootstrap CSS CDN fallback to local copy */
+        <?php /* 🔄 Bootstrap CSS CDN fallback to local copy */ ?>
         (function() {
             var testEl = document.createElement('div');
             testEl.className = 'visually-hidden';
@@ -307,23 +326,23 @@ if ($headerCurrentUser !== null) {
         })();
     </script>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🎨 CSS: FontAwesome (CDN with local fallback)
          @see https://fontawesome.com/docs
-         ==================================================================== -->
-    <!-- TODO F-004: capture SRI hash for font-awesome@6.5.1 at live deploy —
+         ==================================================================== */ ?>
+    <?php /* TODO F-004: capture SRI hash for font-awesome@6.5.1 at live deploy —
          public_html_landing/index.php does not reference FontAwesome, so no
          existing verified hash can be safely copied for this version. Do NOT
-         guess a hash: an incorrect integrity value BLOCKS the resource. -->
+         guess a hash: an incorrect integrity value BLOCKS the resource. */ ?>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
           rel="stylesheet"
           crossorigin="anonymous"
           id="fontawesome-css">
     <script>
-        /* 🔄 FontAwesome CSS CDN fallback to local copy (#119, #137) -
+        <?php /* 🔄 FontAwesome CSS CDN fallback to local copy (#119, #137) -
            same approach as the Bootstrap check above: if the CDN stylesheet
            loaded, an icon element's font-family names "Font Awesome"; if
-           not, load the committed copy in /assets/vendor/fontawesome/. */
+           not, load the committed copy in /assets/vendor/fontawesome/. */ ?>
         (function() {
             var testIcon = document.createElement('i');
             testIcon.className = 'fa-solid fa-check';
@@ -355,22 +374,22 @@ if ($headerCurrentUser !== null) {
         })();
     </script>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🎨 CSS: Custom CueRCode Styles
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <link href="/assets/css/cuercode.css" rel="stylesheet">
 
-    <!-- 🎨 Additional page-specific CSS -->
+    <?php /* 🎨 Additional page-specific CSS */ ?>
     <?php foreach ($pageCSS as $cssFile) { ?>
     <link href="<?php echo htmlspecialchars($cssFile, ENT_QUOTES, 'UTF-8'); ?>" rel="stylesheet">
     <?php } ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🎨 CSS: Dark/Light Mode Auto-Detection
          @see https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <script>
-        /* 🌙 Auto-detect and apply colour scheme preference */
+        <?php /* 🌙 Auto-detect and apply colour scheme preference */ ?>
         (function() {
             var theme = localStorage.getItem('cuercode-theme');
             if (theme === 'dark' || theme === 'light') {
@@ -383,37 +402,36 @@ if ($headerCurrentUser !== null) {
         })();
     </script>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          ♿ Colourblind (CVD) Palette - apply persisted choice before paint
          Mirrors the theme block above so the chosen colourblind-safe palette
          is applied to <html> before first paint, avoiding a flash of the
          default brand colours. The data-cuercode-cvd attribute is consumed
          by the [data-cuercode-cvd="..."] rules in cuercode.css. (FG-023)
          @see https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <script>
-        /* ♿ Apply saved colourblind palette preference pre-paint */
+        <?php /* ♿ Apply saved colourblind palette preference pre-paint */ ?>
         (function() {
             var cvd = localStorage.getItem('cuercode-cvd');
             var valid = ['protanopia', 'deuteranopia', 'tritanopia'];
             if (valid.indexOf(cvd) !== -1) {
                 document.documentElement.setAttribute('data-cuercode-cvd', cvd);
             }
-            /* 'none' or absent leaves the attribute off => default brand palette */
+            <?php /* 'none' or absent leaves the attribute off => default brand palette */ ?>
         })();
     </script>
 </head>
 <body class="<?php echo htmlspecialchars($bodyClass, ENT_QUOTES, 'UTF-8'); ?>">
     <a href="#main-content" class="visually-hidden-focusable">Skip to main content</a>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🧭 Navigation Bar
          @see https://getbootstrap.com/docs/5.3/components/navbar/
-         ==================================================================== -->
-    <nav class="navbar navbar-expand-lg sticky-top" data-bs-theme="dark"
-         style="background: linear-gradient(135deg, #2c7a7b, #38a89d);">
+         ==================================================================== */ ?>
+    <nav class="navbar navbar-expand-lg sticky-top navbar-cuercode" data-bs-theme="dark">
         <div class="container">
-            <!-- 🏠 Brand / Logo -->
+            <?php /* 🏠 Brand / Logo */ ?>
             <a class="navbar-brand fw-bold d-inline-flex align-items-center" href="/">
                 <?php /* 🏷️ Real logo mark (#137) - decorative (alt=""), because the
                          site name follows as text. Sits on a white tile so the
@@ -423,7 +441,7 @@ if ($headerCurrentUser !== null) {
                 <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>
             </a>
 
-            <!-- 📱 Mobile toggle button -->
+            <?php /* 📱 Mobile toggle button */ ?>
             <button class="navbar-toggler" type="button"
                     data-bs-toggle="collapse" data-bs-target="#navbarMain"
                     aria-controls="navbarMain" aria-expanded="false"
@@ -431,34 +449,34 @@ if ($headerCurrentUser !== null) {
                 <span class="navbar-toggler-icon"></span>
             </button>
 
-            <!-- 📋 Navigation Links -->
+            <?php /* 📋 Navigation Links */ ?>
             <div class="collapse navbar-collapse" id="navbarMain">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                     <li class="nav-item">
-                        <a class="nav-link" href="/">
+                        <a class="nav-link<?php if ($navActiveKey === 'generator') { echo ' active'; } ?>" href="/"<?php if ($navActiveKey === 'generator') { echo ' aria-current="page"'; } ?>>
                             <i class="fa-solid fa-qrcode me-1" aria-hidden="true"></i> Generator
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/developers/">
+                        <a class="nav-link<?php if ($navActiveKey === 'developers') { echo ' active'; } ?>" href="/developers/"<?php if ($navActiveKey === 'developers') { echo ' aria-current="page"'; } ?>>
                             <i class="fa-solid fa-code me-1" aria-hidden="true"></i> Developers
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/api/docs">
+                        <a class="nav-link<?php if ($navActiveKey === 'apidocs') { echo ' active'; } ?>" href="/api/docs/"<?php if ($navActiveKey === 'apidocs') { echo ' aria-current="page"'; } ?>>
                             <i class="fa-solid fa-book me-1" aria-hidden="true"></i> API Docs
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/pricing/">
+                        <a class="nav-link<?php if ($navActiveKey === 'pricing') { echo ' active'; } ?>" href="/pricing/"<?php if ($navActiveKey === 'pricing') { echo ' aria-current="page"'; } ?>>
                             <i class="fa-solid fa-tags me-1" aria-hidden="true"></i> Pricing
                         </a>
                     </li>
                 </ul>
 
-                <!-- 🔧 Right-side items -->
+                <?php /* 🔧 Right-side items */ ?>
                 <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
-                    <!-- ====================================================
+                    <?php /* ====================================================
                          ♿ Colourblind-friendly palette picker (FG-023)
                          A Bootstrap dropdown of menuitemradio options.
                          JS (cuercode-common.js) persists the choice in
@@ -467,13 +485,14 @@ if ($headerCurrentUser !== null) {
                          re-applies it on load. Keyboard operable via the
                          native <button>s + Bootstrap's dropdown arrow keys.
                          @see https://getbootstrap.com/docs/5.3/components/dropdowns/
-                         ==================================================== -->
+                         ==================================================== */ ?>
                     <li class="nav-item dropdown">
                         <button class="btn btn-link nav-link dropdown-toggle" id="cvd-toggle"
                                 type="button" data-bs-toggle="dropdown" aria-expanded="false"
                                 title="Colourblind-friendly palette"
                                 aria-label="Choose colourblind-friendly palette">
                             <i class="fa-solid fa-eye-low-vision" aria-hidden="true"></i>
+                            <span class="d-lg-none ms-2">Colourblind palette</span>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end" role="menu"
                             aria-label="Colourblind-friendly palette">
@@ -508,15 +527,16 @@ if ($headerCurrentUser !== null) {
                         </ul>
                     </li>
 
-                    <!-- 🌙 Dark/Light Mode Toggle -->
+                    <?php /* 🌙 Dark/Light Mode Toggle */ ?>
                     <li class="nav-item">
                         <button class="btn btn-link nav-link" id="theme-toggle"
                                 title="Toggle dark/light mode" aria-label="Toggle dark/light mode">
-                            <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
+                            <i class="fa-solid fa-moon" aria-hidden="true"></i>
+                            <span class="d-lg-none ms-2">Dark / light mode</span>
                         </button>
                     </li>
 
-                    <!-- ====================================================
+                    <?php /* ====================================================
                          👤 Logged-in user indicator (ProjectBrief §11.4,
                          Epic E3 stage 2b, #52/#14/#23) - avatar + name +
                          dropdown when authenticated; Sign in / Sign up links
@@ -525,7 +545,7 @@ if ($headerCurrentUser !== null) {
                          behaviour (native <button> + data-bs-toggle, arrow-key
                          navigation handled by Bootstrap's bundled JS).
                          @see https://getbootstrap.com/docs/5.3/components/dropdowns/
-                         ==================================================== -->
+                         ==================================================== */ ?>
                     <?php if ($headerCurrentUser !== null) { ?>
                     <li class="nav-item dropdown">
                         <button class="btn btn-link nav-link dropdown-toggle d-flex align-items-center gap-2"
@@ -576,7 +596,7 @@ if ($headerCurrentUser !== null) {
         </div>
     </nav>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          📄 Main Content Container
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <main id="main-content">

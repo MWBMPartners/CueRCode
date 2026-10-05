@@ -93,26 +93,25 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
     <section class="py-5">
-        <div class="container-fluid">
+        <div class="container">
             <div class="row justify-content-center">
-                <div class="col-lg-2">
+                <div class="col-lg-3">
                     <?php require_once CUERCODE_INCLUDES_DIR . 'developers_nav.php'; ?>
                 </div>
 
                 <div class="col-lg-9">
                     <h1 class="h2 fw-bold mb-3">
-                        <i class="fa-solid fa-list-check me-2" aria-hidden="true"></i>
                         Endpoint Reference
                     </h1>
 
                     <?php if ($openApiSpec === null) { ?>
-                    <!-- ========================================================
+                    <?php /* ========================================================
                          ❌ Spec failed to load - fail visibly, not silently.
-                         ======================================================== -->
+                         ======================================================== */ ?>
                     <div class="alert alert-danger" role="alert">
                         <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
-                        The live endpoint reference is temporarily unavailable (could not read or parse
-                        <code>/api/v1/openapi.json</code>). Please use the
+                        The endpoint reference is temporarily unavailable (the specification at
+                        <code>/api/v1/openapi.json</code> could not be read). Please use the
                         <a href="/api/docs/" class="alert-link">interactive Swagger UI</a> or the
                         <a href="/api/v1/openapi.json" class="alert-link">raw specification file</a> instead.
                     </div>
@@ -124,13 +123,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     ?>
 
                     <p class="text-body-secondary mb-3">
-                        Rendered live from <code>/api/v1/openapi.json</code> (OpenAPI
+                        This reference is generated from the API specification at
+                        <code>/api/v1/openapi.json</code> (OpenAPI
                         <?php echo htmlspecialchars((string) (isset($openApiSpec['openapi']) ? $openApiSpec['openapi'] : '3.0.3'), ENT_QUOTES, 'UTF-8'); ?>,
                         API version <?php echo htmlspecialchars($specVersion, ENT_QUOTES, 'UTF-8'); ?>,
-                        <?php echo (int) $pathCount; ?> path<?php echo ($pathCount === 1) ? '' : 's'; ?>)
-                        at the moment you loaded this page - not a hand-maintained copy.
+                        <?php echo (int) $pathCount; ?> path<?php echo ($pathCount === 1) ? '' : 's'; ?>).
                         <a href="/api/v1/openapi.json">View the raw spec</a> ·
-                        <a href="/api/docs/">Open in Swagger UI</a> (try-it-out enabled).
+                        <a href="/api/docs/">Open in Swagger UI</a>.
                     </p>
 
                     <?php
@@ -207,9 +206,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </ul>
                     </nav>
 
-                    <!-- ============================================================
+                    <?php /* ============================================================
                          🔁 One card per operation, fully rendered from the spec
-                         ============================================================ -->
+                         ============================================================ */ ?>
                     <?php foreach ($operations as $opEntry) {
                         $method    = $opEntry['method'];
                         $path      = $opEntry['path'];

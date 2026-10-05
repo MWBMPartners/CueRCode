@@ -85,9 +85,9 @@ $pageJS          = ['/assets/js/cuercode-account.js'];
 require_once CUERCODE_INCLUDES_DIR . 'header.php';
 ?>
 
-    <!-- ====================================================================
+    <?php /* ====================================================================
          🔑 Forgot Password Form
-         ==================================================================== -->
+         ==================================================================== */ ?>
     <section class="py-5">
         <div class="container">
             <div class="row justify-content-center">
@@ -95,13 +95,12 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <div class="card shadow-sm">
                         <div class="card-body p-4">
                             <h1 class="h3 fw-bold mb-3 text-center">
-                                <i class="fa-solid fa-key me-2" aria-hidden="true"></i>
                                 Forgot your password?
                             </h1>
 
                             <?php if ($requestedReset) { ?>
-                                <!-- ✅ Generic anti-enumeration message - always shown, regardless
-                                     of whether the email is actually registered. -->
+                                <?php /* ✅ Generic anti-enumeration message - always shown, regardless
+                                     of whether the email is actually registered. */ ?>
                                 <div class="alert alert-success" role="status">
                                     <i class="fa-solid fa-circle-check me-1" aria-hidden="true"></i>
                                     If that account exists, a password reset link has been sent to it.
@@ -124,15 +123,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                             <?php } ?>
 
-                            <!-- 🔔 Live region for JS-driven (AJAX) status messages -->
+                            <?php /* 🔔 Live region for JS-driven (AJAX) status messages */ ?>
                             <div id="forgot-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
-
-                            <noscript>
-                                <div class="alert alert-info" role="note">
-                                    <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
-                                    JavaScript is disabled - this form will submit normally and reload the page.
-                                </div>
-                            </noscript>
 
                             <form method="POST" action="/forgot-password/" id="forgot-form" novalidate>
                                 <?php echo csrfField(); ?>

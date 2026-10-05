@@ -24,7 +24,7 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('general', 'site_name', 'CueRCode', 'string', 0, 1, 'The public-facing name of the service'),
 ('general', 'site_url', 'https://cuercode.net', 'url', 0, 1, 'The base URL of the website'),
 ('general', 'site_tagline', 'Advanced QR Code Generator', 'string', 0, 1, 'Tagline displayed alongside the site name'),
-('general', 'site_description', 'Create beautiful, customisable QR codes for any purpose.', 'string', 0, 1, 'Meta description for SEO'),
+('general', 'site_description', 'Free QR codes and barcodes with your own logo, colours and frames, plus print-ready accessible and tactile versions.', 'string', 0, 1, 'Meta description for SEO'),
 ('general', 'site_email', 'hello@cuercode.net', 'email', 0, 1, 'Primary contact email address'),
 ('general', 'site_timezone', 'UTC', 'string', 0, 1, 'Default timezone (PHP timezone identifier)'),
 ('general', 'app_version', '1.0.0', 'string', 0, 0, 'Current application version number'),
@@ -660,7 +660,7 @@ VALUES
 
 -- 🆓 Free - a registered, unpaid account. Adds persistence (saved codes),
 -- a small dynamic-QR allowance, and one API key, still no premium features.
-('free', 'Free', 'Create a free account to save your codes and unlock a few extras.', 0.00, 0.00, 'GBP',
+('free', 'Free', 'Create a free account to save your codes and create an API key.', 0.00, 0.00, 'GBP',
  '{"expiry_scheduling": false, "password_protected_qr": false, "sso": false, "organisations": false, "webhooks": false, "csv_export": false, "barcode_generation": true, "dynamic_qr": true, "dual_function_qr": false}',
  '{"saved_codes": 25, "bulk_batch_size": 50, "dynamic_codes": 3, "api_keys": 1, "analytics_days": 0, "api_rate_limit_per_min": 30, "api_rate_limit_per_day": 2000}',
  1, 1),
