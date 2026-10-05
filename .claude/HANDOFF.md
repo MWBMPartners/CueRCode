@@ -59,11 +59,11 @@
     done):** official brand logos in the logo picker (+ retire Skype),
     accessibility statement page, Light/Dark/Auto theme menu, styled confirm
     dialogs, a "why CueRCode" homepage section.
-  - ⏱️ **In flight (this session, verification only):** a full real-browser
-    sweep (25 pages × 7 widths, console errors, broken requests, sideways
-    scroll, clipped boxes); its finished-notification is the watchdog and
-    results go on #137. If this session dies, nothing is lost — re-run it from
-    the steps in DEV_NOTES "Site Polish Check & Template Comments".
+  - ✅ **Real-browser sweep done** (25 pages × 7 widths, 320–1920 px): no
+    console or script errors, no failed requests, en-GB, one main heading,
+    alt text and button names everywhere. Its last three finds (homepage tab
+    row 7px past its card, API-schema text 3px too wide at 320px, Swagger's
+    second <h1>) are fixed and re-checked. Nothing in flight.
 - **2026-09-25 afternoon (cloud session).** The owner answered
   12 open decisions (all recorded in "❓ Owner decisions" below and in
   `LAUNCH_DECISIONS.md` §H). Done on them: the #121 fix is on `main`

@@ -1651,3 +1651,13 @@ footer a:hover {
         filter: none !important;
     }
 }
+
+/**
+ * ↩️ API schema lists (#137) - rendered from openapi.json on /developers/errors/
+ * and /developers/reference/. Long identifiers and addresses wrap instead of
+ * pushing the page sideways on small phones (it overflowed by 3px at 320px).
+ */
+.oapi-schema dt,
+.oapi-schema dd {
+    overflow-wrap: anywhere;
+}

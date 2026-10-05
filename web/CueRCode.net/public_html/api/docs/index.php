@@ -327,6 +327,18 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <?php /* 📌 Validate responses against the spec */ ?>
                     validatorUrl: null,
 
+                    <?php /* ♿ One main heading per page (#137): Swagger UI draws the API
+                             title as a second <h1>. The page already has its own, so tell
+                             assistive technology it is a level-2 heading. Attributes only -
+                             Swagger (React) keeps managing the element itself. */ ?>
+                    onComplete: function() {
+                        var swaggerTitles = document.querySelectorAll('#swagger-ui h1');
+                        for (var i = 0; i < swaggerTitles.length; i++) {
+                            swaggerTitles[i].setAttribute('role', 'heading');
+                            swaggerTitles[i].setAttribute('aria-level', '2');
+                        }
+                    },
+
                     <?php /* 📌 Request interceptor: auto-add API key from Authorize dialog */ ?>
                     requestInterceptor: function(req) {
                         <?php /* If a CSRF token meta tag exists, add it as a header */ ?>

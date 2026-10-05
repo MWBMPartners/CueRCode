@@ -180,7 +180,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                             <?php echo htmlspecialchars($code, ENT_QUOTES, 'UTF-8'); ?>
                                         </span>
                                     </div>
-                                    <div>
+                                    <?php /* ↩️ text-break (#137): long codes such as BULK_TOO_MANY_ITEMS
+                                             wrap instead of pushing the page sideways on small phones. */ ?>
+                                    <div class="text-break">
                                         <strong><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></strong>
                                         <div class="small text-body-secondary"><?php echo htmlspecialchars($note, ENT_QUOTES, 'UTF-8'); ?></div>
                                     </div>

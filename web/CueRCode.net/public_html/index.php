@@ -522,7 +522,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                          ==================================================== */ ?>
                     <div class="card shadow-sm" id="qr-customize-card">
                         <div class="card-header bg-transparent p-0">
-                            <ul class="nav nav-tabs card-header-tabs px-2 pt-2" id="customize-tabs" role="tablist">
+                            <?php /* ↔️ mx-0 (#137): card-header-tabs' negative side margins are meant for
+                                     a .card-header; directly in the card they pushed the tab row
+                                     7px past the card edge at every screen width. */ ?>
+                            <ul class="nav nav-tabs card-header-tabs mx-0 px-2 pt-2" id="customize-tabs" role="tablist">
                                 <li class="nav-item" role="presentation">
                                     <button class="nav-link active" id="tab-colors-btn" data-bs-toggle="tab"
                                             data-bs-target="#tab-colors" type="button" role="tab"
