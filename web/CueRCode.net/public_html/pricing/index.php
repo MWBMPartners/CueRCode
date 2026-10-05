@@ -223,9 +223,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     $pricingFeatureIsComingSoon = ($pricingFeature['status'] === 'coming_soon')
                                         && $pricingFeature['enabled'];
                                 ?>
-                                <li class="mb-2 <?php echo ($pricingFeature['enabled'] && !$pricingFeatureIsComingSoon) ? '' : 'text-body-secondary'; ?>">
+                                <li class="mb-2 d-flex align-items-baseline <?php echo ($pricingFeature['enabled'] && !$pricingFeatureIsComingSoon) ? '' : 'text-body-secondary'; ?>">
                                     <?php if ($pricingFeatureIsComingSoon) { ?>
-                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle me-2">
+                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle me-2 flex-shrink-0">
                                         <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
                                         Coming soon
                                     </span>
@@ -237,7 +237,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <i class="fa-solid fa-xmark me-2" aria-hidden="true"></i>
                                     <span class="visually-hidden">Not included: </span>
                                     <?php } ?>
-                                    <?php echo htmlspecialchars($pricingFeature['label'], ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php /* ↔️ Label in its own flex item so a long name wraps in its own
+                                             column instead of under the badge or icon (#137). */ ?>
+                                    <span><?php echo htmlspecialchars($pricingFeature['label'], ENT_QUOTES, 'UTF-8'); ?></span>
                                 </li>
                                 <?php } ?>
                             </ul>

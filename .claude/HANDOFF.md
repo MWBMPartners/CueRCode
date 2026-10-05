@@ -15,7 +15,7 @@
 ### 🧭 Where we are, in plain English
 - ⏱️ **IN FLIGHT (2026-10-05, being watched):** Opus planner writing `.claude/plans/7n-admin-commerce-plan.md` (task 7n) — background agent; its finished-notification is the watchdog. If this session dies: check whether the plan file exists on the branch; if not, re-run the planning step. (The Dependabot re-check watchdog was stopped: the recreate command can't be sent from here — see task 7k.)
 - **2026-10-05 (cloud session) — READ THIS FIRST.** The owner answered every remaining decision (23 answers, all below in "❓ Owner decisions → Answered 2026-10-05"). The big theme: **almost everything commercial must be adjustable by a Global Admin** (plans, prices in £/$/€, VAT display, discount codes, lifetime deals, trials, pay-as-you-go, price promises, which plans get which features). **Build order now: (1) the admin settings + commerce screens (task 7n), then (2) dynamic QR (task 7j).** `release-candidate` is now protected (owner, confirmed 2026-10-05). Deploy secrets: `SFTP_KNOWN_HOSTS` (org level) and `SFTP_REMOTE_BASE` (repo level) still to add — see task 7l.
-- **2026-10-05 (cloud session) — NEWEST, READ THIS FIRST.** The owner added
+- **2026-10-05 (cloud session `session_01DLG9KizPcFMi6jeZqdMTqM` — AI-rules audit + site polish, runs alongside the 7n session).** The owner added
   three tasks that run **before** picking the old queue back up (task 7j and
   the launch-decision questions wait until these are done):
   - **N1 — #136 instruction audit (report only, nothing changed).** Review
@@ -46,20 +46,24 @@
   - **N1 status:** ✅ report pushed (`51ad222`), awaiting the owner's decisions;
     nothing in the instruction files changed except the #137 polish rule the
     owner asked for (CLAUDE.md, DEVICE_WIDE_RULES, memory, AGENTS, .OpenAI).
-  - **N2 status (#137):** first batch pushed `43cee39` (SRI fix, real logo,
-    grid clipping, canonical/share tags, noindex, committed fallbacks, cookie
-    button). Done locally, not yet pushed: header/footer/CSS (brand buttons
-    site-wide, AA-contrast navbar, nav "you are here", en-GB, copyright
-    2025–now, Contact link), homepage copy, manifest, robots.txt +
-    sitemap.xml, landing page, `tools/check_site_polish.php` + CI job
-    `site-polish`, the standing rule. **In flight (watchdog = background-task
-    notifications):** two Sonnet builders — A: developer pages + openapi.json
-    wording; B: 403/404/500/fallback pages, sw.js privacy, JS error messages,
-    account/pricing/register wording, legal "Last updated". **Then:** move HTML
-    and inline-JS comments to PHP comments (script in the session scratchpad,
-    verify by static + rendered comparison), drop icons from page `<h1>`s,
-    re-run the browser sweep, docs, push. Local test setup: MariaDB +
-    `php -S` router (see `.claude/memory/feedback_polish_check.md`).
+  - **N2 status (#137):** ✅ fixes pushed — `43cee39` + `bf7af66`. Tests
+    2765/2765, `php -l`/`node --check`/actionlint clean, `php
+    tools/check_site_polish.php` 0 problems (9 warnings = the `[TEMPLATE: …]`
+    legal gaps). CI job `site-polish` first runs on the `work-in-progress →
+    alpha` PR (pushes to WIP trigger no workflows). Summary + owner items on
+    #137. **Owner items:** 9 legal placeholders in Terms/Privacy; live DB
+    settings still hold the old tagline/description/Free-plan blurb (seed only
+    changes new installs); FontAwesome SRI (needs a 2nd source — cdnjs blocked
+    here); HTTPS redirect at go-live. **Owed:** Codex review of `43cee39` +
+    `bf7af66` (big: ~50 files; split by area). **Optional follow-ups (not
+    done):** official brand logos in the logo picker (+ retire Skype),
+    accessibility statement page, Light/Dark/Auto theme menu, styled confirm
+    dialogs, a "why CueRCode" homepage section.
+  - ⏱️ **In flight (this session, verification only):** a full real-browser
+    sweep (25 pages × 7 widths, console errors, broken requests, sideways
+    scroll, clipped boxes); its finished-notification is the watchdog and
+    results go on #137. If this session dies, nothing is lost — re-run it from
+    the steps in DEV_NOTES "Site Polish Check & Template Comments".
 - **2026-09-25 afternoon (cloud session).** The owner answered
   12 open decisions (all recorded in "❓ Owner decisions" below and in
   `LAUNCH_DECISIONS.md` §H). Done on them: the #121 fix is on `main`
