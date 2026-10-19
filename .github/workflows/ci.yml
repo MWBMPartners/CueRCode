@@ -226,12 +226,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks (latest release)
+      # 📌 Pinned version + checksum. This used to ask api.github.com for the
+      #    "latest" release without logging in; GitHub rate-limits those
+      #    anonymous calls per runner IP, so the step randomly died with a 403
+      #    before scanning anything (alpha CI, 2026-10-19). Pinning also means
+      #    an unverified new release can't silently change what CI runs.
+      #    Dependabot can't bump this — to upgrade, change both values below,
+      #    taking the SHA-256 from that release's gitleaks_<ver>_checksums.txt.
+      - name: Run gitleaks (pinned release)
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
         run: |
           set -euo pipefail
-          VER="$(curl -sSfL https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
-            | python3 -c 'import sys, json; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
-          echo "gitleaks version: ${VER}"
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          echo "gitleaks version: ${GITLEAKS_VERSION}"
+          curl -sSfL --retry 3 "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum --check --strict
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           /tmp/gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --exit-code 1

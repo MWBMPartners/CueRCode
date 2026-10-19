@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Secret scan no longer fails at random (2026-10-19, #145)
+
+- **CI's secret scan (gitleaks)** used to ask GitHub for "the latest gitleaks
+  release" without logging in. GitHub limits those anonymous requests, so the
+  step sometimes crashed with a `403` before scanning anything (seen on
+  `alpha` after Dependabot PR #140 merged). It now uses a fixed version
+  (8.30.1, the same one CI was already getting) and checks the download
+  against gitleaks' published SHA-256 fingerprint. `ci.yml` explains how to
+  upgrade it.
+
 ### Fixed - "Does it look AI-made?" polish sweep of the public site (2026-10-05, #137)
 
 A code sweep (109 findings) plus a real-browser pass at seven screen widths.
