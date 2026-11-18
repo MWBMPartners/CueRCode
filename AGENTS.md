@@ -16,3 +16,14 @@ Commercial rules (tiers, prices, discounts, trials, lifetime deals, PAYG, VAT)
 are always Global-Admin-editable data, never hard-coded.
 Before any alpha PR (and after page/CSS/JS changes) run `php tools/check_site_polish.php`
 (0 problems) plus a real-browser pass at several screen sizes - no "AI-made" tells (#137).
+
+## Model tiers for every task (all AI tools) — decision 0001
+
+Applies to Claude, Codex, Ollama, Kimi, Grok, Gemini and any other tool. Full record: `docs/decisions/0001-model-tiers-for-gather-plan-build.md`.
+
+1. **Gather information:** Sonnet-class or Haiku-class model, **medium** effort.
+2. **Deep planning and analysis:** Opus-class (strongest) model, **high** effort, one run after another.
+3. **Implement:** Sonnet-class or Haiku-class model, **medium** effort.
+4. Checks and reviews use the strongest tier. Do not switch model part-way through a task.
+
+Search `docs/decisions/` before asking the owner any question.

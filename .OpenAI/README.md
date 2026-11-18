@@ -16,3 +16,6 @@ Don't keep a second copy of the live state here — read and update that one fil
 so Claude and Codex never disagree about the current position.
 
 The root `AGENTS.md` (which Codex loads automatically) points here.
+
+## Pointer
+Model tiers/effort rule: see `AGENTS.md` and `docs/decisions/0001-model-tiers-for-gather-plan-build.md` (decision 0001). Pointer only.

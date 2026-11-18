@@ -96,6 +96,8 @@ Update `.claude/HANDOFF.md` continuously (not only at the end), so work can be p
 - **Implementation:** Sonnet or Haiku, whichever fits best. If the implementation is complex, use Opus.
 - Philosophy: use tokens/credits efficiently while still producing top-quality, correct code — **GIRFT (Get It Right First Time)**.
 
+- **Model tiers and effort (decision 0001, 2026-11-18):** gather facts = Sonnet/Haiku at medium effort; deep plan/analysis = Opus at high effort; implement = Sonnet/Haiku at medium effort. Full record in `docs/decisions/0001-model-tiers-for-gather-plan-build.md` and `AGENTS.md` (pointer only — do not restate here).
+
 ### 🔌 Use plugins to help
 Use the dev-team plugins freely for any of this work, and for suggesting fixes, tweaks, enhancements and new features. Use them to bring in a different AI system to check work: plan and build with Claude Code, then check/review with Codex (and vice versa).
 
