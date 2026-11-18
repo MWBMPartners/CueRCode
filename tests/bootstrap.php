@@ -52,6 +52,71 @@ error_reporting(E_ALL);
 ini_set('display_errors', '1');
 
 // ==============================================================================
+// 🚨 Step 1b: Deprecation Catcher (#151, PHP 8.6 readiness)
+// ==============================================================================
+// Showing a deprecation on screen is not enough: it scrolls past and the run
+// still ends green. This handler turns every E_DEPRECATED / E_USER_DEPRECATED
+// raised while the suite runs into a recorded FAILURE, so a PHP upgrade that
+// deprecates something we use breaks the build instead of passing silently.
+//
+//   - Anything silenced with the @ operator is ignored (error_reporting() has
+//     the bit cleared for the duration of an @-silenced statement).
+//   - Once the assertion library is loaded, the deprecation becomes a failed
+//     assertion naming the message, file and line.
+//   - Before that (this file runs first), it sets a global flag that run.php
+//     checks, and writes a line starting "CUERCODE-DEPRECATION:" to STDERR.
+//   - A CHILD process (a test that spawns `php` and loads this file but never
+//     loads the assertion library) has nobody to read the flag, so a shutdown
+//     function makes that child exit with code 255. The parent test helpers
+//     also look for the STDERR marker and record a failed assertion. Without
+//     this, a deprecation inside a child process was silently thrown away.
+//   - Every other error type is passed back to PHP's normal handling (return
+//     false), so existing behaviour is unchanged.
+// @see https://www.php.net/manual/en/function.set-error-handler.php
+// ==============================================================================
+
+set_error_handler(
+    static function (int $errno, string $errstr, string $errfile, int $errline): bool {
+        // 🔕 Only deprecations are ours to catch.
+        if ($errno !== E_DEPRECATED && $errno !== E_USER_DEPRECATED) {
+            return false;
+        }
+
+        // 🔕 Respect the @ operator: the bit for this error type is cleared.
+        if ((error_reporting() & $errno) === 0) {
+            return false;
+        }
+
+        $where = $errstr . ' @ ' . basename($errfile) . ':' . $errline;
+
+        // 📝 Remember it for run.php, whatever else happens.
+        $GLOBALS['__CUERCODE_DEPRECATIONS'] = true;
+
+        if (function_exists('test_record')) {
+            // ✅ The assertion library is loaded: record a visible failure.
+            test_record(false, 'deprecation', 'PHP deprecation raised: ' . $where);
+        } elseif (defined('STDERR')) {
+            // ⚠️ Too early for the collector: say so on STDERR.
+            fwrite(STDERR, 'CUERCODE-DEPRECATION: ' . $where . PHP_EOL);
+        }
+
+        // ✅ Handled; do not print a second copy.
+        return true;
+    }
+);
+
+// 🚪 Child-process guard: if a deprecation was caught and the assertion library
+//    never loaded (so nothing could record it), exit non-zero at shutdown.
+//    run.php loads the library, so this never changes the runner's own exit code.
+register_shutdown_function(
+    static function (): void {
+        if (!empty($GLOBALS['__CUERCODE_DEPRECATIONS']) && !function_exists('test_record')) {
+            exit(255);
+        }
+    }
+);
+
+// ==============================================================================
 // 📂 Step 2: Path Constants
 // ==============================================================================
 // Mirror the directory layout the production bootstrap establishes, but anchored

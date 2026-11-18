@@ -53,8 +53,61 @@ on:
       - alpha
 
 jobs:
+  # ===========================================================================
+  # ✅ Gate: PHP checks on every supported version BEFORE anything is uploaded
+  # ===========================================================================
+  # (#151, decision 0002) Supported PHP versions are 8.4, 8.5 and 8.6, and all
+  # three are checked before deploy. A failure on 8.4, 8.5 or the 8.6
+  # compatibility scan blocks the deploy. The 8.6 job is allowed to fail for
+  # now (continue-on-error), a provisional choice (decision 0002); see ci.yml for
+  # the rule on making it blocking. The full test suite is NOT run here (it
+  # needs library downloads; making tests a required check is an open owner
+  # item, LAUNCH_DECISIONS.md section A).
+  php-checks:
+    name: PHP checks (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    if: ${{ vars.SFTP_ENABLED == 'true' }}
+    # ⏱️ A hung job must not hold the queue for the 6-hour default.
+    timeout-minutes: 20
+    continue-on-error: ${{ matrix.php == '8.6' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.4'
+          - '8.5'
+          - '8.6'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      # A deploy with the checks missing must fail, never skip silently.
+      - name: Check the check scripts are present
+        run: |
+          for f in tools/ci/php-lint.sh tools/php86-compat-scan.php; do
+            if [ ! -f "${f}" ]; then
+              echo "::error::${f} is missing - the pre-deploy checks cannot run."
+              exit 1
+            fi
+          done
+
+      - name: Lint every PHP file (syntax and deprecations)
+        run: bash tools/ci/php-lint.sh
+
+      - name: PHP 8.6 compatibility scan
+        run: php tools/php86-compat-scan.php
+
   deploy:
     runs-on: ubuntu-latest
+    # 🚦 Nothing is uploaded unless the PHP checks passed. A failure on the 8.6
+    #    job alone does not block (it is continue-on-error), 8.4/8.5 do.
+    needs: php-checks
 
     # =========================================================================
     # 🔒 Only run if SFTP deployment is explicitly enabled

@@ -277,6 +277,12 @@ if ($totalAssertions === 0) {
     echo colorize('No assertions executed (0 tests).', '33') . PHP_EOL;
     echo str_repeat('=', 60) . PHP_EOL;
     echo PHP_EOL;
+
+    // 🚨 A deprecation caught before any assertion existed still fails the run.
+    if (!empty($GLOBALS['__CUERCODE_DEPRECATIONS'])) {
+        exit(1);
+    }
+
     exit(0);
 }
 
@@ -293,6 +299,13 @@ echo PHP_EOL;
 
 // 🚦 Exit non-zero if anything failed, so CI can gate on it.
 if ($totalFail > 0) {
+    exit(1);
+}
+
+// 🚨 A PHP deprecation fails the run even if the failed-assertion count is zero
+//    (the bootstrap's catcher sets this flag; see tests/bootstrap.php Step 1b).
+if (!empty($GLOBALS['__CUERCODE_DEPRECATIONS'])) {
+    echo colorize('A PHP deprecation was raised during the run.', '31') . PHP_EOL;
     exit(1);
 }
 

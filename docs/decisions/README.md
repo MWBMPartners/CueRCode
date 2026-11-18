@@ -11,3 +11,5 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | No. | Date | Decision | Status |
 |---|---|---|---|
 | [0001](0001-model-tiers-for-gather-plan-build.md) | 2026-11-18 | Gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium; any AI tool | Current |
+| [0002](0002-php-support-matrix-8-4-to-8-6.md) | 2026-11-18 | Supported PHP versions are 8.4, 8.5 and 8.6; all checked on merge and before deploy (8.6 may fail for now) | Current |
+| [0003](0003-no-php-8-6-only-features-without-measured-benefit.md) | 2026-11-18 | Do not adopt PHP 8.6-only features without a measured benefit; keep 8.4/8.5 compatible | Provisional (owner not yet asked) |

@@ -40,20 +40,20 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-09-25, #112, #122/#123/#126)
+## Current suite (2026-11-18, #151; earlier #112, #122/#123/#126)
 
 | File | Assertions |
 | --- | --- |
-| `test_accessibility.php` | 41 |
+| `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
 | `test_account_ui.php` | 70 |
 | `test_api_keys.php` | 108 |
 | `test_api_parity.php` | 76 |
-| `test_auth.php` | 61 |
+| `test_auth.php` | 62 |
 | `test_barcode.php` | 120 |
-| `test_braille.php` | 65 |
-| `test_bulk.php` | 82 |
-| `test_core.php` | 140 |
+| `test_braille.php` | 69 |
+| `test_bulk.php` | 85 |
+| `test_core.php` | 143 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
@@ -61,15 +61,18 @@ set.
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 132 |
 | `test_features.php` | 91 |
-| `test_log_mask.php` | 51 |
-| `test_oauth.php` | 135 |
+| `test_log_mask.php` | 56 |
+| `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
-| `test_pricing.php` | 54 |
+| `test_php_lint_script.php` | 6 |
+| `test_php86_compat_scan.php` | 57 |
+| `test_php_runtime_guards.php` | 24 |
+| `test_pricing.php` | 107 |
 | `test_pricing_flex.php` | 50 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| **Total** | **2712** |
+| **Total** | **2871** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 

@@ -4,7 +4,7 @@
 
 ## Goal
 
-CueRCode is a PHP 8.4/8.5 QR-code-generator SaaS for Dreamhost shared hosting, providing a fully responsive web UI and a feature-parity RESTful API for generating, customising, and downloading QR codes — with the web frontend itself built on top of the API (ProjectBrief §1).
+CueRCode is a PHP 8.4/8.5/8.6 QR-code-generator SaaS for Dreamhost shared hosting, providing a fully responsive web UI and a feature-parity RESTful API for generating, customising, and downloading QR codes — with the web frontend itself built on top of the API (ProjectBrief §1).
 
 ## Definition of done
 
@@ -21,7 +21,7 @@ Production-ready for the current phase scope, tuned to this PHP app:
 
 ## Constraints
 
-- **Runtime:** PHP 8.5 target, backward-compatible to PHP 8.4.
+- **Runtime:** PHP 8.4, 8.5 and 8.6 supported; PHP 8.5 is the target until the host offers 8.6 (decision 0002, `docs/decisions/`).
 - **Database:** MySQLi only, prepared statements for ALL queries (no string interpolation into SQL).
 - **Host:** Dreamhost shared hosting — NO Composer, NO CLI, NO npm on host. Third-party PHP libs self-hosted in `_libraries/` with a custom PSR-4 autoloader.
 - **Crypto:** AES-256-GCM + HKDF (random IV, GCM auth tag) for sensitive data; Argon2id via `password_hash()` for passwords (Phase 2 — schema stub only today).

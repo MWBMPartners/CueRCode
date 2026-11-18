@@ -273,6 +273,18 @@ if (session_status() === PHP_SESSION_NONE && php_sapi_name() !== 'cli') {
         }
     }
 
+    // 🔒 Strict session mode + cookies-only sessions, set in PHP itself (#151).
+    //    PHP 8.6 turns strict mode on by default; 8.4 and 8.5 do not. The
+    //    `php_value` lines in public_html/.htaccess are skipped when PHP runs
+    //    under FastCGI (the usual Dreamhost set-up), so the .htaccess copy alone
+    //    cannot be relied on. ini_set() must run BEFORE session_start().
+    //    - use_strict_mode: PHP refuses a session ID it did not issue, which
+    //      blocks session fixation.
+    //    - use_only_cookies: the session ID is never accepted from the URL.
+    // @see https://www.php.net/manual/en/session.configuration.php
+    ini_set('session.use_strict_mode', '1');
+    ini_set('session.use_only_cookies', '1');
+
     // 🍪 Set session cookie parameters
     if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
         $isSecure = true;

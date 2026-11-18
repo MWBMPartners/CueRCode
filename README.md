@@ -27,7 +27,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 
 | Component | Technology |
 | --- | --- |
-| 🖥️ Backend | PHP 8.5 (backward-compatible with 8.4) |
+| 🖥️ Backend | PHP 8.4, 8.5 or 8.6 (aim: 8.5; see `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`) |
 | 🗄️ Database | MySQL via MySQLi (prepared statements only) |
 | 📦 QR Library | [chillerlan/php-qrcode](https://github.com/chillerlan/php-qrcode) v5.x |
 | 📊 Barcode Library | [tecnickcom/tc-lib-barcode](https://github.com/tecnickcom/tc-lib-barcode) v2.12.0 (#69) |
@@ -73,7 +73,7 @@ CueRCode/
 
 ### Prerequisites
 
-- 🐘 PHP 8.4 or 8.5 with extensions: `mbstring`, `gd`, `json`, `openssl`, `mysqli`, `curl` (email/SSO), `zip` (bulk downloads), `bcmath` (PDF417 barcodes). `imagick` is optional (only used for predefined logos on raster output) - the installer itself only checks for `mysqli`, `mbstring`, `gd`, `json` and `openssl`.
+- 🐘 PHP 8.4, 8.5 or 8.6 with extensions: `mbstring`, `gd`, `json`, `openssl`, `mysqli`, `curl` (email/SSO), `zip` (bulk downloads), `bcmath` (PDF417 barcodes). `imagick` is optional (only used for predefined logos on raster output) - the installer itself only checks for `mysqli`, `mbstring`, `gd`, `json` and `openssl`.
 - 🗄️ MySQL 5.7+ or MariaDB 10.3+
 - 🌐 Apache with `mod_rewrite` enabled
 
@@ -246,7 +246,7 @@ AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.cl
 php tests/run.php
 ```
 
-runs the full dependency-free characterization suite - 2712 assertions across 25 test files, no database or Composer required.
+runs the full dependency-free characterization suite - 2871 assertions across 28 test files, no database or Composer required.
 
 There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL or MariaDB container - see [tests/README.md](tests/README.md).
 

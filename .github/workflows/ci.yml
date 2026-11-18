@@ -4,8 +4,10 @@
 # Runs on push/PR to all four tiers (alpha → beta → release-candidate → main).
 # Provides the per-PR quality signal the repo previously lacked
 # (closes #35 / roadmap E12):
-#   1. php -l syntax lint on BOTH PHP 8.4 and 8.5 (target = 8.5, back-compat 8.4)
-#   2. The dependency-free test suite (php tests/run.php) with the vendored
+#   1. php -l syntax lint on PHP 8.4, 8.5 AND 8.6 (supported versions, decision
+#      0002; lint also fails on compile-time deprecations, #151)
+#   2. The dependency-free test suite (php tests/run.php) on all three versions,
+#      with the vendored
 #      QR/PDF libraries installed at run time (they are gitignored — "downloaded
 #      separately, not committed" — so CI fetches them, mirroring the server).
 #   3. Site polish check (php tools/check_site_polish.php, #137).
@@ -45,12 +47,24 @@ jobs:
   php-lint:
     name: php -l (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
+    # ⏱️ A hung job must not hold the queue for the 6-hour default.
+    timeout-minutes: 20
+    # 🧪 PHP 8.6 is due for general availability on 2026-11-19. Until setup-php's
+    #    `latest` is 8.6 or higher it may serve a release candidate or nightly build.
+    #    Its result is REPORTED but must not block merges for now (#151,
+    #    decision 0002). A red 8.6 run is not ignored: the watchdog reports it.
+    #    To make 8.6 blocking: once setup-php's `latest` is 8.6 or higher AND
+    #    8.6 has passed two runs in a row, delete the `continue-on-error` lines
+    #    (here and in the tests job and deploy.yml) in one commit and record a
+    #    new decision.
+    continue-on-error: ${{ matrix.php == '8.6' }}
     strategy:
       fail-fast: false
       matrix:
         php:
           - '8.4'
           - '8.5'
+          - '8.6'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,37 +75,28 @@ jobs:
           php-version: ${{ matrix.php }}
           coverage: none
 
+      # One shared script (also used by deploy.yml) so the two cannot drift.
+      # It fails on syntax errors AND on compile-time "Deprecated:" output.
       - name: Lint every PHP file
-        run: |
-          set -euo pipefail
-          fail=0
-          # Only scan folders that exist — an older tier (e.g. release-candidate
-          # before alpha is promoted into it) may not have tests/ yet (#110).
-          DIRS=()
-          for d in web tests; do
-            if [ -d "${d}" ]; then
-              DIRS+=("${d}")
-            fi
-          done
-          while IFS= read -r file; do
-            if ! php -l "$file" > /dev/null 2>&1; then
-              echo "::error file=${file}::PHP syntax error"
-              php -l "$file" || true
-              fail=1
-            fi
-          done < <(find "${DIRS[@]}" -name '*.php' -type f)
-          if [ "${fail}" -ne 0 ]; then
-            echo "PHP syntax errors found."
-            exit 1
-          fi
-          echo "php -l clean across all tracked PHP files."
+        run: bash tools/ci/php-lint.sh
 
   # ---------------------------------------------------------------------------
   # 🧪 Dependency-free test suite (libraries vendored at run time)
   # ---------------------------------------------------------------------------
   tests:
-    name: Test suite (PHP 8.4)
+    name: Test suite (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
+    # ⏱️ A hung job must not hold the queue for the 6-hour default.
+    timeout-minutes: 20
+    # 🧪 8.6 is allowed to fail for now (see the php-lint job for the rule).
+    continue-on-error: ${{ matrix.php == '8.6' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.4'
+          - '8.5'
+          - '8.6'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -150,13 +155,16 @@ jobs:
             echo "::notice::tests/ is not on this branch yet — test suite skipped (it arrives via promotion)."
           fi
 
-      - name: Set up PHP 8.4
+      - name: Set up PHP ${{ matrix.php }}
         if: steps.suite.outputs.present == 'true'
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           extensions: gd, mbstring, zip, fileinfo, bcmath
           coverage: none
+          # Report everything, so the child processes some tests start also
+          # print deprecations (#151).
+          ini-values: error_reporting=-1, display_errors=On, log_errors=Off
 
       - name: Install vendored libraries (no Composer, mirrors the server)
         if: steps.suite.outputs.present == 'true'
@@ -176,9 +184,19 @@ jobs:
           cp -r /tmp/tc-lib-color/src "${LIB}/tecnickcom/tc-lib-color/src"
           echo "Vendored libraries installed."
 
+      # The runner exits 1 on a deprecation it catches itself, and the test
+      # helpers that spawn child PHP processes fail on a deprecation in the
+      # child (STDERR marker + exit 255, see tests/bootstrap.php). The grep
+      # below is a backstop for deprecation text that still reaches the log.
       - name: Run test suite
         if: steps.suite.outputs.present == 'true'
-        run: php tests/run.php
+        run: |
+          set -o pipefail
+          php tests/run.php 2>&1 | tee test-output.txt
+          if grep -nE '(^|PHP )Deprecated:' test-output.txt; then
+            echo "::error::PHP deprecation text found in the test output."
+            exit 1
+          fi
 
   # ---------------------------------------------------------------------------
   # 🔍 Site polish check (#137) — BLOCKING. Source-only checks for the small

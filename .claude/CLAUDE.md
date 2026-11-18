@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-CueRCode is a web-based QR Code generation service with a responsive web UI and RESTful API. Built with PHP 8.4+/MySQL, hosted on Dreamhost Shared Hosting. Primary domain: CueRCode.net. Secondary: CueRCode.me. Tertiary: QRmy.Link.
+CueRCode is a web-based QR Code generation service with a responsive web UI and RESTful API. Built with PHP (8.4, 8.5 and 8.6 supported, see decision 0002 in `docs/decisions/`)/MySQL, hosted on Dreamhost Shared Hosting. Primary domain: CueRCode.net. Secondary: CueRCode.me. Tertiary: QRmy.Link.
 
 ## Memory
 
@@ -18,7 +18,7 @@ These instructions MUST be followed for EVERY prompt/action:
 ### Code Standards
 
 - PHP: Full multi-line notation (no shorthand), detailed inline comments, use PHP predefined constants (DIRECTORY_SEPARATOR, PHP_EOL, etc.)
-- PHP: Target PHP 8.5 with backward compatibility to PHP 8.4
+- PHP: supported versions, target and checks are in `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`; no 8.6-only features without a measured benefit (`docs/decisions/0003-no-php-8-6-only-features-without-measured-benefit.md`). Run `php tools/php86-compat-scan.php` before finishing PHP work
 - SQL: MySQLi only, prepared statements for ALL queries
 - HTML5: Fully compliant, responsive, no `<table>` tags for layout
 - CSS3+: Modern CSS with graceful fallbacks

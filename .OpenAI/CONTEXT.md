@@ -9,7 +9,7 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — last updated 2026-09-23 (#108)
 
 ## Project in one paragraph
 CueRCode is a QR-code (and barcode) generator website plus REST API, written in
-PHP 8.4/8.5 with MySQL (MySQLi prepared statements only), hosted on Dreamhost
+PHP with MySQL (supported versions: see `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`) (MySQLi prepared statements only), hosted on Dreamhost
 shared hosting (no Docker, no Composer — libraries are downloaded and hosted
 manually). Domains: CueRCode.net (main), CueRCode.me, QRmy.Link (used for
 dynamic-redirect links). The API spec is

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - PHP 8.6 readiness guard rails (2026-11-18, #151)
+
+CueRCode's own code needs no changes for PHP 8.6. What was missing was a way to
+find out if that stops being true. Now:
+
+- **Supported PHP versions are 8.4, 8.5 and 8.6** (decision 0002). Lint and the
+  test suite run on all three on pull requests into `main`, `release-candidate`,
+  `beta` and `alpha`. 8.6 is allowed to fail for now (a provisional planner choice
+  in decision 0002, not an owner instruction); 8.6 general availability is due
+  2026-11-19.
+- **A gate before deploy:** `deploy.yml` now runs the PHP checks on all three
+  versions first, and does not upload anything if 8.4, 8.5 or the scan fail.
+  Before this it had no checks at all.
+- **Deprecations now fail the build.** Before, a deprecation was printed and the
+  run still ended green; `php -l` also hid compile-time ones. New shared script
+  `tools/ci/php-lint.sh` (it also fails if it finds no PHP files), and the test
+  runner records any deprecation as a failure, including one raised inside a child
+  PHP process that a test starts (previously thrown away).
+- **Session settings set in PHP:** strict session mode and cookies-only sessions are
+  now set with `ini_set()` in `_includes/bootstrap.php`, because the `.htaccess`
+  `php_value` lines are skipped under FastCGI.
+- CI jobs got a 20-minute timeout.
+- **New scanner** `tools/php86-compat-scan.php` (with `tests/test_php86_compat_scan.php`)
+  checks every PHP file for things 8.6 deprecates or changes. Result today: zero.
+- **Guard test** `tests/test_php_runtime_guards.php` fails if the explicit session
+  settings (strict mode, HttpOnly, SameSite Lax) are removed from the source, since
+  8.4 and 8.5 do not default to them. It checks the code text, not a live server.
+  Also proves the deprecation catcher works, including in child processes.
+- **No 8.6-only features adopted** (decision 0003). Version-guard rules for future
+  code are in `DEV_NOTES.md`.
+- Tests: 2765 to 2871 assertions (106 new).
+
 ### Fixed - Secret scan no longer fails at random (2026-10-19, #145)
 
 - **CI's secret scan (gitleaks)** used to ask GitHub for "the latest gitleaks

@@ -342,7 +342,7 @@ assertEquals(200, $logoutResult['httpCode'], 'logoutCurrentUser() reports HTTP 2
  * @param string $snippet PHP code (without a leading "<?php" tag) to run after
  *                        the bootstrap + fn_password.php/fn_auth.php are loaded.
  *
- * @return string The child process's STDOUT (stderr is discarded).
+ * @return string The child process's STDOUT (stderr is checked for deprecations).
  *
  * @see https://www.php.net/manual/en/function.proc-open.php
  */
@@ -367,6 +367,7 @@ function authTestRunPhpSnippet(string $snippet): string
     ];
 
     $stdout  = '';
+    $stderr  = '';
     $command = [PHP_BINARY, $tmpFile];
     $process = proc_open($command, $descriptors, $pipes);
 
@@ -374,7 +375,7 @@ function authTestRunPhpSnippet(string $snippet): string
         fclose($pipes[0]);
         $stdout = stream_get_contents($pipes[1]);
         fclose($pipes[1]);
-        stream_get_contents($pipes[2]);
+        $stderr = (string) stream_get_contents($pipes[2]);
         fclose($pipes[2]);
         proc_close($process);
     }
@@ -384,6 +385,13 @@ function authTestRunPhpSnippet(string $snippet): string
     if ($stdout === false) {
         return '';
     }
+
+    // 🚨 A deprecation inside the child is a FAILURE (#151). bootstrap.php writes
+    //    a CUERCODE-DEPRECATION: line to STDERR (and exits 255) when one is raised.
+    assertFalse(
+        str_contains($stderr, 'CUERCODE-DEPRECATION:'),
+        'child process raised no PHP deprecation' . ($stderr !== '' ? ' - ' . trim($stderr) : '')
+    );
 
     return $stdout;
 }

@@ -585,7 +585,7 @@ assertEquals('ID_TOKEN_MISSING_EXP', $noExpResult['errorCode'], 'missing exp -> 
  *                        test bootstrap (requireFn(), CUERCODE_* constants)
  *                        is already required before this code runs.
  *
- * @return string The child process's STDOUT (stderr is discarded).
+ * @return string The child process's STDOUT (stderr is checked for deprecations).
  *
  * @see https://www.php.net/manual/en/function.proc-open.php
  * @see tests/test_core.php - runPhpSnippet() (the original of this pattern)
@@ -609,6 +609,7 @@ function oauthTestRunPhpSnippet(string $snippet): string
     ];
 
     $stdout  = '';
+    $stderr  = '';
     $command = [PHP_BINARY, $tmpFile];
     $process = proc_open($command, $descriptors, $pipes);
 
@@ -616,7 +617,7 @@ function oauthTestRunPhpSnippet(string $snippet): string
         fclose($pipes[0]);
         $stdout = stream_get_contents($pipes[1]);
         fclose($pipes[1]);
-        stream_get_contents($pipes[2]);
+        $stderr = (string) stream_get_contents($pipes[2]);
         fclose($pipes[2]);
         proc_close($process);
     }
@@ -626,6 +627,13 @@ function oauthTestRunPhpSnippet(string $snippet): string
     if ($stdout === false) {
         return '';
     }
+
+    // 🚨 A deprecation inside the child is a FAILURE (#151). bootstrap.php writes
+    //    a CUERCODE-DEPRECATION: line to STDERR (and exits 255) when one is raised.
+    assertFalse(
+        str_contains($stderr, 'CUERCODE-DEPRECATION:'),
+        'child process raised no PHP deprecation' . ($stderr !== '' ? ' - ' . trim($stderr) : '')
+    );
 
     return $stdout;
 }

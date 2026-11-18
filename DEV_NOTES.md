@@ -90,7 +90,7 @@ delete stale branches).
 
 ### 🐘 PHP
 
-- **Minimum version:** PHP 8.5 (with PHP 8.4 backward compatibility via conditional statements)
+- **Supported versions:** PHP 8.4, 8.5 and 8.6; the target stays 8.5 until the host offers 8.6 (decision 0002, `docs/decisions/`). Minimum is 8.4. See "PHP 8.6 readiness and version guards" below.
 - **Predefined constants:** Use `DIRECTORY_SEPARATOR`, `PHP_EOL`, `PHP_INT_MAX`, etc. for platform neutrality
 - **Code blocks:** Always use full notation (no shorthand `if`/`else`/`for`)
 - **Indentation:** 4 spaces (no tabs)
@@ -185,7 +185,24 @@ Since Dreamhost shared hosting has no CLI/Composer access:
 
 ### Zero-Deprecation DoD Bar (cycle 10)
 
-PHP 8.4/8.5 zero-deprecation is a hard Definition-of-Done gate. As of cycle 10, zero `E_DEPRECATED` or `E_STRICT` notices are emitted by any file under `web/CueRCode.net/`. Any future change must preserve this bar — run `php -l` and verify no deprecation output before committing.
+PHP 8.4/8.5 zero-deprecation is a hard Definition-of-Done gate. As of cycle 10, zero `E_DEPRECATED` or `E_STRICT` notices are emitted by any file under `web/CueRCode.net/`. Any future change must preserve this bar — run `php -l` and verify no deprecation output before committing. (PHP 8.6 is reported but not yet a hard gate; see "PHP 8.6 readiness and version guards" below and decision 0002.)
+
+### PHP 8.6 readiness and version guards (#151, decisions 0002 and 0003, 2026-11-18)
+
+**Position:** CueRCode's own code needs no changes for PHP 8.6 (checked against php-src `PHP-8.6/UPGRADING`). The work is guard rails.
+
+- **Scanner:** `php tools/php86-compat-scan.php` reads all PHP in `web/`, `tests/` and `tools/` with the PHP tokenizer and reports code that 8.6 deprecates or changes (full rule list in the file header). Exit 0 clean, 1 findings, 2 usage error. `--path=<dir>` limits scope; `--include-vendored` lists library hits as warnings. Opt out one line with `// php86-scan-ok: <reason>`. Its test (`tests/test_php86_compat_scan.php`) uses bad examples held as strings, never as separate `.php` files, and also checks the whole repo is clean.
+- **Deprecations fail the checks:** `tests/bootstrap.php` records any PHP deprecation during the test run as a failure, including one raised inside a child PHP process that a test spawns (the child writes a `CUERCODE-DEPRECATION:` line to STDERR and exits 255; the five spawning helpers turn that into a failed assertion, proved in `tests/test_php_runtime_guards.php`); `tools/ci/php-lint.sh` (shared by `ci.yml` and `deploy.yml`) fails on compile-time "Deprecated:" output, which `php -l` alone hides because it still exits 0.
+- **Session settings must stay explicit.** PHP 8.6 turns on strict session mode, HttpOnly and SameSite=Lax by default; 8.4 and 8.5 do not. `_includes/bootstrap.php` sets strict mode and cookies-only with `ini_set()` before `session_start()` (the `.htaccess` `php_value` lines are skipped under FastCGI, so they cannot be the only copy) and sets HttpOnly and SameSite=Lax in `session_set_cookie_params()`. `tests/test_php_runtime_guards.php` reads the source as text and fails if a line is removed; it proves the settings are written in the code, not what a live server sends.
+- **CI:** lint and tests run on 8.4, 8.5 and 8.6; `deploy.yml` has a `php-checks` gate (lint plus scan on all three) that the `deploy` job needs. The deploy gate runs lint and the scanner only; the test suite runs in `ci.yml`, not before deploy. The 8.6 jobs are `continue-on-error` until the two-green-runs rule in decision 0002 is met (8.6 general availability is due 2026-11-19; until setup-php's `latest` is 8.6, it may serve a release candidate or nightly build). All CI jobs have a 20-minute timeout. **To make 8.6 blocking:** once setup-php's `latest` is 8.6 or higher and 8.6 has passed two runs in a row, remove the `continue-on-error` lines in `ci.yml` and `deploy.yml` in one commit and record a new decision. A red 8.6 result is reported and followed up, not ignored.
+- **Scanner known gaps (not detected):** objects passed to `http_build_query()` or `mb_convert_variables()`, session handler methods, and functions passed as strings to callables (e.g. `array_map('is_double', ...)`). `array_walk`, `is_a` and `is_subclass_of` are flagged only when the first argument plausibly is an object or a string literal.
+- **JSON error text:** on 8.6 `json_last_error_msg()` adds where the error is, so API error text for bad JSON gains detail. Cosmetic; no test or spec quotes the text.
+- **Version-guard convention for future code (no 8.6-only features adopted, decision 0003):**
+  1. For a new function or class, test it exists, for example `if (function_exists('clamp'))`.
+  2. For a behaviour change with no new name to test, use `if (PHP_VERSION_ID >= 80600)` (integer comparison). Leave the existing `version_compare` lines alone.
+  3. Never branch on version for anything that writes stored data or makes a security decision.
+  4. Every branch needs a test that runs on each version in the matrix.
+  5. House style: multi-line, emoji comment block, `@see` link to php.net.
 
 ### deploy.yml Build-Info Injection — Marker-Comment Scheme (resolved #47, 2026-07-10)
 

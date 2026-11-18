@@ -217,13 +217,13 @@ $lgmRunChild = static function (string $lgmProgramBody): array {
         $lgmDescriptors,
         $lgmPipes
     );
-    $lgmOutcome = ['exit' => -1, 'stdout' => '', 'log' => ''];
+    $lgmOutcome = ['exit' => -1, 'stdout' => '', 'log' => '', 'stderr' => ''];
 
     if (is_resource($lgmProcess)) {
         fclose($lgmPipes[0]);
         $lgmOutcome['stdout'] = (string) stream_get_contents($lgmPipes[1]);
         fclose($lgmPipes[1]);
-        stream_get_contents($lgmPipes[2]);
+        $lgmOutcome['stderr'] = (string) stream_get_contents($lgmPipes[2]);
         fclose($lgmPipes[2]);
         $lgmOutcome['exit'] = proc_close($lgmProcess);
     }
@@ -233,6 +233,12 @@ $lgmRunChild = static function (string $lgmProgramBody): array {
     // 🧹 Remove both temporary files.
     @unlink($lgmProgramFile);
     @unlink($lgmLogFile);
+
+    // 🚨 A deprecation inside the child is a FAILURE (#151); see tests/bootstrap.php.
+    assertFalse(
+        str_contains($lgmOutcome['stderr'], 'CUERCODE-DEPRECATION:'),
+        'child process raised no PHP deprecation' . ($lgmOutcome['stderr'] !== '' ? ' - ' . trim($lgmOutcome['stderr']) : '')
+    );
 
     return $lgmOutcome;
 };

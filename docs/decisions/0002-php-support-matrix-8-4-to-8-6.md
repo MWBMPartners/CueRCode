@@ -1,0 +1,11 @@
+# 0002 — Which PHP versions are supported, and when they are checked
+
+- **Date:** 2026-11-18
+- **Question (plain words):** Which versions of PHP (the programming language the site runs on) must CueRCode work on, and when are they checked?
+- **What the owner actually asked for (#151):** *"adopt 8.6 methods on 8.6 using PHP_VERSION_ID checks while 8.4 and 8.5 keep working"*, with the acceptance criterion *"zero lint/test failures on 8.4, 8.5 and 8.6"*. Everything marked PROVISIONAL below goes beyond, or softens, that request and was chosen by the planner, not the owner.
+- **Answer:** PHP **8.4, 8.5 and 8.6** are all supported (this part follows the owner's request). All three versions are checked **when changes are merged** (the automatic checks in `.github/workflows/ci.yml`, on pull requests into main, release-candidate, beta and alpha) and **before a deploy** (the `php-checks` job in `.github/workflows/deploy.yml`, which runs lint and the scanner only, not the test suite).
+- **PROVISIONAL (planner choice, not the owner's request):** (a) the 8.6 checks are allowed to fail without blocking (`continue-on-error`), which sits against the owner's "zero lint/test failures on 8.6"; a red 8.6 result is reported and followed up, not ignored. 8.6 general availability is due 2026-11-19. (b) The target stays PHP 8.5 until the web host offers 8.6. (c) The promotion rule: when setup-php's `latest` is 8.6 or higher and 8.6 has passed two runs in a row, remove the `continue-on-error` lines in one commit and record a new decision. The owner should confirm or overturn (a) to (c) with a new record that supersedes this one.
+- **Rules out:** dropping PHP 8.4 support; checking only one version before deploy; letting a deploy go out with no PHP checks at all.
+- **Implemented in:** `.github/workflows/ci.yml` (lint and test matrix 8.4/8.5/8.6), `.github/workflows/deploy.yml` (`php-checks` gate, `deploy` needs it), `tools/ci/php-lint.sh`, `tools/php86-compat-scan.php`, `tests/bootstrap.php` (deprecations fail the run), `DEV_NOTES.md` ("PHP 8.6 readiness and version guards").
+- **Supersedes:** the older wording "target PHP 8.5, backward compatible with 8.4" in `.claude/CLAUDE.md`, `README.md`, `PROJECT.md` and `.OpenAI/CONTEXT.md`.
+- **Issue:** #151 (the owner's request).
