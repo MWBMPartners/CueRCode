@@ -177,6 +177,50 @@ $badExamples = [
         'constant-namespace',
         '<?php class A { const namespace = 1; }',
     ],
+    'call to clamp (8.6-only)' => [
+        'only-86-function',
+        '<?php $v = clamp($x, 1, 10);',
+    ],
+    'call to \\clamp (fully qualified)' => [
+        'only-86-function',
+        '<?php $v = \\clamp($x, 1, 10);',
+    ],
+    'call to grapheme_strrev' => [
+        'only-86-function',
+        '<?php $v = grapheme_strrev($s);',
+    ],
+    'call to stream_last_errors' => [
+        'only-86-function',
+        '<?php $e = stream_last_errors();',
+    ],
+    'call to a sodium ipcrypt function' => [
+        'only-86-function',
+        '<?php $e = sodium_crypto_ipcrypt_keygen();',
+    ],
+    'call to sodium_bin2ip' => [
+        'only-86-function',
+        '<?php $e = sodium_bin2ip($b);',
+    ],
+    'call to gmp_prevprime' => [
+        'only-86-function',
+        '<?php $e = gmp_prevprime($n);',
+    ],
+    'ZipArchive->openString' => [
+        'only-86-method',
+        '<?php $zip->openString($data);',
+    ],
+    'ZipArchive->closeString' => [
+        'only-86-method',
+        '<?php $out = $zip->closeString();',
+    ],
+    'mysqli->quote_string' => [
+        'only-86-method',
+        '<?php $q = $db->quote_string($s);',
+    ],
+    'global function declared as clamp' => [
+        'declares-clamp',
+        '<?php function clamp($v, $lo, $hi) { return $v; }',
+    ],
     'pack format with byte-order sign' => [
         'pack-byte-order',
         '<?php $b = pack("N>", 1);',
@@ -255,6 +299,12 @@ $notFlagged = [
     '__debugInfo returning array'                     => '<?php class A { public function __debugInfo(): array { return []; } }',
     'new mysqli_stmt with a query'                    => '<?php $s = new mysqli_stmt($db, "SELECT 1");',
     'foreach ... as with ordinary variable'           => '<?php foreach ($a as $v) {}',
+    'cuercodeClampInt call'                           => '<?php $v = cuercodeClampInt($x, 1, 10);',
+    'clampPaginationParams call'                      => '<?php $p = clampPaginationParams($page, $per);',
+    'clampLogoSpaceValue method call'                 => '<?php $v = $this->clampLogoSpaceValue($x);',
+    'a method named clamp'                            => '<?php class A { public function clamp($v) { return $v; } }',
+    'function_exists test for clamp (a string)'       => '<?php $ok = function_exists("clamp");',
+    'declaring cuercodeClampInt'                      => '<?php function cuercodeClampInt(int $v, int $a, int $b): int { return $v; }',
 ];
 
 foreach ($notFlagged as $label => $code) {
@@ -282,6 +332,19 @@ assertEquals(
     ['banned-function'],
     php86TestRules("<?php // php86-scan-ok: other line\n\$f = doubleval(\"1\");"),
     'opt-out comment on a DIFFERENT line does not suppress the finding'
+);
+
+// 🆕 8.6-only call that is guarded and marked is allowed
+assertEquals(
+    [],
+    php86TestRules('<?php if (function_exists("clamp")) { $v = clamp($x, 1, 5); } // php86-scan-ok: guarded'),
+    'a guarded 8.6-only call with the opt-out comment on its line is not flagged'
+);
+// the same call without the comment on that line IS flagged
+assertEquals(
+    ['only-86-function'],
+    php86TestRules("<?php if (function_exists('clamp')) {\n \$v = clamp(\$x, 1, 5);\n}"),
+    'a guarded 8.6-only call WITHOUT the opt-out comment is still flagged'
 );
 
 // ==============================================================================

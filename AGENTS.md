@@ -26,8 +26,8 @@ Applies to Claude, Codex, Ollama, Kimi, Grok, Gemini and any other tool. Full re
 3. **Implement:** Sonnet-class or Haiku-class model, **medium** effort.
 4. Checks and reviews use the strongest tier. Do not switch model part-way through a task.
 
-## Supported PHP versions — decisions 0002 and 0003
+## Supported PHP versions — decisions 0002, 0004 and 0006
 
-PHP 8.4, 8.5 and 8.6 are all supported and checked by CI (`ci.yml`: lint and tests) on pull requests into `main`, `release-candidate`, `beta` and `alpha`. Before a deploy, `deploy.yml` runs lint and the compatibility scanner only; the test suite is not run there. Full record: `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`. Do not use 8.6-only features without a measured benefit: `docs/decisions/0003-no-php-8-6-only-features-without-measured-benefit.md`. Run `php tools/php86-compat-scan.php` before finishing PHP work.
+PHP 8.4, 8.5 and 8.6 are all supported and checked by CI (`ci.yml`: lint and tests) on pull requests into `main`, `release-candidate`, `beta` and `alpha`. Before a deploy, `deploy.yml` runs lint and the compatibility scanner only; the test suite is not run there. Full record: `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`. Use 8.6-only features on 8.6 only where safe, behind a test that the feature exists, with the old code kept for 8.4/8.5 (`docs/decisions/0004-adopt-php-8-6-features-where-safe.md`; what was adopted and skipped: `docs/decisions/0006-php-8-6-adoption-what-and-where.md`; 0003 is superseded). Use `cuercodeClampInt()` from `_functions/fn_compat.php`, never a global `clamp()`. Run `php tools/php86-compat-scan.php` before finishing PHP work.
 
 Search `docs/decisions/` before asking the owner any question.

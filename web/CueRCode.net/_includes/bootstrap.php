@@ -195,6 +195,9 @@ $functionFiles = [
     //    fn_email.php before bootstrap; the tests load single files). require_once
     //    resolves the real path, so the repeat loads do nothing.
     'fn_log_mask.php',
+    // 🔀 #151: cuercodeClampInt() and other version helpers. No dependencies, so it
+    //    loads early; the files that use it also require_once it themselves.
+    'fn_compat.php',
     'fn_encryption.php',     // 🔐 Encryption utilities (no dependencies)
     'fn_config.php',         // ⚙️ Configuration manager (depends on encryption)
     'fn_error_handler.php',  // 🚨 Error/exception handling (depends on config for debug mode)

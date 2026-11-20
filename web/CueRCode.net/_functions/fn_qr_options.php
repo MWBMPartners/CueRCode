@@ -41,6 +41,11 @@ if (basename($scriptFilenameValue) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 📦 Import QR code library classes
 // ==============================================================================
@@ -128,7 +133,7 @@ function buildQROptions(array $customization): QROptions
     } else {
         $targetSize = 800;
     }
-    $targetSize = max(100, min($targetSize, 8000));
+    $targetSize = cuercodeClampInt($targetSize, 100, 8000);
 
     // 📌 Error correction level (L, M, Q, H)
     if (isset($customization['ecc'])) {
@@ -196,7 +201,7 @@ function buildQROptions(array $customization): QROptions
     } else {
         $logoSizePct = 20;
     }
-    $logoSizePct = max(5, min($logoSizePct, 40));
+    $logoSizePct = cuercodeClampInt($logoSizePct, 5, 40);
 
     // 📌 Transparency
     if (isset($customization['transparent'])) {
@@ -501,9 +506,9 @@ function rgbToHex(int $r, int $g, int $b): string
     // 📌 Clamp values to 0-255 range
     // @see https://www.php.net/manual/en/function.max.php
     // @see https://www.php.net/manual/en/function.min.php
-    $r = max(0, min(255, $r));
-    $g = max(0, min(255, $g));
-    $b = max(0, min(255, $b));
+    $r = cuercodeClampInt($r, 0, 255);
+    $g = cuercodeClampInt($g, 0, 255);
+    $b = cuercodeClampInt($b, 0, 255);
 
     // 📌 Format as 6-digit hex string with '#' prefix
     // %02x pads each value to 2 hex digits with leading zero if needed
@@ -562,7 +567,7 @@ function calculateScale(int $targetSize, int $eccLevel, int $dataLength): int
 
     // 📌 Clamp scale to a reasonable range
     // Minimum 1 (1px per module), maximum 50 (50px per module)
-    return max(1, min(50, $scale));
+    return cuercodeClampInt($scale, 1, 50);
 }
 
 // ==============================================================================
@@ -1070,7 +1075,7 @@ function qrLineariseSrgbChannel(int $channel): float
     // 📌 Clamp defensively - callers always pass 0-255 (from hexToRgb()), but a
     //    stray out-of-range value must never reach the fractional exponent
     //    below with a negative base (undefined in real arithmetic).
-    $channel = max(0, min(255, $channel));
+    $channel = cuercodeClampInt($channel, 0, 255);
 
     // 📌 Normalise the 0-255 channel to the 0.0-1.0 range the WCAG formula uses.
     $normalisedChannel = $channel / 255.0;

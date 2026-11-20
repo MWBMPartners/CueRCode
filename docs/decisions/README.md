@@ -13,5 +13,6 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0001](0001-model-tiers-for-gather-plan-build.md) | 2026-11-18 | Gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium; any AI tool | Current |
 | [0002](0002-php-support-matrix-8-4-to-8-6.md) | 2026-11-18 | Supported PHP versions are 8.4, 8.5 and 8.6; all checked on merge and before deploy (8.6 may fail for now) | Current |
 | [0003](0003-no-php-8-6-only-features-without-measured-benefit.md) | 2026-11-18 | Do not adopt PHP 8.6-only features without a measured benefit; keep 8.4/8.5 compatible | Superseded by 0004 |
-| [0004](0004-adopt-php-8-6-features-where-safe.md) | 2026-11-18 | Owner: use PHP 8.6 features on 8.6 where safe, old code on 8.4/8.5 | Current (supersedes 0003) |
+| [0004](0004-adopt-php-8-6-features-where-safe.md) | 2026-11-18 | Owner: use PHP 8.6 features on 8.6 where safe, old code on 8.4/8.5 | Current (supersedes 0003); implemented by 0006 |
 | [0005](0005-php-8-6-checks-report-only-for-now.md) | 2026-11-18 | Owner: 8.6 check failures report but do not block yet | Current |
+| [0006](0006-php-8-6-adoption-what-and-where.md) | 2026-11-18 | What was adopted from PHP 8.6 (`clamp()` via `cuercodeClampInt()`) and what was skipped, with reasons | Current (implements 0004) |

@@ -88,6 +88,11 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 //    nothing.
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_log_mask.php';
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 🔧 Constants
 // ==============================================================================
@@ -862,7 +867,7 @@ function computeEmailBackoffMinutes(int $attemptsAfterFailure): int
 {
     // 🛡️ Clamp the exponent defensively - even if maxAttempts were ever raised
     // far beyond the default of 5, this prevents an absurd/overflowing delay.
-    $clampedAttempts = max(0, min($attemptsAfterFailure, 20));
+    $clampedAttempts = cuercodeClampInt($attemptsAfterFailure, 0, 20);
 
     return (int) (2 ** $clampedAttempts);
 }
@@ -2293,7 +2298,7 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         $limit = (int) $options['limit'];
     }
 
-    $limit = max(1, min($limit, CUERCODE_EMAIL_QUEUE_MAX_BATCH));
+    $limit = cuercodeClampInt($limit, 1, CUERCODE_EMAIL_QUEUE_MAX_BATCH);
 
     $stuckMinutes = CUERCODE_EMAIL_QUEUE_STUCK_MINUTES;
 
@@ -2301,7 +2306,7 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         $stuckMinutes = (int) $options['stuckMinutes'];
     }
 
-    $stuckMinutes = max(1, min($stuckMinutes, 1440));
+    $stuckMinutes = cuercodeClampInt($stuckMinutes, 1, 1440);
 
     $timeBudget = (float) CUERCODE_EMAIL_QUEUE_TIME_BUDGET_SECONDS;
 
@@ -2363,7 +2368,7 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         $tidyLimit = (int) $options['tidyLimit'];
     }
 
-    $tidyLimit = max(1, min($tidyLimit, CUERCODE_EMAIL_QUEUE_TIDY_BATCH));
+    $tidyLimit = cuercodeClampInt($tidyLimit, 1, CUERCODE_EMAIL_QUEUE_TIDY_BATCH);
 
     if (isset($options['linkLifetimes']) && is_array($options['linkLifetimes'])) {
         $linkLifetimes = normaliseEmailQueueLinkLifetimes($options['linkLifetimes']);

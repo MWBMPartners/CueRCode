@@ -56,6 +56,11 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 //    path, so when bootstrap.php has already loaded it this does nothing.
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_log_mask.php';
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 📝 logActivity() - Log an activity event
 // ==============================================================================
@@ -330,7 +335,7 @@ function getRecentActivity(int $limit = 50): array
     // 📌 Clamp the limit to a reasonable maximum to prevent excessive memory usage
     // @see https://www.php.net/manual/en/function.min.php
     // @see https://www.php.net/manual/en/function.max.php
-    $limit = max(1, min($limit, 1000));
+    $limit = cuercodeClampInt($limit, 1, 1000);
 
     try {
         // ✅ Verify dbQuery() is available

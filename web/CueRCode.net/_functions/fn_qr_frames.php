@@ -48,6 +48,11 @@ if (basename($scriptFilenameValue) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 🖼️ addFrameToRaster() - Add frame to raster QR code image
 // ==============================================================================
@@ -124,7 +129,7 @@ function addFrameToRaster(string $qrImageData, array $frameConfig, string $outpu
     } else {
         $fontSizeRaw = 16;
     }
-    $fontSize = max(8, min(72, $fontSizeRaw));
+    $fontSize = cuercodeClampInt($fontSizeRaw, 8, 72);
 
     if (isset($frameConfig['color'])) {
         $colorHex = $frameConfig['color'];
@@ -149,14 +154,14 @@ function addFrameToRaster(string $qrImageData, array $frameConfig, string $outpu
     } else {
         $borderWidthRaw = 4;
     }
-    $borderWidth = max(1, min(20, $borderWidthRaw));
+    $borderWidth = cuercodeClampInt($borderWidthRaw, 1, 20);
 
     if (isset($frameConfig['padding'])) {
         $paddingRaw = (int) $frameConfig['padding'];
     } else {
         $paddingRaw = 20;
     }
-    $padding = max(0, min(100, $paddingRaw));
+    $padding = cuercodeClampInt($paddingRaw, 0, 100);
 
     // 📌 If no frame is requested, return the image unchanged
     if ($style === 'none') {
@@ -549,7 +554,7 @@ function addFrameToSVG(string $svgContent, array $frameConfig): string
     } else {
         $svgFontSizeRaw = 16;
     }
-    $fontSize = max(8, min(72, $svgFontSizeRaw));
+    $fontSize = cuercodeClampInt($svgFontSizeRaw, 8, 72);
 
     if (isset($frameConfig['color'])) {
         $colorHex = $frameConfig['color'];
@@ -574,14 +579,14 @@ function addFrameToSVG(string $svgContent, array $frameConfig): string
     } else {
         $svgBorderWidthRaw = 4;
     }
-    $borderWidth = max(1, min(20, $svgBorderWidthRaw));
+    $borderWidth = cuercodeClampInt($svgBorderWidthRaw, 1, 20);
 
     if (isset($frameConfig['padding'])) {
         $svgPaddingRaw = (int) $frameConfig['padding'];
     } else {
         $svgPaddingRaw = 20;
     }
-    $padding = max(0, min(100, $svgPaddingRaw));
+    $padding = cuercodeClampInt($svgPaddingRaw, 0, 100);
 
     // 📌 If no frame is requested, return the SVG unchanged
     if ($style === 'none') {
@@ -855,7 +860,7 @@ function getFrameConfig(array $customization): array
         $fontSizeRawValue = 16;
     }
     $fontSize = (int) $fontSizeRawValue;
-    $fontSize = max(8, min(72, $fontSize));
+    $fontSize = cuercodeClampInt($fontSize, 8, 72);
 
     // 📌 Extract colours
     if (isset($customization['frame_color'])) {
@@ -894,7 +899,7 @@ function getFrameConfig(array $customization): array
         $borderWidthRawValue = 4;
     }
     $borderWidth = (int) $borderWidthRawValue;
-    $borderWidth = max(1, min(20, $borderWidth));
+    $borderWidth = cuercodeClampInt($borderWidth, 1, 20);
 
     if (isset($customization['frame_padding'])) {
         $paddingRawValue = $customization['frame_padding'];
@@ -904,7 +909,7 @@ function getFrameConfig(array $customization): array
         $paddingRawValue = 20;
     }
     $padding = (int) $paddingRawValue;
-    $padding = max(0, min(100, $padding));
+    $padding = cuercodeClampInt($padding, 0, 100);
 
     return [
         'style'       => $style,

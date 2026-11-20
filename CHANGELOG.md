@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - PHP 8.6 `clamp()` adopted through a safe helper (2026-11-18, #151)
+
+- New `_functions/fn_compat.php` with `cuercodeClampInt($value, $min, $max)`: uses
+  PHP 8.6's built-in `clamp()` where it exists, and the old `max(min())` on 8.4/8.5.
+  Whole numbers only; if the limits are the wrong way round it returns the lower
+  limit on every version (the built-in would throw). Results are identical on all versions.
+- The 35 whole-number `max(min())` sites now call it (activity log, API generate,
+  auth, barcode, email queue, QR frames, QR logo, QR options). The one decimal site
+  in `fn_email.php` stays as it was: on 8.6, `clamp()` returns NaN where the old code
+  returned 600.0.
+- Not adopted (reasons in decision 0006): in-memory ZIP open/close, new `Uri` classes,
+  sodium additions, `Time\Duration`, new syntax.
+- Scanner: new rules for calls to 8.6-only functions and methods, and for declaring a
+  global `clamp()`; both need a guard and a `php86-scan-ok` mark.
+- Tests: new `tests/test_php86_adoption.php` plus scanner cases (2871 to 2924 assertions
+  on 8.5.12; 2925 on 8.6.0RC4 in Docker, one extra 8.6-only check).
+- Open owner questions, no code changed: wording of the bad-JSON error text on 8.6, and
+  8.6 trimming form-feed characters (243 `trim` calls).
+
 ### Added - PHP 8.6 readiness guard rails (2026-11-18, #151)
 
 CueRCode's own code needs no changes for PHP 8.6. What was missing was a way to
@@ -35,8 +54,8 @@ find out if that stops being true. Now:
   settings (strict mode, HttpOnly, SameSite Lax) are removed from the source, since
   8.4 and 8.5 do not default to them. It checks the code text, not a live server.
   Also proves the deprecation catcher works, including in child processes.
-- **No 8.6-only features adopted** (decision 0003). Version-guard rules for future
-  code are in `DEV_NOTES.md`.
+- **8.6-only features:** adopted only where safe (decision 0004, which superseded 0003;
+  what was adopted and skipped is in decision 0006). Version-guard rules are in `DEV_NOTES.md`.
 - Tests: 2765 to 2871 assertions (106 new).
 
 ### Fixed - Secret scan no longer fails at random (2026-10-19, #145)

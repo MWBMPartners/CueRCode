@@ -187,7 +187,7 @@ Since Dreamhost shared hosting has no CLI/Composer access:
 
 PHP 8.4/8.5 zero-deprecation is a hard Definition-of-Done gate. As of cycle 10, zero `E_DEPRECATED` or `E_STRICT` notices are emitted by any file under `web/CueRCode.net/`. Any future change must preserve this bar — run `php -l` and verify no deprecation output before committing. (PHP 8.6 is reported but not yet a hard gate; see "PHP 8.6 readiness and version guards" below and decision 0002.)
 
-### PHP 8.6 readiness and version guards (#151, decisions 0002 and 0003, 2026-11-18)
+### PHP 8.6 readiness and version guards (#151, decisions 0002, 0004 and 0006, 2026-11-18)
 
 **Position:** CueRCode's own code needs no changes for PHP 8.6 (checked against php-src `PHP-8.6/UPGRADING`). The work is guard rails.
 
@@ -197,7 +197,10 @@ PHP 8.4/8.5 zero-deprecation is a hard Definition-of-Done gate. As of cycle 10, 
 - **CI:** lint and tests run on 8.4, 8.5 and 8.6; `deploy.yml` has a `php-checks` gate (lint plus scan on all three) that the `deploy` job needs. The deploy gate runs lint and the scanner only; the test suite runs in `ci.yml`, not before deploy. The 8.6 jobs are `continue-on-error` until the two-green-runs rule in decision 0002 is met (8.6 general availability is due 2026-11-19; until setup-php's `latest` is 8.6, it may serve a release candidate or nightly build). All CI jobs have a 20-minute timeout. **To make 8.6 blocking:** once setup-php's `latest` is 8.6 or higher and 8.6 has passed two runs in a row, remove the `continue-on-error` lines in `ci.yml` and `deploy.yml` in one commit and record a new decision. A red 8.6 result is reported and followed up, not ignored.
 - **Scanner known gaps (not detected):** objects passed to `http_build_query()` or `mb_convert_variables()`, session handler methods, and functions passed as strings to callables (e.g. `array_map('is_double', ...)`). `array_walk`, `is_a` and `is_subclass_of` are flagged only when the first argument plausibly is an object or a string literal.
 - **JSON error text:** on 8.6 `json_last_error_msg()` adds where the error is, so API error text for bad JSON gains detail. Cosmetic; no test or spec quotes the text.
-- **Version-guard convention for future code (no 8.6-only features adopted, decision 0003):**
+- **Adopted 8.6 feature (decisions 0004 and 0006):** `clamp()`, through `cuercodeClampInt()` in `_functions/fn_compat.php`, at 35 whole-number sites (files that use it also `require_once` it, and `_includes/bootstrap.php` loads it early). Convention: version helpers live in `fn_compat.php`, carry the `cuercode` prefix, test that the feature exists (`function_exists`), and never declare a global function PHP owns (the scanner flags a global `function clamp(`). `tests/test_php86_adoption.php` proves identical results on every version.
+- **Skipped on purpose (reasons in decision 0006):** the decimal clamp in `fn_email.php` (NaN differs); `ZipArchive::openString`/`closeString` (measured 78 MB against 50 MB peak for a 25 MB archive, risky under the 128 MB limit); the new `Uri` classes (URL checks are security); `Time\Duration`, `grapheme_strrev`, `quote_string` (no use); sodium ipcrypt/XOF/KEM (stored data / security); new syntax (8.4/8.5 cannot parse it).
+- **Trim change (open, owner question):** on 8.6, `trim`/`ltrim`/`rtrim` also strip form feeds; 8.4/8.5 keep them. 243 calls use the default character list. No code changed yet.
+- **Version-guard convention for future code (decisions 0004 and 0006):**
   1. For a new function or class, test it exists, for example `if (function_exists('clamp'))`.
   2. For a behaviour change with no new name to test, use `if (PHP_VERSION_ID >= 80600)` (integer comparison). Leave the existing `version_compare` lines alone.
   3. Never branch on version for anything that writes stored data or makes a security decision.

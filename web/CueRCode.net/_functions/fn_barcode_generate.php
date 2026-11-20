@@ -71,6 +71,11 @@ if (basename($scriptFilenameValue) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 📋 CUERCODE_BARCODE_SYMBOLOGIES - the symbology registry
 // ==============================================================================
@@ -533,7 +538,7 @@ function renderBarcodeToOutput(string $symbologyKey, string $normalizedData, str
     } else {
         $scale = 2;
     }
-    $scale = max(1, min(10, $scale));
+    $scale = cuercodeClampInt($scale, 1, 10);
 
     if ($symbologyDef['category'] === '1d') {
         // 📏 1D: width is a NEGATIVE per-column multiplier; height is a
@@ -545,7 +550,7 @@ function renderBarcodeToOutput(string $symbologyKey, string $normalizedData, str
         } else {
             $heightOption = 50;
         }
-        $height = max(10, min(300, $heightOption));
+        $height = cuercodeClampInt($heightOption, 10, 300);
     } else {
         // 🟦 2D: both width and height are NEGATIVE per-module multipliers.
         // 'height' (if supplied) lets the caller request non-square modules
@@ -557,7 +562,7 @@ function renderBarcodeToOutput(string $symbologyKey, string $normalizedData, str
         } else {
             $rowScale = $scale;
         }
-        $rowScale = max(1, min(10, $rowScale));
+        $rowScale = cuercodeClampInt($rowScale, 1, 10);
         $height   = -$rowScale;
     }
 
@@ -572,12 +577,12 @@ function renderBarcodeToOutput(string $symbologyKey, string $normalizedData, str
             // 📌 PDF417 error-correction LEVEL is params[1] in the type
             // string ("PDF417,<aspect ratio>,<ecc level>"); leave the aspect
             // ratio slot empty so the library's own default applies.
-            $eccValue = max(0, min(8, $eccValue));
+            $eccValue = cuercodeClampInt($eccValue, 0, 8);
             $tclbType = 'PDF417,,' . $eccValue;
         } elseif ($symbologyKey === 'aztec') {
             // 📌 Aztec error-correction PERCENTAGE is params[0]
             // ("AZTEC,<ecc percent>").
-            $eccValue = max(1, min(100, $eccValue));
+            $eccValue = cuercodeClampInt($eccValue, 1, 100);
             $tclbType = 'AZTEC,' . $eccValue;
         }
         // 📌 DataMatrix uses a fixed ECC200 scheme (no configurable ECC) and

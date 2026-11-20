@@ -18,7 +18,7 @@ These instructions MUST be followed for EVERY prompt/action:
 ### Code Standards
 
 - PHP: Full multi-line notation (no shorthand), detailed inline comments, use PHP predefined constants (DIRECTORY_SEPARATOR, PHP_EOL, etc.)
-- PHP: supported versions, target and checks are in `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`; no 8.6-only features without a measured benefit (`docs/decisions/0003-no-php-8-6-only-features-without-measured-benefit.md`). Run `php tools/php86-compat-scan.php` before finishing PHP work
+- PHP: supported versions, target and checks are in `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`; 8.6-only features only where safe and behind an existence test (`docs/decisions/0004-adopt-php-8-6-features-where-safe.md`; adopted/skipped list in `docs/decisions/0006-php-8-6-adoption-what-and-where.md`). Run `php tools/php86-compat-scan.php` before finishing PHP work
 - SQL: MySQLi only, prepared statements for ALL queries
 - HTML5: Fully compliant, responsive, no `<table>` tags for layout
 - CSS3+: Modern CSS with graceful fallbacks

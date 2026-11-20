@@ -36,6 +36,13 @@
  *     literal and allow_string is not true (is_a) / is false (is_subclass_of)
  *   - __debugInfo() declared with a nullable return type
  *   - `new mysqli_stmt($db)` with no query argument
+ *   - calls to PHP 8.6-ONLY functions (clamp, grapheme_strrev, stream_last_errors,
+ *     sodium ipcrypt/xof/kem, and others; the list is php86ScanOnly86Functions())
+ *     and the 8.6-only methods ->openString / ->closeString / ->quote_string.
+ *     8.4 and 8.5 do not have them, so a call must sit behind function_exists()
+ *     (or method_exists()) AND carry a `// php86-scan-ok: <reason>` comment.
+ *     Use cuercodeClampInt() from fn_compat.php instead of clamp().
+ *   - a global `function clamp(`: PHP 8.6 owns that name (a method is fine)
  *
  * Known gaps (not detected): objects passed to http_build_query() or
  * mb_convert_variables(), session handler methods, and functions passed as
@@ -89,6 +96,34 @@ function php86ScanBannedFunctions(): array
         'mb_convert_variables'   => 'deprecated in 8.6',
         'mysqli_get_charset'     => 'deprecated in 8.6',
         'mysqli_stmt_init'       => 'deprecated in 8.6',
+    ];
+}
+
+/**
+ * 🆕 Functions that exist ONLY in PHP 8.6 (all lower case). Calling one on
+ * 8.4 or 8.5 is a fatal "undefined function" error, so every call must be
+ * guarded and marked `// php86-scan-ok:`. (Decision 0004 / 0006, #151.)
+ *
+ * Entries ending in `_` are prefixes (the sodium ipcrypt / xof / kem families).
+ *
+ * @return array<string, string> Function name (or prefix) => short reason.
+ */
+function php86ScanOnly86Functions(): array
+{
+    return [
+        'clamp'                         => 'built-in only from 8.6; use cuercodeClampInt()',
+        'grapheme_strrev'               => 'exists only in 8.6',
+        'stream_last_errors'            => 'exists only in 8.6',
+        'stream_clear_errors'           => 'exists only in 8.6',
+        'stream_socket_get_crypto_status' => 'exists only in 8.6',
+        'mysqli_quote_string'           => 'exists only in 8.6',
+        'gmp_powm_sec'                  => 'exists only in 8.6',
+        'gmp_prevprime'                 => 'exists only in 8.6',
+        'sodium_bin2ip'                 => 'exists only in 8.6',
+        'sodium_ip2bin'                 => 'exists only in 8.6',
+        'sodium_crypto_ipcrypt_'        => 'sodium ipcrypt family exists only in 8.6',
+        'sodium_crypto_xof_'            => 'sodium XOF family exists only in 8.6',
+        'sodium_crypto_kem_'            => 'sodium KEM family exists only in 8.6',
     ];
 }
 
@@ -362,6 +397,15 @@ function php86ScanSource(string $code, string $label): array
                     $add($line, 'banned-function', $name . '(): ' . $banned[$name]);
                 }
 
+                // 🆕 Calls to functions that exist only in 8.6 (exact name or prefix).
+                foreach (php86ScanOnly86Functions() as $only86 => $only86Reason) {
+                    $isPrefix = str_ends_with($only86, '_');
+                    if (($isPrefix && str_starts_with($name, $only86)) || (!$isPrefix && $name === $only86)) {
+                        $add($line, 'only-86-function', $name . '(): ' . $only86Reason . '; guard it and mark the line php86-scan-ok');
+                        break;
+                    }
+                }
+
                 if (str_starts_with($name, 'mb_ereg')) {
                     $add($line, 'banned-function', $name . '(): mb_ereg* family deprecated in 8.6');
                 }
@@ -441,6 +485,11 @@ function php86ScanSource(string $code, string $label): array
                 if (in_array($name, $methods, true)) {
                     $add($line, 'banned-method', '->' . $name . '(): changed or deprecated in 8.6');
                 }
+
+                // 🆕 Methods that exist only in 8.6 (ZipArchive and mysqli additions).
+                if (in_array($name, ['openstring', 'closestring', 'quote_string'], true)) {
+                    $add($line, 'only-86-method', '->' . $name . '(): exists only in 8.6; guard it and mark the line php86-scan-ok');
+                }
             }
 
             // 🧱 The 10 ArrayIterator methods deprecated in 8.6, but only in a file
@@ -498,6 +547,11 @@ function php86ScanSource(string $code, string $label): array
 
             if (is_array($nameTok)) {
                 $fnName = strtolower($nameTok[1]);
+
+                // 🚫 A global function named clamp: PHP 8.6 owns the name.
+                if ($fnName === 'clamp' && empty($isMethod[$i])) {
+                    $add($nameTok[2], 'declares-clamp', 'a global function named clamp clashes with the 8.6 built-in; use a cuercode-prefixed name');
+                }
 
                 if (in_array($fnName, ['readonly', 'let', 'is'], true) && empty($isMethod[$i])) {
                     $add($nameTok[2], 'reserved-function-name', 'a function named ' . $fnName . ' is reserved in 8.6');

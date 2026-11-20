@@ -60,6 +60,11 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 📏 API request field-length limits (🔐 F-007)
 // ==============================================================================
@@ -1038,14 +1043,14 @@ function buildBarcodeOptionsFromRequest(array $raw): array
     } else {
         $scale = 2;
     }
-    $options['scale'] = max(1, min(10, $scale));
+    $options['scale'] = cuercodeClampInt($scale, 1, 10);
 
     // 📌 Height: 1D bar height in px (10-300) OR 2D row multiplier (1-10) -
     // renderBarcodeToOutput() applies the category-specific interpretation
     // and default; absent here means "use that function's own default".
     if (isset($raw['height']) && $raw['height'] !== '' && $raw['height'] !== null) {
         $height = (int) $raw['height'];
-        $options['height'] = max(1, min(300, $height));
+        $options['height'] = cuercodeClampInt($height, 1, 300);
     }
 
     // 📌 Render the human-readable payload text below the symbol (bool,
@@ -1110,7 +1115,7 @@ function buildCustomizationFromRequest(array $raw): array
     } else {
         $size = 800;
     }
-    $customization['size'] = max(100, min(4000, $size));
+    $customization['size'] = cuercodeClampInt($size, 100, 4000);
 
     // 📌 Error correction level (string: L, M, Q, H)
     if (isset($raw['ecc'])) {
@@ -1258,7 +1263,7 @@ function buildCustomizationFromRequest(array $raw): array
     //    fn_qr_logo.php / fn_qr_options.php and the contract (5-40).
     if (isset($raw['logo_size_pct'])) {
         $logoSizePct = (int) $raw['logo_size_pct'];
-        $customization['logo_size_pct'] = max(5, min(40, $logoSizePct));
+        $customization['logo_size_pct'] = cuercodeClampInt($logoSizePct, 5, 40);
     }
 
     // 📌 Frame style (string)
@@ -1376,7 +1381,7 @@ function buildCustomizationFromRequest(array $raw): array
     // @see cuercode-generator.js - collectCustomization() (scan_distance_cm)
     if (isset($raw['scan_distance_cm']) && $raw['scan_distance_cm'] !== '' && $raw['scan_distance_cm'] !== null) {
         $scanDistanceCm = (int) $raw['scan_distance_cm'];
-        $customization['scan_distance_cm'] = max(1, min(10000, $scanDistanceCm));
+        $customization['scan_distance_cm'] = cuercodeClampInt($scanDistanceCm, 1, 10000);
     }
 
     // 📌 PDF print layout (string enum) - E5 (#49). Only meaningful when

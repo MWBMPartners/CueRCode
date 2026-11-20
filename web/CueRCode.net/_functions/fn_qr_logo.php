@@ -43,6 +43,11 @@ if (basename($scriptFilenameValue) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 🛡️ Resource limits for logo decode/processing (F-005)
 // ==============================================================================
@@ -127,7 +132,7 @@ function overlayLogoOnRaster(string $qrImageData, string $logoPath, array $confi
     } else {
         $sizePctRaw = 20;
     }
-    $sizePct = max(5, min(40, $sizePctRaw));
+    $sizePct = cuercodeClampInt($sizePctRaw, 5, 40);
 
     if (isset($config['padding'])) {
         $addPadding = (bool) $config['padding'];
@@ -140,7 +145,7 @@ function overlayLogoOnRaster(string $qrImageData, string $logoPath, array $confi
     } else {
         $paddingPctRaw = 15;
     }
-    $paddingPct = max(0, min(50, $paddingPctRaw));
+    $paddingPct = cuercodeClampInt($paddingPctRaw, 0, 50);
 
     if (isset($config['padding_shape'])) {
         $paddingShapeValue = $config['padding_shape'];
@@ -361,7 +366,7 @@ function overlayLogoOnSVG(string $svgContent, string $logoPath, array $config = 
     } else {
         $svgSizePctRaw = 20;
     }
-    $sizePct = max(5, min(40, $svgSizePctRaw));
+    $sizePct = cuercodeClampInt($svgSizePctRaw, 5, 40);
 
     // ==================================================================
     // 📐 Parse SVG viewBox to get dimensions

@@ -63,6 +63,11 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🔀 #151: cuercodeClampInt() (PHP 8.6 clamp() where it exists, max(min()) otherwise).
+//    Loaded here as well as by bootstrap.php so this file works when loaded on its
+//    own (the tests and the cron runner do that). require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
+
 // ==============================================================================
 // 🔧 Constants
 // ==============================================================================
@@ -1063,7 +1068,7 @@ function resolveAvatarUrl(?string $avatarPath, string $email, int $size = 128): 
         $emailHash = md5($normalizedEmail);
 
         return 'https://www.gravatar.com/avatar/' . $emailHash
-            . '?s=' . max(16, min(2048, $size))
+            . '?s=' . cuercodeClampInt($size, 16, 2048)
             . '&d=404';
     }
 
