@@ -13,6 +13,7 @@
 > **#103** (the umbrella for the current programme of work).
 
 ### 🧭 Where we are, in plain English
+- **2026-11-22 — cloud session `session_01Sh9kKRG7heCLwHceU9WTRS` resumed after its container restarted (it had been idle since 2026-10-05).** Lost in the restart: the 7n **Phase 1A** build (database upgrade tool), which was never committed, so it must be **rebuilt from the plan**. Saved now: four owner answers from 2026-10-05 evening that had not been written down (see "❓ Owner decisions → Answered 2026-10-05 evening"). **Doing now:** merging Dependabot #146–#149 (codeql-action 4.39.0→4.39.1, all checks green) under the owner's standing permission, alpha first and main last, with a watchdog on each merge; then **7s (#150)** code-side checks; then 7n Phase 1A rebuild (Sonnet build at medium effort + Opus review, per decision 0001).
 - **2026-11-20 — Local resync:** rebased the four local #151 commits on `origin/work-in-progress` at `14bec74`. The original tip `29aa254` is saved on `backup/work-in-progress-before-rebase-2026-11-20`. Local tip: `git rev-parse work-in-progress`. Push still awaits owner approval.
 - **2026-11-18 — PHP 8.6 readiness (#151), committed locally on `work-in-progress`, NOT pushed (owner reserves pushes).** Result: our code needed no 8.6 changes; the work is the checks (scanner `tools/php86-compat-scan.php`, `tools/ci/php-lint.sh`, deprecation catcher in `tests/bootstrap.php`, CI/deploy matrix 8.4/8.5/8.6 with 8.6 allowed to fail, `php-checks` gate before deploy) plus one security hardening (strict session mode set in `_includes/bootstrap.php`). Suite 2871/2871 on 8.5.12 and 8.6.0RC4 (Docker). Method: gather Sonnet medium → plan Opus high → build Sonnet medium, Opus review (decision 0001). **Waiting on the owner:** (1) ANSWERED: the owner chose to adopt 8.6 features where safe (decision 0004, supersedes 0003; adoption recorded in 0006); (2) may the 8.4 Docker image be pulled / is push approved? Codex review still owed. First real GitHub 8.6 run = the `work-in-progress → alpha` PR.
 - 🔴 **2026-11-02 — NEW TOP TASK 7s (#150):** review the app, codebase and hosting for **CVE-2026-111497 "HTTP2Shell"** (critical Brotli decoder flaw, reportedly actively exploited, fix-by 10 Nov 2026). Do it **before 7n**. A first look found no Brotli use in our code; the open question is the DreamHost/Cloudflare stack — see the 7s row and #150.
@@ -170,6 +171,13 @@ Until then, the checks below were run **locally** instead (same tools CI uses).
 > **How to ask (owner request, 2026-09-25):** put every decision to the owner
 > as a proper question (the question tool), with each option described, the
 > recommended option first, and WHY it's recommended.
+
+**Answered 2026-10-05 evening (cloud session `session_01Sh9kKRG7heCLwHceU9WTRS`) — recorded late, on 2026-11-22, because that session's container restarted before it could save them:**
+- ✅ **Dependabot — STANDING PERMISSION:** Claude may merge Dependabot's **routine GitHub Actions updates** once **every** check has passed, one branch at a time (`alpha`, `beta`, `release-candidate`, then `main` last, so the security-copy job has nothing left to copy), watching each merge to the end. Covers routine Actions bumps only, not app-code dependencies.
+- ✅ **7n Q1 — live database:** **No — start fresh.** No live CueRCode database needs keeping, so Phase 1A needs **no** one-off catch-up step (the baseline safety check stays).
+- ✅ **7n Q2 — public pricing page until charging starts:** show the **new £ draft prices** (Pro £6.99/£49.99, Business £24.99/£199.99), **"Prices include VAT"**, Enterprise **"Contact us — from £99/month"**, buy buttons **"Coming soon"** (seeds `pricing_show_prices = 1`; Phase 2 moves the old £4.99/£19.99 placeholders).
+- ❓ **7m add-on:** instead of picking an option, the owner asked **"Can/should we develop our own?"** → answered and re-asked on 2026-11-22 (see task 7m).
+- ⏳ **7n Q3–Q6** (accessibility gates, combining discounts, changing plans people pay for, pay-as-you-go cap): not yet asked → asked 2026-11-22.
 
 **Answered 2026-10-05 (cloud session) — asked as proper questions, recommendation first:**
 *Housekeeping*
