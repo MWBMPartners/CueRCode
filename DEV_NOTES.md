@@ -676,7 +676,7 @@ Flip a switch to `1` (plus populate the matching new table) to bring a structure
 
 **Verification caveat:** no local MySQL server was available in the implementing session (`apt-get install mariadb-server` failed - the sandboxed proxy could not fetch `libmysqlclient21`/`rsync`/`iproute2`), so `install.sql` was NOT loaded into a live scratch database this session. Verification relied on `php -l`, a JSON-validity check on `openapi.json`, and structural sanity checks (balanced parentheses/backticks, exact `CREATE TABLE`/`ALTER TABLE` counts). Load `install.sql`/`seed_data.sql` into a real MySQL/MariaDB instance before relying on this schema in production.
 
-**⚠️ Re-run caveat (2026-09-23, #103):** the two `ALTER TABLE ... ADD COLUMN` blocks (`install.sql`, roughly lines 1248-1276 - `tblSubscriptions.pricePointID`/`discountID` and `tblPayments.pricePointID`) are **not safe to run a second time**. `install.sql` is a single linear script with no "if column doesn't exist" guard, so re-running it against a database that already has these columns fails outright with a `duplicate column` error at the first `ALTER TABLE` - and because everything after that point in the file (including the Stage S0/S1 dynamic-redirect tables, `tblQRRedirects`/`tblQRScans`/`tblResolveNonces`) is never reached once the script aborts, those later tables are never created (the installer does report an install.sql error, but it does not say which tables were skipped). There is currently no upgrade/migration script for a database that was installed before this delta shipped - an older database needs the new pieces applied by hand (or a fresh `install.sql` run against a brand-new database), not a blind re-run of the whole file.
+**⚠️ Re-run caveat (2026-09-23, #103) - FIXED (2026-11-23, task 7n Phase 1A, #113 item 5):** this note originally said the two `ALTER TABLE ... ADD COLUMN` blocks were not safe to run a second time, and that there was no upgrade/migration script for an older database. Both of those are now fixed: the two `ALTER TABLE` blocks were moved out of `install.sql` entirely into numbered migration `0001_subscription_price_snapshot_columns.php`, `install.sql` itself is now safe to run as many times as you like (every table is `CREATE TABLE IF NOT EXISTS`, there are no more `ALTER TABLE` statements in it at all), and there IS now an upgrade tool for a database that was installed before this (or any later) delta shipped. See "🧱 Changing the database from now on" below for the full runbook - do **not** apply the two columns "by hand" any more; run the upgrade tool instead.
 
 ### Dynamic Redirect + Dual-Function QR: Stage S0/S1 (#27/#71/#33, 2026-07-22) - BUILT BUT DARK/INERT
 
@@ -757,6 +757,154 @@ Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destinati
 **Why the account-settings "Link" buttons are POST forms, not plain links (the "CSRF on the initiation" requirement).** The anonymous "Sign in with ..." buttons on login/register are ordinary `<a href>` links (a plain GET) - standard OAuth-client UX, and safe because there is no existing account session for a forged request to attack; the `state` parameter is the real defence for that flow. The account-settings "Link" buttons, in contrast, affect an ALREADY-authenticated account, so `public_html/auth/index.php` requires a CSRF-token-validated POST for any authenticated caller and renders a one-click confirmation page (containing that same POST form) if it instead receives a bare GET while authenticated.
 
 **Not built this stage (deferred):** avatar sourcing from the IdP's own profile picture (`fn_auth.php`'s `resolveAvatarUrl()` still documents this as an unreachable Tier 2, by design - out of THIS stage's explicit scope, which is account-linking + session issuance, not profile enrichment); an admin "force logout of all SSO sessions" action; SIGNula (pending upstream, see above); organisation-level SSO enforcement (the `sso` feature flag already exists per-tier in `tblSubscriptionPlans.featuresJSON` from Epic E4, seeded `true` only for the `business` tier - that flag is reserved for a FUTURE "require SSO for this organisation's members" enforcement feature and is deliberately NOT used to gate whether an individual can use the Microsoft/Google sign-in buttons built here, which is a suite-wide convenience available regardless of plan).
+
+---
+
+## 🧱 Changing the database from now on (task 7n Phase 1A, 2026-11-23, #113 item 5, #70)
+
+**In plain English:** `install.sql` and `seed_data.sql` are now a **frozen
+starting point** - the exact set of tables and starting rows a brand-new
+database gets. From now on, **every later change to the database - a new
+table, a new column, a new index, a new starting setting - is a small
+numbered file**, not an edit to `install.sql`. This is what finally makes
+"upgrade an existing database" a real, repeatable, safe thing to do, instead
+of a one-off manual job (closing #113 item 5 and the #70 "re-run caveat" above
+for good).
+
+### Why this changed
+
+Before this task, `install.sql` was a single, linear script. Two `ALTER
+TABLE` statements had been added to the end of it (for #70) to add columns to
+tables that already existed earlier in the same file. That meant:
+
+- `install.sql` could only ever be run **once**, against a **brand-new**
+  database - running it a second time failed at the first `ALTER TABLE` with
+  a "duplicate column" error, and everything after that point in the file
+  (more tables!) was never created either.
+- There was no tool at all for bringing an **older, already-installed**
+  database up to date with a newer one - the only options were "apply the
+  change by hand" or "throw the database away and start again", neither of
+  which is acceptable once real customer data exists.
+
+### How it works now
+
+1. **`install.sql` is frozen.** It only ever contains `CREATE TABLE IF NOT
+   EXISTS` blocks and `SET` lines - **never** another `ALTER TABLE` or a
+   second `CREATE TABLE IF NOT EXISTS \`sometable\`` added later. It is safe
+   to run against the same database as many times as you like; every table
+   it defines is checked, never re-created or changed, once it exists.
+2. **`seed_data.sql` is also frozen, but is NOT safe to re-run.** It is a flat
+   list of plain `INSERT` statements for a brand-new database's starting
+   rows. Running it twice fails (duplicate key) or, with `multi_query()`,
+   could stop part-way through. **Run it once, on a new database only** - the
+   web installer (`public_html/install/index.php`) now checks this for you:
+   before it ever touches `seed_data.sql`, it asks
+   `migrationDbSeedDataAlreadyPresent()` (`_functions/fn_migrations.php`)
+   whether `tblSettings` or `tblSubscriptionPlans` already has rows, and
+   skips the seed step with a plain-English message if so.
+3. **Every later change is a migration file**, one file per change, at
+   `_includes/sql/migrations/NNNN_short_name.php` (four digits, then an
+   underscore, then lower-case words - e.g.
+   `0003_plan_price_points.php`). Each file `return`s an array:
+
+   ```php
+   <?php
+   // _includes/sql/migrations/0003_short_name.php (+ full house file header)
+   return [
+       'key'         => '0003_short_name',                 // must match the file name
+       'description' => 'One sentence saying what this does and why',
+       'steps'       => [
+           [
+               'type'  => 'add_column',                     // see the step types below
+               'table' => 'tblSomething',
+               'name'  => 'newColumnName',
+               'sql'   => 'ALTER TABLE `tblSomething` ADD COLUMN `newColumnName` INT NULL AFTER `existingColumn`',
+           ],
+           // ... one step per column / index / foreign key / starting row
+       ],
+   ];
+   ```
+
+4. **Step types** (anything else is refused - nothing runs):
+
+   | Type | What it does | The SQL must... |
+   | --- | --- | --- |
+   | `create_table` | A brand-new table | start with `CREATE TABLE IF NOT EXISTS` |
+   | `add_column` | One new column on an existing table | be a single `ALTER TABLE ... ADD COLUMN ...` (exactly one column) |
+   | `add_index` | One new index/unique key | be a single `ALTER TABLE ... ADD INDEX`/`ADD UNIQUE KEY ...` |
+   | `add_foreign_key` | One new foreign key | be a single `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY ...` |
+   | `insert_if_missing` | One new starting row | start with `INSERT INTO ...` and end with `ON DUPLICATE KEY UPDATE` `` `x` = `x` `` (a no-op, so a row the owner already edited is never touched) |
+   | `update_if_unchanged` | Changing a seeded value, but only if nobody has touched it since | start with `UPDATE ... SET ...` and have a `WHERE` that only matches rows still at their OLD seeded value |
+
+   Every step is checked against the live database first ("does this column
+   already exist?") and skipped if the work is already done - that is what
+   makes every migration safe to run more than once. Words that undo
+   something (`DROP`, `TRUNCATE`, `RENAME`, `MODIFY`, `CHANGE`, `DELETE FROM`)
+   are refused outright: **migrations only ever add**. If an existing column,
+   row or table genuinely needs to change shape, write a NEW migration that
+   adds the new shape alongside the old one, rather than editing history.
+
+5. **Never edit a migration file once it has been applied anywhere** (even
+   just on your own dev database) - the runner fingerprints every file
+   (SHA-256) the moment it applies it, and reports an edited file as a
+   warning ("changed after it was applied") without ever running it again.
+   If you need to fix a mistake, write a new, higher-numbered migration.
+
+6. **Running the upgrade tool** - the command line (`_includes/cli/migrate.php`,
+   run with the command-line `php`, never from a URL - it lives outside
+   `public_html/` and is also blocked by `_includes/.htaccess`):
+
+   ```bash
+   php _includes/cli/migrate.php --status     # list what is applied and what is waiting; does not change anything
+   php _includes/cli/migrate.php --dry-run    # show exactly what --apply would do; changes nothing
+   php _includes/cli/migrate.php --apply      # apply every waiting migration, in number order
+   php _includes/cli/migrate.php --help       # usage
+   ```
+
+   The web installer (`public_html/install/index.php`) also calls this
+   automatically, straight after loading `install.sql`/`seed_data.sql`, using
+   `appliedBy = 'installer'` - so a fresh install always ends up fully
+   up to date, and re-visiting the installer later (if its lock file is ever
+   removed, e.g. to re-run after a later code update) safely tops up an
+   existing database too.
+
+   **Exit codes:** `0` up to date / applied / dry run finished | `1` a step
+   (or the database) failed - fix the problem and run `--apply` again, every
+   step is safe to repeat | `2` refused, **nothing** was changed (not run from
+   the command line, another upgrade already running, the database is older
+   than the supported starting point, a broken migration file, or a bad
+   option) | `3` (`--status` only) there are migrations waiting.
+
+7. **If a step fails part-way through a migration:** the whole migration is
+   NOT recorded as applied (even the steps that did succeed stay changed in
+   the database - that is fine, because every step re-checks "is this already
+   done?" on the next run). Fix the underlying problem, then run `--apply`
+   again; it picks up exactly where it left off.
+
+8. **If `--apply`/`--status` refuses with "this database does not match the
+   supported starting point"** (exit code 2), it means the database predates
+   `install.sql`'s current shape by more than migrations can bridge - one of
+   `install.sql`'s own starting **columns** is missing (not just a later
+   migration's column). The missing columns are listed by name; that database
+   needs a genuine one-off catch-up before the normal migration tool can run
+   against it again. (A missing **table**, by contrast, is recreated
+   automatically from `install.sql` - that case needs no manual help.)
+
+9. **Two upgrade runs at the same time:** the tool takes a MySQL named lock
+   (`GET_LOCK('cuercode_schema_migrate', ...)`) before doing anything; a
+   second run while one is already in progress is refused ("busy") rather
+   than risking two runs changing the same table at once.
+
+**Where to look:** `_functions/fn_migrations.php` (the engine - read its own
+file header first, it explains the two-halves design: pure file/SQL-text
+checks vs. the small set of database functions), `_includes/sql/migrations/`
+(the migration files themselves, in order - `0001` moved the #70 snapshot
+columns out of `install.sql`; `0002` added `tblAdminAuditLog` and the task 7n
+Phase 1A admin settings), `tests/test_migrations.php` (the DB-independent
+unit tests - every refused SQL word, every step type, the "what is waiting"
+plan, exit codes, report text), `tests/integration/migrations_real_mysql.php`
+(the real-database check - every acceptance bullet above, against a real
+MySQL server; see `tests/README.md` for how to run it).
 
 ---
 

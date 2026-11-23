@@ -128,6 +128,72 @@ code 0 means every scenario passed. For MariaDB, use
 all scenarios passed on MySQL 8.4.11, MySQL 8.0.46, MariaDB 10.11.19 and
 MariaDB 10.6.28.
 
+## Optional real-database check (database upgrades)
+
+`tests/test_migrations.php` proves the database upgrade runner's ("migrations")
+LOGIC without a database, using a stand-in "does this already exist?" checker.
+The real `INFORMATION_SCHEMA` questions, the real named lock, a real
+`install.sql` run twice, a real upgrade of a database built by the OLD
+(pre-task-7n) `install.sql`, and the real command-line tool
+(`_includes/cli/migrate.php`) end to end can only be proven against a real
+server, so there is a separate, optional script for that:
+`tests/integration/migrations_real_mysql.php`. `run.php` does not run it (it
+only picks up `tests/test_*.php`), but CI still syntax-checks it.
+
+**Rules - it creates and drops whole databases:**
+
+- Use a **throwaway container only**, named after the work, started with
+  `--rm` so the container *and* its data are removed when it stops.
+- `CUERCODE_IT_DB_NAME` is a **base name** here, not a single database: the
+  script derives and manages several of its own (`<base>_a`, `<base>_b`,
+  `<base>_f`, `<base>_g`, `<base>_h`) because several checks need independent
+  databases (an "old" database, a "two runs at once" database, a database with
+  its own throwaway migrations folder...). Every database name - base and
+  derived - **must start with `cuercode_it_`**, or the script refuses (exit 2).
+- **Remove the container afterwards**, and check nothing was left behind.
+- It needs the pre-task-7n `install.sql` from **git history** (commit
+  `76b1af7`, read with `git show`). An ordinary clone has it; a *shallow*
+  clone (`git clone --depth 1`) or a shallow CI checkout might not - the
+  script refuses (exit 2) rather than skip that check silently.
+
+```bash
+REPO="/path/to/CueRCode"   # quote it - the path may contain spaces
+BEFORE=$(docker volume ls -q -f dangling=true | wc -l | tr -d ' ')
+docker run --rm -d --name p113-migrations-mysql \
+  -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+  -p 127.0.0.1:33113:3306 mysql:8.0 --default-authentication-plugin=mysql_native_password
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33113 CUERCODE_IT_DB_NAME=cuercode_it_p113 \
+CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  php "$REPO/tests/integration/migrations_real_mysql.php"; echo "exit=$?"
+docker stop p113-migrations-mysql     # --rm removes the container AND its unnamed data volume
+docker ps -a --filter name=p113-migrations-mysql --format '{{.Names}}'     # must print nothing
+AFTER=$(docker volume ls -q -f dangling=true | wc -l | tr -d ' '); echo "dangling before=$BEFORE after=$AFTER"   # must be equal
+```
+
+`mysql:8.4` also works - leave off `--default-authentication-plugin`, which
+8.4 no longer accepts. For MariaDB, use
+`mariadb:10.11 -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1` (and no
+authentication-plugin option) - no `MYSQL_DATABASE`/`MARIADB_DATABASE` is
+needed either way, because the script creates every database it uses itself.
+
+The script waits for the server by itself (up to 120 seconds), then runs
+scenarios A-H: a fresh database (install.sql + seed_data.sql + migrations
+0001/0002, install.sql run a second time with no error, a second apply
+reporting "already up to date", the real command-line tool's exit codes); a
+database built by the OLD install.sql upgrading cleanly (0001 skips every
+step, 0002 applies, the finished schema matches the fresh path's exactly);
+owner-edited setting values surviving a re-run; a missing baseline table being
+re-created and a missing baseline column being refused (exit 2); two upgrade
+runs at the same time (the second is refused "busy", nothing half-applied);
+a failing step stopping the run without being recorded (so the next run
+resumes and finishes it), an edited-after-applied file being reported as a
+warning and never re-run, and a destructive (`DROP`) step being refused before
+anything runs; and the web installer's seed-data protection check
+(`migrationDbSeedDataAlreadyPresent()`). It drops its own databases, then
+prints PASS/FAIL per scenario. Exit code 0 means every scenario passed. Last
+run 2026-11-23 (task 7n Phase 1A part 2, #113 item 5, #70): all scenarios
+passed on MySQL 8.0.46.
+
 ## Syntax-checking the harness
 
 ```bash

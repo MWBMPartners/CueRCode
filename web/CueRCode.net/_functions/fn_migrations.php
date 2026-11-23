@@ -1240,6 +1240,108 @@ function migrationFormatReport(string $mode, array $result): array
     return $lines;
 }
 
+/**
+ * 🚦 Classify ONE line from migrationFormatReport() as 'warning', 'error' or
+ *    'info', so a screen that already has its own warning/error/info styling
+ *    (the web installer, and later the admin "Upgrades" page) can reuse the
+ *    exact same plain-English lines without re-deciding what they mean. Pure
+ *    string matching - never looks at a result array itself.
+ *
+ * @param string $line One line from migrationFormatReport()
+ * @return string 'warning', 'error' or 'info'
+ */
+function migrationReportLineSeverity(string $line): string
+{
+    if (strpos($line, 'Warning:') === 0) {
+        return 'warning';
+    }
+
+    // 🚨 Every headline/explanation that means "something stopped the run" or
+    //    "this needs a human to look at it" - checked as a fixed, known list
+    //    rather than guessing from punctuation, so a new report line defaults
+    //    to 'info' (never silently hidden as success) until this list is
+    //    taught about it.
+    $errorStarts = [
+        'FAILED',
+        'Refused:',
+        'Failed:',
+        'This database is older than',
+        'Broken migration file',
+    ];
+
+    foreach ($errorStarts as $errorStart) {
+        if (strpos($line, $errorStart) === 0) {
+            return 'error';
+        }
+    }
+
+    return 'info';
+}
+
+// ==============================================================================
+// 🌱 PURE + DATABASE: protecting seed_data.sql from running twice
+// ==============================================================================
+// seed_data.sql (unlike install.sql) is a set of plain INSERT statements with
+// no "insert if missing" protection, so running it a second time against a
+// database that already has its starting rows throws duplicate-key errors (or
+// stops part-way through a multi_query() run). The web installer calls
+// migrationDbSeedDataAlreadyPresent() before it ever touches seed_data.sql.
+// ==============================================================================
+
+/**
+ * 🌱 The tables that, if either already has rows, mean "this database has
+ *    already been seeded" (plan §9, installer known-limitation fix). Kept as
+ *    its own function (rather than inline) so a caller can see the exact list
+ *    without reading the database function below, and so a test can check it
+ *    directly.
+ *
+ * @return array<int, string> Plain table names (no back-quotes)
+ */
+function migrationSeedProtectionTables(): array
+{
+    return ['tblSettings', 'tblSubscriptionPlans'];
+}
+
+/**
+ * 🌱 Does this database already hold seed data? Checks every table from
+ *    migrationSeedProtectionTables() and stops at the first one with a row.
+ *
+ * A table that does not exist yet (install.sql must have failed earlier) is
+ * treated as "no data to protect" rather than an error of its own - the
+ * caller's own install.sql result already explains that failure.
+ *
+ * @param \mysqli $db Connection with the site database selected
+ * @return array{ok: bool, present: bool, error: string}
+ */
+function migrationDbSeedDataAlreadyPresent(\mysqli $db): array
+{
+    foreach (migrationSeedProtectionTables() as $tableName) {
+        try {
+            // The table name comes only from the fixed list above (never
+            // from user input), so it is safe to place directly in the SQL
+            // text - a MySQL prepared statement cannot parameterise a table
+            // name in any case.
+            $fetched = migrationDbFetchAll($db, 'SELECT COUNT(*) AS rowCount FROM `' . $tableName . '`');
+        } catch (\Throwable $unexpected) {
+            // Defensive only: migrationDbFetchAll() already catches MySQLi's
+            // own exception type, but this keeps the check itself from ever
+            // being the reason the installer page fails to render.
+            continue;
+        }
+
+        if ($fetched['ok'] !== true) {
+            // Most likely "table doesn't exist" - nothing to protect yet.
+            continue;
+        }
+
+        if ($fetched['rows'] !== [] && (int) $fetched['rows'][0]['rowCount'] > 0) {
+            return ['ok' => true, 'present' => true, 'error' => ''];
+        }
+    }
+
+    return ['ok' => true, 'present' => false, 'error' => ''];
+}
+
 // ==============================================================================
 // 🗄️ DATABASE functions (each takes a \mysqli; prepared statements only)
 // ==============================================================================

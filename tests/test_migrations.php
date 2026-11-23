@@ -775,3 +775,24 @@ assertEquals(2, $migCli['exit'], 'real migrate.php with no option: exit 2 (refus
 
 $migCli = $migRunCli(['--status', '--apply']);
 assertEquals(2, $migCli['exit'], 'real migrate.php with two modes: exit 2');
+
+// ==============================================================================
+// ✅ Section 14: seed-data protection and report-line severity (task 7n Phase
+//    1A part 2 - the web installer's known-limitation fix, §9)
+// ==============================================================================
+// migrationDbSeedDataAlreadyPresent() itself needs a real database (it is
+// covered by tests/integration/migrations_real_mysql.php); only the pure
+// table list and the pure line classifier are unit-tested here.
+// ==============================================================================
+
+assertEquals(['tblSettings', 'tblSubscriptionPlans'], migrationSeedProtectionTables(), 'seed protection: checks tblSettings and tblSubscriptionPlans, in that order');
+
+assertEquals('warning', migrationReportLineSeverity('Warning: 0002_x was changed after it was applied.'), 'severity: a Warning: line is a warning');
+assertEquals('error', migrationReportLineSeverity('FAILED 0002_b - not recorded; fix the problem and run --apply again.'), 'severity: a FAILED line is an error');
+assertEquals('error', migrationReportLineSeverity('Refused: another upgrade is running right now. Try again in a minute.'), 'severity: a Refused: line is an error');
+assertEquals('error', migrationReportLineSeverity('Failed: 0002_b step 3 failed.'), 'severity: a Failed: line is an error');
+assertEquals('error', migrationReportLineSeverity('This database is older than the supported starting point. Missing columns:'), 'severity: the baseline-mismatch line is an error');
+assertEquals('error', migrationReportLineSeverity('Broken migration file 0003_bad:'), 'severity: a broken-file line is an error');
+assertEquals('info', migrationReportLineSeverity('Already up to date.'), 'severity: everything else is info');
+assertEquals('info', migrationReportLineSeverity('Applied 0001_a: 2 step(s) run, 7 already done.'), 'severity: an applied-migration line is info');
+assertEquals('info', migrationReportLineSeverity(''), 'severity: an empty line is info (never silently hidden as success, never mistaken for an error)');

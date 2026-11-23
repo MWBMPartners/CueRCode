@@ -16,9 +16,16 @@
  * @package     CueRCode
  * @subpackage  Installation
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       Phase 1
+ * @since       2026-11-23 (task 7n Phase 1A, #113 item 5, #70) - after seeding,
+ *              the installer now also applies the numbered database upgrades
+ *              ("migrations") in _includes/sql/migrations/, and refuses to
+ *              re-run seed_data.sql (which is not safe to run twice) against
+ *              a database that already has starting data.
  * @see         https://www.php.net/manual/en/book.mysqli.php
+ * @see         ../../_functions/fn_migrations.php - migrationApplyPending(), the database upgrade engine
+ * @see         .claude/plans/7n-admin-commerce-plan.md §5.1 (the migration runner specification)
  */
 
 // ==============================================================================
@@ -276,7 +283,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
             // ----------------------------------------------------------------
             // 📌 Step 5: Execute seed_data.sql (initial data)
             // ----------------------------------------------------------------
-            if (!file_exists($seedSQLPath)) {
+            // ⚠️ KNOWN LIMITATION (task 7n Phase 1A, #113 item 5): unlike
+            // install.sql (every CREATE TABLE is "IF NOT EXISTS"), seed_data.sql
+            // is a set of plain INSERT statements with no "insert if missing"
+            // protection, so running it twice against the same database throws
+            // duplicate primary/unique key errors - or, with multi_query(),
+            // could stop part-way through. This page is meant to run once (the
+            // lock file above normally stops a second visit), but an admin
+            // could still reach this code a second time - for example by
+            // deleting the lock file to re-run the installer after a later
+            // code update. Before ever touching seed_data.sql, ask
+            // migrationDbSeedDataAlreadyPresent() (_functions/fn_migrations.php)
+            // whether either of the tables it seeds already has rows; if it
+            // does, skip the seed step and say so plainly - nothing is
+            // duplicated and nothing already there is overwritten.
+            // ----------------------------------------------------------------
+            // Loaded here (rather than only before Step 5b below) because this
+            // check needs it first; migrationApplyPending() further down reuses
+            // the same require_once (require_once never loads a file twice).
+            require_once $siteRoot . '_functions' . $ds . 'fn_migrations.php';
+
+            $seedPresenceCheck      = migrationDbSeedDataAlreadyPresent($mysqli);
+            $seedDataAlreadyPresent = ($seedPresenceCheck['ok'] === true && $seedPresenceCheck['present'] === true);
+
+            if ($seedDataAlreadyPresent) {
+                $results[] = [
+                    'status' => 'info',
+                    'message' => 'Seed data skipped: this database already holds starting data (tblSettings or '
+                        . 'tblSubscriptionPlans already has rows). Running seed_data.sql again would fail or '
+                        . 'duplicate rows, so it was not run. Any database changes since the first install are '
+                        . 'applied in the next step instead, by the upgrade tool.'
+                ];
+            } elseif (!file_exists($seedSQLPath)) {
                 $results[] = [
                     'status' => 'warning',
                     'message' => 'Seed data SQL file not found: ' . $seedSQLPath
@@ -321,92 +359,141 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
             }
 
             // ----------------------------------------------------------------
-            // 📌 Step 6: Verify table creation
+            // 📌 Step 5b: Apply database upgrades ("migrations")
             // ----------------------------------------------------------------
-            $expectedTables = [
-                'tblSettings', 'tblErrorLog', 'tblActivityLog', 'tblQRCodeTypes',
-                'tblQRCodes', 'tblPredefinedLogos', 'tblAPIKeys', 'tblAPIRateLog',
-                'tblUsers', 'tblOrganisations'
-            ];
+            // From task 7n Phase 1A onwards, install.sql and seed_data.sql are
+            // a frozen starting point: every later database change - the #70
+            // price-point/discount snapshot columns, the admin change log
+            // table, the Phase 1A admin settings - lives in small numbered
+            // files under _includes/sql/migrations/ and is applied by the same
+            // engine the command-line tool (_includes/cli/migrate.php) uses.
+            // $dryRun is false here so the upgrades are genuinely applied; every
+            // step checks the live database first, so running this page again
+            // later is exactly as safe as every other step above. (fn_migrations.php
+            // was already loaded just above, for the seed-presence check.)
+            // ----------------------------------------------------------------
+            $migrationResult = migrationApplyPending($mysqli, 'installer', false);
+            $migrationsOk    = ($migrationResult['status'] === 'ok');
 
-            $verifyResult = $mysqli->query("SHOW TABLES");
-            $existingTables = [];
-
-            if ($verifyResult) {
-                while ($row = $verifyResult->fetch_row()) {
-                    $existingTables[] = $row[0];
-                }
-                $verifyResult->free();
+            // 📝 Turn the plain-English report lines into the same kind of
+            //    result rows the rest of this page already shows, so the
+            //    screen keeps its existing look. migrationReportLineSeverity()
+            //    is the one shared classifier (also used by the Phase 1B admin
+            //    "Upgrades" page later), so the two screens never disagree on
+            //    what counts as a warning or an error. Nothing printed here is
+            //    ever a setting value or secret - migrationFormatReport() never
+            //    includes those.
+            foreach (migrationFormatReport('apply', $migrationResult) as $migrationLine) {
+                $results[] = [
+                    'status'  => migrationReportLineSeverity($migrationLine),
+                    'message' => $migrationLine
+                ];
             }
 
-            $missingTables = array_diff($expectedTables, $existingTables);
-
-            if (empty($missingTables)) {
-                $results[] = [
-                    'status' => 'success',
-                    'message' => 'All ' . count($expectedTables) . ' tables verified: '
-                        . implode(', ', $expectedTables)
-                ];
-                $overallSuccess = true;
-            } else {
+            if (!$migrationsOk) {
                 $results[] = [
                     'status' => 'error',
-                    'message' => 'Missing tables: ' . implode(', ', $missingTables)
+                    'message' => 'Database upgrades did not finish, so installation has stopped here. Fix the '
+                        . 'problem shown above, then reload this page to try again - every upgrade step is safe '
+                        . 'to repeat.'
                 ];
             }
 
-            // ----------------------------------------------------------------
-            // 📌 Step 7: Verify seed data counts
-            // ----------------------------------------------------------------
-            if ($overallSuccess) {
-                $countChecks = [
-                    'tblSettings'       => 'Settings',
-                    'tblQRCodeTypes'    => 'QR Code Types',
-                    'tblPredefinedLogos' => 'Predefined Logos'
+            // 🚦 Everything from here on only runs once the upgrades are in a
+            //    known-good state ("ok": up to date, or just applied).
+            if ($migrationsOk) {
+                // ----------------------------------------------------------------
+                // 📌 Step 6: Verify table creation
+                // ----------------------------------------------------------------
+                $expectedTables = [
+                    'tblSettings', 'tblErrorLog', 'tblActivityLog', 'tblQRCodeTypes',
+                    'tblQRCodes', 'tblPredefinedLogos', 'tblAPIKeys', 'tblAPIRateLog',
+                    'tblUsers', 'tblOrganisations',
+                    // 🧱 Added by the database-upgrade tool in Step 5b above
+                    // (task 7n Phase 1A): tblSchemaMigrations is the runner's
+                    // own ledger, tblAdminAuditLog is created by migration 0002.
+                    'tblSchemaMigrations', 'tblAdminAuditLog'
                 ];
 
-                foreach ($countChecks as $table => $label) {
-                    $countResult = $mysqli->query("SELECT COUNT(*) as cnt FROM `{$table}`");
-                    if ($countResult) {
-                        $count = $countResult->fetch_assoc()['cnt'];
-                        $countResult->free();
-                        if ($count > 0) {
-                            $countStatus = 'success';
-                        } else {
-                            $countStatus = 'warning';
-                        }
-                        $results[] = [
-                            'status' => $countStatus,
-                            'message' => "{$label}: {$count} records loaded"
-                        ];
+                $verifyResult = $mysqli->query("SHOW TABLES");
+                $existingTables = [];
+
+                if ($verifyResult) {
+                    while ($row = $verifyResult->fetch_row()) {
+                        $existingTables[] = $row[0];
                     }
+                    $verifyResult->free();
                 }
-            }
 
-            // ----------------------------------------------------------------
-            // 📌 Step 8: Create lock file to prevent re-execution
-            // ----------------------------------------------------------------
-            if ($overallSuccess) {
-                if (isset($_SERVER['SERVER_NAME'])) {
-                    $serverName = $_SERVER['SERVER_NAME'];
-                } else {
-                    $serverName = 'unknown';
-                }
-                $lockContent = 'Installed on: ' . date('Y-m-d H:i:s T') . PHP_EOL
-                    . 'PHP Version: ' . PHP_VERSION . PHP_EOL
-                    . 'Server: ' . $serverName . PHP_EOL;
+                $missingTables = array_diff($expectedTables, $existingTables);
 
-                if (file_put_contents($lockFile, $lockContent) !== false) {
+                if (empty($missingTables)) {
                     $results[] = [
                         'status' => 'success',
-                        'message' => 'Installation lock file created. Installer is now disabled.'
+                        'message' => 'All ' . count($expectedTables) . ' tables verified: '
+                            . implode(', ', $expectedTables)
                     ];
-                    $isLocked = true;
+                    $overallSuccess = true;
                 } else {
                     $results[] = [
-                        'status' => 'warning',
-                        'message' => 'Could not create lock file. Please manually restrict access to /install/'
+                        'status' => 'error',
+                        'message' => 'Missing tables: ' . implode(', ', $missingTables)
                     ];
+                }
+
+                // ----------------------------------------------------------------
+                // 📌 Step 7: Verify seed data counts
+                // ----------------------------------------------------------------
+                if ($overallSuccess) {
+                    $countChecks = [
+                        'tblSettings'       => 'Settings',
+                        'tblQRCodeTypes'    => 'QR Code Types',
+                        'tblPredefinedLogos' => 'Predefined Logos'
+                    ];
+
+                    foreach ($countChecks as $table => $label) {
+                        $countResult = $mysqli->query("SELECT COUNT(*) as cnt FROM `{$table}`");
+                        if ($countResult) {
+                            $count = $countResult->fetch_assoc()['cnt'];
+                            $countResult->free();
+                            if ($count > 0) {
+                                $countStatus = 'success';
+                            } else {
+                                $countStatus = 'warning';
+                            }
+                            $results[] = [
+                                'status' => $countStatus,
+                                'message' => "{$label}: {$count} records loaded"
+                            ];
+                        }
+                    }
+                }
+
+                // ----------------------------------------------------------------
+                // 📌 Step 8: Create lock file to prevent re-execution
+                // ----------------------------------------------------------------
+                if ($overallSuccess) {
+                    if (isset($_SERVER['SERVER_NAME'])) {
+                        $serverName = $_SERVER['SERVER_NAME'];
+                    } else {
+                        $serverName = 'unknown';
+                    }
+                    $lockContent = 'Installed on: ' . date('Y-m-d H:i:s T') . PHP_EOL
+                        . 'PHP Version: ' . PHP_VERSION . PHP_EOL
+                        . 'Server: ' . $serverName . PHP_EOL;
+
+                    if (file_put_contents($lockFile, $lockContent) !== false) {
+                        $results[] = [
+                            'status' => 'success',
+                            'message' => 'Installation lock file created. Installer is now disabled.'
+                        ];
+                        $isLocked = true;
+                    } else {
+                        $results[] = [
+                            'status' => 'warning',
+                            'message' => 'Could not create lock file. Please manually restrict access to /install/'
+                        ];
+                    }
                 }
             }
 
