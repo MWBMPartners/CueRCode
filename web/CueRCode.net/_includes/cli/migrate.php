@@ -26,9 +26,9 @@
  *
  * Exit codes (plan §5.1): 0 up to date / applied / dry run done | 1 a step or
  * the database failed (fix it and run again - every step is safe to repeat) |
- * 2 refused, nothing changed (not the command line, another upgrade running,
- * a database older than the supported starting point, a broken migration
- * file, or a bad option) | 3 --status found upgrades waiting.
+ * 2 refused, no upgrades applied (not the command line, another upgrade
+ * running, a database older than the supported starting point, a broken
+ * migration file, or a bad option) | 3 --status found upgrades waiting.
  *
  * This file is only a thin wrapper. All of the logic - and its tests - live
  * in _functions/fn_migrations.php.

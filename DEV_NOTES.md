@@ -800,8 +800,19 @@ tables that already existed earlier in the same file. That meant:
    web installer (`public_html/install/index.php`) now checks this for you:
    before it ever touches `seed_data.sql`, it asks
    `migrationDbSeedDataAlreadyPresent()` (`_functions/fn_migrations.php`)
-   whether `tblSettings` or `tblSubscriptionPlans` already has rows, and
-   skips the seed step with a plain-English message if so.
+   whether `tblQRCodeTypes`, `tblPredefinedLogos` or `tblSubscriptionPlans`
+   already has rows, and skips the seed step with a plain-English message if
+   so. **Fixed 2026-11-23 (review finding F1):** this check used to also look
+   at `tblSettings` - but migration `0002` (and any later settings migration)
+   also inserts rows into `tblSettings`, so running `migrate.php --apply` on
+   a brand-new, empty database (before the web installer ever ran) made
+   `tblSettings` non-empty, which then made the web installer wrongly believe
+   `seed_data.sql` had already run - it would skip it **forever**, and the QR
+   code types, predefined logos and subscription plans would never be
+   loaded. The check now only ever looks at tables `seed_data.sql` fills and
+   no migration file is allowed to touch (`migrationSeedProtectionTables()` -
+   `tests/test_migrations.php` has a standing regression guard that checks
+   every real migration file against this).
 3. **Every later change is a migration file**, one file per change, at
    `_includes/sql/migrations/NNNN_short_name.php` (four digits, then an
    underscore, then lower-case words - e.g.
@@ -870,10 +881,16 @@ tables that already existed earlier in the same file. That meant:
 
    **Exit codes:** `0` up to date / applied / dry run finished | `1` a step
    (or the database) failed - fix the problem and run `--apply` again, every
-   step is safe to repeat | `2` refused, **nothing** was changed (not run from
-   the command line, another upgrade already running, the database is older
-   than the supported starting point, a broken migration file, or a bad
+   step is safe to repeat | `2` refused, **no upgrades were applied** (not run
+   from the command line, another upgrade already running, the database is
+   older than the supported starting point, a broken migration file, or a bad
    option) | `3` (`--status` only) there are migrations waiting.
+
+   **Wording note (review finding F5):** a refusal says "no upgrades were
+   applied", never "nothing was changed" - the starting tables (from
+   `install.sql`) or the `tblSchemaMigrations` ledger table itself may
+   already have been created in the same run, just before the refusal
+   happened, so "nothing changed" was not always strictly true.
 
 7. **If a step fails part-way through a migration:** the whole migration is
    NOT recorded as applied (even the steps that did succeed stay changed in
@@ -888,12 +905,30 @@ tables that already existed earlier in the same file. That meant:
    migration's column). The missing columns are listed by name; that database
    needs a genuine one-off catch-up before the normal migration tool can run
    against it again. (A missing **table**, by contrast, is recreated
-   automatically from `install.sql` - that case needs no manual help.)
+   automatically from `install.sql`.)
+
+   **⚠️ A re-created table is still EMPTY (review finding F1, fixed
+   2026-11-23):** re-creating a missing table only gives it back its
+   *structure* - never its *starting data*, which only ever comes from
+   `seed_data.sql`, run once by the web installer. If `migrate.php --apply`
+   ever creates a table this way, it prints "Starting data not loaded: ...
+   run the web installer" straight away - this is exactly what happens the
+   first time `--apply` is run against a brand-new, completely empty database
+   (every one of `install.sql`'s tables counts as "missing" and gets
+   created), which is why running `migrate.php --apply` on its own is never a
+   substitute for running the web installer at least once.
 
 9. **Two upgrade runs at the same time:** the tool takes a MySQL named lock
-   (`GET_LOCK('cuercode_schema_migrate', ...)`) before doing anything; a
-   second run while one is already in progress is refused ("busy") rather
-   than risking two runs changing the same table at once.
+   before doing anything; a second run while one is already in progress is
+   refused ("busy") rather than risking two runs changing the same table at
+   once. **The lock name includes the database (fixed 2026-11-23, review
+   finding F6):** named locks are server-wide, not per-database, so without
+   this an upgrade running against one database on a shared MySQL server
+   could needlessly block - or be confused with - an upgrade running against
+   a completely unrelated database on that same server. See
+   `migrationLockNameSqlExpression()` in `_functions/fn_migrations.php` for
+   exactly how the per-database name is built (and kept under MySQL's
+   64-character limit).
 
 **Where to look:** `_functions/fn_migrations.php` (the engine - read its own
 file header first, it explains the two-halves design: pure file/SQL-text

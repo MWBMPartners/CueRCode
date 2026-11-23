@@ -89,14 +89,20 @@ unset($migrationScriptFilename);
 // 📌 Constants
 // ==============================================================================
 
-// 🔒 Name of the MySQL named lock that stops two upgrades running at once.
-//    Named locks are server-wide; a second run (for this or another site on
-//    the same database server) is told "busy" and can simply try again.
+// 🔒 Fixed PREFIX of the MySQL named lock that stops two upgrades running at
+//    once. Named locks are server-wide, not per-database, so
+//    migrationLockNameSqlExpression() below always builds the FULL lock name
+//    by adding the current database's name (and a short hash of it) onto this
+//    prefix - otherwise an upgrade running against one database on a shared
+//    MySQL server would needlessly block (or, worse, be mistaken for) an
+//    upgrade running against a completely different database on that same
+//    server (review finding F6). A second run against the SAME database is
+//    still correctly told "busy" and can simply try again.
 if (!defined('CUERCODE_MIGRATION_LOCK_NAME')) {
     define('CUERCODE_MIGRATION_LOCK_NAME', 'cuercode_schema_migrate');
 }
 
-// 🚦 Command-line exit codes (plan §5.1). "Refused" means nothing was changed.
+// 🚦 Command-line exit codes (plan §5.1). "Refused" means no upgrades were applied.
 if (!defined('CUERCODE_MIGRATE_EXIT_OK')) {
     define('CUERCODE_MIGRATE_EXIT_OK', 0);        // up to date, or applied, or dry run done
 }
@@ -1054,7 +1060,7 @@ function migrationCliUsage(): array
         'Exit codes:',
         '  0  up to date, applied, or dry run finished',
         '  1  a step or the database failed (run again after fixing - every step is safe to repeat)',
-        '  2  refused, nothing changed (another upgrade running, database older than the',
+        '  2  refused, no upgrades applied (another upgrade running, database older than the',
         '     supported starting point, a broken migration file, or a bad option)',
         '  3  --status only: upgrades are waiting',
     ];
@@ -1110,11 +1116,22 @@ function migrationExitCodeForResult(string $mode, array $result): int
  * 📝 Plain-English report lines for a result. Never includes setting values
  *    or SQL - only names, counts and problems.
  *
- * @param string $mode   'status', 'dry-run' or 'apply'
- * @param array  $result From migrationStatus() / migrationApplyPending()
+ * @param string $mode               'status', 'dry-run' or 'apply'
+ * @param array  $result             From migrationStatus() / migrationApplyPending()
+ * @param bool   $includeErrorDetail True (the command-line tool's default): include the raw
+ *                                   MySQL/PHP error text behind a failure. False (review finding
+ *                                   F3 - used by the web installer, a page members of the public
+ *                                   can reach): replace that raw technical text with one generic,
+ *                                   plain-English line, because a database error message can
+ *                                   contain internal details (table layouts, file paths) that
+ *                                   should never reach a browser. Either way the FULL detail
+ *                                   still belongs in the PHP error log - see
+ *                                   public_html/install/index.php, which writes it there itself
+ *                                   before ever calling this function with $includeErrorDetail
+ *                                   false.
  * @return array<int, string> Lines
  */
-function migrationFormatReport(string $mode, array $result): array
+function migrationFormatReport(string $mode, array $result, bool $includeErrorDetail = true): array
 {
     $lines = [];
 
@@ -1137,6 +1154,19 @@ function migrationFormatReport(string $mode, array $result): array
 
         if (isset($baseline['createdTables']) && is_array($baseline['createdTables']) && $baseline['createdTables'] !== []) {
             $lines[] = 'Created missing starting tables from install.sql: ' . implode(', ', $baseline['createdTables']);
+
+            // 🌱 F1: re-creating a baseline table from install.sql never loads
+            //    its STARTING DATA - that only ever comes from seed_data.sql,
+            //    which only the web installer runs. This note only appears
+            //    for --apply (the only mode that can ever create a table), so
+            //    it is seen exactly when it matters: typically "migrate.php
+            //    --apply" was run directly against a brand-new, empty
+            //    database, before the web installer ever touched it.
+            if ($mode === 'apply') {
+                $lines[] = 'Starting data not loaded: the tables above are now empty. Run the web installer '
+                    . '(public_html/install/) to load the starting QR code types, predefined logos and '
+                    . 'subscription plans.';
+            }
         } elseif (isset($baseline['missingTables']) && is_array($baseline['missingTables']) && $baseline['missingTables'] !== []) {
             if ($mode === 'apply') {
                 $lines[] = 'Starting tables still missing: ' . implode(', ', $baseline['missingTables']);
@@ -1150,7 +1180,7 @@ function migrationFormatReport(string $mode, array $result): array
             foreach ($baseline['missingColumns'] as $missingColumn) {
                 $lines[] = '  - ' . $missingColumn;
             }
-            $lines[] = 'It needs a one-off catch-up upgrade before these upgrades can run. Nothing was changed.';
+            $lines[] = 'It needs a one-off catch-up upgrade before these upgrades can run. No upgrades were applied.';
         }
     }
 
@@ -1175,8 +1205,23 @@ function migrationFormatReport(string $mode, array $result): array
             }
 
             if (isset($migration['problems']) && is_array($migration['problems'])) {
-                foreach ($migration['problems'] as $problem) {
-                    $lines[] = '  - ' . $problem;
+                // 🔒 F3: a 'failed' migration's problems are built from the
+                //    raw MySQL/PHP error text (migrationRunLocked() above),
+                //    which can mention internal table layouts or file paths -
+                //    fine for the command line (a trusted operator, run with
+                //    $includeErrorDetail left at its true default), never fine
+                //    on a page a member of the public could reach (the web
+                //    installer, which asks for $includeErrorDetail = false).
+                //    An 'invalid' migration's problems are only ever plain
+                //    descriptions of the migration FILE's own shape (step
+                //    numbers, table/column names) - never a database error -
+                //    so those are always shown.
+                if ($includeErrorDetail || $outcome !== 'failed') {
+                    foreach ($migration['problems'] as $problem) {
+                        $lines[] = '  - ' . $problem;
+                    }
+                } else {
+                    $lines[] = '  - technical detail was written to the server error log';
                 }
             }
         }
@@ -1201,15 +1246,22 @@ function migrationFormatReport(string $mode, array $result): array
     if ($status === 'busy') {
         $lines[] = 'Refused: another upgrade is running right now. Try again in a minute.';
     } elseif ($status === 'invalid') {
-        $lines[] = 'Refused: a migration file is broken (see above). Nothing was changed.';
+        $lines[] = 'Refused: a migration file is broken (see above). No upgrades were applied.';
     } elseif ($status === 'baseline_refused') {
-        $lines[] = 'Refused: the database does not match the supported starting point. Nothing was changed.';
+        $lines[] = 'Refused: the database does not match the supported starting point. No upgrades were applied.';
     } elseif ($status === 'failed') {
-        $error = '';
-        if (isset($result['error']) && is_string($result['error'])) {
-            $error = $result['error'];
+        // 🔒 F3: $result['error'] can carry raw MySQL/PHP error text (for
+        //    example a baseline install.sql failure, or an unexpected
+        //    exception's message) - never shown on a public page.
+        if ($includeErrorDetail) {
+            $error = '';
+            if (isset($result['error']) && is_string($result['error'])) {
+                $error = $result['error'];
+            }
+            $lines[] = 'Failed: ' . $error;
+        } else {
+            $lines[] = 'Failed: a technical problem stopped the upgrade. Full detail was written to the server error log.';
         }
-        $lines[] = 'Failed: ' . $error;
     } elseif ($status === 'ok') {
         $pendingCount = 0;
         if (isset($result['pending']) && is_array($result['pending'])) {
@@ -1289,17 +1341,32 @@ function migrationReportLineSeverity(string $line): string
 // ==============================================================================
 
 /**
- * 🌱 The tables that, if either already has rows, mean "this database has
- *    already been seeded" (plan §9, installer known-limitation fix). Kept as
- *    its own function (rather than inline) so a caller can see the exact list
- *    without reading the database function below, and so a test can check it
- *    directly.
+ * 🌱 The tables that, if any already has rows, mean "this database has
+ *    already been seeded" (plan §9, installer known-limitation fix; narrowed
+ *    2026-11-23, review finding F1).
+ *
+ * ⚠️ WHY NOT tblSettings: migration 0002 (and every later settings migration)
+ *    also inserts rows into tblSettings with "insert if missing" steps, so a
+ *    database that has only ever had `migrate.php --apply` run against it
+ *    (no web installer, no seed_data.sql) already has tblSettings rows. If
+ *    tblSettings were on this list, the web installer would then wrongly
+ *    believe seed_data.sql had already run and would skip it forever - the
+ *    QR code types, predefined logos and subscription plans would never be
+ *    loaded. The three tables below are ONLY ever filled by seed_data.sql: no
+ *    migration file writes to any of them (tests/test_migrations.php checks
+ *    this stays true for every migration, and the real-database check in
+ *    tests/integration/migrations_real_mysql.php proves the empty-database
+ *    scenario this function exists to protect against).
+ *
+ * Kept as its own function (rather than inline) so a caller can see the exact
+ * list without reading the database function below, and so a test can check
+ * it directly.
  *
  * @return array<int, string> Plain table names (no back-quotes)
  */
 function migrationSeedProtectionTables(): array
 {
-    return ['tblSettings', 'tblSubscriptionPlans'];
+    return ['tblQRCodeTypes', 'tblPredefinedLogos', 'tblSubscriptionPlans'];
 }
 
 /**
@@ -1425,6 +1492,39 @@ function migrationDbFetchAll(\mysqli $db, string $sql, string $types = '', array
 }
 
 /**
+ * 🔒 The SQL EXPRESSION (a piece of SQL text, not a value) that builds the
+ *    FULL GET_LOCK()/RELEASE_LOCK() name for whichever database is currently
+ *    selected on the connection (review finding F6).
+ *
+ * MySQL named locks are limited to 64 characters, and are server-wide - the
+ * same name used against two different databases on the same shared MySQL
+ * server would be the SAME lock, which is not what is wanted here. So the
+ * current database's name is folded in, in two parts:
+ *   - up to the first 30 characters of DATABASE() itself, kept for a human
+ *     reading a MySQL process list to see roughly which database it is;
+ *   - an 8-character slice of MD5(DATABASE()) - the hash of the WHOLE
+ *     database name, not just the truncated 30 characters - so two different
+ *     database names that happen to share their first 30 characters still
+ *     almost certainly end up with two different lock names rather than
+ *     silently colliding into one.
+ * 23 (the prefix) + 1 + 30 + 1 + 8 = 63 characters at most, safely under the
+ * 64-character limit, and always the SAME length calculation regardless of
+ * how long or short the real database name is.
+ *
+ * Used identically by migrationDbAcquireLock() and migrationDbReleaseLock()
+ * (one shared function, so the two can never quietly drift apart and start
+ * computing different names for the same database).
+ *
+ * @return string SQL text with exactly one `?` placeholder (the fixed prefix,
+ *                CUERCODE_MIGRATION_LOCK_NAME - DATABASE() itself needs no
+ *                placeholder, it is a MySQL built-in, never user input)
+ */
+function migrationLockNameSqlExpression(): string
+{
+    return 'CONCAT(?, \':\', SUBSTRING(DATABASE(), 1, 30), \':\', SUBSTRING(MD5(DATABASE()), 1, 8))';
+}
+
+/**
  * 🔒 Try to take the upgrade lock without waiting.
  *
  * @param \mysqli $db Connection
@@ -1432,7 +1532,12 @@ function migrationDbFetchAll(\mysqli $db, string $sql, string $types = '', array
  */
 function migrationDbAcquireLock(\mysqli $db): string
 {
-    $fetched = migrationDbFetchAll($db, 'SELECT GET_LOCK(?, 0) AS gotLock', 's', [CUERCODE_MIGRATION_LOCK_NAME]);
+    $fetched = migrationDbFetchAll(
+        $db,
+        'SELECT GET_LOCK(' . migrationLockNameSqlExpression() . ', 0) AS gotLock',
+        's',
+        [CUERCODE_MIGRATION_LOCK_NAME]
+    );
 
     if ($fetched['ok'] !== true || $fetched['rows'] === []) {
         return 'error';
@@ -1460,7 +1565,12 @@ function migrationDbAcquireLock(\mysqli $db): string
  */
 function migrationDbReleaseLock(\mysqli $db): void
 {
-    $fetched = migrationDbFetchAll($db, 'SELECT RELEASE_LOCK(?) AS released', 's', [CUERCODE_MIGRATION_LOCK_NAME]);
+    $fetched = migrationDbFetchAll(
+        $db,
+        'SELECT RELEASE_LOCK(' . migrationLockNameSqlExpression() . ') AS released',
+        's',
+        [CUERCODE_MIGRATION_LOCK_NAME]
+    );
     unset($fetched);
 }
 
@@ -1582,6 +1692,22 @@ function migrationDbHasDatabase(\mysqli $db): bool
  * it. So the connection's SQL mode and time zone are saved first and put
  * back afterwards.
  *
+ * install.sql (and seed_data.sql, run the same way by the web installer)
+ * also contains a plain "SET CHARACTER SET utf8mb4" statement (review finding
+ * F2). That MySQL statement does NOT behave like set_charset(): it sets
+ * character_set_client and character_set_results to utf8mb4, but sets
+ * character_set_connection (and its collation) to the CURRENT DATABASE's OWN
+ * default character set - which, on a database whose default is something
+ * older such as latin1 or utf8mb3, leaves the connection in a MISMATCHED
+ * state (client says utf8mb4, connection says latin1) rather than simply "the
+ * database default". Left like that, every later migration step on this
+ * connection risks silently mangling multi-byte text (emoji, £, accented
+ * names...) being written or read. mysqli's own set_charset() is the one safe
+ * way to set all of those session variables back to the SAME, consistent
+ * value in one go - so the character set is saved here exactly like the SQL
+ * mode and time zone, and restored with set_charset(), in a finally block so
+ * it happens on every path out of this function, including an exception.
+ *
  * @param \mysqli $db         Connection
  * @param string  $installSql Text of install.sql
  * @return array{ok: bool, error: string}
@@ -1595,57 +1721,78 @@ function migrationDbRunInstallSql(\mysqli $db, string $installSql): array
     $savedSqlMode  = (string) $saved['rows'][0]['sqlMode'];
     $savedTimeZone = (string) $saved['rows'][0]['timeZone'];
 
+    // 🔤 mysqli's own idea of the connection's current character set, read
+    //    BEFORE install.sql's "SET CHARACTER SET utf8mb4" statement runs.
+    $savedCharset = $db->character_set_name();
+
     $error = '';
 
     try {
-        // multi_query(): install.sql is many statements in one file - the
-        // web installer runs it exactly the same way.
-        if ($db->multi_query($installSql)) {
-            do {
-                $resultSet = $db->store_result();
-                if ($resultSet instanceof \mysqli_result) {
-                    $resultSet->free();
-                }
-                if (!$db->more_results()) {
-                    break;
-                }
-            } while ($db->next_result());
+        try {
+            // multi_query(): install.sql is many statements in one file - the
+            // web installer runs it exactly the same way.
+            if ($db->multi_query($installSql)) {
+                do {
+                    $resultSet = $db->store_result();
+                    if ($resultSet instanceof \mysqli_result) {
+                        $resultSet->free();
+                    }
+                    if (!$db->more_results()) {
+                        break;
+                    }
+                } while ($db->next_result());
 
-            if ($db->errno !== 0) {
+                if ($db->errno !== 0) {
+                    $error = 'MySQL error ' . $db->errno . ': ' . $db->error;
+                }
+            } else {
                 $error = 'MySQL error ' . $db->errno . ': ' . $db->error;
             }
-        } else {
-            $error = 'MySQL error ' . $db->errno . ': ' . $db->error;
-        }
-    } catch (\mysqli_sql_exception $databaseError) {
-        $error = 'MySQL error ' . $databaseError->getCode() . ': ' . $databaseError->getMessage();
+        } catch (\mysqli_sql_exception $databaseError) {
+            $error = 'MySQL error ' . $databaseError->getCode() . ': ' . $databaseError->getMessage();
 
-        // Drain anything left so the connection can be used again.
-        try {
-            while ($db->more_results() && $db->next_result()) {
-                $leftover = $db->store_result();
-                if ($leftover instanceof \mysqli_result) {
-                    $leftover->free();
+            // Drain anything left so the connection can be used again.
+            try {
+                while ($db->more_results() && $db->next_result()) {
+                    $leftover = $db->store_result();
+                    if ($leftover instanceof \mysqli_result) {
+                        $leftover->free();
+                    }
                 }
+            } catch (\mysqli_sql_exception $drainError) {
+                unset($drainError);
             }
-        } catch (\mysqli_sql_exception $drainError) {
-            unset($drainError);
         }
-    }
+    } finally {
+        // ↩️ Put the connection's settings back, whatever happened above -
+        //    a finally block, so this always runs, even on an unexpected
+        //    exception type this function does not otherwise catch.
+        $restoredMode = migrationDbExecute($db, 'SET SESSION sql_mode = ?', 's', [$savedSqlMode]);
+        if ($restoredMode['ok'] === true) {
+            $restoredMode['stmt']->close();
+        } elseif ($error === '') {
+            $error = 'Could not restore the SQL mode (' . $restoredMode['error'] . ')';
+        }
 
-    // ↩️ Put the connection's settings back, whatever happened above.
-    $restoredMode = migrationDbExecute($db, 'SET SESSION sql_mode = ?', 's', [$savedSqlMode]);
-    if ($restoredMode['ok'] === true) {
-        $restoredMode['stmt']->close();
-    } elseif ($error === '') {
-        $error = 'Could not restore the SQL mode (' . $restoredMode['error'] . ')';
-    }
+        $restoredZone = migrationDbExecute($db, 'SET SESSION time_zone = ?', 's', [$savedTimeZone]);
+        if ($restoredZone['ok'] === true) {
+            $restoredZone['stmt']->close();
+        } elseif ($error === '') {
+            $error = 'Could not restore the time zone (' . $restoredZone['error'] . ')';
+        }
 
-    $restoredZone = migrationDbExecute($db, 'SET SESSION time_zone = ?', 's', [$savedTimeZone]);
-    if ($restoredZone['ok'] === true) {
-        $restoredZone['stmt']->close();
-    } elseif ($error === '') {
-        $error = 'Could not restore the time zone (' . $restoredZone['error'] . ')';
+        // 🔤 Character set/collation restored LAST, and with set_charset() -
+        //    not a SET query - because it is the only call that sets
+        //    character_set_client, character_set_results, character_set_connection
+        //    and collation_connection back to the SAME value consistently,
+        //    undoing any mismatch install.sql's own SET CHARACTER SET left
+        //    behind (F2). The @ is deliberate: a false return here is read
+        //    from $db->error immediately after, never relied on silently.
+        if (!@$db->set_charset($savedCharset)) {
+            if ($error === '') {
+                $error = 'Could not restore the character set (' . $db->error . ')';
+            }
+        }
     }
 
     if ($error !== '') {

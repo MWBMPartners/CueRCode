@@ -41,6 +41,28 @@
  *      seed_data.sql - correctly reports "no data yet" on an empty or
  *      table-less database and "already seeded" once seed_data.sql has run.
  *
+ * Three more scenarios, added for the Phase 1A part 2 code review fixes
+ * (named here by their own code letters - Scenario I, J, K - to avoid
+ * confusion with the lettering above, which has always run one letter ahead
+ * in code: what this list calls E/F/G are "F busy lock"/"G failing step
+ * stops/resumes"/"H seed protection" in the actual itCheck() scenario names):
+ *
+ *   Scenario I. review finding F2 - a database whose OWN default character
+ *      set is latin1 does not end up with a MISMATCHED connection character
+ *      set after install.sql's own "SET CHARACTER SET utf8mb4" statement
+ *      runs; an emoji and a £ sign written by a migration step afterwards
+ *      round-trip byte-for-byte.
+ *   Scenario J. review finding F1 - running `migrate.php --apply` directly
+ *      against a COMPLETELY EMPTY database (the exact bug: before the web
+ *      installer has ever run) still leaves the installer's own
+ *      migrationDbSeedDataAlreadyPresent() check correctly saying "NOT
+ *      seeded" afterwards, even though migration 0002 has by then inserted
+ *      rows into tblSettings.
+ *   Scenario K. review finding F6 - the upgrade lock name includes the
+ *      database, so two different databases on the same shared MySQL server
+ *      never block each other's upgrades, while a database still correctly
+ *      blocks a second run against ITSELF.
+ *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
  *
@@ -288,6 +310,26 @@ function itRunSqlFile(\mysqli $itDb, string $itSql): string
 }
 
 /**
+ * 🔒 The EXACT lock name migrationDbAcquireLock()/migrationDbReleaseLock()
+ *    would use for the database currently selected on $itDb (review finding
+ *    F6) - built with the SAME SQL expression as production
+ *    (migrationLockNameSqlExpression(), from fn_migrations.php), so this test
+ *    can take/release that real lock directly without guessing at, or
+ *    duplicating, the formula.
+ */
+function itLockNameFor(\mysqli $itDb): string
+{
+    $itLockNameStatement = $itDb->prepare('SELECT ' . migrationLockNameSqlExpression() . ' AS lockName');
+    $itLockNamePrefix    = CUERCODE_MIGRATION_LOCK_NAME;
+    $itLockNameStatement->bind_param('s', $itLockNamePrefix);
+    $itLockNameStatement->execute();
+    $itLockNameRow = $itLockNameStatement->get_result()->fetch_assoc();
+    $itLockNameStatement->close();
+
+    return (string) $itLockNameRow['lockName'];
+}
+
+/**
  * 📸 A normalised snapshot of every table's definition (SHOW CREATE TABLE,
  *    with the AUTO_INCREMENT start value stripped out so two databases that
  *    received rows in a different order still compare equal). Used to prove
@@ -433,11 +475,15 @@ echo 'Read the pre-task-7n install.sql from git history (commit 76b1af7, ' . sub
 
 // 🧮 Database names used below - all derived from the one base name, and all
 //    re-checked by itSafeDbName() the moment they are used.
-$itDbA = $itBaseName . '_a';
-$itDbB = $itBaseName . '_b';
-$itDbF = $itBaseName . '_f';
-$itDbG = $itBaseName . '_g';
-$itDbH = $itBaseName . '_h';
+$itDbA  = $itBaseName . '_a';
+$itDbB  = $itBaseName . '_b';
+$itDbF  = $itBaseName . '_f';
+$itDbG  = $itBaseName . '_g';
+$itDbH  = $itBaseName . '_h';
+$itDbI  = $itBaseName . '_i';
+$itDbJ  = $itBaseName . '_j';
+$itDbK1 = $itBaseName . '_k1';
+$itDbK2 = $itBaseName . '_k2';
 
 // ==============================================================================
 // 🅰️ Scenario A: fresh database - install.sql + seed + migrations; install.sql
@@ -472,7 +518,12 @@ $itLedgerRows = $itA->query('SELECT `migrationKey`, `appliedBy` FROM `tblSchemaM
 itCheck('A fresh database', count($itLedgerRows) === 2, 'tblSchemaMigrations lists both migrations (' . count($itLedgerRows) . ')');
 itCheck('A fresh database', isset($itLedgerRows[0]['migrationKey']) && $itLedgerRows[0]['migrationKey'] === '0001_subscription_price_snapshot_columns', 'ledger: first row is 0001');
 itCheck('A fresh database', isset($itLedgerRows[1]['migrationKey']) && $itLedgerRows[1]['migrationKey'] === '0002_admin_audit_log_and_settings', 'ledger: second row is 0002');
-itCheck('A fresh database', str_starts_with((string) ($itLedgerRows[0]['appliedBy'] ?? ''), 'cli:'), 'ledger: appliedBy records the real CLI label (cli:<os user>)');
+// 🔤 No `??` (house rule) - an explicit isset() check instead.
+$itLedgerAppliedByA = '';
+if (isset($itLedgerRows[0]['appliedBy'])) {
+    $itLedgerAppliedByA = (string) $itLedgerRows[0]['appliedBy'];
+}
+itCheck('A fresh database', str_starts_with($itLedgerAppliedByA, 'cli:'), 'ledger: appliedBy records the real CLI label (cli:<os user>)');
 itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'billing_vat_mode' AND `settingValue` = 'inclusive'")->num_rows === 1, '0002 seeded billing_vat_mode = inclusive');
 
 $itSchemaA = itSchemaSnapshot($itA);
@@ -490,13 +541,18 @@ $itOldSchema = itSchemaSnapshot($itB);
 
 $itUpgradeResult = migrationRun($itB, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck('B old install.sql upgrades', $itUpgradeResult['status'] === 'ok', 'migrationRun(apply) succeeds on the old database');
+// 🔤 No `??` (house rule) - an explicit isset() check instead.
+$itUpgradeFirstMigration = null;
+if (isset($itUpgradeResult['migrations'][0])) {
+    $itUpgradeFirstMigration = $itUpgradeResult['migrations'][0];
+}
 itCheck(
     'B old install.sql upgrades',
     isset($itUpgradeResult['migrations'][0])
         && $itUpgradeResult['migrations'][0]['key'] === '0001_subscription_price_snapshot_columns'
         && $itUpgradeResult['migrations'][0]['stepsRun'] === 0
         && $itUpgradeResult['migrations'][0]['stepsSkipped'] === 9,
-    '0001 skips every one of its 9 steps (the OLD install.sql already has those columns): ' . json_encode($itUpgradeResult['migrations'][0] ?? null)
+    '0001 skips every one of its 9 steps (the OLD install.sql already has those columns): ' . json_encode($itUpgradeFirstMigration)
 );
 itCheck(
     'B old install.sql upgrades',
@@ -560,16 +616,17 @@ $itF = itFreshDb($itEnv, $itPort, $itDbF);
 itRunSqlFile($itF, $itInstallSql);
 itRunSqlFile($itF, $itSeedSql);
 
-$itHolder     = new \mysqli($itEnv['HOST'], $itEnv['USER'], $itEnv['PASS'], $itDbF, $itPort);
-$itGotLockRow = $itHolder->query("SELECT GET_LOCK('cuercode_schema_migrate', 0) AS gotLock")->fetch_assoc();
-itCheck('F busy lock', (int) $itGotLockRow['gotLock'] === 1, 'a second connection takes the upgrade lock directly');
+$itHolder    = new \mysqli($itEnv['HOST'], $itEnv['USER'], $itEnv['PASS'], $itDbF, $itPort);
+$itLockNameF = itLockNameFor($itHolder);
+$itGotLockRow = $itHolder->query("SELECT GET_LOCK('" . $itHolder->real_escape_string($itLockNameF) . "', 0) AS gotLock")->fetch_assoc();
+itCheck('F busy lock', (int) $itGotLockRow['gotLock'] === 1, 'a second connection takes the upgrade lock directly (using the exact per-database name production uses, F6)');
 
 $itCliResult = itCli($itDbF, 'apply');
 itCheck('F busy lock', $itCliResult['exit'] === 2, 'an upgrade run while the lock is held is refused (exit 2, "busy")');
 itCheck('F busy lock', str_contains($itCliResult['out'], 'another upgrade is running') || str_contains($itCliResult['err'], 'another upgrade is running'), 'the refusal explains why, in plain English');
 itCheck('F busy lock', $itF->query("SHOW TABLES LIKE 'tblSchemaMigrations'")->num_rows === 0, 'nothing was half-applied while busy (not even the ledger table)');
 
-$itHolder->query("SELECT RELEASE_LOCK('cuercode_schema_migrate')");
+$itHolder->query("SELECT RELEASE_LOCK('" . $itHolder->real_escape_string($itLockNameF) . "')");
 $itHolder->close();
 
 $itCliResult = itCli($itDbF, 'apply');
@@ -602,7 +659,12 @@ file_put_contents(
 );
 
 $itResult = migrationRun($itG, 'apply', 'test', $itTempMigrationsDir, migrationDefaultInstallSqlPath());
-itCheck('G failing step stops/resumes', $itResult['status'] === 'failed', 'the run stops with status failed: ' . json_encode($itResult['migrations'][0]['problems'] ?? $itResult['error']));
+// 🔤 No `??` (house rule) - an explicit isset() check instead.
+$itFailedMigrationDetail = $itResult['error'];
+if (isset($itResult['migrations'][0]['problems'])) {
+    $itFailedMigrationDetail = $itResult['migrations'][0]['problems'];
+}
+itCheck('G failing step stops/resumes', $itResult['status'] === 'failed', 'the run stops with status failed: ' . json_encode($itFailedMigrationDetail));
 itCheck('G failing step stops/resumes', migrationExitCodeForResult('apply', $itResult) === 1, 'exit code 1 (a step failed)');
 itCheck('G failing step stops/resumes', (int) $itG->query("SELECT COUNT(*) FROM `tblSchemaMigrations` WHERE `migrationKey` = '0001_test_failing_step'")->fetch_row()[0] === 0, 'the failed migration is NOT recorded');
 itCheck('G failing step stops/resumes', $itG->query("SHOW COLUMNS FROM `tblUsers` LIKE 'itTestZzA'")->num_rows === 1, 'step 1 (before the failure) did take effect - the column exists');
@@ -617,13 +679,18 @@ file_put_contents(
         . "]];\n"
 );
 $itResult = migrationRun($itG, 'apply', 'test', $itTempMigrationsDir, migrationDefaultInstallSqlPath());
+// 🔤 No `??` (house rule) - an explicit isset() check instead.
+$itResumedFirstMigration = null;
+if (isset($itResult['migrations'][0])) {
+    $itResumedFirstMigration = $itResult['migrations'][0];
+}
 itCheck(
     'G failing step stops/resumes',
     $itResult['status'] === 'ok'
         && isset($itResult['migrations'][0])
         && $itResult['migrations'][0]['stepsSkipped'] === 1
         && $itResult['migrations'][0]['stepsRun'] === 1,
-    'resumed correctly: step 1 skipped (already done), step 2 now run: ' . json_encode($itResult['migrations'][0] ?? null)
+    'resumed correctly: step 1 skipped (already done), step 2 now run: ' . json_encode($itResumedFirstMigration)
 );
 
 // ⚠️ Edit the (now-applied) file's description only, so its checksum changes.
@@ -680,9 +747,119 @@ $itSeedCheck = migrationDbSeedDataAlreadyPresent($itH);
 itCheck('H seed protection', $itSeedCheck['ok'] === true && $itSeedCheck['present'] === true, 'once seed_data.sql has run, it correctly reports "already present"');
 
 // ==============================================================================
+// 🅸 Scenario I: a LATIN1-default database does not leave the connection in a
+//    mismatched character-set state after install.sql's own "SET CHARACTER
+//    SET utf8mb4" statement runs (review finding F2), and an emoji/£ written
+//    by a migration step afterwards round-trips byte-for-byte
+// ==============================================================================
+echo PHP_EOL . 'Scenario I: a latin1-default database does not corrupt the connection charset (F2)' . PHP_EOL;
+$itServerI = itServerConnect($itEnv, $itPort);
+$itServerI->query('DROP DATABASE IF EXISTS `' . itSafeDbName($itDbI) . '`');
+// 🔤 The database's OWN default is latin1 - this is exactly what makes
+//    MySQL's "SET CHARACTER SET utf8mb4" (inside install.sql) behave
+//    differently to set_charset('utf8mb4'): it sets character_set_connection
+//    to THIS database's default (latin1), not to utf8mb4.
+$itServerI->query('CREATE DATABASE `' . itSafeDbName($itDbI) . '` CHARACTER SET latin1 COLLATE latin1_swedish_ci');
+$itServerI->select_db($itDbI);
+$itServerI->query("SET SQL_MODE = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
+$itServerI->query("SET time_zone = '+00:00'");
+// 🔤 Exactly what the real site's db_connect.php / installer does BEFORE
+//    ever touching install.sql - utf8mb4, set consistently on all four
+//    charset session variables via set_charset(), never a raw SET query.
+$itServerI->set_charset('utf8mb4');
+$itI = $itServerI;
+
+$itOriginalCharsetI = $itI->character_set_name();
+itCheck('I latin1 database charset', $itOriginalCharsetI === 'utf8mb4', 'the connection starts as utf8mb4 (matches the real site start-up), even though the database itself defaults to latin1');
+
+$itInstallRunI = migrationDbRunInstallSql($itI, $itInstallSql);
+itCheck('I latin1 database charset', $itInstallRunI['ok'] === true, 'install.sql runs on a latin1-default database: ' . $itInstallRunI['error']);
+itCheck('I latin1 database charset', $itI->character_set_name() === $itOriginalCharsetI, 'the connection charset is restored to utf8mb4 after install.sql (not left mismatched by its own SET CHARACTER SET statement, F2)');
+
+// 🌍 A migration step (its own throwaway, temporary migrations folder - never
+//    the real one) writes an emoji and a £ sign; it must round-trip
+//    byte-for-byte - proof the connection is genuinely consistent afterwards,
+//    not just reporting the right charset NAME.
+$itTempMigrationsDirI = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_it_mig_i_' . bin2hex(random_bytes(6)) . DIRECTORY_SEPARATOR;
+mkdir($itTempMigrationsDirI, 0700);
+$itEmojiValue = 'Test GBP sign and emoji round-trip: £12.34 🎉';
+file_put_contents(
+    $itTempMigrationsDirI . '0001_test_charset_roundtrip.php',
+    "<?php\nreturn ['key' => '0001_test_charset_roundtrip', 'description' => 'test', 'steps' => ["
+        . "['type' => 'create_table', 'table' => 'tblItCharsetTest', 'sql' => 'CREATE TABLE IF NOT EXISTS `tblItCharsetTest` (`testID` INT UNSIGNED NOT NULL AUTO_INCREMENT, `testValue` VARCHAR(100) NOT NULL, PRIMARY KEY (`testID`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'],"
+        . "['type' => 'insert_if_missing', 'table' => 'tblItCharsetTest', 'sql' => \"INSERT INTO `tblItCharsetTest` (`testID`, `testValue`) VALUES (1, '" . $itEmojiValue . "') ON DUPLICATE KEY UPDATE `testID` = `testID`\"],"
+        . "]];\n"
+);
+
+$itCharsetResult = migrationRun($itI, 'apply', 'test', $itTempMigrationsDirI, migrationDefaultInstallSqlPath());
+itCheck('I latin1 database charset', $itCharsetResult['status'] === 'ok', 'the charset-round-trip migration applies: ' . json_encode($itCharsetResult['error']));
+
+$itRoundTripRow = $itI->query('SELECT `testValue` FROM `tblItCharsetTest` WHERE `testID` = 1')->fetch_assoc();
+itCheck(
+    'I latin1 database charset',
+    isset($itRoundTripRow['testValue']) && $itRoundTripRow['testValue'] === $itEmojiValue,
+    'the £/emoji text written by a migration step round-trips byte-for-byte'
+);
+
+foreach ((array) glob($itTempMigrationsDirI . '*') as $itTempFile) {
+    @unlink((string) $itTempFile);
+}
+@rmdir($itTempMigrationsDirI);
+
+// ==============================================================================
+// 🅹 Scenario J: `migrate.php --apply` run directly on a COMPLETELY EMPTY
+//    database (before the web installer has ever touched it) must still
+//    leave the installer's own seed-protection check correctly saying "NOT
+//    seeded" afterwards (review finding F1 - this is the exact bug)
+// ==============================================================================
+echo PHP_EOL . 'Scenario J: CLI --apply on an EMPTY database, then the installer seed-check still says NOT seeded (F1)' . PHP_EOL;
+$itJ = itFreshDb($itEnv, $itPort, $itDbJ);
+// Nothing else is done to $itJ first - no install.sql, no seed_data.sql by
+// hand - exactly "ran migrate.php --apply before the web installer ever ran".
+
+$itCliResultJ = itCli($itDbJ, 'apply');
+itCheck('J empty db then seed check', $itCliResultJ['exit'] === 0, 'CLI --apply on a completely empty database succeeds (it creates the starting tables from install.sql and applies migrations 0001/0002)');
+itCheck(
+    'J empty db then seed check',
+    str_contains($itCliResultJ['out'], 'Starting data not loaded') || str_contains($itCliResultJ['err'], 'Starting data not loaded'),
+    'the CLI prints a clear note that starting data (QR types, logos, plans) still needs the web installer'
+);
+itCheck('J empty db then seed check', (int) $itJ->query("SELECT COUNT(*) FROM `tblSettings`")->fetch_row()[0] > 0, 'migration 0002 DID insert rows into tblSettings (this is exactly why tblSettings cannot be a seed-protection table)');
+
+$itSeedCheckJ = migrationDbSeedDataAlreadyPresent($itJ);
+itCheck(
+    'J empty db then seed check',
+    $itSeedCheckJ['ok'] === true && $itSeedCheckJ['present'] === false,
+    'the installer\'s seed-protection check correctly says "NOT seeded" (F1 fix) - so seed_data.sql would still be allowed to run if the web installer were used next'
+);
+
+// ==============================================================================
+// 🅺 Scenario K: the upgrade lock name includes the database (review finding
+//    F6) - two different databases never block each other's upgrades
+// ==============================================================================
+echo PHP_EOL . 'Scenario K: the upgrade lock name is per-database (F6)' . PHP_EOL;
+$itK1 = itFreshDb($itEnv, $itPort, $itDbK1);
+$itK2 = itFreshDb($itEnv, $itPort, $itDbK2);
+
+$itLockNameK1 = itLockNameFor($itK1);
+$itLockNameK2 = itLockNameFor($itK2);
+itCheck('K per-database lock name', $itLockNameK1 !== $itLockNameK2, 'two different databases compute two different lock names');
+
+$itLockRowK1 = $itK1->query("SELECT GET_LOCK('" . $itK1->real_escape_string($itLockNameK1) . "', 0) AS gotLock")->fetch_assoc();
+itCheck('K per-database lock name', (int) $itLockRowK1['gotLock'] === 1, 'database K1\'s own lock is taken directly');
+
+$itCliResultK2 = itCli($itDbK2, 'apply');
+itCheck('K per-database lock name', $itCliResultK2['exit'] === 0, 'holding database K1\'s upgrade lock does not block an upgrade running on database K2 (a different database)');
+
+$itK1->query("SELECT RELEASE_LOCK('" . $itK1->real_escape_string($itLockNameK1) . "')");
+
+$itCliResultK1 = itCli($itDbK1, 'apply');
+itCheck('K per-database lock name', $itCliResultK1['exit'] === 0, 'once K1\'s own lock is released, an upgrade on K1 itself still runs normally (the lock genuinely protects K1 against itself, it is not simply "never blocks anything")');
+
+// ==============================================================================
 // 🧹 Clean up and report
 // ==============================================================================
-foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH] as $itDbToRemove) {
+foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2] as $itDbToRemove) {
     itDropDb($itEnv, $itPort, $itDbToRemove);
 }
 

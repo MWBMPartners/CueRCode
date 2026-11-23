@@ -78,6 +78,11 @@ $results = [];
 $overallSuccess = false;
 $installRequested = false;
 
+/** @var bool Whether seed_data.sql itself failed to run (F1 - this must stop
+ *            the installer BEFORE the lock file is written, even though the
+ *            tables from install.sql exist and the upgrade tool succeeded) */
+$seedStepFailed = false;
+
 // ==============================================================================
 // 🔍 Check for credential files
 // ==============================================================================
@@ -294,9 +299,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
             // deleting the lock file to re-run the installer after a later
             // code update. Before ever touching seed_data.sql, ask
             // migrationDbSeedDataAlreadyPresent() (_functions/fn_migrations.php)
-            // whether either of the tables it seeds already has rows; if it
-            // does, skip the seed step and say so plainly - nothing is
-            // duplicated and nothing already there is overwritten.
+            // whether any of the tables ONLY seed_data.sql ever fills already
+            // has rows (migrationSeedProtectionTables() - deliberately NOT
+            // tblSettings, which a migration file can also insert into, see
+            // review finding F1); if it does, skip the seed step and say so
+            // plainly - nothing is duplicated and nothing already there is
+            // overwritten.
             // ----------------------------------------------------------------
             // Loaded here (rather than only before Step 5b below) because this
             // check needs it first; migrationApplyPending() further down reuses
@@ -309,10 +317,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
             if ($seedDataAlreadyPresent) {
                 $results[] = [
                     'status' => 'info',
-                    'message' => 'Seed data skipped: this database already holds starting data (tblSettings or '
-                        . 'tblSubscriptionPlans already has rows). Running seed_data.sql again would fail or '
-                        . 'duplicate rows, so it was not run. Any database changes since the first install are '
-                        . 'applied in the next step instead, by the upgrade tool.'
+                    'message' => 'Seed data skipped: this database already holds starting data (tblQRCodeTypes, '
+                        . 'tblPredefinedLogos or tblSubscriptionPlans already has rows). Running seed_data.sql '
+                        . 'again would fail or duplicate rows, so it was not run. Any database changes since the '
+                        . 'first install are applied in the next step instead, by the upgrade tool.'
                 ];
             } elseif (!file_exists($seedSQLPath)) {
                 $results[] = [
@@ -328,6 +336,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                         'status' => 'error',
                         'message' => 'Failed to read seed data SQL file'
                     ];
+                    // 🔒 F1: a seed_data.sql failure must stop the installer
+                    //    before the lock file is ever written - see Step 6
+                    //    below, where this flag is checked.
+                    $seedStepFailed = true;
                 } else {
                     if ($mysqli->multi_query($seedSQL)) {
                         do {
@@ -342,6 +354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                                 'status' => 'error',
                                 'message' => 'Error executing seed_data.sql. Check server error log for details.'
                             ];
+                            $seedStepFailed = true;
                         } else {
                             $results[] = [
                                 'status' => 'success',
@@ -354,9 +367,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                             'status' => 'error',
                             'message' => 'Failed to execute seed_data.sql. Check server error log for details.'
                         ];
+                        $seedStepFailed = true;
                     }
                 }
             }
+
+            // ----------------------------------------------------------------
+            // 📌 Step 5a: Put the connection back the way it was set up
+            //    (review findings F2/F4)
+            // ----------------------------------------------------------------
+            // install.sql and seed_data.sql each contain their own
+            // "SET CHARACTER SET utf8mb4" and the baseline's own SQL-mode
+            // line (NO_AUTO_VALUE_ON_ZERO) - both of which this page's own
+            // multi_query() calls above have just run directly, bypassing
+            // migrationDbRunInstallSql()'s own save/restore (that function is
+            // only used when the UPGRADE TOOL itself has to re-run
+            // install.sql, in Step 5b below, for a table the tool finds
+            // missing - not for this page's own first run of it). Without
+            // putting the charset and strict mode back here, every migration
+            // step applied in Step 5b would run in whatever state those two
+            // files happened to leave the connection in - exactly the same
+            // mismatch migrationDbRunInstallSql() guards against. Setting
+            // these again is simply repeating exactly what this page set up
+            // in Step 3 above.
+            // ----------------------------------------------------------------
+            $mysqli->set_charset($dbCharset);
+            $mysqli->query("SET SQL_MODE = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
 
             // ----------------------------------------------------------------
             // 📌 Step 5b: Apply database upgrades ("migrations")
@@ -375,15 +411,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
             $migrationResult = migrationApplyPending($mysqli, 'installer', false);
             $migrationsOk    = ($migrationResult['status'] === 'ok');
 
+            // 🔒 F3: the FULL technical detail (which can include raw
+            //    MySQL/PHP error text) goes only to the server's error log,
+            //    never to this page - the installer sits in public_html/ and
+            //    can be reached by anyone until its lock file exists. The
+            //    command-line tool (_includes/cli/migrate.php) is a trusted
+            //    operator at a terminal, so IT keeps showing full detail
+            //    (migrationFormatReport() called there with its default
+            //    $includeErrorDetail of true).
+            if (!$migrationsOk) {
+                error_log(
+                    'CueRCode Installer: database upgrades did not finish - full detail: '
+                    . implode(' | ', migrationFormatReport('apply', $migrationResult, true))
+                );
+            }
+
             // 📝 Turn the plain-English report lines into the same kind of
             //    result rows the rest of this page already shows, so the
             //    screen keeps its existing look. migrationReportLineSeverity()
             //    is the one shared classifier (also used by the Phase 1B admin
             //    "Upgrades" page later), so the two screens never disagree on
-            //    what counts as a warning or an error. Nothing printed here is
-            //    ever a setting value or secret - migrationFormatReport() never
-            //    includes those.
-            foreach (migrationFormatReport('apply', $migrationResult) as $migrationLine) {
+            //    what counts as a warning or an error. $includeErrorDetail is
+            //    false here (F3): this is the page a member of the public can
+            //    reach, so only generic, plain-English lines are shown - the
+            //    full detail just went to the error log above.
+            foreach (migrationFormatReport('apply', $migrationResult, false) as $migrationLine) {
                 $results[] = [
                     'status'  => migrationReportLineSeverity($migrationLine),
                     'message' => $migrationLine
@@ -433,11 +485,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                         'message' => 'All ' . count($expectedTables) . ' tables verified: '
                             . implode(', ', $expectedTables)
                     ];
-                    $overallSuccess = true;
+
+                    // 🔒 F1: tables existing and the upgrade tool succeeding
+                    //    is NOT enough on its own - if seed_data.sql itself
+                    //    failed above, the starting data (QR code types,
+                    //    predefined logos, subscription plans) never loaded,
+                    //    so the installer must not lock itself in as "done".
+                    if (!$seedStepFailed) {
+                        $overallSuccess = true;
+                    }
                 } else {
                     $results[] = [
                         'status' => 'error',
                         'message' => 'Missing tables: ' . implode(', ', $missingTables)
+                    ];
+                }
+
+                if ($seedStepFailed) {
+                    $results[] = [
+                        'status' => 'error',
+                        'message' => 'Installation has stopped here: seed data failed to load (see above), so the '
+                            . 'installer will NOT lock itself in. Fix the problem shown above, then reload this '
+                            . 'page to try again.'
                     ];
                 }
 

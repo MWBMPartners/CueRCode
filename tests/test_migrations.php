@@ -67,7 +67,7 @@ assertEquals(0, CUERCODE_MIGRATE_EXIT_OK, 'exit code: 0 = up to date / applied')
 assertEquals(1, CUERCODE_MIGRATE_EXIT_FAILED, 'exit code: 1 = a step failed');
 assertEquals(2, CUERCODE_MIGRATE_EXIT_REFUSED, 'exit code: 2 = refused');
 assertEquals(3, CUERCODE_MIGRATE_EXIT_PENDING, 'exit code: 3 = --status found pending migrations');
-assertEquals('cuercode_schema_migrate', CUERCODE_MIGRATION_LOCK_NAME, 'lock name matches plan §5.1');
+assertEquals('cuercode_schema_migrate', CUERCODE_MIGRATION_LOCK_NAME, 'lock name prefix matches plan §5.1');
 
 // 🚫 Loading the runner must not bring in the site start-up helpers.
 foreach (['dbQuery', 'getDB', 'getConfig', 'logError', 'logActivity'] as $migForbiddenFunction) {
@@ -683,7 +683,7 @@ $migReport = implode("\n", migrationFormatReport('apply', [
 ]));
 assertContains('tblUsers.erasedAt', $migReport, 'report: missing baseline columns are listed');
 assertContains('tblQRCodes.qrUUID', $migReport, 'report: every missing baseline column is listed');
-assertContains('Nothing was changed', $migReport, 'report: says nothing was changed');
+assertContains('No upgrades were applied', $migReport, 'report: a refusal says "no upgrades were applied" (F5), not "nothing was changed" - the ledger table or starting tables may already have been created before the refusal');
 $migReport = implode("\n", migrationFormatReport('apply', [
     'status'     => 'ok',
     'pending'    => ['0001_a'],
@@ -700,6 +700,56 @@ $migReport = implode("\n", migrationFormatReport('apply', [
 assertContains('not recorded', $migReport, 'report: a failed migration is not recorded');
 assertContains('safe to repeat', $migReport, 'report: says to run again');
 assertContains('add_column tblX.c', $migReport, 'report: names the failed step without its SQL');
+
+// 🏁 F5: "invalid" and "baseline_refused" headlines say "no upgrades were
+// applied", never the old "nothing was changed" (which was not reliably
+// true - the ledger table, or starting tables from install.sql, may already
+// have been created before the refusal happened).
+assertContains('No upgrades were applied', implode("\n", migrationFormatReport('apply', ['status' => 'invalid', 'migrations' => []])), 'report: an "invalid" refusal says no upgrades were applied');
+assertContains('No upgrades were applied', implode("\n", migrationFormatReport('apply', ['status' => 'baseline_refused'])), 'report: a "baseline_refused" refusal says no upgrades were applied');
+
+// 🌱 F1: --apply creating a missing baseline table from install.sql on an
+// otherwise-empty database (no web installer involved) must say plainly that
+// the STARTING DATA (QR code types, logos, plans) still needs the installer -
+// only for --apply (the only mode that ever actually creates a table).
+$migCreatedTablesResult = [
+    'status'   => 'ok',
+    'pending'  => [],
+    'baseline' => ['missingTables' => [], 'createdTables' => ['tblQRScans'], 'missingColumns' => []],
+];
+assertContains('starting data not loaded', strtolower(implode("\n", migrationFormatReport('apply', $migCreatedTablesResult))), 'report: --apply creating a baseline table says the starting data still needs the web installer (F1)');
+assertFalse(str_contains(strtolower(implode("\n", migrationFormatReport('dry-run', $migCreatedTablesResult))), 'starting data not loaded'), 'report: the starting-data note never appears for --dry-run (it never actually creates anything)');
+
+// 🔒 F3: $includeErrorDetail. true (the command-line tool's own default)
+// keeps the raw MySQL/PHP error text; false (used by the web installer, a
+// page a member of the public can reach) replaces it with one generic line.
+// Nothing here loses the detail completely - public_html/install/index.php
+// writes the full-detail report to error_log() itself before ever asking for
+// the generic one (checked directly, by source, in Section 15 below).
+$migSensitiveFailure = [
+    'status'     => 'failed',
+    'error'      => "MySQL error 1045: Access denied for user 'siteuser'@'10.0.0.5' (using password: YES)",
+    'migrations' => [[
+        'key'          => '0002_b',
+        'outcome'      => 'failed',
+        'stepsRun'     => 2,
+        'stepsSkipped' => 0,
+        'problems'     => ["step 3 (add_column tblX.c) failed: MySQL error 1146: Table 'cuercode.tblX' doesn't exist"],
+    ]],
+];
+$migReportWithDetail = implode("\n", migrationFormatReport('apply', $migSensitiveFailure, true));
+assertContains('MySQL error 1045', $migReportWithDetail, 'report ($includeErrorDetail = true, the CLI default): the raw database error is shown');
+assertContains('MySQL error 1146', $migReportWithDetail, 'report ($includeErrorDetail = true): a failed step\'s raw database error is shown');
+
+$migReportNoDetail = implode("\n", migrationFormatReport('apply', $migSensitiveFailure, false));
+assertFalse(str_contains($migReportNoDetail, 'MySQL error 1045'), 'report ($includeErrorDetail = false, F3): the raw database error text is NEVER shown');
+assertFalse(str_contains($migReportNoDetail, 'MySQL error 1146'), 'report ($includeErrorDetail = false, F3): a failed step\'s raw database error text is NEVER shown');
+assertFalse(str_contains($migReportNoDetail, 'siteuser'), 'report ($includeErrorDetail = false, F3): no internal detail (for example a database user name) leaks through');
+assertContains('server error log', $migReportNoDetail, 'report ($includeErrorDetail = false, F3): a generic note points at the server error log instead');
+
+// Default (no third argument) behaves exactly like true, for every existing
+// caller that never knew this parameter existed (the real migrate.php).
+assertEquals($migReportWithDetail, implode("\n", migrationFormatReport('apply', $migSensitiveFailure)), 'report: the default (no third argument) keeps full detail, same as true');
 
 // ==============================================================================
 // ✅ Section 12: source guards
@@ -785,7 +835,35 @@ assertEquals(2, $migCli['exit'], 'real migrate.php with two modes: exit 2');
 // table list and the pure line classifier are unit-tested here.
 // ==============================================================================
 
-assertEquals(['tblSettings', 'tblSubscriptionPlans'], migrationSeedProtectionTables(), 'seed protection: checks tblSettings and tblSubscriptionPlans, in that order');
+assertEquals(
+    ['tblQRCodeTypes', 'tblPredefinedLogos', 'tblSubscriptionPlans'],
+    migrationSeedProtectionTables(),
+    'seed protection (F1): checks tblQRCodeTypes, tblPredefinedLogos and tblSubscriptionPlans, in that order - deliberately NOT tblSettings, which migration 0002 (and any later settings migration) also inserts into'
+);
+
+// 🌱 F1 regression guard: if ANY real migration file ever inserted into one
+// of migrationSeedProtectionTables()'s tables, the exact bug review finding
+// F1 describes would come back - running `migrate.php --apply` on a brand
+// new database would make that table non-empty, so the installer would then
+// believe seed_data.sql had already run and would skip it forever. This
+// checks EVERY migration file in the real folder (not just 0001/0002), so a
+// migration added later that breaks this rule fails a test immediately,
+// rather than only being found by reading the real-database check by eye.
+foreach ($migLoaded['migrations'] as $migSeedGuardKey => $migSeedGuardMigration) {
+    foreach ($migSeedGuardMigration['definition']['steps'] as $migSeedGuardStep) {
+        assertFalse(
+            in_array($migSeedGuardStep['table'], migrationSeedProtectionTables(), true),
+            'F1 regression guard: migration ' . $migSeedGuardKey . ' must never write to a seed-protection table (found: ' . $migSeedGuardStep['table'] . ')'
+        );
+    }
+}
+
+// 🔒 F6: the lock name SQL expression includes the live database (not a
+// fixed, site-wide string) and has exactly one `?` placeholder (the prefix -
+// DATABASE() itself needs none, it is a MySQL built-in).
+assertContains('DATABASE()', migrationLockNameSqlExpression(), 'lock name expression: includes the current database (F6)');
+assertEquals(1, substr_count(migrationLockNameSqlExpression(), '?'), 'lock name expression: exactly one placeholder (the fixed prefix)');
+assertContains('MD5(', migrationLockNameSqlExpression(), 'lock name expression: hashes the full database name too, so truncation can never make two different databases collide into the same lock name');
 
 assertEquals('warning', migrationReportLineSeverity('Warning: 0002_x was changed after it was applied.'), 'severity: a Warning: line is a warning');
 assertEquals('error', migrationReportLineSeverity('FAILED 0002_b - not recorded; fix the problem and run --apply again.'), 'severity: a FAILED line is an error');
@@ -796,3 +874,67 @@ assertEquals('error', migrationReportLineSeverity('Broken migration file 0003_ba
 assertEquals('info', migrationReportLineSeverity('Already up to date.'), 'severity: everything else is info');
 assertEquals('info', migrationReportLineSeverity('Applied 0001_a: 2 step(s) run, 7 already done.'), 'severity: an applied-migration line is info');
 assertEquals('info', migrationReportLineSeverity(''), 'severity: an empty line is info (never silently hidden as success, never mistaken for an error)');
+
+// ==============================================================================
+// ✅ Section 15: the web installer's source (public_html/install/index.php) -
+//    review findings F1, F2, F3, F4 (checked by source here; the end-to-end
+//    database behaviour is proven in tests/integration/migrations_real_mysql.php)
+// ==============================================================================
+
+$migInstallerSource = (string) file_get_contents(
+    dirname(CUERCODE_FUNCTIONS_DIR) . DIRECTORY_SEPARATOR . 'public_html' . DIRECTORY_SEPARATOR
+    . 'install' . DIRECTORY_SEPARATOR . 'index.php'
+);
+
+// F3: the installer must call migrationFormatReport() with $includeErrorDetail
+// = false for what it SHOWS, but must still write the full-detail version to
+// the server's error log first - the detail must not simply vanish.
+assertContains("migrationFormatReport('apply', \$migrationResult, false)", $migInstallerSource, 'installer (F3): shows the report with $includeErrorDetail = false (generic lines only, nothing raw shown to the public)');
+assertContains("migrationFormatReport('apply', \$migrationResult, true)", $migInstallerSource, 'installer (F3): still builds the FULL-detail report before logging it');
+
+// The true-detail call must sit INSIDE an error_log(...) call, not be echoed
+// to the page - checked by looking at the text immediately BEFORE it for the
+// nearest unclosed "error_log(" (a simple, readable window check rather than
+// a brittle exact-whitespace string match).
+$migTrueDetailCallPosition = strpos($migInstallerSource, "migrationFormatReport('apply', \$migrationResult, true)");
+assertTrue(is_int($migTrueDetailCallPosition), 'installer (F3): finds the full-detail migrationFormatReport() call');
+$migTextBeforeTrueDetailCall = substr($migInstallerSource, max(0, $migTrueDetailCallPosition - 250), 250);
+assertContains('error_log(', $migTextBeforeTrueDetailCall, 'installer (F3): the full-detail report is built as an argument to error_log(), not echoed to the page');
+
+// F2/F4: the connection's character set and strict SQL mode are put back
+// after the installer's own install.sql/seed_data.sql multi_query() calls,
+// before the upgrade tool (migrationApplyPending()) ever runs a migration
+// step on this connection.
+// 📍 The ACTUAL call site, not the file header's "@see ... migrationApplyPending()"
+// mention (which appears earlier in the file and would otherwise make an
+// "is it before the call?" check pass for the wrong reason).
+$migApplyPendingCallPosition = strpos($migInstallerSource, '$migrationResult = migrationApplyPending(');
+assertTrue(is_int($migApplyPendingCallPosition), 'installer: finds the real migrationApplyPending() call site');
+
+assertEquals(2, substr_count($migInstallerSource, '$mysqli->set_charset($dbCharset)'), 'installer (F2/F4): sets the charset twice - once in Step 3 (first connect) and once again in Step 5a, before the upgrade tool runs');
+$migFirstCharsetPosition  = strpos($migInstallerSource, '$mysqli->set_charset($dbCharset)');
+$migSecondCharsetPosition = strpos($migInstallerSource, '$mysqli->set_charset($dbCharset)', $migFirstCharsetPosition + 1);
+assertTrue(
+    $migSecondCharsetPosition !== false && $migSecondCharsetPosition < $migApplyPendingCallPosition,
+    'installer (F2/F4): the second charset restore happens BEFORE migrationApplyPending() runs'
+);
+
+assertEquals(2, substr_count($migInstallerSource, 'NO_ENGINE_SUBSTITUTION'), 'installer (F2/F4): reapplies strict SQL mode twice - once in Step 3, once in Step 5a');
+$migFirstStrictModePosition  = strpos($migInstallerSource, 'NO_ENGINE_SUBSTITUTION');
+$migSecondStrictModePosition = strpos($migInstallerSource, 'NO_ENGINE_SUBSTITUTION', $migFirstStrictModePosition + 1);
+assertTrue(
+    $migSecondStrictModePosition !== false && $migSecondStrictModePosition < $migApplyPendingCallPosition,
+    'installer (F2/F4): strict SQL mode is reapplied a second time before migrationApplyPending() runs'
+);
+
+// F1: a seed_data.sql failure must be tracked and must stop the lock file
+// (the "installation is complete, now locked" marker) from ever being written.
+assertContains('$seedStepFailed', $migInstallerSource, 'installer (F1): tracks whether seed_data.sql itself failed');
+assertTrue(
+    strpos($migInstallerSource, 'if (!$seedStepFailed)') < strpos($migInstallerSource, '$overallSuccess = true;', strpos($migInstallerSource, 'if (!$seedStepFailed)')),
+    'installer (F1): $overallSuccess is only ever set true when seed_data.sql did NOT fail'
+);
+assertTrue(
+    strpos($migInstallerSource, '$overallSuccess = true;') < strpos($migInstallerSource, 'file_put_contents($lockFile'),
+    'installer (F1): the lock file is only ever considered after $overallSuccess is decided'
+);

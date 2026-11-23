@@ -146,10 +146,12 @@ only picks up `tests/test_*.php`), but CI still syntax-checks it.
   `--rm` so the container *and* its data are removed when it stops.
 - `CUERCODE_IT_DB_NAME` is a **base name** here, not a single database: the
   script derives and manages several of its own (`<base>_a`, `<base>_b`,
-  `<base>_f`, `<base>_g`, `<base>_h`) because several checks need independent
-  databases (an "old" database, a "two runs at once" database, a database with
-  its own throwaway migrations folder...). Every database name - base and
-  derived - **must start with `cuercode_it_`**, or the script refuses (exit 2).
+  `<base>_f`, `<base>_g`, `<base>_h`, `<base>_i`, `<base>_j`, `<base>_k1`,
+  `<base>_k2`) because several checks need independent databases (an "old"
+  database, a "two runs at once" database, a latin1-default database, a
+  database with its own throwaway migrations folder...). Every database name -
+  base and derived - **must start with `cuercode_it_`**, or the script refuses
+  (exit 2).
 - **Remove the container afterwards**, and check nothing was left behind.
 - It needs the pre-task-7n `install.sql` from **git history** (commit
   `76b1af7`, read with `git show`). An ordinary clone has it; a *shallow*
@@ -177,7 +179,7 @@ authentication-plugin option) - no `MYSQL_DATABASE`/`MARIADB_DATABASE` is
 needed either way, because the script creates every database it uses itself.
 
 The script waits for the server by itself (up to 120 seconds), then runs
-scenarios A-H: a fresh database (install.sql + seed_data.sql + migrations
+scenarios A-K: a fresh database (install.sql + seed_data.sql + migrations
 0001/0002, install.sql run a second time with no error, a second apply
 reporting "already up to date", the real command-line tool's exit codes); a
 database built by the OLD install.sql upgrading cleanly (0001 skips every
@@ -188,11 +190,20 @@ runs at the same time (the second is refused "busy", nothing half-applied);
 a failing step stopping the run without being recorded (so the next run
 resumes and finishes it), an edited-after-applied file being reported as a
 warning and never re-run, and a destructive (`DROP`) step being refused before
-anything runs; and the web installer's seed-data protection check
-(`migrationDbSeedDataAlreadyPresent()`). It drops its own databases, then
+anything runs; the web installer's seed-data protection check
+(`migrationDbSeedDataAlreadyPresent()`); a latin1-default database not ending
+up with a mismatched connection character set after install.sql's own `SET
+CHARACTER SET utf8mb4` statement runs, with an emoji/£ written by a migration
+step afterwards round-tripping byte-for-byte (review finding F2); running
+`migrate.php --apply` directly against a COMPLETELY EMPTY database still
+leaving the installer's seed-protection check correctly saying "NOT seeded"
+afterwards (review finding F1 - this is the exact bug it fixes); and the
+upgrade lock name including the database, so two different databases never
+block each other's upgrades while a database still correctly blocks a second
+run against itself (review finding F6). It drops its own databases, then
 prints PASS/FAIL per scenario. Exit code 0 means every scenario passed. Last
-run 2026-11-23 (task 7n Phase 1A part 2, #113 item 5, #70): all scenarios
-passed on MySQL 8.0.46.
+run 2026-11-23 (task 7n Phase 1A part 2 code review fixes, #113 item 5, #70):
+all scenarios passed on MySQL 8.0.46.
 
 ## Syntax-checking the harness
 
