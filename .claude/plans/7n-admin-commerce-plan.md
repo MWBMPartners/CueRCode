@@ -196,8 +196,12 @@ Admin touch-points only: a `billing_refund_window_days` setting (30) shown on th
 - Price points in £, $ and € are stored and edited now. The **public** page keeps using the legacy single-currency columns while `billing_price_points_enabled` stays off (instruction R8); the editor **mirrors** each plan's default-currency (`billing_default_currency`, £) monthly and yearly default price points into `priceMonthly` / `priceYearly` / `currency` after every price save (one function, `adminMirrorLegacyPlanPrices()`), subject to Q2. Global Admins get a **pricing preview** (`/admin/pricing-preview/`) that renders the page as it will look with price points and a currency switcher.
 - *Rejected:* reading price points for display regardless of the switch — changes the documented meaning of a kill switch the owner asked to keep off.
 
-### 4.8 One discount per purchase
-Default rule (Q4): only one discount applies to a purchase; when several could apply, the customer gets the **biggest saving**. Stored as a setting `billing_discount_combining = '0'` so it is data, not code. Checkout implements it later; the admin "check a code" tool already uses the same rule.
+### 4.8 Combining discounts (owner answer to Q4, 2026-11-22)
+**Each discount says, when it is created, whether it may be combined with others** (`tblDiscounts.allowStacking`, default **No**, so a new discount never combines by accident). The rule at checkout:
+- If **every** applicable discount allows combining, they are all applied, one after another (percentage ones first, each on the amount left; then fixed amounts in the purchase's own currency; never below zero).
+- If **any one** applicable discount does **not** allow combining, it takes priority: no combining happens in that purchase, and the customer gets the **single biggest saving** among the applicable discounts.
+- Ties: the discount with the lowest `discountID`.
+This replaces the old single global switch (`billing_discount_combining` is **not** created). Checkout implements it later; the admin "check a code" tool already uses the same rule. *Reading of the owner's words (record any correction): "a discount that does not allow stacking takes priority and disallows stacking in that transaction; the biggest discount wins" = a single non-stacking discount in the mix switches combining off for that purchase and the biggest saving wins.*
 
 ### 4.9 Accessibility split
 New feature keys for each accessibility output (§5.5, migration 0004). They are seeded **on for every plan** so nothing changes for anyone until the owner moves them in the grid (Q3 recommends doing that on the day charging starts). The contrast **safety refusal** below 3:1 (#48) always runs and has no key — it protects people scanning the code.
@@ -340,6 +344,7 @@ The audit log is **append-only by design**: no screen or function updates or del
 | | `eligibilityMode` | `ENUM('anyone','approved_list') NOT NULL DEFAULT 'anyone'` | 4 / 0005 |
 | | `scopeJSON` | `JSON NULL` — `{"planKeys":[...],"billingIntervals":[...],"currencies":[...]}`; a missing/empty list = no restriction on that dimension | 4 / 0005 |
 | | `currency` | `CHAR(3) NULL` — **required** when `discountType='fixed'`, must be NULL for `percent` | 4 / 0005 |
+| | `allowStacking` | `TINYINT(1) NOT NULL DEFAULT 0` — may be combined with other discounts (Q4); chosen when the discount is created | 4 / 0005 |
 | | `internalNote` | `VARCHAR(500) NULL` | 4 / 0005 |
 | | `createdByUserID` | `INT UNSIGNED NULL` + FK → `tblUsers` ON DELETE SET NULL | 4 / 0005 |
 
@@ -369,7 +374,6 @@ The audit log is **append-only by design**: no screen or function updates or del
 | `billing_price_promise_default_mode` | billing | string | no | `while_subscribed` | 2 / 0003 |
 | `billing_price_promise_default_months` | billing | integer | no | `12` (used only for `fixed_months`) | 2 / 0003 |
 | `pricing_show_prices` | billing | boolean | no | per **Q2** (recommended `1`) | 2 / 0003 |
-| `billing_discount_combining` | billing | boolean | no | `0` (per **Q4**) | 4 / 0005 |
 | `billing_lifetime_default_window_days` | billing | integer | no | `60` | 5 / 0006 |
 | `billing_payg_monthly_spend_cap` | billing | json | no | `{"GBP":"20.00"}` ($/€ blank until the owner sets them; per **Q6**) | 6 / 0007 |
 
@@ -560,7 +564,7 @@ Registry function `adminSettingsRegistry(): array` (`_functions/fn_admin_setting
 
 ### 8.2 Discount arithmetic rules (Phase 4; also used by `/admin/discounts/check/`)
 - Percent discounts apply to any currency. Fixed discounts apply **only** to purchases in the discount's own `currency`.
-- One discount per purchase when `billing_discount_combining=0`: work out each applicable discount's saving in minor units and keep the biggest (tie → lowest `discountID`).
+- Combining (§4.8): if every applicable discount has `allowStacking=1`, apply them all (percentages first, each on the amount left, then fixed amounts, rounded to whole minor units at each step); if any applicable discount has `allowStacking=0`, apply **only** the single biggest saving (tie → lowest `discountID`).
 - A discount never makes a price negative; a 100% discount gives 0.
 
 ### 8.3 VAT
@@ -637,7 +641,7 @@ Real-database checks for every phase run with the pattern of `tests/integration/
 **Tests:** registry shape (every key has kind, label, help, status; every seeded plan key appears), JSON builder from form input, reduction detector, re-sync SQL (integration), gate tests for each output (on/off × anonymous/free/paid), static guard that `pricingAllowedDisplayKeys()` and `entitlementRegistry()` agree.
 
 ### Phase 4 — Discounts (builder: **Opus**; security + money)
-**Build:** migration **0005** (§5.2 eligibility table, §5.3 discount columns, `billing_discount_combining`, the two seeds); `fn_admin_discounts.php` (code rules: upper-case `A-Z0-9-`, 4–32 chars, unique ignoring case — the column collation is case-insensitive; random single-customer codes: 10 characters from an alphabet without look-alikes `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, `random_int()`); pure `discountAppliesTo(array $discount, array $context): array{applies: bool, reason: string}` (dates, active, cap, scope, currency, eligibility, one-per-customer) and `discountChooseBest(array $candidates, int $priceMinor): ?array`; **update `resolveDiscountForCheckout()`** so it fails closed on `eligibilityMode='approved_list'` without a live approval (not revoked, not expired), honours `scopeJSON` and `currency`, and keeps every existing behaviour; screens `/admin/discounts/…` and `/admin/customers/`.
+**Build:** migration **0005** (§5.2 eligibility table, §5.3 discount columns incl. `allowStacking`, the two seeds); `fn_admin_discounts.php` (code rules: upper-case `A-Z0-9-`, 4–32 chars, unique ignoring case — the column collation is case-insensitive; random single-customer codes: 10 characters from an alphabet without look-alikes `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, `random_int()`); pure `discountAppliesTo(array $discount, array $context): array{applies: bool, reason: string}` (dates, active, cap, scope, currency, eligibility, one-per-customer) and `discountChooseBest(array $candidates, int $priceMinor): array` (returns the discounts to apply, in order, following §4.8: all of them if every one allows stacking, otherwise just the biggest saving) with tests for every mix of stacking / non-stacking, percent / fixed, ties and the zero floor; **update `resolveDiscountForCheckout()`** so it fails closed on `eligibilityMode='approved_list'` without a live approval (not revoked, not expired), honours `scopeJSON` and `currency`, and keeps every existing behaviour; screens `/admin/discounts/…` and `/admin/customers/`.
 **Acceptance:** owner can create a general code, a limited-use code, a one-customer code (wizard), edit dates in UK time, disable a code, approve/withdraw education customers; launch discount ends at `2026-12-31 23:59:59` UTC; P2 freezing holds; the checker gives the right answer and reason for every case; a restricted code is **never** accepted for another customer, even with the kill switch turned on in a test database; customer look-up is exact-email only and audited.
 **Tests:** `tests/test_discounts.php` — every `discountAppliesTo()` branch, best-saving choice incl. fixed-vs-percent in different currencies, code normalisation/uniqueness, random code alphabet and length, UK-time end-of-day conversion in GMT and BST, P2 freezing decisions; integration: `resolveDiscountForCheckout()` against real rows (approved / not approved / revoked / expired approval; fixed in wrong currency; out-of-scope interval) with `billing_discounts_enabled=1` **in the throwaway database only**.
 
@@ -718,33 +722,32 @@ Tick each with evidence (file:line, test name, or a reproduced request).
 
 ## 11. Open questions for the owner (ask as proper questions; recommended option first)
 
-**Q1 (fact check) — Is there already a CueRCode database on the live server that must be kept?**
+**Q1 (fact check) — Is there already a CueRCode database on the live server that must be kept?** ✅ **ANSWERED 2026-11-22: No — start fresh (option A).** No catch-up step in Phase 1A.
 - **A (recommended): No — start fresh.** No deploy has run yet (all runs skipped, `SFTP_ENABLED` unset) and the live installer test (#13) has not happened, so there is probably nothing to keep. The upgrade tool then only needs to handle today's design.
 - B: Yes — keep it. Phase 1A adds a one-off "catch-up" step for columns added before today (we would need to know roughly when it was installed).
 
-**Q2 — What should the public pricing page show until charging starts?**
+**Q2 — What should the public pricing page show until charging starts?** ✅ **ANSWERED 2026-11-22: option A** (new £ draft prices, "Prices include VAT", buy buttons "Coming soon").
 - **A (recommended): Your new draft prices in £ (Pro £6.99/£49.99, Business £24.99/£199.99, Enterprise "Contact us — from £99/month"), with "Prices include VAT" and the buy buttons still saying "Coming soon".** It is honest, matches what you will charge, and you can change any price at any time. Today the page shows the old placeholder £4.99, which is wrong.
 - B: Hide all price figures ("Pricing coming soon") until charging starts — avoids anyone holding you to a draft price, but tells visitors less.
 - C: Leave the old placeholder prices — not recommended (they are out of date).
 
-**Q3 — When should the paid accessibility extras (Braille caption, tactile frame, Avery label sheets) stop being free?**
+**Q3 — When should the paid accessibility extras (Braille caption, tactile frame, Avery label sheets) stop being free?** ✅ **ANSWERED 2026-11-22: option A** (switches built now, everything free until charging starts).
 - **A (recommended): Build the switches now but keep all accessibility outputs free for everyone until charging starts; on launch day you move the three extras to the paid plans in the feature grid (a few clicks).** Nobody can buy a plan yet, so charging-only features now would simply take them away from people.
 - B: Move them to paid plans immediately — free and signed-out users lose them now, with no way to get them back until charging starts.
 
-**Q4 — Can discounts be combined (for example education 50% plus launch 25%)?**
-- **A (recommended): No — one discount per purchase; if several apply, the customer automatically gets the biggest saving.** Simple to explain, and it prevents accidental very deep discounts. Stored as a setting, so you can change it later.
-- B: Allow combining (50% then 25% = 62.5% off in total).
+**Q4 — Can discounts be combined (for example education 50% plus launch 25%)?** ✅ **ANSWERED 2026-11-22:** *"Allow combining, but this should be configurable when discounts are created. Any individual discount that does not allow combining/stacking takes priority when used, and disallows the stacking in that transaction. In such cases, the biggest discount wins."* → a per-discount "may be combined" choice (default No); see §4.8.
+- (Options offered were: A one discount per purchase; B allow combining.)
 
-**Q5 — If you change a plan that people already pay for, what should happen?**
+**Q5 — If you change a plan that people already pay for, what should happen?** ✅ **ANSWERED 2026-11-22: option A** (more = everyone; taking away = protected: confirm with a reason, or make a new version).
 - **A (recommended): Changes that give customers more apply to everyone at once; changes that take something away from paying customers are blocked unless you either confirm "apply to existing customers too" with a reason, or choose "make a new version for new customers" (existing customers keep the old version).** Protects customers (and you, legally) while keeping full flexibility.
 - B: Every change applies to everyone immediately — simplest, but it is easy to take something away from paying customers by mistake.
 - C: Any change to a plan with paying customers always creates a new version — safest, but the plan list fills up with versions.
 
-**Q6 — What does the £20 monthly cap on pay-as-you-go mean?**
+**Q6 — What does the £20 monthly cap on pay-as-you-go mean?** ⏳ **STILL OPEN** (not asked yet; needed before Phase 6 only — recommended option A).
 - **A (recommended): The most a customer can spend buying credit packs in one calendar month, set separately per currency (£20 now; you set the $ and € figures).** This matches a money amount and stops surprise spending. (The program today has a different kind of cap — on credits *used* per month — which we keep only as an optional extra limit.)
 - B: A limit on how many credits can be used per month (what the existing code counts) — does not match a £ figure.
 
-Record each answer in HANDOFF §0 and `LAUNCH_DECISIONS.md` §B straight away. Q2's answer sets the seed of `pricing_show_prices`; Q4's sets `billing_discount_combining`; Q5's sets the P3 rule; Q6's sets the Phase 6 cap design; Q1's decides whether Phase 1A needs the catch-up step.
+Record each answer in HANDOFF §0 and `LAUNCH_DECISIONS.md` §B straight away. Q2's answer sets the seed of `pricing_show_prices`; Q4's sets the per-discount `allowStacking` rule (§4.8); Q5's sets the P3 rule; Q6's sets the Phase 6 cap design; Q1's decides whether Phase 1A needs the catch-up step.
 
 ---
 

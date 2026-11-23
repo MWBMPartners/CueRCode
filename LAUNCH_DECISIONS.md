@@ -31,6 +31,14 @@
 
 > **Owner design rule (2026-10-05): flexibility in EVERYTHING commercial.** Every tier, price, discount, trial, lifetime deal, PAYG pack and feature placement must be editable by a Global Admin — today's plans may look completely different in 1–5 years. Today's answers are the starting defaults, not fixed rules.
 
+> **Answered 2026-11-22 (admin & commerce plan, `.claude/plans/7n-admin-commerce-plan.md` §11):**
+> - Public pricing page until charging starts: **new £ draft prices**, "Prices include VAT", Enterprise "Contact us — from £99/month", buy buttons "Coming soon".
+> - Accessibility extras (Braille caption, tactile frame, Avery labels): **switches built now, everything stays free until charging starts**; on launch day the owner moves the extras to paid plans in the feature grid.
+> - Combining discounts: **allowed, chosen per discount when it is created** (default: does not combine). A discount that does not allow combining takes priority: no combining in that purchase and the **biggest saving wins**.
+> - Changing a plan people already pay for: changes that **give more** apply to everyone; changes that **take away** are blocked unless confirmed with a reason, or released as a **new version** for new customers.
+> - Live database to keep: **none — start fresh**.
+> - ⏳ Still open: what the £20 pay-as-you-go cap means (recommended: the most spent buying credit packs per calendar month, per currency).
+
 - [x] **Final GBP price points** (DRAFT): Pro £6.99/mo · £49.99/yr; Business £24.99/mo · £199.99/yr; Enterprise floor ~£99/mo.
       → **Answered 2026-10-05: start with the draft prices — but every plan and price must be editable by a Global Admin** (task 7n).
 - [x] **Currency** at launch: GBP-only vs +USD/EUR price points (schema supports multi-currency per price-point).
