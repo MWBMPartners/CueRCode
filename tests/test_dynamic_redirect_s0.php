@@ -322,13 +322,16 @@ assertEquals(
     'install.sql: exactly 29 CREATE TABLE IF NOT EXISTS statements (26 pre-existing + the 3 new Stage S0 tables)'
 );
 
-// 🔢 The ALTER TABLE count stays UNCHANGED at 2 (both from #70) - this
-// delta adds three brand-new tables and NOT ONE ALTER TABLE statement,
-// confirming no existing table was touched.
+// 🔢 The ALTER TABLE count is now 0. This Stage S0 delta added three
+// brand-new tables and NOT ONE ALTER TABLE statement. The only two there ever
+// were (both #70) moved out of install.sql in task 7n Phase 1A, into
+// _includes/sql/migrations/0001_subscription_price_snapshot_columns.php, so
+// that install.sql is safe to run twice (#113 item 5). Every later table
+// change is a numbered migration, never an edit to install.sql.
 assertEquals(
-    2,
+    0,
     substr_count($installSqlSource, 'ALTER TABLE `'),
-    'install.sql: ALTER TABLE count is UNCHANGED at 2 (both pre-existing #70 ALTERs) - this Stage S0 delta adds pure new tables only, no ALTER'
+    'install.sql: ALTER TABLE count is 0 - the two #70 ALTERs now live in migration 0001, and this Stage S0 delta adds pure new tables only'
 );
 
 // 🧮 Balanced-parentheses + balanced-backticks guard over EACH new table's

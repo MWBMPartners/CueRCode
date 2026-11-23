@@ -348,9 +348,19 @@ foreach (['tblPlanPricePoints', 'tblDiscounts', 'tblDiscountRedemptions', 'tblOn
     );
 }
 
-// ➕ The two additive ALTER TABLE columns exist.
-assertContains('ADD COLUMN `pricePointID`', $installSqlSource, 'install.sql: tblSubscriptions/tblPayments gain an additive pricePointID column');
-assertContains('ADD COLUMN `discountID`', $installSqlSource, 'install.sql: tblSubscriptions gains an additive discountID column');
+// ➕ The additive snapshot columns exist. Since task 7n Phase 1A they are
+//    added by migration 0001 (moved out of install.sql so install.sql can be
+//    run twice), so the text is checked in that migration file instead.
+$migration0001Source = (string) file_get_contents(
+    CUERCODE_INCLUDES_DIR . 'sql' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR
+    . '0001_subscription_price_snapshot_columns.php'
+);
+assertContains('ADD COLUMN `pricePointID`', $migration0001Source, 'migration 0001: tblSubscriptions/tblPayments gain an additive pricePointID column');
+assertContains('ADD COLUMN `discountID`', $migration0001Source, 'migration 0001: tblSubscriptions gains an additive discountID column');
+assertTrue(
+    strpos($installSqlSource, 'ADD COLUMN `pricePointID`') === false && strpos($installSqlSource, 'ADD COLUMN `discountID`') === false,
+    'install.sql: the snapshot columns are no longer added there (one source per change - migration 0001)'
+);
 
 // 🛡️ The PRE-EXISTING tblSubscriptionPlans/tblSubscriptions/tblPayments
 // CREATE TABLE column lists are UNCHANGED - spot-check a handful of exact,

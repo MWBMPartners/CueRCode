@@ -9,6 +9,15 @@
 -- @subpackage  Database
 -- @version     1.0.0
 -- @since       Phase 1
+--
+-- 🧊 FROZEN BASELINE (task 7n Phase 1A, 2026-11): this file is the fixed set
+--    of starting data for a brand-new database. New starting data (settings,
+--    plans, prices, discounts ...) lives in the numbered migrations in
+--    _includes/sql/migrations/ instead, which only ever insert a row if it is
+--    missing - so a value the owner has edited is never overwritten.
+--    ⚠️ Unlike install.sql, this file is NOT safe to run twice: it uses plain
+--    INSERTs, so a second run stops at the first row that already exists.
+--    Run it once, on a new database only (the web installer does this).
 -- ==============================================================================
 
 SET NAMES utf8mb4;

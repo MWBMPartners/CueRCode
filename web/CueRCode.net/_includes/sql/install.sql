@@ -19,6 +19,13 @@
 -- 📌 Table naming convention: tblTableName (camelCase with tbl prefix)
 -- 📌 Column naming convention: camelCase
 -- 📌 All tables include createdAt and updatedAt timestamp columns
+--
+-- 🧊 FROZEN BASELINE (task 7n Phase 1A, 2026-11): this file is the fixed
+--    starting point. Every schema change after 2026-10 is a numbered
+--    migration in _includes/sql/migrations/ (NNNN_short_name.php), applied by
+--    _functions/fn_migrations.php - never edit the tables below in place.
+--    This file now contains only SET lines and "create the table if it is not
+--    there yet" statements, so it is safe to run any number of times.
 -- ==============================================================================
 
 -- ==============================================================================
@@ -920,8 +927,11 @@ CREATE TABLE IF NOT EXISTS `tblPayments` (
 -- 💷 Flexible-pricing schema delta (Epic E4, GitHub issue #70) - BUILT BUT
 --    DISABLED, additive-only, inert by default
 -- ==============================================================================
--- Everything in Tables 22-26 below plus the two ALTER TABLE blocks that follow
--- them is ADDITIVE - no existing column on tblSubscriptionPlans/
+-- Everything in Tables 22-26 below plus the three snapshot columns that
+-- migration 0001 adds afterwards (tblSubscriptions.pricePointID/discountID,
+-- tblPayments.pricePointID - see the note after Table 26, and
+-- _includes/sql/migrations/0001_subscription_price_snapshot_columns.php)
+-- is ADDITIVE - no existing column on tblSubscriptionPlans/
 -- tblSubscriptions/tblPayments is touched, no seeded plan row changes, and no
 -- existing gating semantics change. Each new table/column is USELESS until:
 --   (a) an admin inserts rows into it, AND
@@ -1098,7 +1108,7 @@ CREATE TABLE IF NOT EXISTS `tblDiscounts` (
 -- `currentPeriodEnd = NULL`, `status = 'active'` (that column is already
 -- nullable - Table 20 - so no schema change was needed there for the
 -- "never expires" property itself, only for the pricePointID/discountID
--- snapshot columns added by the ALTER TABLE block below).
+-- snapshot columns that migration 0001 adds - see the note after Table 26).
 --
 -- @see Table 21 tblPayments - the recurring-subscription payment ledger this
 --      table deliberately does NOT merge into
@@ -1260,46 +1270,22 @@ CREATE TABLE IF NOT EXISTS `tblCreditLedger` (
   COMMENT='💰 Append-only PAYG credit ledger (#70) - balance = SUM(delta) per (subject, meterKey), inert until billing_payg_enabled=1';
 
 -- ==============================================================================
--- ➕ Additive columns (#70): tblSubscriptions.pricePointID / discountID
+-- ➕ Snapshot columns (#70): tblSubscriptions.pricePointID / discountID and
+--    tblPayments.pricePointID - now added by MIGRATION 0001
 -- ==============================================================================
--- Snapshot which price point and (if any) discount a subscription was bought
--- under - both NULLable so every EXISTING row (and every row a caller inserts
--- without ever touching the flexible-pricing tables) is completely unaffected
--- - `fn_features.php`'s subscription resolution logic never reads either
--- column, so this ALTER cannot change any gating behaviour. Placed via
--- ALTER TABLE (rather than editing Table 20's CREATE TABLE block above)
--- specifically so that block stays byte-for-byte the schema this codebase has
--- already shipped and tested against; these two columns are purely additive.
+-- These three columns (with an index and a foreign-key link each) used to be
+-- added right here by two table-change statements. Those statements failed
+-- when this file was run a second time ("duplicate column"), so this file
+-- could not be re-run (#113 item 5). Since task 7n Phase 1A they live in:
+--
+--     _includes/sql/migrations/0001_subscription_price_snapshot_columns.php
+--
+-- which adds each piece only if it is missing. The web installer and the
+-- command-line tool (_includes/cli/migrate.php --apply) run it straight after
+-- this file and seed_data.sql. The finished tables are exactly the same as
+-- before; a database built by the old version of this file already has the
+-- columns, and migration 0001 then simply skips every step.
 -- ==============================================================================
-ALTER TABLE `tblSubscriptions`
-    ADD COLUMN `pricePointID` INT UNSIGNED NULL COMMENT '🔗 FK tblPlanPricePoints - the specific price point this subscription was purchased under (NULL = legacy priceMonthly/priceYearly checkout, or a manually-granted/comp subscription with no price point)' AFTER `planID`,
-    ADD COLUMN `discountID`   INT UNSIGNED NULL COMMENT '🔗 FK tblDiscounts - the discount (if any) applied at checkout, snapshotted so it survives the discount later expiring/being deactivated' AFTER `pricePointID`,
-    ADD INDEX `idx_subscription_pricepoint` (`pricePointID`),
-    ADD INDEX `idx_subscription_discount` (`discountID`),
-    ADD CONSTRAINT `fk_subscription_pricepoint` FOREIGN KEY (`pricePointID`)
-        REFERENCES `tblPlanPricePoints` (`pricePointID`)
-        ON DELETE SET NULL
-        ON UPDATE CASCADE,
-    ADD CONSTRAINT `fk_subscription_discount` FOREIGN KEY (`discountID`)
-        REFERENCES `tblDiscounts` (`discountID`)
-        ON DELETE SET NULL
-        ON UPDATE CASCADE;
-
--- ==============================================================================
--- ➕ Additive column (#70): tblPayments.pricePointID
--- ==============================================================================
--- Same rationale as tblSubscriptions above - snapshots which price point a
--- recurring-subscription payment corresponds to, NULLable so every existing/
--- legacy payment row is unaffected. Placed via ALTER TABLE for the same
--- "keep Table 21's CREATE TABLE block untouched" reason.
--- ==============================================================================
-ALTER TABLE `tblPayments`
-    ADD COLUMN `pricePointID` INT UNSIGNED NULL COMMENT '🔗 FK tblPlanPricePoints - the price point this payment corresponds to (NULL = legacy priceMonthly/priceYearly billing, no price-point table in use)' AFTER `subscriptionID`,
-    ADD INDEX `idx_payment_pricepoint` (`pricePointID`),
-    ADD CONSTRAINT `fk_payment_pricepoint` FOREIGN KEY (`pricePointID`)
-        REFERENCES `tblPlanPricePoints` (`pricePointID`)
-        ON DELETE SET NULL
-        ON UPDATE CASCADE;
 
 -- ==============================================================================
 -- 🔗 Dynamic-redirect schema delta (E1a, #27/#71/#33) - BUILT BUT DARK/INERT
@@ -1330,8 +1316,9 @@ ALTER TABLE `tblPayments`
 -- `isDualFunction`/`appID`/`resolvePayloadJSON` are Stage S4 (#71) fields,
 -- present now so a later ALTER is never needed for them, but READ/WRITTEN by
 -- NOTHING in S0/S1 - `appID` intentionally has NO FK yet (tblSanctionedApps
--- does not exist until Stage S4; that FK is added additively via ALTER TABLE
--- then, exactly like the #70 delta's own ALTER-after pattern above).
+-- does not exist until Stage S4; that FK will be added then by a numbered
+-- migration in _includes/sql/migrations/, the same way migration 0001 adds
+-- the #70 snapshot columns).
 --
 -- @see _functions/fn_redirects.php     - validateRedirectDestination(), redirectIsWritableBy()
 -- @see _functions/fn_api_redirects.php - createDynamicRedirectForOwner(), the destination CRUD handlers
@@ -1479,10 +1466,11 @@ CREATE TABLE IF NOT EXISTS `tblResolveNonces` (
 --  17. tblOrganisationMembers   - Organisation membership + roles (Epic E3 org stage stub)
 --  18. tblInvitations           - Organisation invitations (Epic E3 org stage stub)
 --  19. tblSubscriptionPlans     - Data-driven premium tier definitions (Epic E4, #25/#26/#53)
---  20. tblSubscriptions         - User/org subscriptions to a plan (Epic E4, #25/#26/#53) +
---                                 pricePointID/discountID snapshot columns (#70)
---  21. tblPayments              - Payment ledger, schema only (Epic E4, #25/#26/#53) +
---                                 pricePointID snapshot column (#70)
+--  20. tblSubscriptions         - User/org subscriptions to a plan (Epic E4, #25/#26/#53);
+--                                 its pricePointID/discountID snapshot columns (#70) are
+--                                 added by migration 0001
+--  21. tblPayments              - Payment ledger, schema only (Epic E4, #25/#26/#53); its
+--                                 pricePointID snapshot column (#70) is added by migration 0001
 --  22. tblPlanPricePoints       - Multi-price-point/multi-currency/lifetime/PAYG-pack pricing
 --                                 per plan (#70 - flexible pricing, BUILT BUT DISABLED)
 --  23. tblDiscounts             - One-off/limited-time/lifetime discounts, coupon or automatic
@@ -1501,7 +1489,7 @@ CREATE TABLE IF NOT EXISTS `tblResolveNonces` (
 --  29. tblResolveNonces         - Single-use dual-function-QR resolve nonces (#71 - BUILT BUT
 --                                 DARK, Stage S0 - inert until Stage S4)
 --
--- ⚠️ Tables 22-26 and the two additive columns above are INERT until the
+-- ⚠️ Tables 22-26 and the migration-0001 snapshot columns are INERT until the
 --    matching `billing_price_points_enabled` / `billing_discounts_enabled` /
 --    `billing_payg_enabled` kill-switches (seed_data.sql, `billing` settings
 --    group) are flipped from their seeded 0 to 1 - see #70.
@@ -1513,5 +1501,7 @@ CREATE TABLE IF NOT EXISTS `tblResolveNonces` (
 --    dual-function QR (gated)" for the full phased build plan and the G-007
 --    owner sign-off this schema is waiting on before Stage S2 goes live.
 --
--- 📌 Next step: Run seed_data.sql to populate initial data.
+-- 📌 Next step: Run seed_data.sql to populate initial data, then the numbered
+--    migrations (_includes/cli/migrate.php --apply; the web installer does
+--    both for you).
 -- ==============================================================================
