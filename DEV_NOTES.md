@@ -1005,14 +1005,21 @@ about how someone became an admin.
   remembered in the PHP session: `roleID = 1`, account `active`, email
   checked, and a valid signed-in session. `roleID = 2` ("Admin") gets no
   admin access yet. Removing someone's role takes effect on their next click.
-- **Not signed in** → sent to the sign-in page, then back. **Signed in but not
-  a Global Admin** → the ordinary "page not found" page (the area does not
-  advertise itself) and one `admin_denied` activity-log row.
+- **Not signed in** → sent to the sign-in page, then back. That includes
+  `pending` and `suspended` accounts, because `currentUser()` returns nothing
+  for an account that is not `active`. **Signed in (active) but not a Global
+  Admin** → the ordinary "page not found" page, with the same headers as any
+  missing page, and at most one `admin_denied` activity-log row per browser
+  session. The sign-in redirect means `/admin/` is not secret; the gate is the
+  protection (decision 0009).
 - **Every change needs your password again** if you have not typed it in the
   last 15 minutes of activity, and at most every 60 minutes (settings
   `admin_reauth_idle_minutes` 5-60 and `admin_reauth_max_minutes` 15-480).
-  The unlock belongs to that one sign-in: a copy of the cookie used with a
-  different sign-in does not carry it. Five wrong passwords in one session
+  The unlock lives in the PHP session the cookie points at (and is tied to
+  that sign-in's database session): a cookie stolen while editing is unlocked
+  can make changes for up to the idle limit (15 min) and at most the absolute
+  limit (60 min). Tying it to the database session only defeats signing in
+  again, which starts locked. Five wrong passwords in one session
   sign you out, and wrong passwords also count toward the normal account
   lock-out. "Lock editing now" on the Confirm password page locks it at once.
 - **Every change form** carries the CSRF token, is refused if the browser

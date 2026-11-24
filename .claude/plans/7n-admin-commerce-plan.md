@@ -605,6 +605,7 @@ Real-database checks for every phase run with the pattern of `tests/integration/
 **Build:** `fn_admin.php` (§6.1, §6.3–6.5, §6.7, date helpers §8.4); `_includes/cli/admin_access.php` (§6.2); `/admin/` overview, `/admin/reauth/`, `/admin/upgrades/`; `public_html/admin/.htaccess`; `_includes/admin_nav.php`; `cuercode-admin.js` skeleton; the "Admin" item in the header menu; the erasure guard in `eraseUserAccount()`.
 **Acceptance:**
 - Not signed in → `/admin/…` redirects to `/login/?next=/admin/…`; signed in but not a Global Admin (including `roleID=2`, `pending`, `suspended`, unverified) → 404, identical to a missing page.
+  - *Note (1B review, decision 0009): `pending` and `suspended` accounts are not "signed in" (`currentUser()` returns nothing for them), so they are redirected to `/login/`, not shown a 404.*
 - Global Admin → overview loads; every admin response has `Cache-Control: no-store`, frame-blocking and `noindex`.
 - No change is possible without a fresh password confirmation; the confirmation is tied to the database session (copying the session cookie to a new login does not carry it over) and expires on the idle and absolute limits.
 - 5 wrong confirmations → signed out; each attempt audited; the password never appears anywhere.

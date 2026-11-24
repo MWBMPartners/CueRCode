@@ -18,3 +18,4 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0006](0006-php-8-6-adoption-what-and-where.md) | 2026-11-18 | What was adopted from PHP 8.6 (`clamp()` via `cuercodeClampInt()`) and what was skipped, with reasons | Current (implements 0004) |
 | [0007](0007-payg-monthly-cap-means-money-spent-on-packs.md) | 2026-11-24 | Owner: the pay-as-you-go monthly cap is money spent on credit packs, per currency | Current |
 | [0008](0008-push-work-in-progress-after-each-reviewed-phase.md) | 2026-11-24 | Owner: push `work-in-progress` (only) after each reviewed phase | Current |
+| [0009](0009-admin-sign-in-redirect-means-area-not-secret.md) | 2026-11-24 | Lead (owner has not approved; may overrule): signed-out visitors to `/admin/` are sent to sign-in, so the area's existence is not secret; the gate is the protection | Current (unapproved) |

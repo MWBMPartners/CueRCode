@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Phase 1B independent review findings (2026-11-24, #31, #153)
+
+- **Sign-in page open redirect (#153, older than 1B):** `/login/?next=` now refuses tabs, line
+  breaks, NUL and other control characters and any backslash, so `/%09/evil.example` can no longer
+  send a signed-in person to another website. New `tests/test_login_next_url.php` (21 checks).
+- **Admin area:** the security headers are now sent only to Global Admins (a signed-in non-admin
+  gets exactly the same response as any missing page); `admin_denied` is logged at most once per
+  browser session; `admin.first_seen` compares with the most recent grant/revoke row and uses a
+  database lock so two pages cannot write it twice; `/admin/upgrades/` shows a clear warning if
+  the change-log entry for an upgrade could not be saved; the admin `.htaccess` uses
+  `Header always set`; the command line shows its warnings before asking for the email to be
+  retyped.
+- **Account erase:** the erase statement itself now refuses a Global Admin (check and erase are one
+  step), with the same `GLOBAL_ADMIN_CANNOT_ERASE` answer.
+- `verifyPassword()` hides the password from stack traces (`#[\SensitiveParameter]`).
+- **Docs:** SECURITY.md and DEV_NOTES.md no longer overstate the re-confirmation unlock (a cookie
+  stolen while editing is unlocked works for up to 15 minutes idle, 60 at most); pending and
+  suspended accounts are sent to sign-in, not a 404. New decision record 0009 (lead's decision,
+  owner may overrule). Follow-up #154: admin pages still allow inline scripts.
+
 ### Added - Admin area: Global Admin access, password re-confirmation, change log (2026-11-24, task 7n Phase 1B, #31)
 
 - **New private admin area at `/admin/`**, for Global Admins only (`tblUsers.roleID = 1`, account
