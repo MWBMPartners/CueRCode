@@ -743,7 +743,7 @@ Tick each with evidence (file:line, test name, or a reproduced request).
 - B: Every change applies to everyone immediately — simplest, but it is easy to take something away from paying customers by mistake.
 - C: Any change to a plan with paying customers always creates a new version — safest, but the plan list fills up with versions.
 
-**Q6 — What does the £20 monthly cap on pay-as-you-go mean?** ⏳ **STILL OPEN** (not asked yet; needed before Phase 6 only — recommended option A).
+**Q6 — What does the £20 monthly cap on pay-as-you-go mean?** ✅ **ANSWERED 2026-11-24: option A** (decision 0007).
 - **A (recommended): The most a customer can spend buying credit packs in one calendar month, set separately per currency (£20 now; you set the $ and € figures).** This matches a money amount and stops surprise spending. (The program today has a different kind of cap — on credits *used* per month — which we keep only as an optional extra limit.)
 - B: A limit on how many credits can be used per month (what the existing code counts) — does not match a £ figure.
 

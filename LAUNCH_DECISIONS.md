@@ -37,7 +37,7 @@
 > - Combining discounts: **allowed, chosen per discount when it is created** (default: does not combine). A discount that does not allow combining takes priority: no combining in that purchase and the **biggest saving wins**.
 > - Changing a plan people already pay for: changes that **give more** apply to everyone; changes that **take away** are blocked unless confirmed with a reason, or released as a **new version** for new customers.
 > - Live database to keep: **none — start fresh**.
-> - ⏳ Still open: what the £20 pay-as-you-go cap means (recommended: the most spent buying credit packs per calendar month, per currency).
+> - ✅ Answered 2026-11-24 (decision 0007): the £20 pay-as-you-go cap = most spent on credit packs per calendar month, per currency.
 
 - [x] **Final GBP price points** (DRAFT): Pro £6.99/mo · £49.99/yr; Business £24.99/mo · £199.99/yr; Enterprise floor ~£99/mo.
       → **Answered 2026-10-05: start with the draft prices — but every plan and price must be editable by a Global Admin** (task 7n).
