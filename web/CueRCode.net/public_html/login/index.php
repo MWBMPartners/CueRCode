@@ -60,6 +60,15 @@ function resolveSafeNextUrl(mixed $rawNext, string $default): string
         return $default;
     }
 
+    // 🛡️ Refuse any control character (tab, CR, LF, NUL, DEL ...) and any
+    // backslash ANYWHERE in the value (#153). Browsers silently strip tabs and
+    // line breaks from a Location address, so '/<TAB>/evil.example' would
+    // become '//evil.example' (another website). Same rules as
+    // adminSafeNextPath() in _functions/fn_admin.php.
+    if (preg_match('/[\x00-\x1F\x7F]/', $rawNext) === 1 || str_contains($rawNext, '\\')) {
+        return $default;
+    }
+
     // 🛡️ Must start with a single '/' and NOT with '//' or '/\' (both are
     // browser-interpretable as protocol-relative to a DIFFERENT host).
     if (!str_starts_with($rawNext, '/') || str_starts_with($rawNext, '//') || str_starts_with($rawNext, '/\\')) {
