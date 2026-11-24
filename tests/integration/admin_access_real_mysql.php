@@ -488,6 +488,13 @@ aiCheck('H', $aiFirstSeen['actorType'] === 'system' && $aiFirstSeen['actorUserID
 adminRecordFirstSeen(['userID' => $aiUserIDs['owner'], 'email' => $aiOwnerEmail]);
 aiCheck('H', aiCount($aiServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'admin.first_seen' AND `entityKey` = ?", 's', [(string) $aiUserIDs['owner']]) === 0, 'an admin with an admin.grant row gets no first_seen row');
 
+// 🕰️ Review finding H: compare with the MOST RECENT grant/revoke row. A revoke
+//    followed by a hand-made re-grant needs a NEW first_seen row, once.
+$aiServer->query("INSERT INTO `tblAdminAuditLog` (`actorUserID`, `actorType`, `actorLabel`, `action`, `entityType`, `entityKey`, `outcome`) VALUES (NULL, 'cli', 'cli:test', 'admin.revoke', 'user', '" . (int) $aiUserIDs['hand'] . "', 'success')");
+adminRecordFirstSeen($aiHandAdmin);
+adminRecordFirstSeen($aiHandAdmin);
+aiCheck('H', aiCount($aiServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'admin.first_seen' AND `entityKey` = ?", 's', [(string) $aiUserIDs['hand']]) === 2, 'after a revoke and a hand-made re-grant, ONE more first_seen row is written (2 in total)');
+
 // ==============================================================================
 // I. The erasure guard
 // ==============================================================================
@@ -496,6 +503,9 @@ $aiErase = eraseUserAccount($aiUserIDs['owner'], $aiPasswords['owner'], true);
 aiCheck('I', $aiErase['success'] === false && $aiErase['httpCode'] === 409 && $aiErase['errorCode'] === 'GLOBAL_ADMIN_CANNOT_ERASE', 'right password: refused with 409 GLOBAL_ADMIN_CANNOT_ERASE');
 $aiErase = eraseUserAccount($aiUserIDs['owner'], 'wrong-password', true);
 aiCheck('I', $aiErase['errorCode'] === 'GLOBAL_ADMIN_CANNOT_ERASE', 'wrong password: the same refusal (checked before the password)');
+// 🛡️ Review finding G: the erase UPDATE itself refuses a Global Admin (check and erase are one statement).
+aiCheck('I', aiCount($aiServer, 'SELECT COUNT(*) FROM `tblUsers` WHERE `userID` = ? AND ' . adminSqlNotGlobalAdminCondition(), 'i', [$aiUserIDs['owner']]) === 0, 'the erase condition matches NO row for a Global Admin');
+aiCheck('I', aiCount($aiServer, 'SELECT COUNT(*) FROM `tblUsers` WHERE `userID` = ? AND ' . adminSqlNotGlobalAdminCondition(), 'i', [$aiUserIDs['second']]) === 1, 'the erase condition matches an account with no admin role');
 $aiOwnerAfter = aiRow($aiServer, 'SELECT `email`, `status`, `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiUserIDs['owner']]);
 aiCheck('I', $aiOwnerAfter['email'] === $aiOwnerEmail && $aiOwnerAfter['status'] === 'active' && $aiOwnerAfter['passwordHash'] !== null, 'the admin account is untouched');
 $aiErase = eraseUserAccount($aiUserIDs['second'], $aiPasswords['second'], true);

@@ -1706,9 +1706,27 @@ function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): 
     // mirrors), so every statement below genuinely participates in the same
     // transaction as $db->begin_transaction()/commit()/rollback().
     // ------------------------------------------------------------------
+    // 🛡️ The UPDATE below asks fn_admin.php for the "not a Global Admin" SQL
+    // condition (roleID text lives only there - plan §9 guard b). If that
+    // file cannot be loaded, fail closed: erase nothing.
+    $adminFunctionsPathForErase = __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin.php';
+    if (!function_exists('adminSqlNotGlobalAdminCondition') && is_file($adminFunctionsPathForErase)) {
+        require_once $adminFunctionsPathForErase;
+    }
+    if (!function_exists('adminSqlNotGlobalAdminCondition')) {
+        return [
+            'success'   => false,
+            'httpCode'  => 500,
+            'errorCode' => 'ERASE_FAILED',
+            'message'   => 'Your account could not be erased. No changes were made - please try again or contact support.',
+            'data'      => [],
+        ];
+    }
+
     $db                  = getDB();
     $transactionStarted  = false;
     $conflictDuringErase = false;
+    $adminRefusedDuringErase = false;
 
     try {
         $db->begin_transaction();
@@ -1728,7 +1746,10 @@ function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): 
             . "`erasedAt` = NOW(), "
             . "`failedLoginCount` = 0, "
             . "`lockedUntil` = NULL "
-            . "WHERE `userID` = ? AND `status` != 'deleted'",
+            . "WHERE `userID` = ? AND `status` != 'deleted' "
+            // 🛡️ Check and erase in ONE statement: if the account was made a
+            // Global Admin after the check above, no row is changed.
+            . 'AND ' . adminSqlNotGlobalAdminCondition(),
             'si',
             [$anonymizedEmail, $userID]
         );
@@ -1736,7 +1757,22 @@ function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): 
         $anonymizeStmt->close();
 
         if (!$anonymized) {
-            $conflictDuringErase = true;
+            // 🔎 Zero rows changed: either the account was erased a moment
+            // ago, or it became a Global Admin after the check above. Look
+            // again to give the right refusal.
+            $recheckStmt = dbQuery(
+                'SELECT `roleID` FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
+                'i',
+                [$userID]
+            );
+            $recheckRow = $recheckStmt->get_result()->fetch_assoc();
+            $recheckStmt->close();
+
+            if ($recheckRow !== null && $recheckRow['roleID'] !== null && (int) $recheckRow['roleID'] === 1) {
+                $adminRefusedDuringErase = true;
+            } else {
+                $conflictDuringErase = true;
+            }
             throw new \RuntimeException('cuercode_erase_conflict');
         }
 
@@ -1779,6 +1815,16 @@ function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): 
                 // 🛡️ Best-effort - a failed rollback cannot make the
                 // already-caught failure any worse; logged below either way.
             }
+        }
+
+        if ($adminRefusedDuringErase) {
+            return [
+                'success'   => false,
+                'httpCode'  => 409,
+                'errorCode' => 'GLOBAL_ADMIN_CANNOT_ERASE',
+                'message'   => 'This account is a Global Admin, so it cannot be deleted here. Its admin access must be removed first, by another Global Admin or on the server command line.',
+                'data'      => [],
+            ];
         }
 
         if ($conflictDuringErase) {

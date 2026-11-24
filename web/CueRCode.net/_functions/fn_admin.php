@@ -117,6 +117,16 @@ if (!defined('CUERCODE_ADMIN_FLASH_KEY')) {
     define('CUERCODE_ADMIN_FLASH_KEY', 'cuercode_admin_flash');
 }
 
+/** @var string $_SESSION key remembering that an admin_denied activity row was already written for this session (one per session, never one per request). */
+if (!defined('CUERCODE_ADMIN_DENIED_KEY')) {
+    define('CUERCODE_ADMIN_DENIED_KEY', 'cuercode_admin_denied_logged');
+}
+
+/** @var string Name prefix of the database lock that stops two pages writing the same admin.first_seen row. */
+if (!defined('CUERCODE_ADMIN_FIRST_SEEN_LOCK_PREFIX')) {
+    define('CUERCODE_ADMIN_FIRST_SEEN_LOCK_PREFIX', 'cuercode_admin_first_seen_');
+}
+
 /** @var string $_SESSION key remembering that the "first seen" check already ran for a user. */
 if (!defined('CUERCODE_ADMIN_FIRST_SEEN_KEY')) {
     define('CUERCODE_ADMIN_FIRST_SEEN_KEY', 'cuercode_admin_first_seen_checked');
@@ -1611,6 +1621,36 @@ function adminRenderNotFoundAndExit(): never
 }
 
 /**
+ * 🛡️ SQL text for "this account is NOT a Global Admin", to be ANDed into a
+ *    WHERE clause (used by the account-erase UPDATE so that the check and the
+ *    erase are one atomic statement). Kept here so the role number appears
+ *    only in this file. No user input is involved.
+ *
+ * @return string A parenthesised SQL condition
+ */
+function adminSqlNotGlobalAdminCondition(): string
+{
+    return '(`roleID` IS NULL OR `roleID` <> ' . (int) CUERCODE_ROLE_GLOBAL_ADMIN . ')';
+}
+
+/**
+ * 🔁 Has an admin_denied activity row already been written for this user in
+ *    this browser session? (Pure: the caller passes the session array.)
+ *
+ * @param array $session The $_SESSION array (or [] when no session is active)
+ * @param int   $userID  The signed-in user who was turned away
+ * @return bool True = already logged once, so do not write another
+ */
+function adminDenialAlreadyLogged(array $session, int $userID): bool
+{
+    if ($userID <= 0 || !isset($session[CUERCODE_ADMIN_DENIED_KEY])) {
+        return false;
+    }
+
+    return (int) $session[CUERCODE_ADMIN_DENIED_KEY] === $userID;
+}
+
+/**
  * 🚪 THE GATE - the first call on every admin page (plan §6.1, §7.1).
  *
  *   - not signed in      → 302 to /login/?next=<this admin page>;
@@ -1627,8 +1667,10 @@ function adminRenderNotFoundAndExit(): never
  */
 function requireGlobalAdminPage(string $selfPath): array
 {
-    adminSendSecurityHeaders();
-
+    // 🧱 The admin security headers are NOT sent here: they are sent only once
+    //    the visitor is known to be a Global Admin (below). A signed-in person
+    //    who is not an admin must get exactly the same response as for any
+    //    page that does not exist, headers included.
     $safeSelfPath = adminSafeNextPath($selfPath, '/admin/');
 
     $currentUserRow = null;
@@ -1651,17 +1693,36 @@ function requireGlobalAdminPage(string $selfPath): array
     if ($decision !== 'admin') {
         // 📝 F1 (plan §3): logActivity() cannot see the signed-in user by
         //    itself, so the user is passed as the entity instead.
-        if (function_exists('logActivity')) {
+        //    At most ONE row per browser session (not one per request), so a
+        //    signed-in non-admin cannot flood the activity log by reloading.
+        $deniedUserID = 0;
+        if (isset($currentUserRow['userID'])) {
+            $deniedUserID = (int) $currentUserRow['userID'];
+        }
+
+        $deniedSession = [];
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $deniedSession = $_SESSION;
+        }
+
+        if (function_exists('logActivity') && !adminDenialAlreadyLogged($deniedSession, $deniedUserID)) {
             logActivity(
                 'admin_denied',
                 'A signed-in account without Global Admin access asked for an admin page',
                 'user',
-                (int) $currentUserRow['userID'],
+                $deniedUserID,
                 ['path' => $safeSelfPath]
             );
+
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION[CUERCODE_ADMIN_DENIED_KEY] = $deniedUserID;
+            }
         }
         adminRenderNotFoundAndExit();
     }
+
+    // 🧱 Admin branch only: now the §7.4 headers may be sent.
+    adminSendSecurityHeaders();
 
     $displayName = '';
     if (isset($accessRow['displayName']) && $accessRow['displayName'] !== null) {
@@ -2303,9 +2364,10 @@ function adminAuditOrFallback(array $entry): bool
  * 👀 "How did this person become an admin?" (plan §6.2 step 4). A Global
  *    Admin made by hand in phpMyAdmin has no admin.grant row, so on their
  *    first admin page an admin.first_seen row (actor: system) is written -
- *    the log is never silent about it. One single INSERT ... WHERE NOT
- *    EXISTS, so two pages opened at once cannot normally write two. Checked
- *    once per session; skipped while the audit table does not exist yet.
+ *    the log is never silent about it. One INSERT that looks at the MOST
+ *    RECENT grant / revoke / first_seen row (a later revoke followed by a
+ *    hand-made re-grant gets a new row), inside a per-user database lock so
+ *    two pages opened at once cannot write two. Checked once per session; skipped while the audit table does not exist yet.
  *
  * @param array $admin From requireGlobalAdminPage()
  * @return void
@@ -2340,14 +2402,46 @@ function adminRecordFirstSeen(array $admin): void
         return;
     }
 
+    // 🔒 A named database lock around check + insert, so two admin pages
+    //    opened at the same instant cannot both decide "nothing recorded yet"
+    //    and both insert. The lock is per user and is always released.
+    $lockName   = CUERCODE_ADMIN_FIRST_SEEN_LOCK_PREFIX . $userKey;
+    $lockGained = false;
+
     try {
+        $lockStmt = dbQuery('SELECT GET_LOCK(?, 5) AS `lockResult`', 's', [$lockName]);
+        $lockRow  = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+
+        // GET_LOCK() gives 1 (got it), 0 (timed out) or NULL (error).
+        if ($lockRow !== null && isset($lockRow['lockResult']) && (int) $lockRow['lockResult'] === 1) {
+            $lockGained = true;
+        }
+    } catch (\Throwable $e) {
+        $lockGained = false;
+    }
+
+    if (!$lockGained) {
+        // Could not get the lock: write nothing now; the next admin page tries again.
+        return;
+    }
+
+    $written = false;
+
+    try {
+        // 🕰️ Compare against the MOST RECENT grant / revoke / first_seen row
+        //    for this user, not against any old one: a revoked admin who is
+        //    later made an admin again by hand needs a NEW first_seen row.
+        //    Insert only when there is no such row, or the latest is a revoke.
         $stmt = dbQuery(
             'INSERT INTO `tblAdminAuditLog` (`actorUserID`, `actorType`, `actorLabel`, `action`, `entityType`, `entityKey`, `outcome`, `reason`, `requestIP`, `userAgent`) '
             . 'SELECT NULL, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM DUAL '
-            . 'WHERE NOT EXISTS ('
-            . 'SELECT 1 FROM `tblAdminAuditLog` '
-            . "WHERE `entityType` = 'user' AND `entityKey` = ? AND `action` IN ('admin.grant', 'admin.first_seen')"
-            . ')',
+            . 'WHERE COALESCE(('
+            . 'SELECT `latest`.`action` FROM `tblAdminAuditLog` AS `latest` '
+            . "WHERE `latest`.`entityType` = 'user' AND `latest`.`entityKey` = ? "
+            . "AND `latest`.`action` IN ('admin.grant', 'admin.revoke', 'admin.first_seen') "
+            . 'ORDER BY `latest`.`auditID` DESC LIMIT 1'
+            . "), 'admin.revoke') = 'admin.revoke'",
             'ssssssssss',
             [
                 $row['actorType'],
@@ -2363,10 +2457,22 @@ function adminRecordFirstSeen(array $admin): void
             ]
         );
         $stmt->close();
+        $written = true;
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
             logError('warning', 'Admin first-seen audit row could not be written', get_class($e));
         }
+    }
+
+    // 🔓 Always let go of the lock (it also ends with the connection).
+    try {
+        $releaseStmt = dbQuery('SELECT RELEASE_LOCK(?) AS `releaseResult`', 's', [$lockName]);
+        $releaseStmt->close();
+    } catch (\Throwable $e) {
+        // Best effort: the lock ends with the connection anyway.
+    }
+
+    if (!$written) {
         return;
     }
 
@@ -2489,11 +2595,13 @@ function adminDatabaseReadyForChanges(): bool
  * password) with adminCheckPost().
  *
  * @param array $admin From requireGlobalAdminPage()
- * @return array{ok: bool, status: string, lines: array<int, string>, applied: array<int, string>}
+ * @return array{ok: bool, status: string, lines: array<int, string>, applied: array<int, string>, auditWritten: ?bool}
+ *         auditWritten: true = change-log entry saved; false = it could NOT be saved;
+ *         null = no upgrade was attempted, so nothing was logged
  */
 function adminRunUpgrades(array $admin): array
 {
-    $outcome = ['ok' => false, 'status' => 'failed', 'lines' => [], 'applied' => []];
+    $outcome = ['ok' => false, 'status' => 'failed', 'lines' => [], 'applied' => [], 'auditWritten' => null];
 
     if (!adminLoadMigrationEngine() || !function_exists('getDB')) {
         $outcome['lines'][] = 'The database upgrade tool could not be loaded.';
@@ -2536,7 +2644,9 @@ function adminRunUpgrades(array $admin): array
         $auditOutcome = 'refused';
     }
 
-    adminAuditOrFallback(adminAuditEntryForAdmin(
+    // 📝 Keep the answer: if the change-log entry could not be saved, the
+    //    page must say so rather than report plain success.
+    $auditWritten = adminAuditOrFallback(adminAuditEntryForAdmin(
         $admin,
         'schema.migrate',
         'schema',
@@ -2549,8 +2659,27 @@ function adminRunUpgrades(array $admin): array
     $outcome['status']  = $status;
     $outcome['lines']   = migrationFormatReport('apply', $result, false);
     $outcome['applied'] = $appliedKeys;
+    $outcome['auditWritten'] = $auditWritten;
 
     return $outcome;
+}
+
+/**
+ * ⚠️ The warning to show after an upgrade whose change-log entry could not be
+ *    saved (finding C of the 1B review). Pure, so it can be tested.
+ *
+ * @param array $run The array returned by adminRunUpgrades()
+ * @return string The warning text, or '' when the entry was saved or never attempted
+ */
+function adminUpgradeAuditWarning(array $run): string
+{
+    // Only an explicit false means "tried and failed" (null = never tried).
+    if (!array_key_exists('auditWritten', $run) || $run['auditWritten'] !== false) {
+        return '';
+    }
+
+    return 'The upgrade ran, but the admin change log entry for it could not be saved. '
+        . 'Please make a note of what was applied (listed above) and check the server error log.';
 }
 
 /**

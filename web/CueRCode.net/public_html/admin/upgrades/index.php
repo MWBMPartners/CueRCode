@@ -76,6 +76,13 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST' &
             adminFlashAdd('danger', 'The upgrades did not finish. Nothing that failed was recorded, so it is safe to try again after the problem is fixed.', $upgradesLines);
         }
 
+        // ⚠️ The change-log entry is separate from the upgrade itself: if it
+        //    could not be saved, say so clearly instead of plain success.
+        $upgradesAuditWarning = adminUpgradeAuditWarning($upgradesRun);
+        if ($upgradesAuditWarning !== '') {
+            adminFlashAdd('warning', $upgradesAuditWarning, []);
+        }
+
         adminRedirect('/admin/upgrades/');
     }
 }

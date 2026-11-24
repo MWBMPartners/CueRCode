@@ -669,20 +669,55 @@ assertEquals([], $aaAdminPaths, 'no openapi.json path starts with /admin (guard 
 
 // 🧱 The admin .htaccess sends the §7.4 headers.
 $aaHtaccess = (string) file_get_contents($aaAdminRoot . '.htaccess');
-assertContains('Header set X-Frame-Options "DENY"', $aaHtaccess, 'admin .htaccess: X-Frame-Options DENY');
-assertContains('Header set Cache-Control "no-store"', $aaHtaccess, 'admin .htaccess: Cache-Control no-store');
-assertContains('Header set X-Robots-Tag "noindex, nofollow"', $aaHtaccess, 'admin .htaccess: X-Robots-Tag noindex, nofollow');
+assertContains('Header always set X-Frame-Options "DENY"', $aaHtaccess, 'admin .htaccess: X-Frame-Options DENY');
+assertContains('Header always set Cache-Control "no-store"', $aaHtaccess, 'admin .htaccess: Cache-Control no-store');
+assertContains('Header always set X-Robots-Tag "noindex, nofollow"', $aaHtaccess, 'admin .htaccess: X-Robots-Tag noindex, nofollow');
 assertContains("frame-ancestors 'none'", $aaHtaccess, "admin .htaccess: CSP frame-ancestors 'none'");
 assertContains("script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;", $aaHtaccess, 'admin .htaccess: no new script sources');
 $aaSiteHtaccess = (string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . '.htaccess');
 preg_match('/Header set Content-Security-Policy "([^"]+)"/', $aaSiteHtaccess, $aaSiteCsp);
-preg_match('/Header set Content-Security-Policy "([^"]+)"/', $aaHtaccess, $aaAdminCsp);
+preg_match('/Header always set Content-Security-Policy "([^"]+)"/', $aaHtaccess, $aaAdminCsp);
 assertEquals(
     str_replace("frame-ancestors 'self'", "frame-ancestors 'none'", (string) $aaSiteCsp[1]),
     (string) $aaAdminCsp[1],
     "admin CSP = the site CSP with frame-ancestors 'none' (the two stay in step)"
 );
 assertFalse(str_contains((string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'robots.txt'), 'admin'), 'robots.txt does not advertise /admin/');
+
+// 🧪 1B review fixes (#31): wording and ordering guards.
+assertFalse((bool) preg_match('/^\s*Header (?!always )(set|unset|append)/m', $aaHtaccess), 'admin .htaccess: every Header line is "Header always set" (review finding I)');
+
+$aaGateSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php');
+$aaGateStart  = strpos($aaGateSource, 'function requireGlobalAdminPage(');
+$aaGateBody   = substr($aaGateSource, (int) $aaGateStart, 4500);
+$aaHeadersAt  = strpos($aaGateBody, 'adminSendSecurityHeaders();');
+$aaNotFoundAt = strpos($aaGateBody, 'adminRenderNotFoundAndExit();');
+assertTrue($aaHeadersAt !== false && $aaNotFoundAt !== false && $aaHeadersAt > $aaNotFoundAt, 'the admin headers are sent only AFTER the not-an-admin 404 branch (review finding E)');
+
+$aaAccountSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_account.php');
+assertContains("adminSqlNotGlobalAdminCondition()", $aaAccountSource, 'the erase UPDATE itself refuses a Global Admin (check and erase are one statement, review finding G)');
+assertContains('GLOBAL_ADMIN_CANNOT_ERASE', substr($aaAccountSource, (int) strpos($aaAccountSource, '$adminRefusedDuringErase)')), 'zero rows changed for a Global Admin gives the same refusal');
+
+assertContains('#[\\SensitiveParameter] string $plainPassword', (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_password.php'), 'verifyPassword() hides the password from stack traces (review finding J)');
+
+$aaCliSource  = (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'cli' . DIRECTORY_SEPARATOR . 'admin_access.php');
+$aaWarnAt     = strpos($aaCliSource, "'WARNING: '");
+$aaRetypeAt   = strpos($aaCliSource, 'Type the email address again');
+assertTrue($aaWarnAt !== false && $aaRetypeAt !== false && $aaWarnAt < $aaRetypeAt, 'the command line prints its warnings BEFORE asking for the email to be retyped (review finding D)');
+
+assertEquals('(`roleID` IS NULL OR `roleID` <> 1)', adminSqlNotGlobalAdminCondition(), 'the erase UPDATE condition keeps accounts with no role or a non-admin role only');
+
+// 🔁 One admin_denied row per session, not per request (finding F).
+assertFalse(adminDenialAlreadyLogged([], 7), 'denied: nothing in the session yet → write one');
+assertTrue(adminDenialAlreadyLogged([CUERCODE_ADMIN_DENIED_KEY => 7], 7), 'denied: already written for this user → do not write again');
+assertFalse(adminDenialAlreadyLogged([CUERCODE_ADMIN_DENIED_KEY => 8], 7), 'denied: flag belongs to another user → write one');
+assertFalse(adminDenialAlreadyLogged([CUERCODE_ADMIN_DENIED_KEY => 7], 0), 'denied: user 0 → write');
+
+// ⚠️ An upgrade whose change-log entry could not be saved must warn (finding C).
+assertEquals('', adminUpgradeAuditWarning(['ok' => true, 'auditWritten' => true]), 'upgrade audit saved → no warning');
+assertEquals('', adminUpgradeAuditWarning(['ok' => false, 'auditWritten' => null]), 'nothing attempted → no warning');
+assertEquals('', adminUpgradeAuditWarning([]), 'no key → no warning');
+assertContains('could not be saved', adminUpgradeAuditWarning(['ok' => true, 'auditWritten' => false]), 'upgrade audit NOT saved → clear warning');
 
 // 🧱 fn_admin.php source rules.
 $aaAdminSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php');

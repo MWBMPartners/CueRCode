@@ -171,7 +171,7 @@ function hashPassword(string $plainPassword): string
  *       // Password is correct
  *   }
  */
-function verifyPassword(string $plainPassword, string $hash): bool
+function verifyPassword(#[\SensitiveParameter] string $plainPassword, string $hash): bool
 {
     // 📌 An empty stored hash (e.g. an SSO-only account with no local
     // password set, Epic E2) can never be matched by any plaintext attempt.

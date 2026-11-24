@@ -267,6 +267,14 @@ if ($adminCliPreview['outcome'] === 'nothing') {
 
 fwrite(STDOUT, 'Account #' . (int) $adminCliRows[0]['userID'] . ' (' . $adminCliEmail . '): ' . $adminCliPreview['message'] . PHP_EOL);
 
+// ⚠️ Show any warnings BEFORE asking the operator to retype the email, so
+//    they can read them and still say no.
+if (isset($adminCliPreview['warnings']) && is_array($adminCliPreview['warnings'])) {
+    foreach ($adminCliPreview['warnings'] as $adminCliPreviewWarning) {
+        fwrite(STDOUT, 'WARNING: ' . (string) $adminCliPreviewWarning . PHP_EOL);
+    }
+}
+
 if ($adminCliParsed['yes'] !== true) {
     fwrite(STDOUT, 'Type the email address again to confirm: ');
     $adminCliTyped = fgets(STDIN);
