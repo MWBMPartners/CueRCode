@@ -943,6 +943,131 @@ MySQL server; see `tests/README.md` for how to run it).
 
 ---
 
+## 🛡️ Admin area and the first Global Admin (task 7n Phase 1B, 2026-11-24, #31)
+
+**In plain English:** there is now a private admin area at `/admin/`. Only a
+**Global Admin** can open it. Today it has three pages: an **overview** (what
+is set up and what is not), **Confirm password** (unlocks editing) and
+**Database upgrades** (applies waiting upgrades without needing the server
+command line). The settings screen for the email, sign-in, bot-protection and
+PayPal keys is the next phase (1C). Plan: `.claude/plans/7n-admin-commerce-plan.md` §6.
+
+### First Global Admin
+
+No web page can create the first admin: a "first visitor becomes admin" page
+would let a stranger claim a fresh site before you do. So the first one is
+made on the server:
+
+1. Install as usual (`/install/`, which also applies the database upgrades),
+   or on an existing site run `php _includes/cli/migrate.php --apply`.
+2. Sign up normally at `/register/`. The account stays **pending**, because
+   email sending is not set up yet, so no verification email can arrive.
+3. Over SSH, from the site folder:
+
+   ```sh
+   php _includes/cli/admin_access.php grant you@example.com --activate
+   ```
+
+   It shows what it will do and asks you to type the email address again
+   (add `--yes` to skip that). `--activate` also marks the account active
+   with a checked email address - allowed here because whoever can run
+   commands on the server already controls the site. It refuses (exit 2,
+   nothing changed) when no account or more than one has that email, when the
+   account is suspended or deleted, when it has no password (a Global Admin
+   must re-type a password before every change), and when the database has
+   not been upgraded yet (it needs the admin change log table). The role
+   change and its change-log row are written together in one transaction.
+4. Sign in, open `/admin/` (or "Admin" in your account menu), and confirm
+   your password to unlock editing.
+
+Other commands: `list` (the Global Admins, email addresses partly hidden),
+`revoke <email>` (refuses to remove the **last** working Global Admin) and
+`--help`. Exit codes: **0** done or nothing to do, **1** a database problem
+(nothing half-done; run it again), **2** refused (see the message). On
+DreamHost the command-line PHP is probably `/usr/local/php84/bin/php` (not yet
+checked on the live server).
+
+**No SSH? Use phpMyAdmin** (DreamHost panel). Type the email address
+carefully - this changes whichever account has it:
+
+```sql
+UPDATE `tblUsers` SET `roleID` = 1, `status` = 'active', `emailVerifiedAt` = COALESCE(`emailVerifiedAt`, UTC_TIMESTAMP()) WHERE `email` = 'you@example.com' AND `status` IN ('pending','active') AND `passwordHash` IS NOT NULL;
+```
+
+It should say "1 row affected". A Global Admin made this way has no "grant"
+row in the change log, so the first time they open the admin area the site
+writes one `admin.first_seen` row (actor "system"). The log is never silent
+about how someone became an admin.
+
+### How the admin area protects itself
+
+- **Who gets in** - checked fresh from the database on every request, never
+  remembered in the PHP session: `roleID = 1`, account `active`, email
+  checked, and a valid signed-in session. `roleID = 2` ("Admin") gets no
+  admin access yet. Removing someone's role takes effect on their next click.
+- **Not signed in** → sent to the sign-in page, then back. **Signed in but not
+  a Global Admin** → the ordinary "page not found" page (the area does not
+  advertise itself) and one `admin_denied` activity-log row.
+- **Every change needs your password again** if you have not typed it in the
+  last 15 minutes of activity, and at most every 60 minutes (settings
+  `admin_reauth_idle_minutes` 5-60 and `admin_reauth_max_minutes` 15-480).
+  The unlock belongs to that one sign-in: a copy of the cookie used with a
+  different sign-in does not carry it. Five wrong passwords in one session
+  sign you out, and wrong passwords also count toward the normal account
+  lock-out. "Lock editing now" on the Confirm password page locks it at once.
+- **Every change form** carries the CSRF token, is refused if the browser
+  says it came from another website (the `Origin` header), and never changes
+  anything from a plain link (GET).
+- **Change log** (`tblAdminAuditLog`): who, when, what it was and what it
+  became, written in the same transaction as the change. Secret values are
+  never written - only "secret set / replaced / cleared". Nothing in the code
+  edits or deletes these rows (the database cannot enforce that on shared
+  hosting, where there is only one database user). Action names are a fixed
+  list in `adminAuditActionNames()`.
+- **Headers**: `public_html/admin/.htaccess` and the PHP code both send
+  `Cache-Control: no-store`, `X-Frame-Options: DENY`, `X-Robots-Tag: noindex,
+  nofollow` and a content policy with `frame-ancestors 'none'`. The admin
+  content policy is the site policy with that one change; a test keeps the
+  two in step. `/admin/` is deliberately not in `robots.txt`.
+- **No API**: there is no `/api/v1/admin` route and none in `openapi.json`
+  (a test checks); admin pages ignore API keys and use only the browser
+  session.
+- **A Global Admin cannot erase their own account** at `/account/` (or with
+  `POST /api/v1/account/erase`): it is refused with `409
+  GLOBAL_ADMIN_CANNOT_ERASE` and nothing changes. Remove the admin role first
+  (another admin, or `revoke` on the command line); the last admin can never
+  be removed.
+
+### Database upgrades from the admin area
+
+`/admin/upgrades/` lists waiting upgrades in plain English and applies them
+with one button (after confirming your password and ticking "I have a recent
+backup"). It is the same engine as `migrate.php` and works even before the
+change log table exists (the gate only needs the user tables). It records
+`admin:<userID>` in `tblSchemaMigrations` and a `schema.migrate` row in the
+change log. Raw database errors are never shown on the page; the full detail
+goes to the error log. **While any upgrade is waiting, every other admin page
+must refuse to save** (`adminDatabaseReadyForChanges()`, used from Phase 1C),
+so no change can ever happen without its change-log row.
+
+### If you lose access
+
+- Forgot the password: use "Forgot password" once email works; before that,
+  ask another Global Admin, or reset it over SSH/phpMyAdmin the usual way.
+- No working Global Admin at all: run `grant` again on the command line (or
+  the phpMyAdmin line above).
+
+**Where to look:** `_functions/fn_admin.php` (everything: the gate, the
+password re-confirmation, the change log, the UK-time date helpers, the
+command-line decisions - read its file header first),
+`_includes/cli/admin_access.php`, `public_html/admin/`,
+`_includes/admin_nav.php`, `public_html/assets/js/cuercode-admin.js` (comfort
+only; every page works with JavaScript off). Tests: `tests/test_admin_access.php`
+(no database) and `tests/integration/admin_access_real_mysql.php` (real
+database; see `tests/README.md`).
+
+---
+
 ## 🔍 Site Polish Check & Template Comments (2026-10-05, #137)
 
 - **`php tools/check_site_polish.php`** - source-only (no database, no web

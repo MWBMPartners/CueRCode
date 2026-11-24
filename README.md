@@ -122,11 +122,17 @@ CueRCode/
    ```
 
 4. **🗄️ Run the database installer:**
-   Navigate to `https://your-domain/install/` in your browser.
+   Navigate to `https://your-domain/install/` in your browser. It creates the tables, loads the starting data and applies the numbered database upgrades.
+
+   **Upgrading an existing site later:** run `php web/CueRCode.net/_includes/cli/migrate.php --apply` on the server, or use **Database upgrades** in the admin area (`/admin/upgrades/`). See DEV_NOTES.md "Changing the database from now on".
 
 5. **🌍 Point your web server** to `web/CueRCode.net/public_html/` as the document root.
 
-6. **⏱️ Set up the email queue job (once email is configured):** add the DreamHost cron job described under "⏱️ The email queue job (DreamHost cron)" below. Without it, sign-up and password-reset emails are queued but never sent.
+6. **🛡️ Make yourself the first Global Admin:** sign up at `/register/`, then on the server run
+   `php web/CueRCode.net/_includes/cli/admin_access.php grant you@example.com --activate`
+   (no SSH? DEV_NOTES.md "First Global Admin" has a phpMyAdmin alternative). Then sign in and open `/admin/`.
+
+7. **⏱️ Set up the email queue job (once email is configured):** add the DreamHost cron job described under "⏱️ The email queue job (DreamHost cron)" below. Without it, sign-up and password-reset emails are queued but never sent.
 
 ### 🧪 Development Environments
 
@@ -213,11 +219,15 @@ The auth API foundation is now live in code (schema/crypto/password/engine/API),
 
 CueRCode's **first ownership-scoped resource surface** also shipped in stage 2a: `POST /api/v1/save` (claim a generated code into your account, subject to a per-plan `saved_codes` limit), `GET /api/v1/qrcodes` (list your own saved codes, paginated), and `GET/PATCH/DELETE /api/v1/qrcodes/{uuid}` (fetch/edit/delete a code you own). Every route re-checks ownership from your authenticated identity on every request - a code that isn't yours (and isn't marked public) is reported as `404`, never `403`, so private UUIDs belonging to other accounts can never be enumerated. See [DEV_NOTES.md](DEV_NOTES.md#saved-codes-api--ownership-model-epic-e3-stage-2a-5224-2026-07-10) for the full ownership model.
 
-**The browser UI now exists too (stage 2b):** `/register/`, `/login/`, `/verify-email/`, `/forgot-password/`, `/reset-password/`, and a full `/account/` dashboard (profile + avatar per the §11.4 priority chain - local upload > Gravatar > default icon, saved-codes library with plan-usage indicator, active-session list + revoke, change-password), plus a navbar sign-in/account-menu indicator on every page. Every form works with JavaScript disabled (a real `<form>` POST handled by the SAME `fn_auth.php` engine the JSON API calls) and is progressively enhanced with AJAX when JS is available. Three new own-account-scoped endpoints back the dashboard - `PATCH /api/v1/account/profile`, `GET/DELETE /api/v1/account/sessions[/{id}]`, `POST /api/v1/account/change-password` - all identity-derived server-side only, all reporting a not-yours target as `404` (never `403`). See [DEV_NOTES.md](DEV_NOTES.md#account-ui--own-account-dashboard-epic-e3-stage-2b-521214232026-07-10) for the full design rationale. **Organisations, WebAuthn, and the admin dashboard are not yet built. Self-service API-key management, single sign-on, and GDPR/CCPA data-subject rights now ARE built - see the sections below.**
+**The browser UI now exists too (stage 2b):** `/register/`, `/login/`, `/verify-email/`, `/forgot-password/`, `/reset-password/`, and a full `/account/` dashboard (profile + avatar per the §11.4 priority chain - local upload > Gravatar > default icon, saved-codes library with plan-usage indicator, active-session list + revoke, change-password), plus a navbar sign-in/account-menu indicator on every page. Every form works with JavaScript disabled (a real `<form>` POST handled by the SAME `fn_auth.php` engine the JSON API calls) and is progressively enhanced with AJAX when JS is available. Three new own-account-scoped endpoints back the dashboard - `PATCH /api/v1/account/profile`, `GET/DELETE /api/v1/account/sessions[/{id}]`, `POST /api/v1/account/change-password` - all identity-derived server-side only, all reporting a not-yours target as `404` (never `403`). See [DEV_NOTES.md](DEV_NOTES.md#account-ui--own-account-dashboard-epic-e3-stage-2b-521214232026-07-10) for the full design rationale. **Organisations and WebAuthn are not yet built. The admin area has started (see "Admin area" below). Self-service API-key management, single sign-on, and GDPR/CCPA data-subject rights now ARE built - see the sections below.**
 
 ### 📦 GDPR/CCPA Data-Subject Rights (#37, epic #52)
 
 The account dashboard's new "Your data" section gives every user two self-service tools: **Download my data** (a plain download link, `GET /api/v1/account/export` under the hood) produces a complete JSON export of your OWN profile, saved QR codes (payload included, never the rendered image), sessions (masked, never a replayable token), subscriptions + payments, linked SSO providers, and API keys - secrets/hashes/tokens are never included. **Delete my account** (`POST /api/v1/account/erase`) requires your current password and a typed `DELETE` confirmation, then **anonymizes** your account rather than hard-deleting it: your email/name/avatar/password are cleared, every session/API key/SSO link is revoked, and every saved code is removed - while subscription and payment records are retained (detached from your identity) for the legally-required financial/audit period. Both endpoints are session-only (an API key cannot export or erase an account, matching every other `account/*` route) and strictly own-account-only (there is no field anywhere in either request that can target a different account). See [DEV_NOTES.md](DEV_NOTES.md#account-erasure-anonymize-now-hard-purge-later-37-epic-52-2026-07-10) for the full anonymize-vs-hard-purge model and the owner-run purge runbook, and [privacy.php](web/CueRCode.net/public_html/privacy.php) Section 11.1 for the public-facing rights disclosure.
+
+## 🛡️ Admin area (task 7n, #31) - started
+
+A private control panel at `/admin/`, for **Global Admins** only. Today it has an overview (what is and is not set up - secrets are only ever shown as "Set" or "Not set"), a **Confirm password** page and a **Database upgrades** page. Anyone else gets the ordinary "page not found" page. Every change needs the password typed again within the last 15 minutes of activity (60 at most), every change is written to a permanent change log (`tblAdminAuditLog`, never holding secret values), and admin pages are never cached, framed or listed by search engines. There is no admin API. The first Global Admin is made on the server command line (`_includes/cli/admin_access.php`); a Global Admin cannot erase their own account. The settings screen for the email, sign-in, bot-protection and PayPal keys is next (phase 1C). Runbook: [DEV_NOTES.md](DEV_NOTES.md) "Admin area and the first Global Admin".
 
 ## 🔓 Single Sign-On (Epic E2)
 

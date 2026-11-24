@@ -1,18 +1,20 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-11-18 (PHP 8.6 readiness guard rails, #151; earlier: issue audit + documentation refresh, #103)
+**📅 Last Updated:** 2026-11-24 (admin area: Global Admin access, task 7n Phase 1B, #31; database upgrades, Phase 1A, #113; earlier: PHP 8.6 readiness guard rails, #151)
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 **🌿 Branch cadence:** `work-in-progress → alpha → beta → release-candidate → main` (four-tier; scanning + Dependabot + security-fix propagation cover all four branches, #64)
 
 ---
 
-## 🧭 Current position at a glance (2026-09-23; polish update 2026-10-05)
+## 🧭 Current position at a glance (2026-09-23; polish update 2026-10-05; admin update 2026-11-24)
+
+**2026-11-24 (task 7n, #31, #113):** the admin & commerce build has started. **Phase 1A** (database upgrades): numbered migrations, `install.sql` now safe to run twice, `migrate.php` command-line tool. **Phase 1B** (this update, committed locally, not yet reviewed or pushed): a private `/admin/` area for Global Admins (overview, confirm password, database upgrades), password re-confirmation before any change, a permanent change log, the `admin_access.php` command-line tool to make the first Global Admin, and Global Admins can no longer erase their own account. **Next: Phase 1C**, the settings screen where the owner types in the email, sign-in, bot-protection and PayPal keys. Whole suite 3739/3739 on PHP 8.5.12.
 
 **2026-10-05 (#137):** a "does it look AI-made?" sweep fixed the blocked Bootstrap stylesheet (wrong SRI hash), the clipped QR-type grid, the missing logo, share/canonical tags, invisible "Coming soon" badges, contrast failures, internal notes on developer pages and error/empty states; `tools/check_site_polish.php` now runs in CI. **Still needs the owner:** the nine `[TEMPLATE: ...]` gaps in Terms/Privacy, the live database's tagline/description/plan-blurb settings, and switching on the HTTPS redirect at go-live.
 
 
-**What's built (in code, tests passing):** the whole QR engine (26 QR types + 11 barcode types, 6 output formats), the responsive/accessible web UI (dark/light mode, colourblind palettes, skip links), the full REST API (30 OpenAPI paths, 93 catalogued error codes), accounts (registration, login, password reset, sessions, saved codes, self-service API keys, data export/erasure), a subscription/plan gating engine, Microsoft 365 + Google SSO, the developer portal, and CI scanning (CodeQL/Semgrep/actionlint/Dependabot) on all four tier branches. All 2185 automated tests pass and all 77 tracked web PHP files pass `php -l`.
+**What's built (in code, tests passing):** the whole QR engine (26 QR types + 11 barcode types, 6 output formats), the responsive/accessible web UI (dark/light mode, colourblind palettes, skip links), the full REST API (30 OpenAPI paths, 94 catalogued error codes), accounts (registration, login, password reset, sessions, saved codes, self-service API keys, data export/erasure), a subscription/plan gating engine, Microsoft 365 + Google SSO, the developer portal, and CI scanning (CodeQL/Semgrep/actionlint/Dependabot) on all four tier branches. All 2185 automated tests pass and all 77 tracked web PHP files pass `php -l`.
 
 **Built but switched off** (code exists, kill-switches are off until the owner acts):
 - SSO (Microsoft 365 #19, Google #20) — needs the owner to register OAuth apps and enter credentials.
@@ -30,9 +32,9 @@
 ## 🕳️ Known gaps found in the 2026-09-23 audit
 
 - The email queue runner exists (#112) but has never run on the live server - the owner still needs to add the DreamHost cron job and do a test send.
-- There is no admin screen to enter encrypted settings (#31/#115).
+- There is no admin screen to enter encrypted settings yet (#31/#115). The admin area itself and its access control now exist (task 7n Phase 1B, 2026-11-24); the settings screen is Phase 1C.
 - Predefined logos have no PNG copies (#65).
-- `install.sql` can't safely run twice, and there is no upgrade script (#113; also #70/#11).
+- ~~`install.sql` can't safely run twice, and there is no upgrade script~~ - fixed by task 7n Phase 1A (2026-11-23, #113 item 5): numbered migrations, `migrate.php`, and `/admin/upgrades/` (Phase 1B).
 - Email/password sign-ups, logins and password resets are not recorded as their own events in the activity log — only a generic "API call" row with no user or outcome when they come through the API (#114; also #12/#14/#15).
 - No bot protection (#114; also #47 DS-8/#12).
 - Deploy doesn't upload the third-party libraries or the CDN fallback copies, and no credentials template is in the repo (#113; also #1/#7/#36/#44).
@@ -164,7 +166,7 @@ Verify all Phase 1 features work correctly on the live Dreamhost shared hosting 
 
 | Issue | Task | Status |
 | --- | --- | --- |
-| [#31](https://github.com/MWBMPartners/CueRCode/issues/31) | Admin dashboard: Global Admin control panel | 📋 Not started (2026-09-23 audit; the encrypted-settings screen is also tracked as #115). This is now blocking the owner from entering encrypted credentials for email (#29), SSO (#55), bot protection and PayPal — needed: admin-only dashboard, error/activity log viewers with filters, settings editor (including encrypted values), user/organisation/QR-type/API-key management, health view |
+| [#31](https://github.com/MWBMPartners/CueRCode/issues/31) | Admin dashboard: Global Admin control panel | 🔄 Started (task 7n, plan `.claude/plans/7n-admin-commerce-plan.md`): Phase 1A database upgrades done (2026-11-23); Phase 1B Global Admin access - `/admin/` overview, confirm password, database upgrades, change log, `admin_access.php` CLI - built 2026-11-24, review owed; settings editor is Phase 1C. Earlier status: (2026-09-23 audit; the encrypted-settings screen is also tracked as #115). This is now blocking the owner from entering encrypted credentials for email (#29), SSO (#55), bot protection and PayPal — needed: admin-only dashboard, error/activity log viewers with filters, settings editor (including encrypted values), user/organisation/QR-type/API-key management, health view |
 | [#32](https://github.com/MWBMPartners/CueRCode/issues/32) | Bulk QR code generation | 🔄 Addressed in code (cycle 8, 2026-06-29) — POST /api/v1/bulk-generate + accessible UI panel + ZIP streaming; accessibility-preset parity closed (#57, FG-033 close-out, 2026-07-18) — `preset`/`scan_distance_cm` now enforced per item in both the ZIP loop and the Avery-sheet fork (manifest failure / blank slot, not a batch 422), CSV reserved-column list completed to 20/20 keys; `tests/test_bulk.php` +33 assertions; 2185/2185 suite green; needs live-server verification (#18). Gaps (2026-09-23 audit, keep open): no `.xlsx` support (CSV only), no column-mapping screen, no real progress bar (single spinner for the whole batch), no per-item style overrides in the web screen beyond JSON, and no queue for large batches (they are simply capped) — follow-up #115 |
 | [#33](https://github.com/MWBMPartners/CueRCode/issues/33) | QR code analytics and scan tracking | 📋 Not started (2026-09-23 audit) — schema-only. `tblQRScans` (install.sql Table 28: `ipHash` SHA-256+pepper never raw IP, coarse UA fields, `scanChannel`/`outcome`) exists but is completely unwritten — the write path is the future `/r/` route's fire-and-forget accounting step (Stage S2/S3), not built this cycle. No dashboard, no GeoLite2, no API endpoint yet |
 | [#34](https://github.com/MWBMPartners/CueRCode/issues/34) | Internationalisation (i18n) and translation framework | 📋 Not started (2026-09-23 audit) — all page text is written directly in English; nothing built (translation function, language files/database, language picker, saved preference, admin translation editor, right-to-left layout). Blocked on owner go-ahead |

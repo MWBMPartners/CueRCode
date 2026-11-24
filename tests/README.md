@@ -40,13 +40,16 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-18, #151; earlier #112, #122/#123/#126)
+## Current suite (2026-11-24, task 7n Phase 1B #31; earlier #151, #112, #122/#123/#126)
+
+Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 
 | File | Assertions |
 | --- | --- |
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
 | `test_account_ui.php` | 70 |
+| `test_admin_access.php` | 423 |
 | `test_api_keys.php` | 108 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -54,25 +57,28 @@ set.
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
 | `test_core.php` | 143 |
+| `test_curl_content_decoding_guard.php` | 3 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
 | `test_email_queue_runner.php` | 476 |
 | `test_emoji_logo.php` | 123 |
-| `test_error_catalogue.php` | 132 |
+| `test_error_catalogue.php` | 134 |
 | `test_features.php` | 91 |
 | `test_log_mask.php` | 56 |
+| `test_migrations.php` | 386 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
+| `test_php86_adoption.php` | 34 |
+| `test_php86_compat_scan.php` | 76 |
 | `test_php_lint_script.php` | 6 |
-| `test_php86_compat_scan.php` | 57 |
 | `test_php_runtime_guards.php` | 24 |
 | `test_pricing.php` | 107 |
-| `test_pricing_flex.php` | 50 |
+| `test_pricing_flex.php` | 51 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| **Total** | **2871** |
+| **Total** | **3739** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -205,6 +211,40 @@ prints PASS/FAIL per scenario. Exit code 0 means every scenario passed. Last
 run 2026-11-23 (task 7n Phase 1A part 2 code review fixes, #113 item 5, #70):
 all scenarios passed on MySQL 8.0.46.
 
+## Optional real-database check (Global Admin access)
+
+`tests/test_admin_access.php` proves the admin access DECISIONS without a
+database. `tests/integration/admin_access_real_mysql.php` proves the rest
+against a real server, using one throwaway database built from
+`install.sql` + `seed_data.sql`: the command-line tool refusing to change a
+role before the upgrades; `/admin/upgrades/`'s engine applying the upgrades
+before the change log table exists (audit entry falls back to the activity
+log, then `schema.migrate` lands in the new table); `grant --activate` on a
+pending account (with its `admin.grant` row), the typed confirmation, the
+refusals (suspended, deleted, no password, unknown), `list` with partly
+hidden addresses, `revoke` and the last-admin rule (all through the REAL
+`_includes/cli/admin_access.php` as a child process); the gate's fresh
+database read; exactly one `admin.first_seen` row; the erasure guard (409
+`GLOBAL_ADMIN_CANNOT_ERASE`); the password re-confirmation counting toward
+the account lock-out; and no typed password in any log table. Same rules as
+above: throwaway container only, the database name must start with
+`cuercode_it_` (it uses `<name>_admin` and drops it afterwards), and it never
+reads `_auth_keys/auth_creds.php`.
+
+```bash
+docker run -d --rm --name cuercode-it -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+  -p 127.0.0.1:33114:3306 mysql:8.0.36
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33114 \
+CUERCODE_IT_DB_NAME=cuercode_it_p1b CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  php tests/integration/admin_access_real_mysql.php
+docker stop cuercode-it
+```
+
+Exit code 0 means every scenario passed. Last run 2026-11-24 (task 7n Phase
+1B): all 11 scenarios (79 checks) passed on MySQL 8.0.36, MySQL 8.4.13 and
+MariaDB 11.4.13. MariaDB 10.11 (named in the plan) was not available locally
+and was not run.
+
 ## Syntax-checking the harness
 
 ```bash
@@ -223,7 +263,9 @@ tests/
 ├── lib/
 │   └── assert.php     # tiny assertion library + global results collector
 ├── integration/       # OPTIONAL checks that need a real (throwaway) database - NOT run by run.php
-│   └── email_queue_real_mysql.php
+│   ├── admin_access_real_mysql.php
+│   ├── email_queue_real_mysql.php
+│   └── migrations_real_mysql.php
 └── test_*.php         # individual characterization test files (added per cycle)
 ```
 

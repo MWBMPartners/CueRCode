@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Admin area: Global Admin access, password re-confirmation, change log (2026-11-24, task 7n Phase 1B, #31)
+
+- **New private admin area at `/admin/`**, for Global Admins only (`tblUsers.roleID = 1`, account
+  active, email checked - read fresh from the database on every request). Three pages: an
+  **overview** (who you are, whether editing is unlocked, waiting database upgrades, email set-up
+  and queue, sign-in providers, the three charging switches shown "Off (locked)", number of
+  admins - secrets only ever shown as "Set" / "Not set"), **Confirm password** and **Database
+  upgrades** (applies waiting upgrades without the command line).
+- Not signed in → sent to sign in. Signed in but not a Global Admin → the ordinary "page not
+  found" page, plus an `admin_denied` activity-log row.
+- **Every change needs the password again** within 15 minutes of activity and at most every 60
+  (two settings). The unlock belongs to that sign-in only; 5 wrong passwords sign you out; wrong
+  passwords count toward the normal account lock-out.
+- **Change log** `tblAdminAuditLog` (from migration 0002) is now written: `reauth.*`,
+  `admin.grant` / `admin.revoke` / `admin.first_seen`, `schema.migrate`. Secret values are never
+  written.
+- **First Global Admin** is made on the server: new command-line tool
+  `_includes/cli/admin_access.php` (`grant <email> [--activate]`, `list`, `revoke <email>`;
+  refuses the last admin). phpMyAdmin fallback in DEV_NOTES.md.
+- `/admin/` pages send `Cache-Control: no-store`, `X-Frame-Options: DENY`, `X-Robots-Tag:
+  noindex, nofollow` and a content policy with `frame-ancestors 'none'` (new
+  `public_html/admin/.htaccess`, and from PHP too). No admin API; no inline scripts (new
+  `assets/js/cuercode-admin.js`, comfort only - everything works with JavaScript off).
+- An **"Admin"** item in the account menu, for Global Admins only (`currentUser()` now also
+  returns `roleID`).
+- **API change:** `POST /api/v1/account/erase` (and "Delete my account") now refuses a Global
+  Admin with **409 `GLOBAL_ADMIN_CANNOT_ERASE`**, nothing changed. `openapi.json` updated (94
+  catalogued error codes).
+- Tests: new `tests/test_admin_access.php` (423 assertions, including four static guards: the
+  admin gate comes first on every admin page, `roleID` is only written by the admin code, no
+  `/admin` API route, no inline scripts) and `tests/integration/admin_access_real_mysql.php`
+  (79 checks; passed on MySQL 8.0.36, 8.4.13 and MariaDB 11.4.13). Whole suite 3739/3739 on
+  PHP 8.5.12.
+
+### Added - Database upgrades: numbered migrations, `install.sql` safe to run twice (2026-11-23, task 7n Phase 1A, #113 item 5, #70)
+
+- `install.sql` and `seed_data.sql` are now a frozen starting point. Every later database change
+  is a numbered file in `_includes/sql/migrations/`, applied in order and recorded in the new
+  `tblSchemaMigrations` table; each step checks whether it is already done, so it is safe to
+  run twice and never overwrites values you have changed.
+- Ways to run them: the web installer (fresh installs), `php _includes/cli/migrate.php
+  --status | --dry-run | --apply`, and (since Phase 1B) `/admin/upgrades/`.
+- Migration 0001 moves the #70 price snapshot columns out of `install.sql` (so `install.sql`
+  can run twice); 0002 adds `tblAdminAuditLog` and the admin, PayPal, hCaptcha, VAT, refund and
+  trial settings. The installer no longer re-runs `seed_data.sql` on a database that already has
+  its starting rows. Runbook: DEV_NOTES.md "Changing the database from now on".
+
 ### Changed - PHP 8.6 `clamp()` adopted through a safe helper (2026-11-18, #151)
 
 - New `_functions/fn_compat.php` with `cuercodeClampInt($value, $min, $max)`: uses
