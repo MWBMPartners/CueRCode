@@ -926,8 +926,15 @@ function logoutCurrentUser(): array
  * opportunistically bumps tblUserSessions.lastSeenAt (best-effort, failure
  * is non-fatal).
  *
- * @return array{userID: int, email: string, displayName: string|null, avatarPath: string|null}|null
+ * @return array{userID: int, email: string, displayName: string|null, avatarPath: string|null, roleID: int|null}|null
  *         The current user, or null if there is no valid authenticated session
+ *
+ * 🎭 'roleID' (task 7n Phase 1B, #31) is the platform-wide role from
+ *    tblUsers.roleID (NULL for ordinary accounts). It is returned ONLY so
+ *    header.php can show an "Admin" menu item without a second query. It is
+ *    a convenience, never a permission: every admin page re-checks the role,
+ *    status and email verification fresh with requireGlobalAdminPage()
+ *    (fn_admin.php).
  *
  * @see resolveAvatarUrl() - turns 'avatarPath' (added Epic E3 stage 2b, #23)
  *      into a displayable <img src> per the ProjectBrief §11.4 priority chain
@@ -950,7 +957,7 @@ function currentUser(): ?array
 
     try {
         $stmt = dbQuery(
-            'SELECT s.`userID`, s.`expiresAt`, s.`revokedAt`, u.`email`, u.`displayName`, u.`avatarPath`, u.`status` '
+            'SELECT s.`userID`, s.`expiresAt`, s.`revokedAt`, u.`email`, u.`displayName`, u.`avatarPath`, u.`status`, u.`roleID` '
             . 'FROM `tblUserSessions` s '
             . 'INNER JOIN `tblUsers` u ON u.`userID` = s.`userID` '
             . 'WHERE s.`sessionID` = ? LIMIT 1',
@@ -990,11 +997,18 @@ function currentUser(): ?array
         // non-fatal
     }
 
+    // 🎭 NULL stays NULL (an ordinary account); anything else becomes a whole number.
+    $roleID = null;
+    if (isset($row['roleID']) && $row['roleID'] !== null) {
+        $roleID = (int) $row['roleID'];
+    }
+
     return [
         'userID'      => (int) $row['userID'],
         'email'       => (string) $row['email'],
         'displayName' => $row['displayName'],
         'avatarPath'  => $row['avatarPath'],
+        'roleID'      => $roleID,
     ];
 }
 

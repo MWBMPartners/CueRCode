@@ -219,6 +219,27 @@ if ($headerCurrentUser !== null) {
     $headerUserDisplayName = '';
     $headerAvatarUrl       = '/assets/img/branding/avatar-default.svg';
 }
+
+// ==============================================================================
+// 🛡️ "Admin" menu item - Global Admins only (task 7n Phase 1B, #31)
+// ==============================================================================
+// currentUser() returns the account's platform role (roleID). Only when SOME
+// role is set (staff accounts - rare) is fn_admin.php loaded to ask whether it
+// is the Global Admin role, so ordinary visitors never load the admin code.
+// This link is only a convenience: every admin page checks access again,
+// fresh from the database, with requireGlobalAdminPage().
+// ==============================================================================
+$headerShowAdminLink = false;
+
+if ($headerCurrentUser !== null && isset($headerCurrentUser['roleID']) && $headerCurrentUser['roleID'] !== null) {
+    $headerAdminFunctions = CUERCODE_FUNCTIONS_DIR . 'fn_admin.php';
+    if (is_file($headerAdminFunctions)) {
+        require_once $headerAdminFunctions;
+    }
+    if (function_exists('adminRoleIsGlobalAdmin') && adminRoleIsGlobalAdmin($headerCurrentUser['roleID'])) {
+        $headerShowAdminLink = true;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en-GB" data-bs-theme="auto">
@@ -567,6 +588,13 @@ if ($headerCurrentUser !== null) {
                                     <i class="fa-solid fa-layer-group me-2" aria-hidden="true"></i>Saved codes
                                 </a>
                             </li>
+                            <?php if ($headerShowAdminLink) { ?>
+                            <li role="presentation">
+                                <a class="dropdown-item" role="menuitem" href="/admin/">
+                                    <i class="fa-solid fa-user-shield me-2" aria-hidden="true"></i>Admin
+                                </a>
+                            </li>
+                            <?php } ?>
                             <li role="presentation"><hr class="dropdown-divider"></li>
                             <li role="presentation">
                                 <form method="POST" action="/account/" class="px-3">

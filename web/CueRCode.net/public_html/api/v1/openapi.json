@@ -3120,7 +3120,7 @@
                     "Account"
                 ],
                 "summary": "Permanently erase your own account by anonymization (GDPR/CCPA)",
-                "description": "Erases the caller's own account by anonymization, never a hard delete of the record: the email is replaced with a non-reversible `deleted-<userID>@deleted.invalid` placeholder, the display name becomes 'Deleted user', the first name, last name and avatar are cleared (the avatar file is also deleted), the password is cleared (login becomes impossible), and the account status becomes 'deleted' with an erasure timestamp. All sessions are revoked, all API keys deactivated, all linked SSO providers unlinked, and all saved QR codes soft-deleted - all inside one database transaction. Subscription/payment records are retained (for financial/audit obligations) but carry no PII beyond the now-anonymized account reference. Requires the caller's current password (wrong password -> `401 INVALID_PASSWORD`, nothing is changed) and an explicit `\"confirm\": true` in the request body (`400 CONFIRMATION_REQUIRED` otherwise). Ends the session on success. **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
+                "description": "Erases the caller's own account by anonymization, never a hard delete of the record: the email is replaced with a non-reversible `deleted-<userID>@deleted.invalid` placeholder, the display name becomes 'Deleted user', the first name, last name and avatar are cleared (the avatar file is also deleted), the password is cleared (login becomes impossible), and the account status becomes 'deleted' with an erasure timestamp. All sessions are revoked, all API keys deactivated, all linked SSO providers unlinked, and all saved QR codes soft-deleted - all inside one database transaction. Subscription/payment records are retained (for financial/audit obligations) but carry no PII beyond the now-anonymized account reference. Requires the caller's current password (wrong password -> `401 INVALID_PASSWORD`, nothing is changed) and an explicit `\"confirm\": true` in the request body (`400 CONFIRMATION_REQUIRED` otherwise). A Global Admin account cannot be erased here (`409 GLOBAL_ADMIN_CANNOT_ERASE`, nothing is changed): its admin access must be removed first. Ends the session on success. **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes.",
                 "operationId": "eraseAccount",
                 "security": [
                     {
@@ -3228,13 +3228,23 @@
                         }
                     },
                     "409": {
-                        "description": "This account has already been erased (a defensive, non-mutating fail-safe - should not normally be reachable, since an already-erased account cannot authenticate at all)",
+                        "description": "Nothing was changed. Either the account is a Global Admin (`GLOBAL_ADMIN_CANNOT_ERASE` - its admin access must be removed first, by another Global Admin or on the server command line, and the last Global Admin can never be removed; checked before the password), or the account has already been erased (`ALREADY_ERASED` - a defensive, non-mutating fail-safe that should not normally be reachable, since an already-erased account cannot authenticate at all)",
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/ErrorResponse"
                                 },
                                 "examples": {
+                                    "global_admin": {
+                                        "summary": "The account is a Global Admin",
+                                        "value": {
+                                            "success": false,
+                                            "message": "This account is a Global Admin, so it cannot be deleted here. Its admin access must be removed first, by another Global Admin or on the server command line.",
+                                            "data": {},
+                                            "error_code": "GLOBAL_ADMIN_CANNOT_ERASE",
+                                            "timestamp": "2026-11-24T12:00:00+00:00"
+                                        }
+                                    },
                                     "already_erased": {
                                         "summary": "Already erased",
                                         "value": {
@@ -5204,7 +5214,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, ERASE_FAILED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are reserved for pay-as-you-go credit consumption, which is not available yet, so no endpoint returns them today), INVALID_DESTINATION, REDIRECT_SUSPENDED (the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates the destination and rejects an abuse-suspended redirect). The full, exact, machine-readable set is the x-error-codes array on this schema.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, GLOBAL_ADMIN_CANNOT_ERASE, ERASE_FAILED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are reserved for pay-as-you-go credit consumption, which is not available yet, so no endpoint returns them today), INVALID_DESTINATION, REDIRECT_SUSPENDED (the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates the destination and rejects an abuse-suspended redirect). The full, exact, machine-readable set is the x-error-codes array on this schema.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -5260,6 +5270,7 @@
                     "FILE_NOT_FOUND",
                     "FILE_SAVE_FAILED",
                     "GENERATION_FAILED",
+                    "GLOBAL_ADMIN_CANNOT_ERASE",
                     "HANDLER_NOT_FOUND",
                     "HASH_FAILED",
                     "INSUFFICIENT_SCOPE",

@@ -1,0 +1,43 @@
+# ==============================================================================
+# 🛡️ CueRCode - Admin area (/admin/) security headers
+# ==============================================================================
+# Path: public_html/admin/.htaccess
+#
+# Extra protection for the private Global Admin area (task 7n Phase 1B,
+# plan §7.4). Everything else (rewriting, error pages, the other security
+# headers) still comes from public_html/.htaccess.
+#
+#   - X-Frame-Options DENY + CSP frame-ancestors 'none': no other page, not
+#     even one on this site, may show an admin page inside a frame
+#     (clickjacking).
+#   - Cache-Control no-store: browsers and proxies never keep a copy of an
+#     admin page.
+#   - X-Robots-Tag noindex, nofollow: search engines never list an admin page.
+#   - The Content-Security-Policy is the SITE policy from public_html/.htaccess
+#     with frame-ancestors 'none'. Scripts still come only from this site and
+#     https://cdn.jsdelivr.net - no new script source. Keep the two in step.
+#
+# "Header set" replaces the value public_html/.htaccess set for the same
+# header, so each header is sent once. The admin PHP code
+# (adminSendSecurityHeaders() in _functions/fn_admin.php) sends the same
+# headers itself too, in case a host ignores these lines.
+#
+# The admin path is deliberately NOT listed in robots.txt: that would
+# advertise it.
+#
+# @package     CueRCode
+# @copyright   2025–2026 MWBM Partners Ltd
+# @since       2026-11-24 (task 7n Phase 1B, #31)
+# @see         https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/frame-ancestors
+# @see         https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control
+# ==============================================================================
+
+<IfModule mod_headers.c>
+    Header set X-Frame-Options "DENY"
+    Header set Cache-Control "no-store"
+    Header set X-Robots-Tag "noindex, nofollow"
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+</IfModule>
+
+# 📁 No folder listings
+Options -Indexes

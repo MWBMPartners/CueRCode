@@ -246,7 +246,7 @@ function polishResolveAddress(string $publicRoot, string $address): string
 // ==============================================================================
 $publicPhp   = polishListFiles($publicRoot, ['php']);
 $templateFiles = $publicPhp;
-foreach (['header.php', 'footer.php', 'developers_nav.php'] as $sharedTemplate) {
+foreach (['header.php', 'footer.php', 'developers_nav.php', 'admin_nav.php'] as $sharedTemplate) {
     $templateFiles[] = $includesRoot . $ds . $sharedTemplate;
 }
 $templateFiles[] = $landingRoot . $ds . 'index.php';

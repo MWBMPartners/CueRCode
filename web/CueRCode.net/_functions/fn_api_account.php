@@ -1569,6 +1569,13 @@ function buildErasedAccountEmail(int $userID): string
  *     identity by `handleAccountErase()` - there is no "target user"
  *     parameter anywhere in this function or its caller that could ever
  *     erase a DIFFERENT account.
+ *   - 🛡️ A GLOBAL ADMIN cannot erase their own account here (task 7n Phase
+ *     1B, plan §6.5): it is refused with 409 GLOBAL_ADMIN_CANNOT_ERASE and
+ *     nothing is changed. Their admin access must be removed first (by
+ *     another Global Admin, or with _includes/cli/admin_access.php revoke),
+ *     and the LAST Global Admin can never be removed - so the site can
+ *     never be left with nobody able to run it. Checked before the password,
+ *     so the answer is the same whatever password was typed.
  *
  * @param int    $userID          The caller's own tblUsers.userID (already
  *                                resolved server-side - never client-supplied).
@@ -1615,7 +1622,7 @@ function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): 
     // ------------------------------------------------------------------
     try {
         $lookupStmt = dbQuery(
-            "SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ? AND `status` != 'deleted' LIMIT 1",
+            "SELECT `passwordHash`, `roleID` FROM `tblUsers` WHERE `userID` = ? AND `status` != 'deleted' LIMIT 1",
             'i',
             [$userID]
         );
@@ -1647,6 +1654,34 @@ function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): 
             'message'   => 'This account has already been erased.',
             'data'      => [],
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // 🛡️ Step 1b: a Global Admin cannot erase their own account (task 7n
+    // Phase 1B, plan §6.5). fn_admin.php is loaded only when the account
+    // has SOME role set (staff - rare), to ask adminRoleIsGlobalAdmin();
+    // if that file is missing, ANY role set is refused (fail closed).
+    // ------------------------------------------------------------------
+    if ($row['roleID'] !== null) {
+        $adminFunctionsPath = __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin.php';
+        if (is_file($adminFunctionsPath)) {
+            require_once $adminFunctionsPath;
+        }
+
+        $isGlobalAdmin = true;
+        if (function_exists('adminRoleIsGlobalAdmin')) {
+            $isGlobalAdmin = adminRoleIsGlobalAdmin($row['roleID']);
+        }
+
+        if ($isGlobalAdmin) {
+            return [
+                'success'   => false,
+                'httpCode'  => 409,
+                'errorCode' => 'GLOBAL_ADMIN_CANNOT_ERASE',
+                'message'   => 'This account is a Global Admin, so it cannot be deleted here. Its admin access must be removed first, by another Global Admin or on the server command line.',
+                'data'      => [],
+            ];
+        }
     }
 
     $storedHash = (string) $row['passwordHash'];

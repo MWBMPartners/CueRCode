@@ -494,9 +494,11 @@ assertEquals(
 );
 
 assertEquals(
-    93,
+    94,
     count($xErrorCodes),
-    'ErrorResponse.x-error-codes has exactly 93 entries (the 91 pre-existing codes '
+    'ErrorResponse.x-error-codes has exactly 94 entries (GLOBAL_ADMIN_CANNOT_ERASE - '
+    . 'task 7n Phase 1B, fn_api_account.php eraseUserAccount(): a Global Admin cannot '
+    . 'erase their own account - plus the 93 earlier codes: the 91 pre-existing codes '
     . '(83 = 76 original + HANDLER_NOT_FOUND, UNKNOWN_HANDLER, FEATURE_NOT_AVAILABLE, '
     . 'BULK_AVERY_ALL_FAILED, BULK_PARSE_ERROR, BULK_VALIDATION_ERROR, JSON_ENCODE_ERROR, '
     . 'plus the 8 #70 PAYG credit codes: CREDIT_INSUFFICIENT_BALANCE, '
@@ -547,6 +549,12 @@ assertTrue(
     isset($codesByFile['fn_api_account.php']['ACCOUNT_MANAGEMENT_FORBIDDEN']),
     'ACCOUNT_MANAGEMENT_FORBIDDEN is found in fn_api_account.php (session-only account '
     . 'management guard, F-026)'
+);
+
+assertTrue(
+    isset($codesByFile['fn_api_account.php']['GLOBAL_ADMIN_CANNOT_ERASE']),
+    'GLOBAL_ADMIN_CANNOT_ERASE is found in fn_api_account.php (a Global Admin cannot '
+    . 'erase their own account - task 7n Phase 1B, plan §6.5)'
 );
 
 assertTrue(
