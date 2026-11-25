@@ -85,7 +85,12 @@ foreach (['email_queue_retention_days', 'email_queue_failed_retention_days'] as 
     assertEquals('1', $asValidate($asKey, '1')['value'], $asKey . ' accepts 1');
     assertEquals('3650', $asValidate($asKey, '3650')['value'], $asKey . ' accepts 3650');
     assertEquals('30', $asValidate($asKey, ' 30 ')['value'], $asKey . ' trims and accepts 30');
-    assertEquals('7', $asValidate($asKey, '007')['value'], $asKey . ' normalises 007 to 7');
+    // 🔢 Strict, canonical digits only: a leading zero is refused, whatever follows it.
+    foreach (['007', '01', '000030', '030', '00'] as $asLeadingZero) {
+        $asZeroResult = $asValidate($asKey, $asLeadingZero);
+        assertFalse($asZeroResult['ok'], $asKey . ' refuses ' . var_export($asLeadingZero, true) . ' (a leading zero)');
+        assertContains('no zero at the start', $asZeroResult['error'], $asKey . ' says why ' . var_export($asLeadingZero, true) . ' is refused');
+    }
 }
 
 // 🔢 Other whole numbers at their bounds.
@@ -237,7 +242,19 @@ foreach ([$asLeakProbe . "\n" . $asLeakProbe, str_repeat($asLeakProbe, 200)] as 
 // ✅ Section 3: the registry against the seeded rows
 // ==============================================================================
 $asSeedSql   = (string) file_get_contents($asSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'sql' . DIRECTORY_SEPARATOR . 'seed_data.sql');
-$asMigration = (string) file_get_contents($asSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'sql' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '0002_admin_audit_log_and_settings.php');
+// 🗂️ EVERY migration is read (not only 0002): a later migration that seeds a row
+//    the registry calls "rowOptional" would make that flag wrong, and a later
+//    one that adds a row must agree with the registry's group and type too.
+$asMigration = '';
+$asMigrationFiles = glob($asSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'sql' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '*.php');
+if (!is_array($asMigrationFiles)) {
+    $asMigrationFiles = [];
+}
+sort($asMigrationFiles);
+foreach ($asMigrationFiles as $asMigrationFile) {
+    $asMigration .= "\n" . (string) file_get_contents($asMigrationFile);
+}
+assertTrue(count($asMigrationFiles) >= 3, 'the test reads every migration file (' . count($asMigrationFiles) . ' found)');
 
 $asSeeded = [];   // key => [group, type, sensitive, editable]
 if (preg_match_all("/\\('([a-z_]+)',\\s*'([A-Za-z0-9_]+)',\\s*'(?:[^']|'')*',\\s*'(string|integer|float|boolean|json|color|url|path|email)',\\s*([01]),\\s*([01]),/", $asSeedSql, $asSeedMatches, PREG_SET_ORDER)) {
@@ -261,6 +278,9 @@ foreach ($asRegistry as $asKey => $asField) {
     if ($asField['rowOptional'] === true) {
         $asOptionalKeys[] = $asKey;
         assertFalse(isset($asSeeded[$asKey]), $asKey . ' is the documented exception: it has no seeded row (the screen creates it)');
+        // 🔎 Belt and braces: the name must not appear AT ALL in the seed file or any
+        //    migration (a differently written INSERT would slip past the pattern above).
+        assertFalse(str_contains($asSeedSql . $asMigration, $asKey), $asKey . ' is not mentioned in seed_data.sql or any migration');
         continue;
     }
     assertTrue(isset($asSeeded[$asKey]), $asKey . ' exists in seed_data.sql or migration 0002');
@@ -275,7 +295,15 @@ foreach ($asRegistry as $asKey => $asField) {
     assertTrue($asField['help'] !== '' && $asField['label'] !== '' && $asField['description'] !== '', $asKey . ' has a label, help text and description');
     assertTrue(isset(adminSettingsSections()[$asField['section']]), $asKey . ' belongs to a real section');
 }
-assertEquals(['trusted_proxy_ips'], $asOptionalKeys, 'only trusted_proxy_ips may lack a seeded row');
+assertEquals(
+    [
+        'trusted_proxy_ips',
+        'verification_resend_min_gap_seconds', 'verification_resend_daily_cap', 'verification_resend_ip_per_hour',
+        'password_reset_request_min_gap_seconds', 'password_reset_request_daily_cap', 'password_reset_request_ip_per_hour',
+    ],
+    $asOptionalKeys,
+    'only trusted_proxy_ips and the six emailed-link limits may lack a seeded row'
+);
 assertEquals(8, count(adminSettingsSections()), 'there are eight sections (plan §7.2)');
 
 // 🔐 Every seeded secret is on the screen, or deliberately not (runtime caches, SIGNula, inert).
@@ -585,6 +613,12 @@ $asSensitiveChecks = [
     ['fn_admin_settings.php', 'function adminSettingsCheckSecretValue(#[\SensitiveParameter] string $typed'],
     ['fn_admin_settings.php', 'function adminSettingsSecretIntent(#[\SensitiveParameter] string $typed'],
     ['fn_admin_settings.php', 'function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string $raw'],
+    ['fn_admin_settings.php', 'function adminSettingsIsGuid(#[\SensitiveParameter] string $text'],
+    ['fn_admin_settings.php', 'function adminSettingsIsDomainName(#[\SensitiveParameter] string $text'],
+    ['fn_admin_settings.php', 'function adminSettingsProcessSection(string $sectionId, #[\SensitiveParameter] array $post'],
+    ['fn_admin_settings.php', '#[\SensitiveParameter] array $changes, ?string $reason = null): array'],
+    ['fn_config.php', 'function convertValueForStorage(#[\SensitiveParameter] mixed $value'],
+    ['fn_oauth.php', '#[\SensitiveParameter] string $clientSecret,'],
     ['fn_password.php', 'function hashPassword(#[\SensitiveParameter] string $plainPassword'],
     ['fn_password.php', 'function verifyPassword(#[\SensitiveParameter] string $plainPassword'],
     ['fn_password.php', 'function validatePasswordPolicy(#[\SensitiveParameter] string $plainPassword'],
@@ -617,3 +651,245 @@ $asNav = (string) file_get_contents($asSiteRoot . '_includes' . DIRECTORY_SEPARA
 assertContains("'/admin/settings/'", $asNav, 'the admin menu links to the settings page');
 $asOverview = (string) file_get_contents($asSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'index.php');
 assertFalse(str_contains($asOverview, 'which is the next part of the admin area to be built'), 'the overview no longer says the settings screen is still to be built');
+
+
+// ==============================================================================
+// ✅ Section 10: second independent review (I1, I2, M1-M6, nits, extra)
+// ==============================================================================
+
+// 📏 I2 / decision 0015: the editor uses fn_client_ip.php's range check (not a copy).
+foreach (['0.0.0.0/0', '::/0', '0.0.0.0/1', '10.0.0.0/7', '2000::/16'] as $asWideRange) {
+    $asWideResult = $asValidate('trusted_proxy_ips', $asWideRange);
+    assertFalse($asWideResult['ok'], '0015: ' . $asWideRange . ' is refused');
+    assertContains('is too wide', $asWideResult['error'], '0015: ' . $asWideRange . ' is refused with the plain "too wide" message');
+    assertContains('"' . $asWideRange . '"', $asWideResult['error'], '0015: the message names ' . $asWideRange);
+}
+foreach (['10.0.0.0/8', '2606:4700::/32'] as $asFineRange) {
+    assertTrue($asValidate('trusted_proxy_ips', $asFineRange)['ok'], '0015: ' . $asFineRange . ' is accepted');
+}
+assertFalse(str_contains($asFunctions, 'inet_pton'), 'the settings code does not parse ranges itself (it calls clientIpParseRangeList)');
+assertContains('clientIpParseRangeList(', $asFunctions, 'the settings code calls clientIpParseRangeList()');
+
+// 🏷️ M1: every section has its own Save button wording.
+$asSaveLabels = [];
+foreach (adminSettingsSections() as $asSectionKey => $asSection) {
+    assertTrue(isset($asSection['saveLabel']) && $asSection['saveLabel'] !== '', $asSectionKey . ' has its own save button label');
+    assertTrue(str_starts_with($asSection['saveLabel'], 'Save '), $asSectionKey . ' label starts with "Save "');
+    assertTrue($asSection['saveLabel'] === ucfirst($asSection['saveLabel']) && !str_contains($asSection['saveLabel'], 'paypal') && !str_contains($asSection['saveLabel'], '(microsoft'), $asSectionKey . ' label is not a lower-cased section title');
+    $asSaveLabels[] = $asSection['saveLabel'];
+}
+assertEquals(count($asSaveLabels), count(array_unique($asSaveLabels)), 'no two sections share a save button label');
+assertTrue(in_array('Save PayPal settings', $asSaveLabels, true), 'the PayPal button says "Save PayPal settings"');
+assertTrue(in_array('Save prices, VAT and refunds', $asSaveLabels, true), 'the prices button says "Save prices, VAT and refunds"');
+assertTrue(in_array('Save email settings', $asSaveLabels, true), 'the email button says "Save email settings"');
+assertFalse(str_contains($asPage, 'strtolower($settingsSection'), 'the page no longer lower-cases a section title for its button');
+assertContains("\$settingsSection['saveLabel']", $asPage, 'the page uses the section\'s own save label');
+
+// 💬 M2: where the detail really is written.
+assertFalse(str_contains($asFunctions, 'server error log'), 'no message sends the admin to the "server error log" (the detail is in the activity log)');
+assertEquals(2, substr_count($asFunctions, 'More detail is in the activity log'), 'both test actions point at the activity log');
+
+// 🌐 M3: discovery addresses are kept narrow.
+foreach ([
+    'https://127.0.0.1/x', 'https://[::1]/x', 'https://[2001:db8::1]/x', 'https://10.0.0.1/x', 'https://2130706433/x', 'https://127.1/x', 'https://0x7f.0.0.1/x',
+    'https://login.example.com:8443/x', 'https://login.example.com:80/x', 'https://login.example.com:/x', 'https://login.example.com:0443/x',
+    'https://user@login.example.com/x', 'https://user:pw@login.example.com/x', 'https://login.example.com@evil.example.org/x',
+    "https://b\xC3\xBCcher.example/x", "https://\xE4\xBE\x8B\xE3\x81\x88.jp/x", 'https://localhost/x', 'https://intranet/x', 'https://exa_mple.com/x',
+    'https://login.example.com\\@evil.example/x', 'HTTP://login.example.com/x',
+] as $asBadAddress) {
+    assertFalse($asValidate('sso_google_discovery_url', $asBadAddress)['ok'], 'discovery address refuses ' . var_export($asBadAddress, true));
+}
+foreach ([
+    'https://accounts.google.com/.well-known/openid-configuration', 'HTTPS://Login.Example.com/x?y=1#z', 'https://login.example.com:443/x', 'https://xn--bcher-kva.example/x',
+    'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
+] as $asGoodAddress) {
+    assertTrue($asValidate('sso_google_discovery_url', $asGoodAddress)['ok'], 'discovery address accepts ' . var_export($asGoodAddress, true));
+}
+assertContains('IP number', $asValidate('sso_google_discovery_url', 'https://127.0.0.1/x')['error'], 'an IP address is refused with a plain reason');
+assertContains('port', $asValidate('sso_google_discovery_url', 'https://login.example.com:8443/x')['error'], 'a port is refused with a plain reason');
+
+// 🚦 M4: the connection check has its own limit, counted from the audit log.
+assertEquals(10, CUERCODE_ADMIN_TEST_GRAPH_MAX, 'at most 10 connection checks per 10 minutes');
+$asGraphTimes = [];
+for ($asI = 0; $asI < 10; $asI++) {
+    $asGraphTimes[] = $asNow - 100 - $asI;
+}
+assertFalse(adminSettingsTestEmailWindow($asGraphTimes, $asNow, CUERCODE_ADMIN_TEST_GRAPH_MAX)['allowed'], 'the 11th connection check inside 10 minutes is refused');
+assertTrue(adminSettingsTestEmailWindow(array_slice($asGraphTimes, 1), $asNow, CUERCODE_ADMIN_TEST_GRAPH_MAX)['allowed'], 'the 10th connection check is allowed');
+assertContains("adminSettingsRecentAttemptTimes((int) \$admin['userID'], 'setting.test_graph'", $asFunctions, 'the connection check counts the admin\'s own setting.test_graph audit rows');
+assertContains("adminSettingsRecentAttemptTimes((int) \$admin['userID'], 'setting.test_email'", $asFunctions, 'the test email also counts the admin\'s own setting.test_email audit rows');
+$asGraphBody = (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsTestGraph('), 4200);
+assertTrue(strpos($asGraphBody, 'adminSettingsWriteTestAttempt(') < strpos($asGraphBody, '$tokenFetcher()'), 'the connection check writes its audit row BEFORE it runs');
+$asEmailBody = (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsSendTestEmail('), 6000);
+assertTrue(strpos($asEmailBody, 'adminSettingsWriteTestAttempt(') < strpos($asEmailBody, '$sender($address'), 'the test email writes its audit row BEFORE it is sent');
+assertContains('so no email was sent', $asEmailBody, 'a test email that cannot be recorded is not sent, and the message says so');
+
+// 📋 M5: a drop-down never silently changes a saved value.
+$asDrop = static function (string $asKey, ?string $asSaved, array $asView = []) use ($asRegistry): string {
+    $asStateForDrop = ['exists' => true, 'hasValue' => $asSaved !== null && $asSaved !== '', 'value' => $asSaved, 'updatedAt' => null];
+    return adminSettingsRenderField($asRegistry[$asKey], array_merge(['state' => $asStateForDrop, 'error' => ''], $asView));
+};
+$asOdd = $asDrop('billing_vat_mode', 'half<b>');
+assertContains('<option value="half&lt;b&gt;" selected>Current value (not in list): half&lt;b&gt;</option>', $asOdd, 'a saved value not in the list is shown, escaped, and selected');
+assertEquals(1, substr_count($asOdd, ' selected'), 'only that option is selected');
+assertFalse(str_contains($asOdd, 'half<b>'), 'the odd value is escaped everywhere');
+$asNormal = $asDrop('billing_vat_mode', 'exclusive');
+assertFalse(str_contains($asNormal, 'not in list'), 'a saved value that IS in the list adds no extra option');
+assertContains('<option value="exclusive" selected>', $asNormal, 'the saved option is the selected one');
+$asEmptyChoice = $asDrop('paypal_mode', '');
+assertContains('<option value="" selected>Choose...</option>', $asEmptyChoice, 'an empty saved choice leads with "Choose..." (empty is not allowed)');
+$asPlanEmpty = adminSettingsRenderField($asRegistry['billing_trial_plan_key'], ['state' => ['exists' => true, 'hasValue' => false, 'value' => '', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);
+assertContains('<option value="" selected>Choose...</option>', $asPlanEmpty, 'an empty trial plan leads with "Choose..."');
+$asPlanOdd = adminSettingsRenderField($asRegistry['billing_trial_plan_key'], ['state' => ['exists' => true, 'hasValue' => true, 'value' => 'old_plan', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);
+assertContains('old_plan (not an active paid plan)', $asPlanOdd, 'an unknown saved plan is still shown (as before)');
+// ...and saving the untouched form changes nothing (the odd value posts back as itself).
+$asOddSave = adminSettingsProcessSection('prices', ['f' => ['billing_vat_mode' => 'half<b>']], ['billing_vat_mode' => $asState(['value' => 'half<b>'])]);
+assertEquals([], $asOddSave['changes'] + $asOddSave['errors'], 'saving the untouched form with an odd saved value changes nothing and raises no error');
+assertContains('Choose one of the options listed.', adminSettingsProcessSection('prices', ['f' => ['billing_vat_mode' => 'other']], ['billing_vat_mode' => $asState(['value' => 'half<b>'])])['errors']['billing_vat_mode'], 'but choosing an unlisted value by hand is still refused');
+
+// ❗ M6: required boxes say so; the unsaved-changes warning is on.
+foreach ($asRegistry as $asKey => $asField) {
+    $asBox = adminSettingsRenderField($asField, ['state' => ['exists' => true, 'hasValue' => false, 'value' => '', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);
+    $asKindIsRequired = in_array($asField['kind'], ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'scopes'], true);
+    if ($asKindIsRequired) {
+        assertTrue(adminSettingsFieldIsRequired($asField), $asKey . ' is required');
+        assertContains('(required)', $asBox, $asKey . ' says "(required)" in its label');
+        assertContains('aria-required="true"', $asBox, $asKey . ' is marked aria-required');
+    } else {
+        assertFalse(adminSettingsFieldIsRequired($asField), $asKey . ' is not required');
+        assertFalse(str_contains($asBox, '(required)'), $asKey . ' does not say "(required)"');
+    }
+}
+assertContains('data-admin-dirty-check', $asPage, 'every settings form turns on the unsaved-changes warning');
+assertFalse(strpos($asPage, '<form method="POST" action="/admin/settings/" novalidate>') !== false, 'no settings form is left without the warning');
+$asAdminJs = (string) file_get_contents($asSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'cuercode-admin.js');
+assertContains("form[data-admin-dirty-check]", $asAdminJs, 'the admin script supports the unsaved-changes warning');
+assertContains("data-admin-confirm-check", $asAdminJs, 'the admin script supports a confirmation on a tick box');
+assertFalse((bool) preg_match('/<script\b[^>]*>[^<]/i', $asPage), 'still no inline script on the settings page');
+
+// ☑️ Remove tick: confirmation text, with the form still working without JavaScript.
+$asRemoveBox = adminSettingsRenderField($asRegistry['graph_client_secret'], ['state' => ['exists' => true, 'hasValue' => true, 'value' => null, 'updatedAt' => null], 'error' => '']);
+assertContains('data-admin-confirm-check="Remove this stored secret?"', $asRemoveBox, 'the Remove tick asks "Remove this stored secret?"');
+assertContains('name="rm[graph_client_secret]" value="1"', $asRemoveBox, 'the Remove tick is still a plain tick box that works without JavaScript');
+
+// 🙈 Hidden characters: control, invisible formatting and line/paragraph separators.
+foreach (["a\u{200B}b", "a\u{200D}b", "a\u{FEFF}b", "a\u{202E}b", "a\u{2028}b", "a\u{2029}b", "a\u{00AD}b", "a\u{0085}b"] as $asHidden) {
+    assertFalse($asValidate('email_from_name', $asHidden)['ok'], 'a text box refuses hidden character ' . bin2hex($asHidden));
+    assertFalse($asSecretCheck($asHidden, '')['ok'], 'a secret refuses hidden character ' . bin2hex($asHidden));
+    assertFalse($asValidate('trusted_proxy_ips', '10.0.0.0/8 ' . $asHidden)['ok'], 'the forwarding list refuses hidden character ' . bin2hex($asHidden));
+}
+assertFalse($asValidate('email_from_name', "ab\xFFcd")['ok'], 'a text box refuses invalid UTF-8');
+assertFalse($asValidate('trusted_proxy_ips', "10.0.0.0/8\xFF")['ok'], 'the forwarding list refuses invalid UTF-8');
+assertTrue($asValidate('email_from_name', 'CueRCode Café Ünïcode 日本')['ok'], 'ordinary accented and non-Latin letters are fine');
+assertTrue(adminSettingsHasHiddenCharacter("a\nb", false), 'a line break is hidden when line breaks are not allowed');
+assertFalse(adminSettingsHasHiddenCharacter("a\nb\tc\r", true), 'line breaks and tabs are fine in the multi-line box');
+
+// 🔢 Numbers are written one way only.
+assertTrue(adminSettingsNumberTextIsCanonical('int', '0') && adminSettingsNumberTextIsCanonical('int', '30') && adminSettingsNumberTextIsCanonical('int', '999999'), 'whole numbers: 0, 30 and 999999 are canonical');
+foreach (['01', '000030', '', '-1', '+1', '1.0', '1e3', ' 1', '1234567'] as $asNotCanonical) {
+    assertFalse(adminSettingsNumberTextIsCanonical('int', $asNotCanonical), 'whole numbers: ' . var_export($asNotCanonical, true) . ' is not canonical');
+}
+foreach (['20', '0', '17.5', '0.5', '100', '99.99'] as $asDecimalOk) {
+    assertTrue(adminSettingsNumberTextIsCanonical('decimal', $asDecimalOk), 'decimals: ' . $asDecimalOk . ' is canonical');
+}
+foreach (['020', '00.5', '.5', '1.', '1.234', '1000', '1e1'] as $asDecimalBad) {
+    assertFalse(adminSettingsNumberTextIsCanonical('decimal', $asDecimalBad), 'decimals: ' . var_export($asDecimalBad, true) . ' is not canonical');
+}
+assertFalse($asValidate('billing_vat_rate_percent', '020')['ok'], 'VAT rate refuses 020');
+assertFalse($asValidate('billing_refund_window_days', '01')['ok'], 'the money-back period refuses 01');
+// "030" posted when 30 is saved is refused, not waved through as "unchanged" (and "000030" the same way).
+foreach (['030', '000030', '01'] as $asZeroPosted) {
+    $asZeroSave = adminSettingsProcessSection('email-records', ['f' => ['email_queue_retention_days' => $asZeroPosted]], ['email_queue_retention_days' => $asState(['value' => '30'])]);
+    assertTrue(isset($asZeroSave['errors']['email_queue_retention_days']) && $asZeroSave['changes'] === [], 'posting ' . $asZeroPosted . ' is an error, never a quiet "no change"');
+}
+$asSame30 = adminSettingsProcessSection('email-records', ['f' => ['email_queue_retention_days' => '30']], ['email_queue_retention_days' => $asState(['value' => '30'])]);
+assertEquals([], $asSame30['changes'] + $asSame30['errors'], 'posting 30 when 30 is saved is no change');
+// An older saved spelling is drawn the one allowed way, so the untouched form does not trip the rule.
+assertContains('value="30"', adminSettingsRenderField($asRegistry['email_queue_retention_days'], ['state' => ['exists' => true, 'hasValue' => true, 'value' => '030', 'updatedAt' => null], 'error' => '']), 'a stored 030 is drawn as 30');
+
+// 📧 Sender addresses: no IP-number domains.
+foreach (['a@[127.0.0.1]', 'a@[IPv6:::1]', 'notifications@[10.0.0.1]'] as $asLiteral) {
+    assertFalse($asValidate('graph_sender_mailbox', $asLiteral)['ok'], 'a sender address refuses ' . $asLiteral);
+}
+
+// 🔖 I1: the form fingerprint (pure).
+$asFpStates = [
+    'email_queue_retention_days'        => ['exists' => true, 'hasValue' => true, 'value' => '30', 'marker' => 'aaaa'],
+    'email_queue_failed_retention_days' => ['exists' => true, 'hasValue' => true, 'value' => '90', 'marker' => 'bbbb'],
+];
+$asFpBase = adminSettingsSectionFingerprint('email-records', $asFpStates);
+assertEquals(64, strlen($asFpBase), 'a fingerprint is 64 hexadecimal characters');
+assertEquals($asFpBase, adminSettingsSectionFingerprint('email-records', $asFpStates), 'the same state gives the same fingerprint');
+$asFpChanged = $asFpStates;
+$asFpChanged['email_queue_retention_days']['value'] = '40';
+assertTrue($asFpBase !== adminSettingsSectionFingerprint('email-records', $asFpChanged), 'a changed value changes the fingerprint');
+$asFpMarker = $asFpStates;
+$asFpMarker['email_queue_retention_days']['marker'] = 'cccc';
+assertTrue($asFpBase !== adminSettingsSectionFingerprint('email-records', $asFpMarker), 'a changed change-marker (same value, saved again) changes the fingerprint');
+$asFpOldSpelling = $asFpStates;
+$asFpOldSpelling['email_queue_retention_days']['value'] = ' 030 ';
+assertEquals($asFpBase, adminSettingsSectionFingerprint('email-records', $asFpOldSpelling), 'an older spelling of the same number does not change it');
+assertTrue($asFpBase !== adminSettingsSectionFingerprint('prices', $asFpStates), 'the section is part of the fingerprint');
+$asFpMissing = $asFpStates;
+$asFpMissing['email_queue_retention_days'] = ['exists' => false, 'hasValue' => false, 'value' => null, 'marker' => ''];
+assertTrue($asFpBase !== adminSettingsSectionFingerprint('email-records', $asFpMissing), 'a row that does not exist differs from one that does');
+$asFpSecret = ['graph_client_secret' => ['exists' => true, 'hasValue' => true, 'value' => null, 'marker' => 'm1']];
+$asFpSecretA = adminSettingsSectionFingerprint('email', $asFpSecret);
+$asFpSecret['graph_client_secret']['marker'] = 'm2';
+assertTrue($asFpSecretA !== adminSettingsSectionFingerprint('email', $asFpSecret), 'a secret replaced by another secret (new marker) changes the fingerprint');
+$asFpSecret['graph_client_secret'] = ['exists' => true, 'hasValue' => false, 'value' => null, 'marker' => 'm2'];
+assertTrue($asFpSecretA !== adminSettingsSectionFingerprint('email', $asFpSecret), 'a secret set versus not set changes the fingerprint');
+// The marker comes from a hash; a stored secret's text never appears in the state or the fingerprint.
+$asRowState = adminSettingsStateFromRow(['settingKey' => 'graph_client_secret', 'settingType' => 'string', 'isSensitive' => 1, 'isEditable' => 1, 'settingValue' => 'CIPHER-PROBE-xyz', 'updatedAt' => '2026-11-25 10:00:00']);
+assertFalse(str_contains(json_encode($asRowState), 'CIPHER-PROBE'), 'the state kept for a secret holds neither its text nor its ciphertext');
+assertEquals(24, strlen((string) $asRowState['marker']), 'the change marker is a short hash');
+$asRowState2 = adminSettingsStateFromRow(['settingKey' => 'graph_client_secret', 'settingType' => 'string', 'isSensitive' => 1, 'isEditable' => 1, 'settingValue' => 'CIPHER-PROBE-xyz', 'updatedAt' => '2026-11-25 10:00:00']);
+$asRowState3 = adminSettingsStateFromRow(['settingKey' => 'graph_client_secret', 'settingType' => 'string', 'isSensitive' => 1, 'isEditable' => 1, 'settingValue' => 'CIPHER-PROBE-xy2', 'updatedAt' => '2026-11-25 10:00:00']);
+assertEquals($asRowState['marker'], $asRowState2['marker'], 'the same row gives the same marker');
+assertTrue($asRowState['marker'] !== $asRowState3['marker'], 'a different stored value gives a different marker even within the same second');
+assertContains('Someone changed these settings while you were editing. Nothing was saved. Reload the page and try again.', adminSettingsStaleMessage(), 'the stale-form message is the agreed plain English');
+assertContains('name="fp"', $asPage, 'every section form carries its fingerprint');
+assertContains('adminSettingsSaveSection($adminUser, $settingsSectionID, $settingsPostedFingerprint,', $asPage, 'the page hands the posted fingerprint to the save');
+assertContains('hash_equals(', $asFunctions, 'the fingerprint is compared in constant time');
+assertContains('FOR UPDATE', $asFunctions, 'the section rows are locked while the fingerprint is checked');
+
+// 🔒 Rows are locked while a secret is set or replaced.
+assertEquals(1, substr_count($asFunctions, '$rows = adminSettingsLoadRows([$key], true);'), 'adminSaveSetting() reads its row with a lock');
+assertTrue(strpos($asFunctions, 'getDB()->begin_transaction();') < strpos($asFunctions, '$rows = adminSettingsLoadRows([$key], true);'), '... after opening its transaction');
+
+// ⏱️ EXTRA: the emailed-link limits are editable, with the code's own clamps.
+$asBounds = authLinkRequestLimitBounds();
+assertEquals(['min_gap_seconds', 'daily_cap', 'ip_per_hour'], array_keys($asBounds), 'the shared bounds list the three limits');
+assertEquals(['min' => 10, 'max' => 86400, 'default' => 60], $asBounds['min_gap_seconds'], 'shared bounds: the gap is 10 to 86400, default 60');
+assertEquals(['min' => 1, 'max' => 50, 'default' => 5], $asBounds['daily_cap'], 'shared bounds: the daily cap is 1 to 50, default 5');
+assertEquals(['min' => 1, 'max' => 1000, 'default' => 10], $asBounds['ip_per_hour'], 'shared bounds: the hourly limit is 1 to 1000, default 10');
+foreach (['verification_resend', 'password_reset_request'] as $asPrefix) {
+    foreach ($asBounds as $asSuffix => $asBound) {
+        $asLimitKey = $asPrefix . '_' . $asSuffix;
+        assertTrue(isset($asRegistry[$asLimitKey]), $asLimitKey . ' is in the settings editor');
+        assertEquals('admin-security', $asRegistry[$asLimitKey]['section'], $asLimitKey . ' is in the Admin security section');
+        assertEquals('int', $asRegistry[$asLimitKey]['kind'], $asLimitKey . ' is a whole number');
+        assertTrue($asRegistry[$asLimitKey]['rowOptional'] === true, $asLimitKey . ' has no seeded row (created on first save)');
+        assertEquals($asBound['min'], $asRegistry[$asLimitKey]['min'], $asLimitKey . ': the editor\'s lowest value is the code\'s lowest');
+        assertEquals($asBound['max'], $asRegistry[$asLimitKey]['max'], $asLimitKey . ': the editor\'s highest value is the code\'s highest');
+        assertTrue($asValidate($asLimitKey, (string) $asBound['min'])['ok'] && $asValidate($asLimitKey, (string) $asBound['max'])['ok'], $asLimitKey . ' accepts its lowest and highest');
+        assertFalse($asValidate($asLimitKey, (string) ($asBound['min'] - 1))['ok'] || $asValidate($asLimitKey, (string) ($asBound['max'] + 1))['ok'], $asLimitKey . ' refuses one below and one above');
+        assertEquals('security', $asRegistry[$asLimitKey]['group'], $asLimitKey . ' is in the "security" settings group, as the code reads it');
+        assertEquals('integer', $asRegistry[$asLimitKey]['type'], $asLimitKey . ' is stored as an integer');
+        assertContains('The default is ' . $asBound['default'] . '.', $asRegistry[$asLimitKey]['help'], $asLimitKey . ' help names the default');
+        // What the code does with the saved number: the same range.
+        $asCodeLimits = authLinkRequestLimitSettings($asPrefix, static function (string $asK, mixed $asD) use ($asLimitKey, $asBound): mixed {
+            if ($asK === $asLimitKey) {
+                return (string) ($asBound['max'] + 5000);
+            }
+            return $asD;
+        });
+        $asKeyMap = ['min_gap_seconds' => 'minGapSeconds', 'daily_cap' => 'dailyCap', 'ip_per_hour' => 'ipPerHour'];
+        assertEquals($asBound['max'], $asCodeLimits[$asKeyMap[$asSuffix]], $asLimitKey . ': the code pulls a too-big saved number back to the same top value the editor allows');
+    }
+}
+assertEquals(['verification_resend', 'password_reset_request'], array_values(array_unique(array_map(static function (string $asK): string {
+    return (string) preg_replace('/_(min_gap_seconds|daily_cap|ip_per_hour)$/', '', $asK);
+}, array_filter(array_keys($asRegistry), static function (string $asK): bool {
+    return (bool) preg_match('/_(min_gap_seconds|daily_cap|ip_per_hour)$/', $asK);
+})))), 'exactly the two forms\' limits are in the editor');

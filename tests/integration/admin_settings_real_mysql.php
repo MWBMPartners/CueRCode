@@ -48,6 +48,16 @@
  *      no secret. (A real browser is NOT used.)
  *   K. No secret typed during the run is in any log table, the audit log or
  *      the PHP error log.
+ *   L. Lost updates (plan §7.5): two forms opened at the same time, the second
+ *      one is refused after the first is saved (nothing of it is written); a
+ *      replaced secret is noticed; a missing fingerprint is refused; and a REAL
+ *      overlap - a second process is made to wait on the section's row lock
+ *      while another connection changes the row - ends in a refusal.
+ *   M. The emailed-link limits (verification and forgot-password) can be
+ *      saved from the screen (the rows are created) and the code reads them.
+ *   N. The test actions write their audit row BEFORE acting (a forced audit
+ *      failure means nothing is sent), and the limits are counted from the
+ *      audit rows (10 connection checks, 5 test emails per 10 minutes).
  *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php), as
  * it needs a database. How to run it (Docker example):
@@ -129,6 +139,40 @@ function asDefineDatabase(string $asDbName): void
 }
 
 $asArguments = array_slice($argv, 1);
+
+// ==============================================================================
+// 👶 Self-invoked CHILD mode: save a section from a fingerprint (the lost-update race)
+// php <this file> --save-section <db> <base64 json {userID, email, section, fp, changes}>
+// Prints one line "@@RESULT@@<json>" with the answer (no secret is ever passed).
+// ==============================================================================
+if (isset($asArguments[0]) && $asArguments[0] === '--save-section') {
+    $asChildDb = '';
+    if (isset($asArguments[1])) {
+        $asChildDb = $asArguments[1];
+    }
+    if (preg_match('/^cuercode_it_[a-z0-9_]+$/', $asChildDb) !== 1 || !isset($asArguments[2])) {
+        fwrite(STDERR, 'Refusing: bad arguments.' . PHP_EOL);
+        exit(9);
+    }
+    $asRequest = json_decode((string) base64_decode($asArguments[2], true), true);
+    if (!is_array($asRequest)) {
+        fwrite(STDERR, 'Refusing: bad request.' . PHP_EOL);
+        exit(9);
+    }
+
+    asDefineDatabase($asChildDb);
+    $_SERVER['REMOTE_ADDR']     = '203.0.113.10';
+    $_SERVER['HTTP_USER_AGENT'] = 'integration-test-child';
+    require_once $asSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+    require_once $asSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin_settings.php';
+    restore_error_handler();
+    restore_exception_handler();
+
+    $asChildAdmin = ['userID' => (int) $asRequest['userID'], 'email' => (string) $asRequest['email'], 'displayName' => 'IT admin', 'sessionHash' => '', 'hasPassword' => true];
+    $asChildResult = adminSettingsSaveSection($asChildAdmin, (string) $asRequest['section'], (string) $asRequest['fp'], $asRequest['changes']);
+    echo '@@RESULT@@' . json_encode($asChildResult) . PHP_EOL;
+    exit(0);
+}
 
 // ==============================================================================
 // 👶 Self-invoked CHILD mode: render the REAL /admin/settings/ page
@@ -477,6 +521,16 @@ function asConfig(string $asKey): mixed
     return getConfig($asKey, null);
 }
 
+/**
+ * 🧾 The fingerprint of a section as the database holds it right now (what a
+ *    freshly loaded form would carry).
+ */
+function asFingerprint(string $asSection): string
+{
+    $asStates = adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection($asSection)));
+    return adminSettingsSectionFingerprint($asSection, (array) $asStates);
+}
+
 // ==============================================================================
 // A. Before the upgrades: nothing can be saved
 // ==============================================================================
@@ -595,7 +649,7 @@ $asHostile = adminSettingsProcessSection('prices', ['f' => [
     'billing_payg_enabled' => '1', 'billing_price_points_enabled' => '1', 'billing_discounts_enabled' => '1',
     'dynamic_qr_enabled' => '1', 'billing_vat_mode' => 'inclusive',
 ]], $asCurrent);
-$asSaved = adminSettingsSaveSection($asAdmin, $asHostile['changes']);
+$asSaved = adminSettingsSaveSection($asAdmin, 'prices', asFingerprint('prices'), $asHostile['changes']);
 asCheck('D', $asSaved['ok'] === true && $asSaved['saved'] === 1, 'a hand-made prices request saves ONLY the one real change');
 asCheck('D', asConfig('billing_payg_enabled') === false && asConfig('billing_price_points_enabled') === false && asConfig('billing_discounts_enabled') === false && asConfig('dynamic_qr_enabled') === false, 'all four charging switches are still off');
 
@@ -630,14 +684,14 @@ foreach ($asForced as $asLabel => $asTrigger) {
     $asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
     $asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE ' . $asTrigger[1] . ' ON `' . $asTrigger[0] . '` FOR EACH ROW BEGIN IF ' . $asTrigger[2] . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced failure for the integration test'; END IF; END");
     $asAuditBefore = asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`');
-    $asSaved = adminSettingsSaveSection($asAdmin, $asProcessed['changes']);
+    $asSaved = adminSettingsSaveSection($asAdmin, 'email', asFingerprint('email'), $asProcessed['changes']);
     $asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
     asCheck('E', $asSaved['ok'] === false, 'failure at ' . $asLabel . ': the save reports "not saved"');
     asCheck('E', asSetting($asServer, 'email_from_name')['settingValue'] === '' && asSetting($asServer, 'graph_sender_mailbox')['settingValue'] === '', 'failure at ' . $asLabel . ': BOTH settings are exactly as before (the first was rolled back)');
     asCheck('E', asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`') === $asAuditBefore, 'failure at ' . $asLabel . ': no audit row was kept');
     asCheck('E', asConfig('email_from_name') === '', 'failure at ' . $asLabel . ': getConfig() does not show the rolled-back value');
 }
-$asSaved = adminSettingsSaveSection($asAdmin, $asProcessed['changes']);
+$asSaved = adminSettingsSaveSection($asAdmin, 'email', asFingerprint('email'), $asProcessed['changes']);
 asCheck('E', $asSaved['ok'] === true && $asSaved['saved'] === 2 && asConfig('email_from_name') === 'Section Test Name', 'without the fault both changes are saved');
 asCheck('E', count(asAuditRows($asServer, 'setting.update', 'email_from_name')) === 1 && count(asAuditRows($asServer, 'setting.update', 'graph_sender_mailbox')) === 1, '... with one audit row each');
 
@@ -686,7 +740,7 @@ asCheck('G', $asResult['ok'] === true && str_contains($asResult['message'], 'Con
 asCheck('G', $asSeenCache === '', 'the saved token was cleared BEFORE asking for a new one');
 asCheck('G', !str_contains(json_encode($asResult), 'FAKE-ACCESS-TOKEN'), 'the token is not in the answer');
 $asAudit = asAuditRows($asServer, 'setting.test_graph');
-asCheck('G', count($asAudit) === 1 && $asAudit[0]['outcome'] === 'success' && $asAudit[0]['changesJSON'] === null, 'audited as setting.test_graph, success, no details');
+asCheck('G', count($asAudit) === 2 && $asAudit[0]['outcome'] === 'failed' && $asAudit[0]['reason'] === CUERCODE_ADMIN_TEST_ATTEMPT_REASON && $asAudit[1]['outcome'] === 'success' && $asAudit[1]['reason'] === CUERCODE_ADMIN_TEST_RESULT_REASON && $asAudit[1]['changesJSON'] === null, 'audited as setting.test_graph: an attempt row first, then a success row, no details');
 
 $asBadFetcher = static function (): ?string {
     return null;
@@ -699,7 +753,7 @@ $asThrowingFetcher = static function (): ?string {
 $asResult = adminSettingsTestGraph($asAdmin, $asThrowingFetcher);
 asCheck('G', $asResult['ok'] === false && !str_contains(json_encode($asResult), 'AADSTS') && !str_contains(json_encode($asResult), 'SECRET-IN-ERROR-BODY'), 'an error from Microsoft is never shown');
 asCheck('G', asCount($asServer, "SELECT COUNT(*) FROM `tblErrorLog` WHERE CONCAT_WS(' ', COALESCE(`errorTitle`, ''), COALESCE(`errorDetail`, '')) LIKE '%SECRET-IN-ERROR-BODY%'") === 0, '... and not in the error log either');
-asCheck('G', count(asAuditRows($asServer, 'setting.test_graph')) === 3, 'every check was audited (3 rows)');
+asCheck('G', count(asAuditRows($asServer, 'setting.test_graph')) === 6, 'every check was audited before and after (3 checks, 6 rows)');
 
 // With nothing filled in, the REAL fetcher returns null without any network call.
 foreach (['graph_tenant_id', 'graph_client_id'] as $asClearKey) {
@@ -707,6 +761,7 @@ foreach (['graph_tenant_id', 'graph_client_id'] as $asClearKey) {
 }
 $asResult = adminSettingsTestGraph($asAdmin);
 asCheck('G', $asResult['ok'] === false && str_contains($asResult['message'], 'not all filled in'), 'with the details missing, the real check says so (and makes no network call)');
+asCheck('G', str_contains($asResult['message'], 'activity log') === false && str_contains($asResult['message'], 'server error log') === false, 'the "not filled in" answer does not point at any log (nothing was tried)');
 
 // ✉️ Test email.
 asCheck('G', session_status() === PHP_SESSION_ACTIVE, 'set-up: a PHP session is active for the 5-per-10-minutes limit');
@@ -728,6 +783,12 @@ for ($asI = 1; $asI < 5; $asI++) {
 asCheck('G', count($asSentTo) === 5, 'five test emails are allowed');
 $asResult = adminSettingsSendTestEmail($asAdmin, $asSender, 1800000010);
 asCheck('G', $asResult['ok'] === false && count($asSentTo) === 5 && str_contains($asResult['message'], 'Too many'), 'the sixth within 10 minutes is refused');
+// 🍪 Signing in again (an empty session list) does not reset the limit: it is counted from the admin's own audit rows.
+$_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY] = [];
+$asResult = adminSettingsSendTestEmail($asAdmin, $asSender, 1800000010);
+asCheck('G', $asResult['ok'] === false && count($asSentTo) === 5 && str_contains($asResult['message'], 'Too many'), 'with a brand-new session the sixth is STILL refused (counted from the audit rows)');
+// ⏩ The audit rows are made 11 minutes older (the test cannot wait; the clock stand-in only moves PHP's time).
+$asServer->query("UPDATE `tblAdminAuditLog` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 11 MINUTE) WHERE `action` = 'setting.test_email'");
 $asResult = adminSettingsSendTestEmail($asAdmin, $asSender, 1800000000 + 601);
 asCheck('G', $asResult['ok'] === true && count($asSentTo) === 6, 'after 10 minutes it is allowed again');
 $asFailingSender = static function (): array {
@@ -736,7 +797,73 @@ $asFailingSender = static function (): array {
 $asResult = adminSettingsSendTestEmail($asAdmin, $asFailingSender, 1800005000);
 asCheck('G', $asResult['ok'] === false && !str_contains(json_encode($asResult), 'SECRET-IN-SEND-ERROR'), 'a send failure never shows the error text');
 $asAudit = asAuditRows($asServer, 'setting.test_email');
-asCheck('G', count($asAudit) === 7 && $asAudit[0]['outcome'] === 'success' && $asAudit[6]['outcome'] === 'failed', 'test emails are audited (success and failed)');
+$asEmailAttempts = array_values(array_filter($asAudit, static function (array $asRow): bool {
+    return $asRow['reason'] === CUERCODE_ADMIN_TEST_ATTEMPT_REASON;
+}));
+$asEmailResults = array_values(array_filter($asAudit, static function (array $asRow): bool {
+    return $asRow['reason'] === CUERCODE_ADMIN_TEST_RESULT_REASON;
+}));
+asCheck('G', count($asAudit) === 14 && count($asEmailAttempts) === 7 && count($asEmailResults) === 7 && $asEmailResults[0]['outcome'] === 'success' && $asEmailResults[6]['outcome'] === 'failed', 'test emails are audited before and after (7 attempts, 7 results; success and failed)');
+asCheck('G', str_contains($asResult['message'], 'activity log') && !str_contains($asResult['message'], 'server error log'), 'a failed test email points at the activity log (where the detail really is)');
+setConfig('email_enabled', '0', ['group' => 'email', 'type' => 'boolean']);
+
+// ==============================================================================
+// N. The test actions: audit row first, limits from the audit rows
+// ==============================================================================
+echo PHP_EOL . 'N. Test actions: audit first, limits from the audit log' . PHP_EOL;
+$asFetcherCalls = 0;
+$asCountingFetcher = static function () use (&$asFetcherCalls): string {
+    $asFetcherCalls++;
+    return 'FAKE-ACCESS-TOKEN-' . bin2hex(random_bytes(4));
+};
+$asAgeRows = static function (string $asAction) use ($asServer): void {
+    $asServer->query("UPDATE `tblAdminAuditLog` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 11 MINUTE) WHERE `action` = '" . $asAction . "'");
+};
+$asAgeRows('setting.test_graph');
+$asRows = count(asAuditRows($asServer, 'setting.test_graph'));
+for ($asI = 1; $asI <= 10; $asI++) {
+    $asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
+    if ($asAnswer['ok'] !== true) {
+        break;
+    }
+}
+asCheck('N', $asFetcherCalls === 10 && count(asAuditRows($asServer, 'setting.test_graph')) === $asRows + 20, 'ten connection checks in 10 minutes are allowed (20 audit rows: before and after)');
+$asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
+asCheck('N', $asAnswer['ok'] === false && str_contains($asAnswer['message'], 'Too many connection checks') && $asFetcherCalls === 10 && count(asAuditRows($asServer, 'setting.test_graph')) === $asRows + 20, 'the 11th is refused: no check was run and no audit row was added');
+$asAgeRows('setting.test_graph');
+$asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
+asCheck('N', $asAnswer['ok'] === true && $asFetcherCalls === 11, 'ten minutes later it is allowed again');
+$asAgeRows('setting.test_graph');
+
+// 🧾 If the audit row cannot be written first, the check is NOT run.
+$asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
+$asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` = \'setting.test_graph\' THEN SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'; END IF; END');
+$asBeforeCalls = $asFetcherCalls;
+$asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
+$asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
+asCheck('N', $asAnswer['ok'] === false && $asFetcherCalls === $asBeforeCalls && str_contains($asAnswer['message'], 'could not be recorded'), 'Check connection: an audit row that cannot be written means the check is not run, and it says so');
+
+// 🧾 If only the RESULT row fails, the check ran and the answer says the record is missing.
+$asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` = \'setting.test_graph\' AND NEW.`reason` = \'' . CUERCODE_ADMIN_TEST_RESULT_REASON . '\' THEN SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'; END IF; END');
+$asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
+$asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
+asCheck('N', $asAnswer['ok'] === true && $asFetcherCalls === $asBeforeCalls + 1 && str_contains($asAnswer['message'], 'could not be written to the admin change log'), 'a result row that cannot be written: the check still ran and the answer says the result is not in the change log');
+$asAgeRows('setting.test_graph');
+
+// ✉️ The same for the test email.
+setConfig('email_enabled', '1', ['group' => 'email', 'type' => 'boolean']);
+$_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY] = [];
+$asAgeRows('setting.test_email');
+$asSentBefore = count($asSentTo);
+$asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` = \'setting.test_email\' THEN SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'; END IF; END');
+$asAnswer = adminSettingsSendTestEmail($asAdmin, $asSender, 1800009000);
+$asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
+asCheck('N', $asAnswer['ok'] === false && count($asSentTo) === $asSentBefore && str_contains($asAnswer['message'], 'so no email was sent'), 'Send test email: an audit row that cannot be written means NO email is sent, and it says so');
+$asSessionTimes = [];
+if (isset($_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY]) && is_array($_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY])) {
+    $asSessionTimes = $_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY];
+}
+asCheck('N', $asSessionTimes === [], 'and the failed attempt is not counted against the session limit');
 setConfig('email_enabled', '0', ['group' => 'email', 'type' => 'boolean']);
 
 // ==============================================================================
@@ -755,6 +882,129 @@ $asResult = adminSaveSetting(['key' => 'trusted_proxy_ips'], '10.0.0.0/8, nonsen
 asCheck('H', $asResult['ok'] === false && asSetting($asServer, 'trusted_proxy_ips')['settingValue'] === '10.0.0.0/8, 2001:db8::/32, 192.0.2.7', 'a bad entry is refused and the saved list stays');
 $asResult = adminSaveSetting(['key' => 'trusted_proxy_ips'], '10.0.0.0/8, 0.0.0.0/0', $asAdmin);
 asCheck('H', $asResult['ok'] === false && asSetting($asServer, 'trusted_proxy_ips')['settingValue'] === '10.0.0.0/8, 2001:db8::/32, 192.0.2.7', 'decision 0015: a /0 range is refused and the saved list stays');
+
+// ==============================================================================
+// M. The emailed-link limits (rows created on first save)
+// ==============================================================================
+echo PHP_EOL . 'M. Emailed-link limits' . PHP_EOL;
+foreach (['verification_resend', 'password_reset_request'] as $asPrefix) {
+    asCheck('M', asSetting($asServer, $asPrefix . '_daily_cap') === null, 'set-up: ' . $asPrefix . '_daily_cap has no row yet');
+}
+$asResult = adminSaveSetting(['key' => 'password_reset_request_daily_cap'], '7', $asAdmin);
+$asRaw = asSetting($asServer, 'password_reset_request_daily_cap');
+asCheck('M', $asResult['outcome'] === 'saved' && $asRaw !== null && $asRaw['settingGroup'] === 'security' && $asRaw['settingType'] === 'integer' && (int) $asRaw['isSensitive'] === 0 && (int) $asRaw['isEditable'] === 1, 'the row is created (group security, integer, not sensitive) on first save');
+clearConfigCache('password_reset_request_daily_cap');
+asCheck('M', authLinkRequestLimitSettings('password_reset_request')['dailyCap'] === 7, 'the code now reads 7 for the forgot-password daily cap');
+asCheck('M', authLinkRequestLimitSettings('verification_resend')['dailyCap'] === 5, 'the verification link limit is untouched (still the default 5)');
+$asResult = adminSaveSetting(['key' => 'verification_resend_min_gap_seconds'], '120', $asAdmin);
+clearConfigCache('verification_resend_min_gap_seconds');
+asCheck('M', $asResult['outcome'] === 'saved' && authLinkRequestLimitSettings('verification_resend')['minGapSeconds'] === 120, 'the verification-link gap is saved and read by the code');
+foreach (['password_reset_request_daily_cap' => ['0', '51', '07', 'x'], 'verification_resend_min_gap_seconds' => ['9', '86401'], 'verification_resend_ip_per_hour' => ['0', '1001']] as $asLimitKey => $asBadValues) {
+    foreach ($asBadValues as $asBadValue) {
+        $asResult = adminSaveSetting(['key' => $asLimitKey], $asBadValue, $asAdmin);
+        asCheck('M', $asResult['ok'] === false, $asLimitKey . ' refuses ' . var_export($asBadValue, true));
+    }
+}
+asCheck('M', authLinkRequestLimitSettings('password_reset_request')['dailyCap'] === 7, '... and the saved 7 stays');
+$asAudit = asAuditRows($asServer, 'setting.update', 'password_reset_request_daily_cap');
+asCheck('M', count($asAudit) === 1, 'the first save is audited (setting.update)');
+
+// ==============================================================================
+// L. Lost updates: a form opened earlier cannot undo a newer change
+// ==============================================================================
+echo PHP_EOL . 'L. Lost updates' . PHP_EOL;
+adminSaveSetting(['key' => 'billing_trial_days'], '14', $asAdmin);
+$asTrialKeys = array_keys(adminSettingsFieldsForSection('trials'));
+$asFpA = asFingerprint('trials');
+$asFpB = asFingerprint('trials');
+asCheck('L', $asFpA === $asFpB && strlen($asFpA) === 64, 'two forms opened together carry the same fingerprint');
+$asProcess = static function (array $asFields) use ($asTrialKeys): array {
+    return adminSettingsProcessSection('trials', ['f' => $asFields], (array) adminSettingsLoadRows($asTrialKeys), ['planKeys' => []]);
+};
+
+// Tab A: keep-days 14 -> 40.
+$asTabA = $asProcess(['billing_trial_days' => '40']);
+asCheck('L', count($asTabA['changes']) === 1, 'tab A: one change (14 to 40)');
+$asSavedA = adminSettingsSaveSection($asAdmin, 'trials', $asFpA, $asTabA['changes']);
+asCheck('L', $asSavedA['ok'] === true && $asSavedA['saved'] === 1 && $asSavedA['stale'] === false && asConfig('billing_trial_days') === 40, 'tab A saves (40)');
+
+// Tab B (opened earlier) posts the old 14 and turns the card switch on. Against the NEW database
+// that looks like a change from 40 back to 14: the silent undo.
+$asTabB = $asProcess(['billing_trial_days' => '14', 'billing_trial_requires_card' => '1']);
+asCheck('L', count($asTabB['changes']) === 2, 'tab B on its own looks like two changes, one of them undoing tab A');
+$asAuditBefore = asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`');
+$asSavedB = adminSettingsSaveSection($asAdmin, 'trials', $asFpB, $asTabB['changes']);
+asCheck('L', $asSavedB['ok'] === false && $asSavedB['stale'] === true && $asSavedB['saved'] === 0, 'tab B is refused as out of date');
+asCheck('L', $asSavedB['message'] === 'Someone changed these settings while you were editing. Nothing was saved. Reload the page and try again.', 'tab B gets the agreed plain-English message');
+asCheck('L', asConfig('billing_trial_days') === 40 && asConfig('billing_trial_requires_card') === false, 'nothing of tab B was written (still 40 days, card switch untouched)');
+asCheck('L', asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`') === $asAuditBefore, 'and no audit row was written for it');
+// Reloaded: the new fingerprint works.
+$asSavedB2 = adminSettingsSaveSection($asAdmin, 'trials', asFingerprint('trials'), $asProcess(['billing_trial_days' => '40', 'billing_trial_requires_card' => '1'])['changes']);
+asCheck('L', $asSavedB2['ok'] === true && $asSavedB2['saved'] === 1 && asConfig('billing_trial_requires_card') === true, 'after reloading, the same admin can save (fresh fingerprint)');
+adminSaveSetting(['key' => 'billing_trial_requires_card'], '0', $asAdmin);
+adminSaveSetting(['key' => 'billing_trial_days'], '14', $asAdmin);
+
+// A missing or made-up fingerprint is refused too.
+$asNoFp = adminSettingsSaveSection($asAdmin, 'trials', '', $asProcess(['billing_trial_days' => '30'])['changes']);
+asCheck('L', $asNoFp['ok'] === false && $asNoFp['stale'] === true && asConfig('billing_trial_days') === 14, 'a form with no fingerprint is refused and nothing is saved');
+$asMadeUp = adminSettingsSaveSection($asAdmin, 'trials', str_repeat('0', 64), $asProcess(['billing_trial_days' => '30'])['changes']);
+asCheck('L', $asMadeUp['ok'] === false && $asMadeUp['stale'] === true, 'a made-up fingerprint is refused');
+$asOtherSection = adminSettingsSaveSection($asAdmin, 'trials', asFingerprint('email-records'), $asProcess(['billing_trial_days' => '30'])['changes']);
+asCheck('L', $asOtherSection['ok'] === false && $asOtherSection['stale'] === true, 'another section\'s fingerprint is refused');
+
+// Same-second change: the value differs, so the fingerprint does, with no waiting.
+$asFpC = asFingerprint('trials');
+adminSaveSetting(['key' => 'billing_trial_days'], '15', $asAdmin);
+asCheck('L', asFingerprint('trials') !== $asFpC, 'a change made within the same second still changes the fingerprint');
+adminSaveSetting(['key' => 'billing_trial_days'], '14', $asAdmin);
+
+// A secret replaced by someone else is noticed (the "set" state is the same, the marker is not).
+adminSaveSetting(['key' => 'paypal_webhook_id'], $asSecrets['paypal'] . '-hook-one', $asAdmin);
+$asFpPaypal = asFingerprint('paypal');
+adminSaveSetting(['key' => 'paypal_webhook_id'], $asSecrets['paypal'] . '-hook-two', $asAdmin);
+asCheck('L', asFingerprint('paypal') !== $asFpPaypal, 'a secret replaced by another secret changes the fingerprint');
+$asModeChange = adminSettingsProcessSection('paypal', ['f' => ['paypal_mode' => 'live']], (array) adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection('paypal'))));
+$asStaleSecret = adminSettingsSaveSection($asAdmin, 'paypal', $asFpPaypal, $asModeChange['changes']);
+asCheck('L', $asStaleSecret['ok'] === false && $asStaleSecret['stale'] === true && asConfig('paypal_mode') === 'sandbox' && asConfig('paypal_webhook_id') === $asSecrets['paypal'] . '-hook-two', 'a form from before the secret was replaced is refused and the replaced secret is untouched');
+asCheck('L', !str_contains(json_encode($asStaleSecret), $asSecrets['paypal']), '... and the refusal holds no secret');
+
+// A row the screen creates on first save: the form opened before it existed is stale after it exists.
+$asFpLimits = asFingerprint('admin-security');
+adminSaveSetting(['key' => 'verification_resend_ip_per_hour'], '12', $asAdmin);
+asCheck('L', asFingerprint('admin-security') !== $asFpLimits, 'creating a row (first save of a limit) changes the section fingerprint');
+
+// 🏁 A REAL overlap: another connection holds the section's rows locked while a second process tries to save.
+$asFpOld = asFingerprint('trials');
+$asChildChanges = $asProcess(['billing_trial_days' => '33'])['changes'];
+$asLocker = new \mysqli(asEnv('HOST'), asEnv('USER'), asEnv('PASS'), $asDbName, (int) $asPort);
+$asLocker->query("SET time_zone = '+00:00'");
+$asLocker->begin_transaction();
+$asLocker->query("SELECT `settingKey` FROM `tblSettings` WHERE `settingKey` IN ('billing_trial_days', 'billing_trial_plan_key', 'billing_trials_enabled', 'billing_trial_requires_card') FOR UPDATE");
+$asChildCommand = [PHP_BINARY, __FILE__, '--save-section', $asDbName, base64_encode((string) json_encode(['userID' => $asAdminID, 'email' => $asAdminEmail, 'section' => 'trials', 'fp' => $asFpOld, 'changes' => $asChildChanges]))];
+$asChildProcess = proc_open($asChildCommand, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $asChildPipes, null, ['CUERCODE_IT_ENCRYPTION_KEY' => ENCRYPTION_KEY] + getenv());
+fclose($asChildPipes[0]);
+usleep(3000000);
+$asChildStatus = proc_get_status($asChildProcess);
+asCheck('L', $asChildStatus['running'] === true, 'the second process is still waiting for the locked rows after 3 seconds (it did not slip past the lock)');
+// The first connection changes the days (as another admin would) and lets go.
+$asLocker->query("UPDATE `tblSettings` SET `settingValue` = '21' WHERE `settingKey` = 'billing_trial_days'");
+$asLocker->commit();
+$asChildOut = (string) stream_get_contents($asChildPipes[1]);
+$asChildErr = (string) stream_get_contents($asChildPipes[2]);
+fclose($asChildPipes[1]);
+fclose($asChildPipes[2]);
+$asChildExit = proc_close($asChildProcess);
+$asLocker->close();
+$asChildJson = null;
+$asChildMarker = strrpos($asChildOut, '@@RESULT@@');
+if ($asChildMarker !== false) {
+    $asChildJson = json_decode(trim(substr($asChildOut, $asChildMarker + strlen('@@RESULT@@'))), true);
+}
+asCheck('L', is_array($asChildJson) && $asChildJson['ok'] === false && $asChildJson['stale'] === true, 'once the lock is released the waiting save sees the NEW value and is refused as out of date' . ($asChildErr !== '' ? ' (stderr: ' . substr($asChildErr, 0, 200) . ')' : ''));
+clearConfigCache('billing_trial_days');
+asCheck('L', asConfig('billing_trial_days') === 21, 'the other admin\'s value (21) is what remains; the waiting form did not overwrite it');
+adminSaveSetting(['key' => 'billing_trial_days'], '14', $asAdmin);
+adminSaveSetting(['key' => 'paypal_webhook_id'], '', $asAdmin);
 
 // ==============================================================================
 // I. A failure leaks no secret
@@ -818,6 +1068,14 @@ asCheck('J', !str_contains($asPage['html'], $asStoredCipher) && !str_contains($a
 asCheck('J', str_contains($asPage['html'], 'Set - last changed'), 'the page says the secret is Set, and when it was last changed');
 asCheck('J', preg_match('/type="password"[^>]*value="[^"]/', $asPage['html']) === 0, 'no secret box has a value');
 asCheck('J', str_contains($asPage['html'], 'Editing unlocked until') && !str_contains($asPage['html'], '<fieldset disabled'), 'unlocked: the forms are editable');
+// 🧾 Every section form carries its own fingerprint, the unsaved-changes warning and its own button words.
+foreach (array_keys(adminSettingsSections()) as $asSectionId) {
+    asCheck('J', str_contains($asPage['html'], '<input type="hidden" name="fp" value="' . asFingerprint($asSectionId) . '">'), 'the ' . $asSectionId . ' form carries the current fingerprint');
+}
+asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 8, 'all eight forms have the unsaved-changes warning');
+asCheck('J', str_contains($asPage['html'], 'Save PayPal settings') && str_contains($asPage['html'], 'Save prices, VAT and refunds') && str_contains($asPage['html'], 'Save email settings') && !str_contains($asPage['html'], 'Save email (microsoft'), 'each section has its own button words');
+asCheck('J', str_contains($asPage['html'], '(required)') && str_contains($asPage['html'], 'data-admin-confirm-check="Remove this stored secret?"'), 'required boxes say so and the Remove tick asks for confirmation');
+asCheck('J', str_contains($asPage['html'], 'name="f[password_reset_request_daily_cap]"') && str_contains($asPage['html'], 'name="f[verification_resend_min_gap_seconds]"'), 'the emailed-link limits are on the page');
 asCheck('J', str_contains($asPage['html'], 'Off (locked)') && !str_contains($asPage['html'], 'name="f[billing_payg_enabled]"') && !str_contains($asPage['html'], 'name="f[dynamic_qr_enabled]"'), 'the charging switches show "Off (locked)" and have no input');
 asCheck('J', str_contains($asPage['html'], 'Check Microsoft connection') && str_contains($asPage['html'], 'Send me a test email'), 'both test buttons are on the page');
 $asMainStart = strpos($asPage['html'], 'id="section-email"');
@@ -834,7 +1092,7 @@ asCheck('J', !str_contains($asLocked['html'], $asSecrets['page']), 'locked: stil
 
 // 🚫 A POST with a wrong CSRF token.
 $asAuditBefore = asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`');
-$asPost = ['csrf_token' => 'wrong-token', 'settings_action' => 'save_section', 'section' => 'email-records', 'f' => ['email_queue_retention_days' => '77']];
+$asPost = ['csrf_token' => 'wrong-token', 'settings_action' => 'save_section', 'section' => 'email-records', 'fp' => asFingerprint('email-records'), 'f' => ['email_queue_retention_days' => '77']];
 $asBad = asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => $asPost]));
 asCheck('J', asConfig('email_queue_retention_days') === 45 && asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`') === $asAuditBefore, 'a wrong CSRF token saves nothing');
 $asBadStatus = 0;
@@ -853,19 +1111,19 @@ $asBad = asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post
 asCheck('J', asConfig('email_queue_retention_days') === 45 && str_contains($asBad['html'], 'confirm your password again'), 'a POST without a fresh password confirmation saves nothing');
 
 // 🚫 A hand-made POST naming a locked switch in a real section.
-$asHostilePost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'prices', 'f' => ['billing_payg_enabled' => '1', 'dynamic_qr_enabled' => '1', 'billing_vat_mode' => 'none']];
+$asHostilePost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'prices', 'fp' => asFingerprint('prices'), 'f' => ['billing_payg_enabled' => '1', 'dynamic_qr_enabled' => '1', 'billing_vat_mode' => 'none']];
 asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => $asHostilePost]));
 asCheck('J', asConfig('billing_payg_enabled') === false && asConfig('dynamic_qr_enabled') === false, 'a hand-made POST cannot turn on a charging switch or dynamic QR codes');
 
 // ❌ A POST with an invalid value: error summary, nothing saved, typed secret not echoed.
-$asInvalidPost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'email', 'f' => ['graph_client_id' => 'not-a-guid ' . $asSecrets['page'], 'email_from_name' => 'Kept Name']];
+$asInvalidPost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'email', 'fp' => asFingerprint('email'), 'f' => ['graph_client_id' => 'not-a-guid ' . $asSecrets['page'], 'email_from_name' => 'Kept Name']];
 $asInvalid = asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => $asInvalidPost]));
 asCheck('J', str_contains($asInvalid['html'], 'id="settings-error-summary"') && str_contains($asInvalid['html'], 'role="alert"') && str_contains($asInvalid['html'], 'aria-invalid="true"'), 'a mistake shows an error summary and marks the box invalid');
 asCheck('J', !str_contains($asInvalid['html'], $asSecrets['page']), 'the typed secret is NOT echoed back on the error page');
 asCheck('J', str_contains($asInvalid['html'], 'value="Kept Name"') && asConfig('email_from_name') === 'Section Test Name', 'ordinary typed values are kept in the boxes; nothing was saved');
 
 // ✅ A good POST.
-$asGoodPost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'email-records', 'f' => ['email_queue_retention_days' => '77', 'email_queue_failed_retention_days' => '3650']];
+$asGoodPost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'email-records', 'fp' => asFingerprint('email-records'), 'f' => ['email_queue_retention_days' => '77', 'email_queue_failed_retention_days' => '3650']];
 $asGood = asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => $asGoodPost]));
 asCheck('J', asConfig('email_queue_retention_days') === 77, 'a good POST saves the change');
 $asFlashList = [];
@@ -877,21 +1135,34 @@ asCheck('J', str_contains($asFlash, 'Saved') && str_contains($asFlash, 'Email re
 asCheck('J', count(asAuditRows($asServer, 'setting.update', 'email_queue_retention_days')) === 2, 'and exactly one more audit row');
 asCheck('J', $asGood['html'] === '' || !str_contains($asGood['html'], '<h1'), 'a good POST redirects instead of drawing the page again');
 
+// 🕰️ A POST from a form that is now out of date (the settings changed since it was drawn).
+$asOldFp = asFingerprint('email-records');
+adminSaveSetting(['key' => 'email_queue_retention_days'], '78', $asAdmin);
+$asStalePost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'email-records', 'fp' => $asOldFp, 'f' => ['email_queue_retention_days' => '77', 'email_queue_failed_retention_days' => '3650']];
+$asStaleAuditBefore = asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`');
+$asStale = asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => $asStalePost]));
+asCheck('J', str_contains($asStale['html'], 'Someone changed these settings while you were editing. Nothing was saved. Reload the page and try again.'), 'an out-of-date form shows the plain-English message');
+asCheck('J', asConfig('email_queue_retention_days') === 78 && asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`') === $asStaleAuditBefore, 'the newer value (78) stays and no audit row is written');
+asCheck('J', str_contains($asStale['html'], 'value="77"') && str_contains($asStale['html'], '<input type="hidden" name="fp" value="' . $asOldFp . '">'), 'the typed value is shown again and the form keeps its OLD fingerprint (pressing Save again is refused again until the page is reloaded)');
+asCheck('J', !str_contains($asStale['html'], $asSecrets['page']), 'the out-of-date page holds no secret');
+adminSaveSetting(['key' => 'email_queue_retention_days'], '77', $asAdmin);
+
 // ✅ A good secret POST through the real page.
-$asSecretPost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'bot', 'f' => ['turnstile_secret_key' => $asSecrets['page'] . '-turnstile']];
+$asSecretPost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'save_section', 'section' => 'bot', 'fp' => asFingerprint('bot'), 'f' => ['turnstile_secret_key' => $asSecrets['page'] . '-turnstile']];
 asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => $asSecretPost]));
 asCheck('J', asConfig('turnstile_secret_key') === $asSecrets['page'] . '-turnstile', 'a secret typed on the real page is saved and decrypts to what was typed');
 asCheck('J', !str_contains((string) asSetting($asServer, 'turnstile_secret_key')['settingValue'], $asSecrets['page']), '... and is stored as ciphertext');
 
 // ✅ Test connection through the page (no credentials: the REAL check, no network).
 adminSaveSetting(['key' => 'graph_client_secret'], '', $asAdmin);
+$asGraphRowsBeforeJ = count(asAuditRows($asServer, 'setting.test_graph'));
 $asTestPost = ['csrf_token' => $asBase['csrf'], 'settings_action' => 'test_graph'];
 $asTested = asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => $asTestPost]));
 $asTestedFlash = [];
 if (isset($asTested['state']['flash'])) {
     $asTestedFlash = $asTested['state']['flash'];
 }
-asCheck('J', str_contains(json_encode($asTestedFlash), 'Could not connect') && count(asAuditRows($asServer, 'setting.test_graph')) === 5, 'the page\'s connection check says Could not connect (nothing is filled in) and is audited');
+asCheck('J', str_contains(json_encode($asTestedFlash), 'Could not connect') && count(asAuditRows($asServer, 'setting.test_graph')) === $asGraphRowsBeforeJ + 2, 'the page\'s connection check says Could not connect (nothing is filled in) and is audited (an attempt row and a result row)');
 
 // ==============================================================================
 // K. No secret anywhere in the logs
