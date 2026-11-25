@@ -22,3 +22,5 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0010](0010-first-admin-activation-sets-a-new-password.md) | 2026-11-24 | Owner: activating a waiting account as first Global Admin sets a new password and signs out old sessions | Current |
 | [0011](0011-commit-third-party-php-libraries-into-repository.md) | 2026-11-25 | Owner: commit the QR/PDF/barcode libraries into the repository so the deploy ships them | Current |
 | [0012](0012-database-minimum-mysql-8-0-13-mariadb-10-6.md) | 2026-11-25 | Owner: minimum database is MySQL 8.0.13+ or MariaDB 10.6+, enforced by the installer | Current |
+| [0013](0013-signup-first-trick-verification-needs-password-reset-removes-all.md) | 2026-11-25 | Owner: verification link needs the password; a password reset removes sessions, API keys, linked sign-ins, passkeys | Current |
+| [0014](0014-client-address-trust-cloudflare-only-from-its-ranges.md) | 2026-11-25 | Owner: trust Cloudflare's address header only from Cloudflare ranges; add a live check | Current |
