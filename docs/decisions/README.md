@@ -25,3 +25,4 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0013](0013-signup-first-trick-verification-needs-password-reset-removes-all.md) | 2026-11-25 | Owner: verification link needs the password; a password reset removes sessions, API keys, linked sign-ins, passkeys | Current |
 | [0014](0014-client-address-trust-cloudflare-only-from-its-ranges.md) | 2026-11-25 | Owner: trust Cloudflare's address header only from Cloudflare ranges; add a live check | Current |
 | [0015](0015-trusted-forwarding-list-refuses-very-wide-ranges.md) | 2026-11-25 | Owner: the trusted forwarding servers setting refuses ranges wider than /8 (IPv4) or /32 (IPv6) | Current |
+| [0016](0016-voluntary-password-change-signs-out-everywhere-only.md) | 2026-11-25 | Owner: a voluntary password change signs out everywhere and does nothing more (no key or link removal) | Current |
