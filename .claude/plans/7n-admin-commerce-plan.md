@@ -210,6 +210,8 @@ New feature keys for each accessibility output (§5.5, migration 0004). They are
 
 ## 5. Data-model changes (all additive) and how existing databases get them
 
+> **Numbering update (2026-11-25):** migration `0003` is now `0003_sessions_valid_from` (an account-recovery change), so the later migrations this plan pencils in as 0003-0006 are numbered **from 0004** onwards. Read every `0003`-`0006` below as the next free number from `0004`.
+
 ### 5.1 The migration runner (Phase 1A)
 
 **Files**

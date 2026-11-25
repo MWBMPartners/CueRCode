@@ -222,9 +222,9 @@ all scenarios passed on MySQL 8.0.46.
 
 ## Optional real-database check (admin settings editor)
 
-`tests/test_admin_settings.php` (642 checks, no database) proves the
+`tests/test_admin_settings.php` (1,074 checks, no database) proves the
 settings editor's decisions. `tests/integration/admin_settings_real_mysql.php`
-(150 checks, scenarios A-K) proves the rest on a throwaway database: secrets
+(213 checks, scenarios A-N, including the lost-update overlap with a second process waiting on the row lock) proves the rest on a throwaway database: secrets
 stored as ciphertext with a fresh salt per save and audited as set / replaced /
 cleared; ordinary settings and the VAT wording; locked keys refused even by
 hand-made requests; one transaction per section (triggers force a failure);
@@ -244,7 +244,7 @@ CUERCODE_IT_DB_NAME=cuercode_it_p1c CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS
 docker stop cuercode-it-settings
 ```
 
-Run 2026-11-25: 150/150 on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28.
+Run 2026-11-25 (after the second independent review): 213/213 on MySQL 8.0.36, MySQL 8.4.11 and MariaDB 10.6.28.
 
 ## Optional real-database check (Global Admin access)
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed and added - Second independent review of the settings editor (2026-11-25, #31)
+
+- **A settings form opened earlier can no longer undo a newer change** (plan §7.5). Each section form carries a fingerprint of what it showed; the save locks the section's rows, recomputes it and, if anything changed since (another tab, another admin, a replaced secret), refuses with "Someone changed these settings while you were editing. Nothing was saved. Reload the page and try again." Typed values are kept; secret boxes stay empty; pressing Save again is refused until the page is reloaded.
+- **Test actions:** each writes its change-log row BEFORE acting (no record, no email sent), then a second row with the result; "Check Microsoft connection" is limited to 10 per 10 minutes and the test email's 5 per 10 minutes is now also counted from the admin's own change-log rows (signing in again no longer resets it). Messages point at the activity log, where the detail really is.
+- **Discovery addresses** refuse IP numbers (plain or in brackets), ports other than 443, user names/passwords and non-ASCII host names.
+- Each section has its own Save button words ("Save PayPal settings", "Save prices, VAT and refunds", ...). Drop-downs keep a saved value that is not in the list (shown as "Current value (not in list): ..."); empty required choices lead with "Choose...". Required boxes say "(required)"; the unsaved-changes warning is on for every settings form; "Remove this secret" asks "Remove this stored secret?" (works without JavaScript).
+- Whole numbers are written one way only (`01`, `030`, `000030` are refused); sender addresses with an IP number in brackets are refused; hidden/invisible characters and invalid text are refused in every box.
+- **New:** the "send me a new verification link" and "Forgot password" limits (gap, per-account daily cap, per-address hourly cap) can be changed on `/admin/settings/` (Admin security). Their allowed range comes from the same place the code enforces it (`authLinkRequestLimitBounds()`).
+- `trusted_proxy_ips` already refused ranges wider than /8 or /32 through the shared range reader (decision 0015); tests now pin `0.0.0.0/0`, `::/0`, `0.0.0.0/1`, `10.0.0.0/7`, `2000::/16` (refused) and `10.0.0.0/8`, `2606:4700::/32` (accepted).
+- More secret-carrying parameters are hidden from stack traces (`#[\SensitiveParameter]`). A secret is saved from a locked row, so "set" versus "replaced" cannot be decided from stale data.
+- Plan §5 note: later migrations are numbered from 0004 (0003 is `0003_sessions_valid_from`). README and DEV_NOTES wording fixed (install step 7 is above; sign-in switches are now flipped on `/admin/settings/`).
+- Tests: `tests/test_admin_settings.php` 1,074 checks; `tests/integration/admin_settings_real_mysql.php` 213/213 on MySQL 8.0.36, MySQL 8.4.11 and MariaDB 10.6.28 (includes two overlapping saves, one a real second process waiting on the row lock); suite 5545/5545.
+
 ### Security - A password reset now also stops sign-ins already under way, and other review fixes (2026-11-25, independent review of decisions 0013/0014, #31, decision 0015)
 
 - **A sign-in already under way when a password is reset no longer survives it** (finding 1). Accounts get a "sessions valid from" mark (database upgrade `0003_sessions_valid_from`); a reset or an admin grant moves it, and a session counts only if it was made with the account's current mark. This also covers Google/Microsoft sign-in. **After deploying, apply the waiting database upgrade** (`/admin/upgrades/` or `migrate.php --apply`); until then sign-in works as before.

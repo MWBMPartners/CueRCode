@@ -187,7 +187,7 @@ curl -X POST https://cuercode.net/api/v1/generate \
 Registration verification, password resets, and organisation invitations are sent via the **Microsoft Graph API** (client-credentials grant, M365 shared mailbox Send-As) - never PHP's `mail()`. The whole subsystem (`_functions/fn_email.php`) is **inert by default**: the `email_enabled` kill-switch seeds to `0` and every Graph credential seeds empty, so no email can be sent (and no network call is attempted) until an owner completes the M365 app registration and fills in the settings. See [DEV_NOTES.md](DEV_NOTES.md#email-subsystem-microsoft-graph---epic-e8-29) for the full setup runbook. Google Workspace (#30) is a future driver slot behind the same `email_provider` setting.
 
 > ⚠️ **Two things to know, even once M365 is configured and `email_enabled` is on:**
-> 1. The Microsoft credentials are entered on the admin settings screen (`/admin/settings/`, Email section) - see "Installation" step 7 below.
+> 1. The Microsoft credentials are entered on the admin settings screen (`/admin/settings/`, Email section) - see "Installation" step 7 above.
 > 2. Emails are only ever *queued* by the site. They are sent by the email queue runner (#112), which **must be set up as a DreamHost cron job** (below). Without that job, no verification or password-reset email is ever sent, so nobody can finish signing up.
 
 ### ⏱️ The email queue job (DreamHost cron)
