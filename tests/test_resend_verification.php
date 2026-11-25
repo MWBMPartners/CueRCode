@@ -236,7 +236,8 @@ requestNewVerificationLink('someone@example.com', '203.0.113.9');
 assertTrue((hrtime(true) - $rvStart) >= 240000 * 1000, 'M3: the real function (503 path here) takes at least about 250 ms');
 assertContains('requestNewVerificationLinkWork($email, $ipAddress)', $rvSection, 'M3: the public function wraps the work and pads the time');
 assertContains('resendLimitedRowWrittenRecently((int) $account[\'userID\'])', $rvSection, 'M3: the limited row is written at most once an hour per account');
-assertContains("`activityType` = 'verification_link_resend_limited'", $rvAuth, 'M3: the once-an-hour check looks at the limited rows');
+assertContains('return limitedRowWrittenRecently($userID, \'verification_link_resend_limited\');', $rvAuth, 'M3: the once-an-hour check looks at the limited rows (shared check, review finding 3)');
+assertContains("WHERE `activityType` = ? AND `entityType` = 'user' AND `entityID` = ?", $rvAuth, 'M3: ...by activity type, account and the last hour');
 
 // 🔥 M4: only SMALLER-numbered tokens are retired.
 assertFalse(str_contains($rvAuth, '`verificationID` <> ?'), 'M4: no `<>` in the retire-earlier-tokens SQL');

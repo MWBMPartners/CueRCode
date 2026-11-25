@@ -283,6 +283,7 @@ function arReset(): void
         arExec('DELETE FROM `' . $arTable . '`');
     }
     arExec("DELETE FROM `tblAPIKeys` WHERE `apiKeyName` LIKE 'ar-%'");
+    arExec("DELETE FROM `tblAPIRateLog` WHERE `apiKeyID` IS NULL AND `endpoint` = 'auth/request-password-reset'");
     arExec("DELETE FROM `tblUsers` WHERE `email` LIKE 'ar-%@ar.cuercode.invalid'");
 }
 
@@ -446,6 +447,9 @@ arGiveWaysIn($arD, 'd');
 arGiveWaysIn($arOther, 'other');
 $arOtherBefore = arSnapshot($arOther);
 
+// ⏱️ The set-up link above was made a moment ago; age it so the one-minute
+//    gap between reset emails (review finding 3, section FP) does not apply.
+arExec('UPDATE `tblPasswordResets` SET `createdAt` = DATE_SUB(NOW(), INTERVAL 2 HOUR) WHERE `userID` = ?', 'i', [$arD]);
 $arR = requestPasswordReset('ar-d@ar.cuercode.invalid', '203.0.113.50');
 arCheck($arR['success'] === true, 'Forgot password for the waiting account: the usual answer');
 arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arD]) === 2, '...and a reset link WAS made for it (decision 0013)');
@@ -822,6 +826,52 @@ for ($arTry = 1; $arTry <= 5; $arTry++) {
     loginUser('ar-w2@ar.cuercode.invalid', 'wrong-' . $arTry, '203.0.113.50', 'integration-check');
 }
 arCheck(arSnapshot($arW2)['user']['lockedUntil'] !== null, 'five wrong sign-ins one after another still lock the account (limit 5)');
+
+// ==============================================================================
+// FP. Finding 3: "Forgot password" limits and even timing
+// ==============================================================================
+echo PHP_EOL . 'FP. Forgot password: limits and even timing (finding 3)' . PHP_EOL;
+$arFp = arUser('fp', 'active', $arStrangerPassword, true);
+$arFpLinks = static function () use ($arFp): int {
+    return arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arFp]);
+};
+$arFpLimited = static function (int $arUserID): int {
+    return arCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'password_reset_request_limited' AND `entityID` = ?", 'i', [$arUserID]);
+};
+$arT0 = microtime(true);
+$arKnown = requestPasswordReset('ar-fp@ar.cuercode.invalid', '198.51.100.61');
+$arKnownTime = microtime(true) - $arT0;
+$arT0 = microtime(true);
+$arUnknown = requestPasswordReset('ar-nobody@ar.cuercode.invalid', '198.51.100.61');
+$arUnknownTime = microtime(true) - $arT0;
+arCheck($arKnown === $arUnknown, 'a registered and an unknown address get exactly the same answer');
+arCheck($arKnownTime >= 0.25 && $arUnknownTime >= 0.25, 'both take at least 250 ms (registered ' . round($arKnownTime * 1000) . ' ms, unknown ' . round($arUnknownTime * 1000) . ' ms)');
+arCheck(abs($arKnownTime - $arUnknownTime) < 0.1, '...so the time no longer tells them apart (difference ' . round(abs($arKnownTime - $arUnknownTime) * 1000) . ' ms)');
+arCheck($arFpLinks() === 1, 'the registered address got one link');
+requestPasswordReset('ar-fp@ar.cuercode.invalid', '198.51.100.61');
+arCheck($arFpLinks() === 1 && $arFpLimited($arFp) === 0, 'a second request inside the one-minute gap: no new link, and no log row (a double-click)');
+for ($arTry = 2; $arTry <= 5; $arTry++) {
+    arExec('UPDATE `tblPasswordResets` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 2 MINUTE) WHERE `userID` = ?', 'i', [$arFp]);
+    requestPasswordReset('ar-fp@ar.cuercode.invalid', '198.51.100.6' . $arTry);
+}
+arCheck($arFpLinks() === 5, 'with the gap respected, five links in a day are sent');
+arExec('UPDATE `tblPasswordResets` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 2 MINUTE) WHERE `userID` = ?', 'i', [$arFp]);
+$arR = requestPasswordReset('ar-fp@ar.cuercode.invalid', '198.51.100.70');
+arCheck($arR === $arUnknown && $arFpLinks() === 5, 'the sixth in a day: the same answer, no link (daily cap)');
+arCheck($arFpLimited($arFp) === 1, '...and one "refused by the limit" row');
+arExec('UPDATE `tblPasswordResets` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 2 MINUTE) WHERE `userID` = ?', 'i', [$arFp]);
+requestPasswordReset('ar-fp@ar.cuercode.invalid', '198.51.100.71');
+requestPasswordReset('ar-fp@ar.cuercode.invalid', '198.51.100.72');
+arCheck($arFpLimited($arFp) === 1, 'more refused requests in the same hour add NO further rows (at most one an hour)');
+$arFp2 = arUser('fp2', 'active', $arStrangerPassword, true);
+for ($arTry = 1; $arTry <= 10; $arTry++) {
+    requestPasswordReset('ar-unknown-' . $arTry . '@ar.cuercode.invalid', '198.51.100.99');
+}
+arCheck(arCount("SELECT COUNT(*) FROM `tblAPIRateLog` WHERE `requestIP` = '198.51.100.99' AND `endpoint` = 'auth/request-password-reset'") === 10, 'every request from one address is counted, known or not (10)');
+$arR = requestPasswordReset('ar-fp2@ar.cuercode.invalid', '198.51.100.99');
+arCheck($arR === $arUnknown && arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arFp2]) === 0, 'the eleventh from that address in an hour: the same answer, no link (address cap)');
+arCheck($arFpLimited($arFp2) === 1, '...and one "refused by the limit" row for that account');
+arCheck(arCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'password_reset_request_limited' AND (`activityDetail` LIKE '%@%' OR `additionalData` LIKE '%@%')") === 0, 'no limit row holds an email address');
 
 // ==============================================================================
 // V. Nit: what a verification link says when nothing is activated

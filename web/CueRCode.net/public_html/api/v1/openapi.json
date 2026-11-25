@@ -1761,7 +1761,7 @@
                     "Accounts"
                 ],
                 "summary": "Request a password reset email",
-                "description": "Queue a password-reset email if (and only if) the address belongs to an active account, or to one still waiting for email verification (decision 0013: using that link activates it). Anti-enumeration: always returns the identical 200 response regardless of whether the email is registered, so the response never reveals whether an address has an account. Requires a valid CSRF token (website) or API key.",
+                "description": "Queue a password-reset email if (and only if) the address belongs to an active account, or to one still waiting for email verification (decision 0013: using that link activates it). Anti-enumeration: always returns the identical 200 response regardless of whether the email is registered, so the response never reveals whether an address has an account. It also takes at least 250 ms for every address, so its timing does not reveal it either. Limits (review finding 3, all settings with safe defaults): at most one link per account per minimum gap (default 60 s), at most 5 links per account per 24 hours, and at most 10 requests per visitor address per hour; a request over a limit gets the same 200 answer and no email. Requires a valid CSRF token (website) or API key.",
                 "operationId": "authRequestPasswordReset",
                 "security": [
                     {

@@ -104,8 +104,56 @@ assertContains("if (\$accountStatus !== 'pending' && \$accountStatus !== 'active
 assertContains("`status` = 'active', `failedLoginCount` = 0, `lockedUntil` = NULL", $arVerify, 'activation also clears the lock-out counter');
 assertFalse(str_contains($arVerify, 'logActivity(\'verification_link_stopped\', $password'), 'the password never goes into a log call');
 
-$arRequest = arFunctionBody($arAuth, 'requestPasswordReset');
-assertContains("if (\$status === 'active' || \$status === 'pending') {", $arRequest, 'Forgot password also sends a link to a waiting (pending) account');
+$arRequest = arFunctionBody($arAuth, 'requestPasswordResetWork');
+assertContains("\$isEligible = (\$status === 'active' || \$status === 'pending');", $arRequest, 'Forgot password also sends a link to a waiting (pending) account');
+
+// ==============================================================================
+// ⏱️ Review finding 3: limits and even timing for "Forgot password"
+// ==============================================================================
+$arFpDefaults = passwordResetRequestSettings(static function (string $key, mixed $default): mixed {
+    return $default;
+});
+assertEquals(['minGapSeconds' => 60, 'dailyCap' => 5, 'ipPerHour' => 10], $arFpDefaults, 'F3: defaults are 60 s gap, 5 a day, 10 an hour per address (the same as "send me a new link")');
+$arFpAsked = [];
+passwordResetRequestSettings(static function (string $key, mixed $default) use (&$arFpAsked): mixed {
+    $arFpAsked[] = $key;
+    return $default;
+});
+assertEquals(['password_reset_request_min_gap_seconds', 'password_reset_request_daily_cap', 'password_reset_request_ip_per_hour'], $arFpAsked, 'F3: its own three settings are read (not the resend ones)');
+$arFpClamped = passwordResetRequestSettings(static function (string $key, mixed $default): mixed {
+    $values = ['password_reset_request_min_gap_seconds' => '1', 'password_reset_request_daily_cap' => '999', 'password_reset_request_ip_per_hour' => 'lots'];
+    return $values[$key];
+});
+assertEquals(['minGapSeconds' => 10, 'dailyCap' => 50, 'ipPerHour' => 10], $arFpClamped, 'F3: silly values are pulled into the safe range; junk means the default');
+$arFpThrows = passwordResetRequestSettings(static function (string $key, mixed $default): mixed {
+    throw new \RuntimeException('settings unavailable');
+});
+assertEquals($arFpDefaults, $arFpThrows, 'F3: a settings reader that fails gives the defaults');
+assertEquals(verificationResendSettings(static function (string $key, mixed $default): mixed {
+    return $default;
+}), ['minGapSeconds' => 60, 'dailyCap' => 5, 'ipPerHour' => 10], 'F3: the resend limits are unchanged by sharing the reader');
+
+$arFpOk = ['ipRequestsInLastHour' => 1, 'accountIsEligible' => true, 'secondsSinceLastLink' => null, 'linksInLast24Hours' => 0];
+assertEquals(['send' => true, 'reason' => 'send'], decidePasswordResetRequest($arFpOk, $arFpDefaults), 'F3: an eligible account with room to spare gets a link');
+assertEquals('no_eligible_account', decidePasswordResetRequest(array_merge($arFpOk, ['accountIsEligible' => false]), $arFpDefaults)['reason'], 'F3: no account that can be reset -> nothing sent');
+assertEquals('too_soon', decidePasswordResetRequest(array_merge($arFpOk, ['secondsSinceLastLink' => 59]), $arFpDefaults)['reason'], 'F3: inside the minimum gap -> nothing sent');
+assertTrue(decidePasswordResetRequest(array_merge($arFpOk, ['secondsSinceLastLink' => 60]), $arFpDefaults)['send'], 'F3: exactly at the gap -> sent');
+assertEquals('daily_cap', decidePasswordResetRequest(array_merge($arFpOk, ['linksInLast24Hours' => 5]), $arFpDefaults)['reason'], 'F3: the fifth link in a day was the last');
+assertEquals('ip_limited', decidePasswordResetRequest(array_merge($arFpOk, ['ipRequestsInLastHour' => 11]), $arFpDefaults)['reason'], 'F3: the eleventh request from one address in an hour is refused');
+assertEquals('ip_limited', decidePasswordResetRequest(array_merge($arFpOk, ['ipRequestsInLastHour' => 11, 'accountIsEligible' => false]), $arFpDefaults)['reason'], 'F3: the address limit is checked FIRST, whatever the account');
+
+$arFpWrapper = arFunctionBody($arAuth, 'requestPasswordReset');
+assertContains('$startedAtNanos = hrtime(true);', $arFpWrapper, 'F3: the request notes when it began');
+assertContains('padResponseToMinimumDuration($startedAtNanos, CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS);', $arFpWrapper, 'F3: ...and waits out the fixed minimum time');
+assertEquals(250000, CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS, 'F3: the minimum is 250 ms (as for "send me a new link")');
+assertTrue(strpos($arRequest, 'countLinkRequestsFromIp($ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT)') < strpos($arRequest, 'recordAPIRequest(null, $ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT)'), 'F3: the address allowance is counted, then THIS request recorded (every address uses it up alike)');
+assertTrue(strpos($arRequest, 'recordAPIRequest(') < strpos($arRequest, 'FROM `tblUsers` WHERE `email` = ?'), 'F3: ...before the account is even looked up');
+assertContains("limitedRowWrittenRecently((int) \$row['userID'], 'password_reset_request_limited')", $arRequest, 'F3: at most one "refused by the limit" row per account per hour');
+assertContains("\$decision['reason'] !== 'too_soon'", $arRequest, 'F3: a double-click inside the gap writes no row at all');
+assertFalse(str_contains($arRequest, "'httpCode'  => 429"), 'F3: a limited request gets the SAME 200 answer (never a different code)');
+$arApiAccounts = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_accounts.php');
+assertContains('$result = requestPasswordReset($email, $clientIP);', $arApiAccounts, 'F3: the API route calls the same padded, limited function');
+assertContains('$clientIP = getClientIP();', $arApiAccounts, 'F3: ...with the visitor address from getClientIP() (decision 0014)');
 
 $arReset = arFunctionBody($arAuth, 'resetPasswordWithToken');
 assertContains('#[\SensitiveParameter] string $newPassword', $arReset, 'the new password is hidden from stack traces');

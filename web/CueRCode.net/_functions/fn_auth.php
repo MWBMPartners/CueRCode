@@ -581,6 +581,28 @@ if (!defined('CUERCODE_RESEND_VERIFICATION_ENDPOINT')) {
  */
 function verificationResendSettings(?callable $getSetting = null): array
 {
+    return authLinkRequestLimitSettings('verification_resend', $getSetting);
+}
+
+/**
+ * ⚙️ Read the three limits for an emailed-link form ("send me a new link" or
+ *    "Forgot password") from the settings. Shared so both forms behave alike.
+ *
+ * Settings (group 'security'), with PREFIX = $prefix:
+ *   PREFIX_min_gap_seconds (default 60, kept within 10-86400),
+ *   PREFIX_daily_cap       (default 5,  kept within 1-50),
+ *   PREFIX_ip_per_hour     (default 10, kept within 1-1000).
+ * A missing, non-numeric or throwing value falls back to the default; a silly
+ * number is pulled into the safe range. None is commercial, so none is a
+ * hard-coded rule: each can be stored in tblSettings to change it.
+ *
+ * @param string        $prefix     'verification_resend' or 'password_reset_request'
+ * @param callable|null $getSetting Called as $getSetting(string $key, mixed $default);
+ *                                  getConfig when null (a stand-in in tests)
+ * @return array{minGapSeconds: int, dailyCap: int, ipPerHour: int}
+ */
+function authLinkRequestLimitSettings(string $prefix, ?callable $getSetting = null): array
+{
     if ($getSetting === null) {
         if (function_exists('getConfig')) {
             $getSetting = 'getConfig';
@@ -592,9 +614,9 @@ function verificationResendSettings(?callable $getSetting = null): array
     }
 
     $defaults = [
-        'verification_resend_min_gap_seconds' => 60,
-        'verification_resend_daily_cap'       => 5,
-        'verification_resend_ip_per_hour'     => 10,
+        $prefix . '_min_gap_seconds' => 60,
+        $prefix . '_daily_cap'       => 5,
+        $prefix . '_ip_per_hour'     => 10,
     ];
     $values = [];
 
@@ -613,9 +635,9 @@ function verificationResendSettings(?callable $getSetting = null): array
     }
 
     return [
-        'minGapSeconds' => cuercodeClampInt($values['verification_resend_min_gap_seconds'], 10, 86400),
-        'dailyCap'      => cuercodeClampInt($values['verification_resend_daily_cap'], 1, 50),
-        'ipPerHour'     => cuercodeClampInt($values['verification_resend_ip_per_hour'], 1, 1000),
+        'minGapSeconds' => cuercodeClampInt($values[$prefix . '_min_gap_seconds'], 10, 86400),
+        'dailyCap'      => cuercodeClampInt($values[$prefix . '_daily_cap'], 1, 50),
+        'ipPerHour'     => cuercodeClampInt($values[$prefix . '_ip_per_hour'], 1, 1000),
     ];
 }
 
@@ -678,6 +700,20 @@ function decideVerificationResend(array $facts, array $limits): array
  */
 function countVerificationResendRequestsFromIp(string $ipAddress): int
 {
+    return countLinkRequestsFromIp($ipAddress, CUERCODE_RESEND_VERIFICATION_ENDPOINT);
+}
+
+/**
+ * 🔢 Count this IP address's requests to ONE emailed-link form in the last
+ *    hour (shared by "send me a new link" and "Forgot password").
+ *
+ * @param string $ipAddress Client IP address
+ * @param string $endpoint  The name that form writes to the request log
+ * @return int Requests in the last hour (0 when the log cannot be read - the
+ *             check fails open, like checkRateLimit())
+ */
+function countLinkRequestsFromIp(string $ipAddress, string $endpoint): int
+{
     if (!function_exists('dbQuery')) {
         return 0;
     }
@@ -688,13 +724,13 @@ function countVerificationResendRequestsFromIp(string $ipAddress): int
             . 'WHERE `apiKeyID` IS NULL AND `requestIP` = ? AND `endpoint` = ? '
             . 'AND `requestedAt` >= DATE_SUB(NOW(), INTERVAL 1 HOUR)',
             'ss',
-            [mb_substr($ipAddress, 0, 45), CUERCODE_RESEND_VERIFICATION_ENDPOINT]
+            [mb_substr($ipAddress, 0, 45), $endpoint]
         );
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
-            logError('warning', 'Resend-verification IP count failed', $e->getMessage());
+            logError('warning', 'Emailed-link request IP count failed', $e->getMessage());
         }
         return 0;
     }
@@ -801,13 +837,28 @@ function padResponseToMinimumDuration(int $startedAtNanos, int $minimumMicroseco
  */
 function resendLimitedRowWrittenRecently(int $userID): bool
 {
+    return limitedRowWrittenRecently($userID, 'verification_link_resend_limited');
+}
+
+/**
+ * 🕐 Has an activity row of this "refused by the rate limit" type already
+ *    been written for this account in the last hour? (Shared by both
+ *    emailed-link forms.) Any database problem answers TRUE, so a fault can
+ *    only ever mean "write nothing", never "write another row".
+ *
+ * @param int    $userID       Account number
+ * @param string $activityType The limited-row type to look for
+ * @return bool
+ */
+function limitedRowWrittenRecently(int $userID, string $activityType): bool
+{
     try {
         $stmt = dbQuery(
             'SELECT COUNT(*) AS `rowCount` FROM `tblActivityLog` '
-            . "WHERE `activityType` = 'verification_link_resend_limited' AND `entityType` = 'user' AND `entityID` = ? "
+            . "WHERE `activityType` = ? AND `entityType` = 'user' AND `entityID` = ? "
             . 'AND `createdAt` >= DATE_SUB(NOW(), INTERVAL 1 HOUR)',
-            'i',
-            [$userID]
+            'si',
+            [$activityType, $userID]
         );
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -2300,6 +2351,56 @@ function accountRemoveOtherWaysIn(int $userID, bool $alsoCancelVerificationLinks
 // 🔑 requestPasswordReset() - Always-identical-response reset request
 // ==============================================================================
 
+/** @var string The name "Forgot password" writes to the request log (page AND API share it). */
+if (!defined('CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT')) {
+    define('CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT', 'auth/request-password-reset');
+}
+
+/** @var int Shortest time (microseconds) a "Forgot password" request takes to answer (review finding 3). */
+if (!defined('CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS')) {
+    define('CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS', 250000);
+}
+
+/**
+ * ⚙️ The three limits for "Forgot password" (review finding 3): settings
+ *    `password_reset_request_min_gap_seconds` (default 60),
+ *    `password_reset_request_daily_cap` (default 5) and
+ *    `password_reset_request_ip_per_hour` (default 10), read and kept in safe
+ *    ranges exactly like the "send me a new link" ones.
+ *
+ * @param callable|null $getSetting getConfig when null (a stand-in in tests)
+ * @return array{minGapSeconds: int, dailyCap: int, ipPerHour: int}
+ */
+function passwordResetRequestSettings(?callable $getSetting = null): array
+{
+    return authLinkRequestLimitSettings('password_reset_request', $getSetting);
+}
+
+/**
+ * 🧠 May a reset link be sent? PURE. The same checks, in the same order, as
+ *    decideVerificationResend(): the IP address's hourly allowance, then
+ *    whether there is an account that can be reset (active or waiting), then
+ *    the minimum gap, then the daily cap.
+ *
+ * @param array $facts  Keys: ipRequestsInLastHour (int), accountIsEligible (bool),
+ *                      secondsSinceLastLink (int|null), linksInLast24Hours (int)
+ * @param array $limits The result of passwordResetRequestSettings()
+ * @return array{send: bool, reason: string} reason: 'ip_limited',
+ *         'no_eligible_account', 'too_soon', 'daily_cap' or 'send'
+ */
+function decidePasswordResetRequest(array $facts, array $limits): array
+{
+    $mapped = $facts;
+    $mapped['accountIsPending'] = !empty($facts['accountIsEligible']);
+
+    $decision = decideVerificationResend($mapped, $limits);
+    if ($decision['reason'] === 'no_pending_account') {
+        $decision['reason'] = 'no_eligible_account';
+    }
+
+    return $decision;
+}
+
 /**
  * 🔑 Request a password reset email for the given address.
  *
@@ -2309,14 +2410,41 @@ function accountRemoveOtherWaysIn(int $userID, bool $alsoCancelVerificationLinks
  * is expected to have already rejected before calling this (so in normal
  * operation this function's result is a constant).
  *
+ * ⏱️ Review finding 3 (2026-11-25): it ALSO takes the same time for every
+ *    address (at least CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS -
+ *    measured before: 0.20 ms for an unknown address, 3.91 ms for a waiting
+ *    one), and it has the same limits as "send me a new link": a minimum gap
+ *    and a daily cap per account, an hourly cap per visitor address (from
+ *    getClientIP(), decision 0014), and at most one "refused by the limit"
+ *    activity row per account per hour. The page and the API both call this,
+ *    so both get the limits and the even timing.
+ *
  * @param string $email     Candidate email address
- * @param string $ipAddress Client IP address (audit trail on the reset row)
+ * @param string $ipAddress Client IP address (from getClientIP())
  *
  * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
  *
  * @see resetPasswordWithToken()
+ * @see requestNewVerificationLink() - the same protections for the other form
  */
 function requestPasswordReset(string $email, string $ipAddress): array
+{
+    $startedAtNanos = hrtime(true);
+    $result         = requestPasswordResetWork($email, $ipAddress);
+    padResponseToMinimumDuration($startedAtNanos, CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS);
+
+    return $result;
+}
+
+/**
+ * 🔑 The real work of requestPasswordReset(), without the fixed minimum
+ *    time. Call requestPasswordReset() instead.
+ *
+ * @param string $email     Candidate email address
+ * @param string $ipAddress Client IP address
+ * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
+ */
+function requestPasswordResetWork(string $email, string $ipAddress): array
 {
     $genericMessage = 'If this email address is registered, a password reset link has been sent to it.';
     $genericResult  = [
@@ -2331,7 +2459,17 @@ function requestPasswordReset(string $email, string $ipAddress): array
         return $genericResult;
     }
 
+    // 🚦 recordAPIRequest() lives in fn_api_auth.php (constants and functions
+    //    only - loading it here once is harmless; the API already has it).
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_api_auth.php';
+
     $normalizedEmail = mb_strtolower(trim($email));
+    $limits          = passwordResetRequestSettings();
+
+    // 🌍 Per-IP allowance: count first, then record THIS request, so every
+    //    attempt (known address or not) uses up the same allowance.
+    $ipRequests = countLinkRequestsFromIp($ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT) + 1;
+    recordAPIRequest(null, $ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT);
 
     try {
         $stmt = dbQuery(
@@ -2348,18 +2486,74 @@ function requestPasswordReset(string $email, string $ipAddress): array
         return $genericResult;
     }
 
-    if ($row === null) {
-        return $genericResult;
-    }
-
     // 📌 Only an ACTIVE or a waiting (PENDING) account gets an actual reset
     // email queued - this distinction is internal only and never observable
     // in the response. 🔐 Decision 0013: a pending account is included,
     // because the reset link proves the person owns the email address; using
     // it sets a new password AND activates the account. This is the way out
     // for someone whose address a stranger signed up with first.
-    $status = (string) $row['status'];
-    if ($status === 'active' || $status === 'pending') {
+    $status = '';
+    if (is_array($row)) {
+        $status = (string) $row['status'];
+    }
+    $isEligible = ($status === 'active' || $status === 'pending');
+
+    // ⏱️ Per-account history, read from the reset links already issued.
+    $secondsSince = null;
+    $linksInDay   = 0;
+
+    if ($isEligible) {
+        try {
+            $historyStmt = dbQuery(
+                'SELECT COUNT(CASE WHEN `createdAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1 END) AS `dayCount`, '
+                . 'TIMESTAMPDIFF(SECOND, MAX(`createdAt`), NOW()) AS `secondsSince` '
+                . 'FROM `tblPasswordResets` WHERE `userID` = ?',
+                'i',
+                [(int) $row['userID']]
+            );
+            $history = $historyStmt->get_result()->fetch_assoc();
+            $historyStmt->close();
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'Password reset history lookup failed', $e->getMessage());
+            }
+            return $genericResult;
+        }
+
+        if (is_array($history)) {
+            $linksInDay = (int) $history['dayCount'];
+            if ($history['secondsSince'] !== null) {
+                $secondsSince = (int) $history['secondsSince'];
+            }
+        }
+    }
+
+    $decision = decidePasswordResetRequest(
+        [
+            'ipRequestsInLastHour' => $ipRequests,
+            'accountIsEligible'    => $isEligible,
+            'secondsSinceLastLink' => $secondsSince,
+            'linksInLast24Hours'   => $linksInDay,
+        ],
+        $limits
+    );
+
+    if ($isEligible && !$decision['send']) {
+        // 📝 A double-click inside the minimum gap is not worth a row, and
+        //    once a limit is hit, at most ONE row per account per hour.
+        if ($decision['reason'] !== 'too_soon' && function_exists('logActivity') && !limitedRowWrittenRecently((int) $row['userID'], 'password_reset_request_limited')) {
+            logActivity(
+                'password_reset_request_limited',
+                'A password reset link was refused by the rate limit (' . $decision['reason'] . ')',
+                'user',
+                (int) $row['userID'],
+                []
+            );
+        }
+        return $genericResult;
+    }
+
+    if ($isEligible) {
         $userID    = (int) $row['userID'];
         $rawToken  = generateRandomToken();
         $tokenHash = hashToken($rawToken);

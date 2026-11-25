@@ -16,6 +16,12 @@
  * way out for someone whose address a stranger signed up with first. Using
  * the link activates the account (see reset-password/index.php).
  *
+ * ⏱️ Review finding 3 (2026-11-25): requestPasswordReset() now has the same
+ *    limits as "send me a new link" (a minimum gap and a daily cap per
+ *    account, an hourly cap per visitor address) and always takes at least
+ *    250 ms, so neither the answer nor its timing shows whether an address
+ *    has an account. The answer below never changes.
+ *
  * @package     CueRCode
  * @subpackage  Pages / Account
  * @copyright   2025–2026 MWBM Partners Ltd
