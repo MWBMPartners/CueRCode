@@ -622,7 +622,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                         $results[] = [
                             'status' => 'error',
                             'message' => 'The database is installed, but the installer could not write its lock file, so it is NOT switched off. '
-                                . 'Delete the install folder from the server now (or make _auth_keys writable and create _auth_keys/.installed.lock).'
+                                . 'Make the _auth_keys folder writable and create an empty file called _auth_keys/.installed.lock now. Keep the install folder and its .htaccess file in place: deleting the folder does not help, because the next deploy puts it back.'
                         ];
                     }
                 }

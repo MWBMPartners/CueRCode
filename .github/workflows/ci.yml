@@ -6,10 +6,9 @@
 # (closes #35 / roadmap E12):
 #   1. php -l syntax lint on PHP 8.4, 8.5 AND 8.6 (supported versions, decision
 #      0002; lint also fails on compile-time deprecations, #151)
-#   2. The dependency-free test suite (php tests/run.php) on all three versions,
-#      with the vendored
-#      QR/PDF libraries installed at run time (they are gitignored — "downloaded
-#      separately, not committed" — so CI fetches them, mirroring the server).
+#   2. The dependency-free test suite (php tests/run.php) on all three versions.
+#      The QR/PDF/barcode libraries are committed in _libraries/ (decision 0011);
+#      a pin check verifies them instead of downloading anything.
 #   3. Site polish check (php tools/check_site_polish.php, #137).
 #   4. Secret scan via the gitleaks CLI (the org-licensed gitleaks *action*
 #      silently no-ops on private repos without a licence — the CLI does not).
@@ -81,7 +80,7 @@ jobs:
         run: bash tools/ci/php-lint.sh
 
   # ---------------------------------------------------------------------------
-  # 🧪 Dependency-free test suite (libraries vendored at run time)
+  # 🧪 Dependency-free test suite (libraries committed, pin-checked)
   # ---------------------------------------------------------------------------
   tests:
     name: Test suite (PHP ${{ matrix.php }})
