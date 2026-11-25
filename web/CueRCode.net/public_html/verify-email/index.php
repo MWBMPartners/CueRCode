@@ -137,9 +137,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <?php echo htmlspecialchars($verifyResult['message'], ENT_QUOTES, 'UTF-8'); ?>
                                 </div>
                                 <p>
-                                    Need a new link? <a href="/register/">Register again</a> or
-                                    <a href="/forgot-password/">reset your password</a> if you already
-                                    have an account.
+                                    Need a new link? <a href="/resend-verification/">Send me a new verification link</a>.
+                                    If you already have a working account, you can
+                                    <a href="/forgot-password/">reset your password</a> instead.
                                 </p>
                                 <?php } ?>
                             <?php } elseif ($rawToken === '') { ?>
@@ -148,6 +148,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     This verification link is missing its token. Please use the exact
                                     link from your verification email.
                                 </div>
+                                <p>
+                                    Lost the email? <a href="/resend-verification/">Send me a new verification link</a>.
+                                </p>
                             <?php } else { ?>
                                 <p class="text-body-secondary mb-4">
                                     Click the button below to confirm your email address and activate

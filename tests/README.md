@@ -378,3 +378,23 @@ boundaries when deciding what to test:
   validators (`test_api_keys.php`), and `fn_api_qrcodes.php`'s ownership
   predicates (`test_qrcodes.php`). Their **DB/render-dependent parts** remain
   out of scope for this dependency-free harness.
+
+## Optional real-database check (new verification link, #128)
+
+`tests/test_resend_verification.php` proves the decisions, settings and page
+wiring without a database. `tests/integration/resend_verification_real_mysql.php`
+proves the real SQL: old links retired, one email queued, the same answer for
+every kind of address, the minimum gap, the daily cap, the per-IP cap, and no
+address or link in the activity log. `run.php` does not run it; CI
+syntax-checks it. It deletes rows, so it refuses any database not named
+`cuercode_it_*`. It never sends email.
+
+```sh
+docker run --rm -d --name p128-resend-mysql \
+  -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -e MYSQL_DATABASE=cuercode_it_p128 \
+  -p 127.0.0.1:33128:3306 mysql:8.4
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33128 CUERCODE_IT_DB_NAME=cuercode_it_p128 \
+CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  php "$REPO/tests/integration/resend_verification_real_mysql.php" --load-schema; echo "exit=$?"
+docker stop p128-resend-mysql
+```

@@ -111,6 +111,7 @@ var PRIVATE_PATH_PREFIXES = [
     '/forgot-password',
     '/reset-password',
     '/verify-email',
+    '/resend-verification',
     '/auth'
 ];
 

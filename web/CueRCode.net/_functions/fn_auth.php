@@ -253,6 +253,100 @@ function buildAccountActionUrl(string $action, string $rawToken): string
 }
 
 // ==============================================================================
+// 🎫 issueEmailVerificationLink() - ONE place that makes a verification link (#128)
+// ==============================================================================
+
+/**
+ * 🎫 Create a fresh verification token for a user and queue the email carrying it.
+ *
+ * Used by registerUser() (first link) and requestNewVerificationLink() (a
+ * replacement link, #128), so there is exactly one way a verification link is
+ * made. Only the SHA-256 hash of the token is stored; the raw token travels
+ * only inside the queued email and is never logged.
+ *
+ * When $invalidateEarlier is true, every OTHER still-unused token for the same
+ * user is marked used straight after the new one is saved, so only the newest
+ * link works. (The new row is saved first, so a failure part-way never leaves
+ * the person with no working link at all.)
+ *
+ * @param int         $userID            The pending account
+ * @param string      $email             Normalised (lower-case) address to send to
+ * @param string|null $displayName       Display name for the greeting, if any
+ * @param bool        $invalidateEarlier Burn the person's older unused tokens
+ *
+ * @return bool True when the token was saved (the email is then queued, if the
+ *              email subsystem is loaded); false when saving the token failed.
+ *
+ * @see registerUser()
+ * @see requestNewVerificationLink()
+ */
+function issueEmailVerificationLink(int $userID, string $email, ?string $displayName, bool $invalidateEarlier): bool
+{
+    if (!function_exists('dbQuery')) {
+        return false;
+    }
+
+    $rawToken  = generateRandomToken();
+    $tokenHash = hashToken($rawToken);
+
+    try {
+        $verifyStmt = dbQuery(
+            'INSERT INTO `tblEmailVerifications` (`userID`, `tokenHash`, `expiresAt`) '
+            . 'VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))',
+            'isi',
+            [$userID, $tokenHash, CUERCODE_EMAIL_VERIFICATION_TTL_HOURS]
+        );
+        $newVerificationID = (int) $verifyStmt->insert_id;
+        $verifyStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            // 🙈 The driver text can echo values back, so only the fact is logged.
+            logError('error', 'Verification token insert failed', $e->getMessage());
+        }
+        // The account row exists but has no way to self-verify yet - logged
+        // for operator follow-up.
+        return false;
+    }
+
+    // 🔥 #128: burn the earlier unused tokens (never the one just made).
+    if ($invalidateEarlier) {
+        try {
+            $burnStmt = dbQuery(
+                'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() '
+                . 'WHERE `userID` = ? AND `usedAt` IS NULL AND `verificationID` <> ?',
+                'ii',
+                [$userID, $newVerificationID]
+            );
+            $burnStmt->close();
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('warning', 'Earlier verification tokens could not be retired', $e->getMessage());
+            }
+        }
+    }
+
+    // 📧 Queue the verification email (fails open/silently if fn_email.php
+    // is not loaded or the email subsystem is not configured - see fn_email.php).
+    if (function_exists('queueEmail')) {
+        $verificationUrl = buildAccountActionUrl('verify-email', $rawToken);
+
+        queueEmail(
+            $email,
+            'verification',
+            [
+                'recipientName'   => $displayName,
+                'verificationUrl' => $verificationUrl,
+                'expiryHours'     => CUERCODE_EMAIL_VERIFICATION_TTL_HOURS,
+            ],
+            null,
+            $displayName
+        );
+    }
+
+    return true;
+}
+
+// ==============================================================================
 // 📝 registerUser() - Register a new (pending) account
 // ==============================================================================
 
@@ -418,46 +512,338 @@ function registerUser(string $email, string $plainPassword, ?string $displayName
         return $genericSuccess;
     }
 
-    // 🎫 Issue a single-use, expiring email verification token.
-    $rawToken  = generateRandomToken();
-    $tokenHash = hashToken($rawToken);
-
-    try {
-        $verifyStmt = dbQuery(
-            'INSERT INTO `tblEmailVerifications` (`userID`, `tokenHash`, `expiresAt`) '
-            . 'VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))',
-            'isi',
-            [$newUserID, $tokenHash, CUERCODE_EMAIL_VERIFICATION_TTL_HOURS]
-        );
-        $verifyStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('error', 'Verification token insert failed', $e->getMessage());
-        }
-        // The account row exists but has no way to self-verify yet - logged
-        // for operator follow-up; the RESPONSE stays generic either way.
-        return $genericSuccess;
-    }
-
-    // 📧 Queue the verification email (fails open/silently if fn_email.php
-    // is not loaded or the email subsystem is not configured - see fn_email.php).
-    if (function_exists('queueEmail')) {
-        $verificationUrl = buildAccountActionUrl('verify-email', $rawToken);
-
-        queueEmail(
-            $normalizedEmail,
-            'verification',
-            [
-                'recipientName'   => $normalizedDisplayName,
-                'verificationUrl' => $verificationUrl,
-                'expiryHours'     => CUERCODE_EMAIL_VERIFICATION_TTL_HOURS,
-            ],
-            null,
-            $normalizedDisplayName
-        );
-    }
+    // 🎫 Issue the single-use, expiring verification token and queue the email.
+    // 📌 #128: this is the SAME helper the "send me a new link" form uses, so
+    //    there is only one path that makes a verification link. The helper logs
+    //    its own failures; the RESPONSE stays generic either way.
+    issueEmailVerificationLink($newUserID, $normalizedEmail, $normalizedDisplayName, false);
 
     return $genericSuccess;
+}
+
+// ==============================================================================
+// 📨 Ask for a NEW verification link (#128)
+// ==============================================================================
+//
+// A person who signed up with an email address and password stays "pending"
+// until they click the link in the verification email. If that email never
+// arrived, expired or was deleted, they used to be stuck for good. These
+// functions let them ask for a replacement.
+//
+// 🙈 NO ACCOUNT ENUMERATION: requestNewVerificationLink() returns the SAME
+//    message whether the address has a waiting account, has no account, is
+//    already verified, is suspended, or the request was rate limited.
+// ⏱️ RATE LIMITS (all settings, with the defaults below - nothing commercial
+//    is hard-coded): a minimum gap between two sends for one account, a cap
+//    per 24 hours for one account, and a cap per hour for one IP address.
+// ==============================================================================
+
+/**
+ * @var string The one plain answer every request for a new link gets.
+ */
+if (!defined('CUERCODE_RESEND_VERIFICATION_MESSAGE')) {
+    define(
+        'CUERCODE_RESEND_VERIFICATION_MESSAGE',
+        'If that address is waiting for verification, a new link is on its way. '
+        . 'Please check your inbox and your spam folder.'
+    );
+}
+
+/**
+ * @var string The name written to the request log for this form, so its
+ * requests can be counted separately from the rest of the site's traffic.
+ */
+if (!defined('CUERCODE_RESEND_VERIFICATION_ENDPOINT')) {
+    define('CUERCODE_RESEND_VERIFICATION_ENDPOINT', 'page/resend-verification');
+}
+
+/**
+ * ⚙️ Read the three limits for "send me a new link" from the settings.
+ *
+ * Settings (group 'security'): `verification_resend_min_gap_seconds` (default
+ * 60), `verification_resend_daily_cap` (default 5) and
+ * `verification_resend_ip_per_hour` (default 10). A missing, non-numeric or
+ * silly value falls back to the default or is pulled into a safe range.
+ *
+ * @param callable|null $getSetting Called as $getSetting(string $key, mixed $default);
+ *                                  getConfig when null (a stand-in in tests).
+ *
+ * @return array{minGapSeconds: int, dailyCap: int, ipPerHour: int}
+ */
+function verificationResendSettings(?callable $getSetting = null): array
+{
+    if ($getSetting === null) {
+        if (function_exists('getConfig')) {
+            $getSetting = 'getConfig';
+        } else {
+            $getSetting = static function (string $key, mixed $default): mixed {
+                return $default;
+            };
+        }
+    }
+
+    $defaults = [
+        'verification_resend_min_gap_seconds' => 60,
+        'verification_resend_daily_cap'       => 5,
+        'verification_resend_ip_per_hour'     => 10,
+    ];
+    $values = [];
+
+    foreach ($defaults as $key => $default) {
+        try {
+            $raw = $getSetting($key, $default);
+        } catch (\Throwable $e) {
+            $raw = $default;
+        }
+
+        if (is_int($raw) || (is_string($raw) && preg_match('/^\d{1,9}$/', $raw) === 1)) {
+            $values[$key] = (int) $raw;
+        } else {
+            $values[$key] = $default;
+        }
+    }
+
+    return [
+        'minGapSeconds' => cuercodeClampInt($values['verification_resend_min_gap_seconds'], 10, 86400),
+        'dailyCap'      => cuercodeClampInt($values['verification_resend_daily_cap'], 1, 50),
+        'ipPerHour'     => cuercodeClampInt($values['verification_resend_ip_per_hour'], 1, 1000),
+    ];
+}
+
+/**
+ * 🧠 Decide whether a new verification link may be sent (pure - no database).
+ *
+ * The checks run in this order, and the FIRST one that fails wins:
+ *   1. the IP address has asked too often this hour  -> 'ip_limited'
+ *   2. there is no waiting (pending, unverified) account -> 'no_pending_account'
+ *   3. the last link was sent less than the minimum gap ago -> 'too_soon'
+ *   4. the account has had its daily quota of links -> 'daily_cap'
+ *   5. otherwise -> 'send'
+ *
+ * The caller never shows the reason to the visitor (they always get the same
+ * message); it exists for the activity log and the tests.
+ *
+ * @param array $facts Keys: ipRequestsInLastHour (int), accountIsPending (bool),
+ *                     secondsSinceLastLink (int|null, null = never),
+ *                     linksInLast24Hours (int)
+ * @param array $limits The result of verificationResendSettings()
+ *
+ * @return array{send: bool, reason: string}
+ */
+function decideVerificationResend(array $facts, array $limits): array
+{
+    $ipRequests = (int) ($facts['ipRequestsInLastHour'] ?? 0);
+
+    if ($ipRequests > (int) $limits['ipPerHour']) {
+        return ['send' => false, 'reason' => 'ip_limited'];
+    }
+
+    if (empty($facts['accountIsPending'])) {
+        return ['send' => false, 'reason' => 'no_pending_account'];
+    }
+
+    $secondsSince = $facts['secondsSinceLastLink'] ?? null;
+
+    if ($secondsSince !== null && (int) $secondsSince < (int) $limits['minGapSeconds']) {
+        return ['send' => false, 'reason' => 'too_soon'];
+    }
+
+    if ((int) ($facts['linksInLast24Hours'] ?? 0) >= (int) $limits['dailyCap']) {
+        return ['send' => false, 'reason' => 'daily_cap'];
+    }
+
+    return ['send' => true, 'reason' => 'send'];
+}
+
+/**
+ * 🔢 Count this IP address's requests for a new link in the last hour.
+ *
+ * Reads the same request log (tblAPIRateLog) the API rate limiter uses, but
+ * only the rows written by this form, so ordinary site traffic from the same
+ * address never uses up the allowance.
+ *
+ * @param string $ipAddress Client IP address
+ *
+ * @return int Requests in the last hour (0 when the log cannot be read - the
+ *             check fails open, like checkRateLimit()).
+ */
+function countVerificationResendRequestsFromIp(string $ipAddress): int
+{
+    if (!function_exists('dbQuery')) {
+        return 0;
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT COUNT(*) AS `requestCount` FROM `tblAPIRateLog` '
+            . 'WHERE `apiKeyID` IS NULL AND `requestIP` = ? AND `endpoint` = ? '
+            . 'AND `requestedAt` >= DATE_SUB(NOW(), INTERVAL 1 HOUR)',
+            'ss',
+            [mb_substr($ipAddress, 0, 45), CUERCODE_RESEND_VERIFICATION_ENDPOINT]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('warning', 'Resend-verification IP count failed', $e->getMessage());
+        }
+        return 0;
+    }
+
+    if (is_array($row) && isset($row['requestCount'])) {
+        return (int) $row['requestCount'];
+    }
+
+    return 0;
+}
+
+/**
+ * 📨 Send a replacement verification link to a waiting account.
+ *
+ * Always returns the identical 200 result (see CUERCODE_RESEND_VERIFICATION_MESSAGE)
+ * - the only different answer is 503 when the database is not available at all,
+ * which says nothing about any account. The link is made by the same
+ * issueEmailVerificationLink() that sign-up uses, and earlier unused links
+ * for the account stop working.
+ *
+ * Nothing written to a log carries the address, the link or the token: the
+ * activity row names only the account number.
+ *
+ * Known, accepted limits: two requests at exactly the same instant could both
+ * pass the per-account gap check (the per-IP cap still applies); and the work
+ * done for a waiting account takes a few milliseconds longer than for an
+ * unknown address.
+ *
+ * @param string $email     Address typed into the form (checked by the caller too)
+ * @param string $ipAddress Client IP address
+ *
+ * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
+ *
+ * @see decideVerificationResend()
+ * @see issueEmailVerificationLink()
+ */
+function requestNewVerificationLink(string $email, string $ipAddress): array
+{
+    $genericResult = [
+        'success'   => true,
+        'httpCode'  => 200,
+        'errorCode' => null,
+        'message'   => CUERCODE_RESEND_VERIFICATION_MESSAGE,
+        'data'      => [],
+    ];
+
+    if (!function_exists('dbQuery')) {
+        return [
+            'success'   => false,
+            'httpCode'  => 503,
+            'errorCode' => 'SERVICE_UNAVAILABLE',
+            'message'   => 'This is temporarily unavailable. Please try again later.',
+            'data'      => [],
+        ];
+    }
+
+    // 🚦 The request log and client-IP helpers live in fn_api_auth.php, which
+    //    ordinary pages do not load; it only defines constants and functions,
+    //    so loading it here (once) is harmless.
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_api_auth.php';
+
+    $normalizedEmail = mb_strtolower(trim($email));
+    $limits          = verificationResendSettings();
+
+    // 🌍 Per-IP allowance: count first, then record THIS request, so every
+    //    attempt (known address or not) uses up the same allowance.
+    $ipRequests = countVerificationResendRequestsFromIp($ipAddress) + 1;
+
+    recordAPIRequest(null, $ipAddress, CUERCODE_RESEND_VERIFICATION_ENDPOINT);
+
+    // 🔍 Is there a waiting account? (Only ever used internally.)
+    $account = null;
+
+    try {
+        $stmt = dbQuery(
+            'SELECT `userID`, `displayName`, `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `email` = ? LIMIT 1',
+            's',
+            [$normalizedEmail]
+        );
+        $account = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Resend-verification lookup failed', $e->getMessage());
+        }
+        return $genericResult;
+    }
+
+    $isPending = is_array($account)
+        && (string) $account['status'] === 'pending'
+        && $account['emailVerifiedAt'] === null;
+
+    // ⏱️ Per-account history, read from the tokens already issued.
+    $secondsSince = null;
+    $linksInDay   = 0;
+
+    if ($isPending) {
+        try {
+            $stmt = dbQuery(
+                'SELECT COUNT(CASE WHEN `createdAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1 END) AS `dayCount`, '
+                . 'TIMESTAMPDIFF(SECOND, MAX(`createdAt`), NOW()) AS `secondsSince` '
+                . 'FROM `tblEmailVerifications` WHERE `userID` = ?',
+                'i',
+                [(int) $account['userID']]
+            );
+            $history = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'Resend-verification history lookup failed', $e->getMessage());
+            }
+            return $genericResult;
+        }
+
+        if (is_array($history)) {
+            $linksInDay = (int) $history['dayCount'];
+
+            if ($history['secondsSince'] !== null) {
+                $secondsSince = (int) $history['secondsSince'];
+            }
+        }
+    }
+
+    $decision = decideVerificationResend(
+        [
+            'ipRequestsInLastHour' => $ipRequests,
+            'accountIsPending'     => $isPending,
+            'secondsSinceLastLink' => $secondsSince,
+            'linksInLast24Hours'   => $linksInDay,
+        ],
+        $limits
+    );
+
+    if ($decision['send'] && $isPending) {
+        $displayName = null;
+
+        if ($account['displayName'] !== null && (string) $account['displayName'] !== '') {
+            $displayName = (string) $account['displayName'];
+        }
+
+        $issued = issueEmailVerificationLink((int) $account['userID'], $normalizedEmail, $displayName, true);
+
+        if ($issued && function_exists('logActivity')) {
+            // 🙈 The account NUMBER only - never the address, link or token.
+            logActivity('verification_link_resent', 'A new verification link was requested', 'user', (int) $account['userID'], []);
+        }
+    } elseif ($isPending && $decision['reason'] !== 'too_soon' && function_exists('logActivity')) {
+        // 📝 A plain double-click inside the minimum gap is not worth a log row.
+        logActivity(
+            'verification_link_resend_limited',
+            'A new verification link was refused by the rate limit (' . $decision['reason'] . ')',
+            'user',
+            (int) $account['userID'],
+            []
+        );
+    }
+
+    return $genericResult;
 }
 
 // ==============================================================================

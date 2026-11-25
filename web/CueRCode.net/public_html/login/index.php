@@ -241,6 +241,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                                 <div class="mb-4 text-end">
                                     <a href="/forgot-password/" class="small">Forgot password?</a>
+                                    <?php /* 📨 #128: the sign-in message is the same for an unverified account
+                                         (no enumeration), so the way to a new link is always offered. */ ?>
+                                    <br>
+                                    <a href="/resend-verification/" class="small">Didn't get your verification email? Send a new link</a>
                                 </div>
 
                                 <div class="d-grid">
