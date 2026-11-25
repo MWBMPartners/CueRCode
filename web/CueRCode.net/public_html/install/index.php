@@ -46,6 +46,13 @@ $siteRoot = dirname(dirname($installDir)) . $ds;
 /** @var string Path to the server-wide root (three levels up) */
 $serverRoot = dirname($siteRoot) . $ds;
 
+// 🔧 Pure readiness-check helpers (PHP extensions, database version, writable
+// folders, lock-file paths) - kept in their own file so they can be unit tested
+// (#113 B2, B7). IMPORTANT: this must be loaded BEFORE the first helper call
+// below (installLockFilePaths). Loading it later made every request a fatal
+// error found by the fresh-install dry run (B9, 2026-11-25).
+require_once $siteRoot . '_functions' . $ds . 'fn_install_checks.php';
+
 /**
  * @var string Lock file path - prevents re-running the installer. Review fix
  *             M8: it now lives in _auth_keys/ (outside install/ and outside
@@ -61,10 +68,6 @@ $installSQLPath = $siteRoot . '_includes' . $ds . 'sql' . $ds . 'install.sql';
 
 /** @var string Path to SQL seed data script */
 $seedSQLPath = $siteRoot . '_includes' . $ds . 'sql' . $ds . 'seed_data.sql';
-
-// 🔧 Pure readiness-check helpers (PHP extensions, database version, writable
-// folders) - kept in their own file so they can be unit tested (#113 B2, B7).
-require_once $siteRoot . '_functions' . $ds . 'fn_install_checks.php';
 
 // ==============================================================================
 // 🔒 Lock File Check - Prevent Re-Execution
@@ -528,7 +531,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                 if (empty($missingTables)) {
                     $results[] = [
                         'status' => 'success',
-                        'message' => 'All ' . count($expectedTables) . ' tables verified: '
+                        'message' => 'All ' . count($expectedTables) . ' core tables verified (database upgrades add the rest): '
                             . implode(', ', $expectedTables)
                     ];
 
@@ -870,8 +873,10 @@ foreach ($prerequisites as $prereq) {
                             </p>
                             <hr>
                             <p class="mb-0">
-                                <strong>Next steps:</strong> Remove or restrict access to the
-                                <code>/install/</code> directory, then visit your site.
+                                <strong>Next steps:</strong> Put the <code>.htaccess</code> file back in the
+                                <code>/install/</code> folder (rename <code>.htaccess.off</code> to
+                                <code>.htaccess</code>) and keep the folder, then visit your site.
+                                Do not delete the folder: the next deploy puts it back.
                             </p>
                         </div>
                         <div class="text-center mt-3">
