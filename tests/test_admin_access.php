@@ -1082,10 +1082,14 @@ assertTrue(strpos($aaRunBody, 'if (!$startedWritten) {') < strpos($aaRunBody, 'm
  * 🧪 Run adminAuditOrFallback() and adminReauthRecordSuccess() in a child
  *    process with a stand-in database. $aaMode picks the stand-in:
  *      none           - no dbQuery() at all (database not loaded);
- *      check-fails    - the "does the table exist?" question throws;
+ *      check-fails    - the "does the table exist?" question throws a plain
+ *                       RuntimeException (no error number);
  *      missing-refuse - table confirmed missing; the activity-log insert throws;
  *      missing-zero   - table confirmed missing; the insert reports 0 rows;
- *      missing-works  - table confirmed missing; the insert writes 1 row.
+ *      missing-works  - table confirmed missing; the insert writes 1 row;
+ *      no-privilege   - the account may not read the table (error 1142);
+ *      connection-lost - the connection drops (error 2006);
+ *      table-exists   - the probe works (the table is there).
  *
  * @return array<string, mixed> {fallback, unlocked, inserts, schemaQueries} or {crashed}
  */
@@ -1104,26 +1108,29 @@ $aaAuditChild = static function (string $aaMode): array {
 if ($GLOBALS['aaMode'] !== 'none') {
     function dbQuery(string $sql, string $types = '', array $params = [])
     {
-        if (str_contains($sql, 'INFORMATION_SCHEMA')) {
+        // 🔎 Codex round 3 finding 3: the table check is now a cheap SELECT on
+        //    the table itself, and the error NUMBER decides the answer.
+        if (str_contains($sql, 'SELECT 1 FROM `tblAdminAuditLog`')) {
             $GLOBALS['aaSchemaQueries'] = $GLOBALS['aaSchemaQueries'] + 1;
             if ($GLOBALS['aaMode'] === 'check-fails') {
                 throw new \RuntimeException('stand-in: the table check failed');
             }
-            return new class {
-                public function get_result(): object
-                {
-                    return new class {
-                        public function fetch_assoc(): array
-                        {
-                            return ['tableCount' => 0];
-                        }
-                    };
-                }
-                public function close(): bool
-                {
-                    return true;
-                }
-            };
+            if ($GLOBALS['aaMode'] === 'no-privilege') {
+                throw new \mysqli_sql_exception('stand-in: SELECT command denied to user', 1142);
+            }
+            if ($GLOBALS['aaMode'] === 'connection-lost') {
+                throw new \mysqli_sql_exception('stand-in: MySQL server has gone away', 2006);
+            }
+            if ($GLOBALS['aaMode'] === 'table-exists') {
+                return new class {
+                    public function close(): bool
+                    {
+                        return true;
+                    }
+                };
+            }
+            // missing-refuse / missing-zero / missing-works: 1146 = no such table
+            throw new \mysqli_sql_exception('stand-in: Table does not exist', 1146);
         }
         if (str_contains($sql, 'INSERT INTO `tblActivityLog`')) {
             $GLOBALS['aaInserts'] = $GLOBALS['aaInserts'] + 1;
@@ -1192,6 +1199,17 @@ assertTrue(isset($aaR21['unlocked'], $aaR21['stored']) && $aaR21['unlocked'] ===
 $aaR21 = $aaAuditChild('missing-zero');
 assertTrue(isset($aaR21['fallback'], $aaR21['unlocked']) && $aaR21['fallback'] === false && $aaR21['unlocked'] === false, 'R2-1: an insert that writes no row counts as NOT written ' . json_encode($aaR21));
 
+// 🔒 Codex round 3 finding 3: only error 1146 means "confirmed missing". A
+//    refused permission (1142), a dropped connection (2006) or a table that
+//    exists must NEVER reach the activity-log stand-in.
+foreach (['no-privilege' => 'the account has no privilege on the table (1142)', 'connection-lost' => 'the connection is lost (2006)', 'table-exists' => 'the table exists'] as $aaR3Mode => $aaR3Why) {
+    $aaR21 = $aaAuditChild($aaR3Mode);
+    assertTrue(isset($aaR21['inserts']) && $aaR21['inserts'] === 0, 'round 3 (3): ' . $aaR3Why . ' - the activity log is NOT used as a stand-in ' . json_encode($aaR21));
+    assertTrue(isset($aaR21['fallback'], $aaR21['unlocked']) && $aaR21['fallback'] === false && $aaR21['unlocked'] === false, 'round 3 (3): ' . $aaR3Why . ' - nothing is recorded as written and editing is NOT unlocked');
+}
+$aaR21 = $aaAuditChild('no-privilege');
+assertTrue(isset($aaR21['schemaQueries']) && $aaR21['schemaQueries'] >= 2, 'round 3 (3): "could not tell" is asked again next time, not remembered as "missing"');
+
 $aaR21 = $aaAuditChild('none');
 assertTrue(isset($aaR21['fallback'], $aaR21['unlocked']) && $aaR21['fallback'] === false && $aaR21['unlocked'] === false, 'R2-1: with no database at all, nothing is recorded as written and nothing unlocks ' . json_encode($aaR21));
 
@@ -1204,6 +1222,12 @@ $aaR21Source = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php
 $aaR21Start  = strpos($aaR21Source, 'function adminAuditOrFallback(');
 $aaR21Body   = substr($aaR21Source, (int) $aaR21Start, (int) strpos($aaR21Source, "\nfunction ", (int) $aaR21Start + 10) - (int) $aaR21Start);
 assertContains("adminTableExistsState('tblAdminAuditLog')", $aaR21Body, 'R2-1: the fallback tells "confirmed missing" from "could not tell"');
+$aaR3Start = strpos($aaR21Source, 'function adminTableExistsState(');
+$aaR3Body  = substr($aaR21Source, (int) $aaR3Start, (int) strpos($aaR21Source, "\nfunction ", (int) $aaR3Start + 10) - (int) $aaR3Start);
+assertFalse(str_contains($aaR3Body, 'INFORMATION_SCHEMA\'') || str_contains($aaR3Body, 'INFORMATION_SCHEMA`.'), 'round 3 (3): the table check no longer asks INFORMATION_SCHEMA (it only lists tables the account can see)');
+assertContains("'SELECT 1 FROM `' . \$table . '` LIMIT 1'", $aaR3Body, 'round 3 (3): the table check is a cheap SELECT on the table itself');
+assertContains('=== 1146', $aaR3Body, 'round 3 (3): only error 1146 (no such table) means "confirmed missing"');
+assertContains('\\mysqli_sql_exception', $aaR3Body, 'round 3 (3): the error number is read from mysqli_sql_exception::getCode()');
 assertContains('return logActivityChecked(', $aaR21Body, 'R2-1: the stand-in row is a checked write, and its answer is returned');
 assertFalse((bool) preg_match('/^\s*logActivity\(/m', $aaR21Body), 'R2-1: the unchecked logActivity() is no longer used by the fallback');
 $aaR21Log = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_activity_log.php');

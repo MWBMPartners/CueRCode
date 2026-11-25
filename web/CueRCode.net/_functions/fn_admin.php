@@ -2568,16 +2568,32 @@ function adminTableExists(string $table, bool $forget = false): bool
 
 /**
  * 🔎 Does a table exist? Three answers (independent review, Codex round 2
- *    finding R2-1, 2026-11-25):
- *   - "yes"     - INFORMATION_SCHEMA says it exists;
- *   - "no"      - INFORMATION_SCHEMA was asked successfully and says it does
- *                 NOT exist (confirmed missing);
- *   - "unknown" - the question could not be answered (no database, a query
- *                 error). Never remembered, so the next call asks again.
- * Before this, a failed question read as "missing", which sent admin actions
- * to the activity-log stand-in even when the change-log table existed.
+ *    finding R2-1, 2026-11-25; the way it asks was changed in Codex round 3
+ *    finding 3, 2026-11-25):
+ *   - "yes"     - a cheap prepared SELECT on the table itself worked;
+ *   - "no"      - the database answered with error 1146 (ER_NO_SUCH_TABLE,
+ *                 "table does not exist"): confirmed missing;
+ *   - "unknown" - anything else: no database, a connection error or timeout,
+ *                 no permission to read the table (errors 1142 / 1143), a
+ *                 query error. Never remembered, so the next call asks again.
  *
- * @param string $table  Plain table name (a bound value)
+ * ⚠️ WHY A REAL PROBE, NOT INFORMATION_SCHEMA (Codex round 3 finding 3):
+ *    INFORMATION_SCHEMA.TABLES only LISTS tables the database account may
+ *    see. A table that exists but that the account has no rights on gave a
+ *    count of 0, so it read as "confirmed missing", and an admin action went
+ *    to the activity-log stand-in instead of being refused. Reading the real
+ *    error number tells "the table is not there" (1146) from "I may not look"
+ *    (1142 and others), which must refuse. A PHP 8.1+ mysqli throws
+ *    mysqli_sql_exception whose getCode() is that number, so the code is read
+ *    from it; any other failure (for example the plain RuntimeException the
+ *    older non-throwing mode gives, which carries no error number) is
+ *    "unknown" and fails closed.
+ *
+ * The table name goes into the SQL text (a prepared statement cannot bind a
+ * table name), so it must be a plain name made of letters, digits and
+ * underscores; anything else is "unknown". Callers only ever pass fixed names.
+ *
+ * @param string $table  Plain table name
  * @param bool   $forget True to drop the remembered answer (after an upgrade)
  * @return string "yes", "no" or "unknown"
  */
@@ -2597,32 +2613,31 @@ function adminTableExistsState(string $table, bool $forget = false): string
         return 'unknown';
     }
 
+    // 🛡️ The name is placed in the SQL text, so only a plain name is allowed.
+    if (preg_match('/^[A-Za-z0-9_]+$/', $table) !== 1) {
+        return 'unknown';
+    }
+
     try {
-        $stmt = dbQuery(
-            'SELECT COUNT(*) AS `tableCount` FROM `INFORMATION_SCHEMA`.`TABLES` '
-            . 'WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?',
-            's',
-            [$table]
-        );
-        $row = $stmt->get_result()->fetch_assoc();
+        $stmt = dbQuery('SELECT 1 FROM `' . $table . '` LIMIT 1');
         $stmt->close();
+    } catch (\mysqli_sql_exception $e) {
+        // 1146 = ER_NO_SUCH_TABLE: the database says the table is not there.
+        // Any other number (1142 / 1143 no privilege, 2006 / 2013 connection
+        // lost, 1205 timeout...) means "could not tell", never "missing".
+        if ((int) $e->getCode() === 1146) {
+            $known[$table] = 'no';
+            return 'no';
+        }
+
+        return 'unknown';
     } catch (\Throwable $e) {
         return 'unknown';
     }
 
-    if (!is_array($row) || !array_key_exists('tableCount', $row)) {
-        return 'unknown';
-    }
+    $known[$table] = 'yes';
 
-    if ((int) $row['tableCount'] > 0) {
-        $state = 'yes';
-    } else {
-        $state = 'no';
-    }
-
-    $known[$table] = $state;
-
-    return $state;
+    return 'yes';
 }
 
 /**
@@ -2737,7 +2752,8 @@ function adminAuditWrite(array $entry): bool
  *    row instead (plan §6.7: only /admin/reauth/ and /admin/upgrades/ may act
  *    then, and they use this).
  *
- * 🔒 Independent review, Codex round 2 finding R2-1 (2026-11-25): both halves
+ * 🔒 Independent review, Codex round 2 finding R2-1 (2026-11-25; the table check
+ *    itself was made a real probe in round 3 finding 3): both halves
  *    now fail closed. Before, the stand-in row was written with logActivity(),
  *    which cannot report failure, so this returned true even when nothing was
  *    written - and a failed "does the table exist?" question counted as

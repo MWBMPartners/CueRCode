@@ -251,6 +251,37 @@ if (isset($aiArguments[0]) && $aiArguments[0] === '--run-reauth-success') {
 }
 
 // ==============================================================================
+// 👶 Self-invoked CHILD mode 4 (independent review, Codex round 3 finding 3):
+//    ask adminTableExistsState('tblAdminAuditLog') as whichever database user
+//    the parent put in CUERCODE_IT_DB_USER / CUERCODE_IT_DB_PASS (a restricted
+//    one for the privilege case). A fresh process, so nothing is remembered.
+// php <this file> --run-table-state --db=<name>
+// Prints one line: TABLE-STATE:<yes|no|unknown>
+// ==============================================================================
+if (isset($aiArguments[0]) && $aiArguments[0] === '--run-table-state') {
+    $aiTsDb = '';
+    foreach ($aiArguments as $aiTsArgument) {
+        if (str_starts_with($aiTsArgument, '--db=')) {
+            $aiTsDb = substr($aiTsArgument, 5);
+        }
+    }
+
+    if (preg_match('/^cuercode_it_[a-z0-9_]+$/', $aiTsDb) !== 1) {
+        fwrite(STDERR, 'Refusing: bad arguments.' . PHP_EOL);
+        exit(9);
+    }
+
+    aiDefineDatabase($aiTsDb);
+    require_once $aiSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+    require_once $aiSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin.php';
+    restore_error_handler();
+    restore_exception_handler();
+
+    echo 'TABLE-STATE:' . adminTableExistsState('tblAdminAuditLog') . PHP_EOL;
+    exit(0);
+}
+
+// ==============================================================================
 // 🛡️ Step 1: safety - only ever a throwaway database named cuercode_it_*
 // ==============================================================================
 $aiBaseName = aiEnv('NAME');
@@ -633,11 +664,44 @@ $aiHandAdmin = [
     'hasPassword' => true,
 ];
 
+/**
+ * 🔎 Ask adminTableExistsState('tblAdminAuditLog') in a fresh child process as
+ *    a given database user (Codex round 3 finding 3).
+ *
+ * @return string "yes", "no", "unknown", or "crashed: ..." when the child gave no answer
+ */
+function aiTableStateAs(string $aiDb, string $aiDbUser, string $aiDbPass): string
+{
+    $aiOut  = [];
+    $aiCode = 0;
+    $aiCommand = 'CUERCODE_IT_DB_USER=' . escapeshellarg($aiDbUser) . ' CUERCODE_IT_DB_PASS=' . escapeshellarg($aiDbPass) . ' '
+        . escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' --run-table-state --db=' . escapeshellarg($aiDb) . ' 2>&1';
+    exec($aiCommand, $aiOut, $aiCode);
+    foreach ($aiOut as $aiLine) {
+        if (str_starts_with($aiLine, 'TABLE-STATE:')) {
+            return substr($aiLine, strlen('TABLE-STATE:'));
+        }
+    }
+    return 'crashed: ' . substr(implode(' | ', $aiOut), 0, 300);
+}
+
 // ==============================================================================
 // B. Upgrades from the admin area before the audit table exists
 // ==============================================================================
 echo PHP_EOL . 'B. Admin upgrades before tblAdminAuditLog exists' . PHP_EOL;
 aiCheck('B', adminTableExists('tblAdminAuditLog') === false, 'tblAdminAuditLog does not exist yet');
+
+// 🔒 Codex round 3 finding 3: "confirmed missing" must come from the database's
+//    own "no such table" error (1146), and "I may not look" (1142) must read as
+//    "could not tell". A restricted account is made here: it may read ONE
+//    ordinary table (tblUsers) and nothing else.
+$aiRestrictedUser = 'cuercode_it_rx';
+$aiRestrictedPass = bin2hex(random_bytes(8));
+$aiServer->query('DROP USER IF EXISTS \'' . $aiRestrictedUser . '\'@\'%\'');
+$aiServer->query('CREATE USER \'' . $aiRestrictedUser . '\'@\'%\' IDENTIFIED BY \'' . $aiRestrictedPass . '\'');
+$aiServer->query('GRANT SELECT ON `' . $aiDbName . '`.`tblUsers` TO \'' . $aiRestrictedUser . '\'@\'%\'');
+aiCheck('B', aiTableStateAs($aiDbName, aiEnv('USER'), aiEnv('PASS')) === 'no', 'round 3 (3): a full-rights account, table absent: "no" (error 1146, confirmed missing)');
+aiCheck('B', aiTableStateAs($aiDbName, $aiRestrictedUser, $aiRestrictedPass) === 'unknown', 'round 3 (3): a restricted account that may not read the table: "unknown" (privilege error), never "no"');
 aiCheck('B', adminDatabaseReadyForChanges() === false, 'adminDatabaseReadyForChanges() is false (other admin pages must refuse to save)');
 $aiOverview = adminUpgradeOverview();
 aiCheck('B', $aiOverview['ok'] && count($aiOverview['pending']) >= 2, 'the overview lists the waiting upgrades (' . count($aiOverview['pending']) . ')');
@@ -670,6 +734,8 @@ $aiMigrateRow = aiRow($aiServer, "SELECT `actorUserID`, `actorType`, `outcome`, 
 aiCheck('B', $aiMigrateRow !== null && (int) $aiMigrateRow['actorUserID'] === $aiUserIDs['hand'] && $aiMigrateRow['actorType'] === 'admin' && $aiMigrateRow['outcome'] === 'success', 'schema.migrate audit row written into the table the upgrade just created');
 aiCheck('B', $aiMigrateRow !== null && str_contains((string) $aiMigrateRow['changesJSON'], '0001_subscription_price_snapshot_columns'), 'the audit row lists the applied upgrades');
 aiCheck('B', adminDatabaseReadyForChanges() === true, 'afterwards adminDatabaseReadyForChanges() is true');
+aiCheck('B', aiTableStateAs($aiDbName, aiEnv('USER'), aiEnv('PASS')) === 'yes', 'round 3 (3): once the table exists, a full-rights account reads "yes"');
+aiCheck('B', aiTableStateAs($aiDbName, $aiRestrictedUser, $aiRestrictedPass) === 'unknown', 'round 3 (3): the table exists but the restricted account cannot read it: "unknown" - the OLD INFORMATION_SCHEMA count said 0 ("missing") here, which sent the action to the stand-in');
 $aiAgain = adminRunUpgrades($aiHandAdmin);
 aiCheck('B', $aiAgain['ok'] === true && $aiAgain['applied'] === [], 'running it again changes nothing');
 
@@ -1101,6 +1167,7 @@ aiCheck('L', $aiStartedRow !== null && $aiFinalRow !== null && (int) $aiStartedR
 // ==============================================================================
 // 🏁 Clean up and report
 // ==============================================================================
+$aiServer->query('DROP USER IF EXISTS \'cuercode_it_rx\'@\'%\'');
 $aiServer->query('DROP DATABASE IF EXISTS `' . $aiDbName . '`');
 $aiServer->close();
 
