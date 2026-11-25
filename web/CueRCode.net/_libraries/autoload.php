@@ -11,7 +11,9 @@
  * PSR-4 autoloading standard. When a class is instantiated, PHP calls
  * this autoloader to locate and include the corresponding file.
  *
- * 📌 Libraries must be manually downloaded and placed in the correct directories:
+ * 📌 The libraries are COMMITTED in this folder (decision 0011, #113); the pinned
+ *    versions are in PINNED_VERSIONS.json and checked by
+ *    tools/check_vendored_libraries.php. Layout:
  *     - chillerlan/php-qrcode v5.x → _libraries/chillerlan/php-qrcode/src/
  *     - chillerlan/php-settings-container v3.x → _libraries/chillerlan/php-settings-container/src/
  *     - setasign/fpdf v1.8.x → _libraries/fpdf/

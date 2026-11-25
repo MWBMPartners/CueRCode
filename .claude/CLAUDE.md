@@ -56,12 +56,12 @@ These instructions MUST be followed for EVERY prompt/action:
 ### Libraries (CDN-first with local fallback)
 
 - Bootstrap 5.3.3, FontAwesome 6.5.1, jQuery 3.7.1
-- PHP: chillerlan/php-qrcode v5.0.5, php-settings-container v3.2.1, FPDF v1.86
-- PHP: tecnickcom/tc-lib-barcode v2.12.0 + tc-lib-color v2.13.1 (non-QR 1D/2D barcode generation, #69) - LGPL-3.0-or-later; PDF417's numeric-compaction encode mode requires the `bcmath` PHP extension (verify present on the production host)
+- PHP: chillerlan/php-qrcode v5.0.5, php-settings-container v3.2.1, FPDF v1.86 - committed in `_libraries/` (decision 0011, `docs/decisions/0011-*.md`); pins in `_libraries/PINNED_VERSIONS.json`, checked by `tools/check_vendored_libraries.php`; the monthly watch (#139) still applies
+- PHP: tecnickcom/tc-lib-barcode v2.12.0 + tc-lib-color v2.13.1 (non-QR 1D/2D barcode generation, #69) - LGPL-3.0-or-later (also committed, decision 0011); PDF417's numeric-compaction encode mode requires the `bcmath` PHP extension (verify present on the production host)
 - Assets: Twemoji (jdecked/twemoji) v17.0.3 (emoji centre-icon picker, #67) - CC-BY-4.0, attribution REQUIRED (`/attributions` page, footer-linked); curated ~400-emoji starter set committed under `public_html/assets/img/emoji/`, NOT gitignored (unlike the QR/barcode PHP libraries above)
 - Swagger UI (swagger-ui-dist) v5.33.0 (API docs page `/api/docs/`, #111) - Apache-2.0 (SmartBear; credited on `/attributions`); jsDelivr pinned + SRI, with the local fallback COMMITTED under `public_html/assets/vendor/swagger-ui/` (not gitignored) so it works on shared hosting without a CDN. The site CSP (`public_html/.htaccess`) only allows scripts/styles from self + jsDelivr (+ cdnjs for styles) - never load a library from any other CDN without updating the CSP
 - Graphics: SVG-first with PNG/APNG fallback
-- No Composer dependency - all PHP libraries manually downloaded/hosted
+- No Composer dependency - all PHP libraries committed under `_libraries/` (decision 0011)
 
 ### UI Requirements
 

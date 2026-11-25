@@ -1,0 +1,52 @@
+{
+    "note": "Pinned third-party libraries (decision 0011). Checked by tools/check_vendored_libraries.php. Upgrade deliberately, then run it with --update.",
+    "libraries": {
+        "chillerlan/php-qrcode": {
+            "version": "5.0.5",
+            "path": "chillerlan/php-qrcode",
+            "source": "https://github.com/chillerlan/php-qrcode/tree/5.0.5",
+            "licence": "MIT or Apache-2.0",
+            "sha256": "0f9e3af00c33a0adf0c7bf7ac8d867b3d79ea352b263279fcf8375dabe080548"
+        },
+        "chillerlan/php-settings-container": {
+            "version": "3.2.1",
+            "path": "chillerlan/php-settings-container",
+            "source": "https://github.com/chillerlan/php-settings-container/tree/3.2.1",
+            "licence": "MIT",
+            "sha256": "1c89e0b3a38ffb5a1d7ed013bdbe5de999a2688424d1d16676c5fc3f654c08f5"
+        },
+        "setasign/fpdf": {
+            "version": "1.86",
+            "path": "fpdf",
+            "source": "https://github.com/Setasign/FPDF (commit 0838e0e, 'Update to 1.86')",
+            "licence": "FPDF permissive licence",
+            "marker": {
+                "file": "fpdf.php",
+                "regex": "/const\\s+VERSION\\s*=\\s*'([^']+)'/"
+            },
+            "sha256": "60fb79d642351d952570d18f7d67f8f889b78fdb889b3aa6ba7492168cb72e9e"
+        },
+        "tecnickcom/tc-lib-barcode": {
+            "version": "2.12.0",
+            "path": "tecnickcom/tc-lib-barcode",
+            "source": "https://github.com/tecnickcom/tc-lib-barcode/tree/2.12.0",
+            "licence": "LGPL-3.0-or-later",
+            "marker": {
+                "file": "VERSION",
+                "regex": "/^\\s*(\\S+)/"
+            },
+            "sha256": "d7782e1f0a1ccd177ee833b4a7797f396bc81e5420d55754c85b4a0a0307e2e6"
+        },
+        "tecnickcom/tc-lib-color": {
+            "version": "2.13.1",
+            "path": "tecnickcom/tc-lib-color",
+            "source": "https://github.com/tecnickcom/tc-lib-color/tree/2.13.1",
+            "licence": "LGPL-3.0-or-later",
+            "marker": {
+                "file": "VERSION",
+                "regex": "/^\\s*(\\S+)/"
+            },
+            "sha256": "770936e54e9045368c9dcb0d3c5055a713cd23a88ad0727ee113dbb5b118272d"
+        }
+    }
+}

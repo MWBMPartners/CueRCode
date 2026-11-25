@@ -166,23 +166,15 @@ jobs:
           # print deprecations (#151).
           ini-values: error_reporting=-1, display_errors=On, log_errors=Off
 
-      - name: Install vendored libraries (no Composer, mirrors the server)
+      # Decision 0011 (#113): the QR/PDF/barcode libraries are COMMITTED in
+      # web/CueRCode.net/_libraries/, so the checkout already has them. This
+      # step proves the committed copies are exactly the pinned versions
+      # (PINNED_VERSIONS.json) instead of downloading anything. To upgrade a
+      # library deliberately, replace the files, run
+      # `php tools/check_vendored_libraries.php --update`, review the diff.
+      - name: Check committed libraries match the pinned versions
         if: steps.suite.outputs.present == 'true'
-        run: |
-          set -euo pipefail
-          LIB="web/CueRCode.net/_libraries"
-          git clone --depth 1 --branch 5.0.5 https://github.com/chillerlan/php-qrcode.git /tmp/php-qrcode
-          git clone --depth 1 --branch 3.2.1 https://github.com/chillerlan/php-settings-container.git /tmp/php-settings-container
-          git clone --depth 1 https://github.com/Setasign/FPDF.git /tmp/fpdf
-          git clone --depth 1 --branch 2.12.0 https://github.com/tecnickcom/tc-lib-barcode.git /tmp/tc-lib-barcode
-          git clone --depth 1 --branch 2.13.1 https://github.com/tecnickcom/tc-lib-color.git /tmp/tc-lib-color
-          mkdir -p "${LIB}/chillerlan/php-qrcode" "${LIB}/chillerlan/php-settings-container" "${LIB}/fpdf" "${LIB}/tecnickcom/tc-lib-barcode" "${LIB}/tecnickcom/tc-lib-color"
-          cp -r /tmp/php-qrcode/src "${LIB}/chillerlan/php-qrcode/src"
-          cp -r /tmp/php-settings-container/src "${LIB}/chillerlan/php-settings-container/src"
-          cp -r /tmp/fpdf/. "${LIB}/fpdf/"
-          cp -r /tmp/tc-lib-barcode/src "${LIB}/tecnickcom/tc-lib-barcode/src"
-          cp -r /tmp/tc-lib-color/src "${LIB}/tecnickcom/tc-lib-color/src"
-          echo "Vendored libraries installed."
+        run: php tools/check_vendored_libraries.php
 
       # The runner exits 1 on a deprecation it catches itself, and the test
       # helpers that spawn child PHP processes fail on a deprecation in the

@@ -13,14 +13,10 @@
 !**/_auth_keys/.htaccess
 
 # ==============================================================================
-# 📦 Third-party libraries (downloaded separately, not committed)
+# 📦 Third-party libraries ARE committed (decision 0011, #113)
+# The QR/PDF/barcode libraries live in web/CueRCode.net/_libraries/ so the normal
+# deploy ships them. tools/check_vendored_libraries.php verifies the pinned versions.
 # ==============================================================================
-web/CueRCode.net/_libraries/chillerlan/
-web/CueRCode.net/_libraries/fpdf/
-web/CueRCode.net/_libraries/tecnickcom/
-web/_libraries/chillerlan/
-web/_libraries/fpdf/
-web/_libraries/tecnickcom/
 
 # ==============================================================================
 # 📁 Uploaded files and backups

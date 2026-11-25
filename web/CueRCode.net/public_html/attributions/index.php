@@ -128,6 +128,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <strong><a href="https://github.com/tecnickcom/tc-lib-barcode" target="_blank" rel="noopener noreferrer">tecnickcom/tc-lib-barcode</a></strong>
                                 (with <a href="https://github.com/tecnickcom/tc-lib-color" target="_blank" rel="noopener noreferrer">tc-lib-color</a>)
                                 - the non-QR (1D/2D) barcode generation engine. LGPL-3.0-or-later.
+                                The unmodified source and the full licence text ship with this
+                                site and are also available from the
+                                <a href="https://github.com/tecnickcom/tc-lib-barcode/tree/2.12.0" target="_blank" rel="noopener noreferrer">project's repository</a>
+                                (<a href="https://github.com/tecnickcom/tc-lib-color/tree/2.13.1" target="_blank" rel="noopener noreferrer">tc-lib-color</a>).
                             </li>
                             <li>
                                 <strong><a href="https://getbootstrap.com/" target="_blank" rel="noopener noreferrer">Bootstrap</a></strong>
