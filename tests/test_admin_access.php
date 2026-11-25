@@ -773,6 +773,8 @@ assertEquals([], $aaAdminPaths, 'no openapi.json path starts with /admin (guard 
 // 🧱 The admin .htaccess sends the §7.4 headers.
 $aaHtaccess = (string) file_get_contents($aaAdminRoot . '.htaccess');
 assertContains('Header always set X-Frame-Options "DENY"', $aaHtaccess, 'admin .htaccess: X-Frame-Options DENY');
+assertFalse(str_contains($aaHtaccess, 'set with "Header always set" (also on error pages)'), 'review finding 10: the comment no longer claims Apache\'s own error pages get the admin headers');
+assertContains('NO: Apache\'s OWN error page for a file under /admin/', $aaHtaccess, 'review finding 10: the comment says plainly which error pages do NOT get them (measured)');
 assertContains('Header always set Cache-Control "no-store"', $aaHtaccess, 'admin .htaccess: Cache-Control no-store');
 assertContains('Header always set X-Robots-Tag "noindex, nofollow"', $aaHtaccess, 'admin .htaccess: X-Robots-Tag noindex, nofollow');
 assertContains("frame-ancestors 'none'", $aaHtaccess, "admin .htaccess: CSP frame-ancestors 'none'");

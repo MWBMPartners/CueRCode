@@ -24,11 +24,21 @@
 # real Apache 2.4.71: X-Frame-Options, Content-Security-Policy and
 # Cache-Control were each sent twice). So each header is first removed with
 # "Header unset" (clears the site value) and "Header always unset", and then
-# set with "Header always set" (also on error pages). mod_expires would add
-# its own "Cache-Control: max-age=0" to static files, so it is switched off
-# here. The admin PHP code (adminSendSecurityHeaders() in
-# _functions/fn_admin.php) sends the same headers itself too, in case a host
-# ignores these lines.
+# set with "Header always set". mod_expires would add its own
+# "Cache-Control: max-age=0" to static files, so it is switched off here. The
+# admin PHP code (adminSendSecurityHeaders() in _functions/fn_admin.php)
+# sends the same headers itself too, in case a host ignores these lines.
+#
+# Which answers get these headers (measured on Apache 2.4.71 in Docker,
+# 2026-11-25, review finding 10 - an earlier version of this comment said
+# "also on error pages", which was only half true):
+#   - YES: every admin page, including one that itself answers with an error
+#     status (for example a PHP admin page refusing with 403).
+#   - NO: Apache's OWN error page for a file under /admin/ that does not exist
+#     (404) or may not be read (403). Apache hands those to /error/404.php and
+#     /error/403.php (ErrorDocument in public_html/.htaccess), which are
+#     outside this folder and carry the site's ordinary headers. Those pages
+#     show no admin content, so this is accepted rather than worked around.
 #
 # The admin path is deliberately NOT listed in robots.txt: that would
 # advertise it.
