@@ -805,7 +805,7 @@ function oauthFetchJwks(string $provider, string $jwksUri): ?array
 function oauthExchangeCodeForTokens(
     string $tokenEndpoint,
     string $clientId,
-    string $clientSecret,
+    #[\SensitiveParameter] string $clientSecret,
     string $code,
     string $codeVerifier,
     string $redirectUri

@@ -678,7 +678,7 @@ function castSettingValue(?string $value, string $type): mixed
  *
  * @see https://www.php.net/manual/en/function.json-encode.php
  */
-function convertValueForStorage(mixed $value, string $type): ?string
+function convertValueForStorage(#[\SensitiveParameter] mixed $value, string $type): ?string
 {
     // 📌 Handle null
     if ($value === null) {

@@ -585,6 +585,30 @@ function verificationResendSettings(?callable $getSetting = null): array
 }
 
 /**
+ * 📏 The ONE place that says how big each "new emailed link" limit may be, and
+ *    what it is when nothing is saved. Both the code that enforces the limits
+ *    (authLinkRequestLimitSettings() below) and the admin settings editor
+ *    (_functions/fn_admin_settings.php) read it, so the two can never disagree
+ *    about what a safe value is. PURE.
+ *
+ * The three limits (each has its own setting, named PREFIX + "_" + the key
+ * below, for each of the two forms):
+ *   min_gap_seconds - the shortest wait between two links to the same account;
+ *   daily_cap       - the most links one account may be sent in 24 hours;
+ *   ip_per_hour     - the most requests one visitor address may make in an hour.
+ *
+ * @return array<string, array{min: int, max: int, default: int}>
+ */
+function authLinkRequestLimitBounds(): array
+{
+    return [
+        'min_gap_seconds' => ['min' => 10, 'max' => 86400, 'default' => 60],
+        'daily_cap'       => ['min' => 1,  'max' => 50,    'default' => 5],
+        'ip_per_hour'     => ['min' => 1,  'max' => 1000,  'default' => 10],
+    ];
+}
+
+/**
  * ⚙️ Read the three limits for an emailed-link form ("send me a new link" or
  *    "Forgot password") from the settings. Shared so both forms behave alike.
  *
@@ -592,9 +616,11 @@ function verificationResendSettings(?callable $getSetting = null): array
  *   PREFIX_min_gap_seconds (default 60, kept within 10-86400),
  *   PREFIX_daily_cap       (default 5,  kept within 1-50),
  *   PREFIX_ip_per_hour     (default 10, kept within 1-1000).
+ * (The numbers come from authLinkRequestLimitBounds().)
  * A missing, non-numeric or throwing value falls back to the default; a silly
  * number is pulled into the safe range. None is commercial, so none is a
- * hard-coded rule: each can be stored in tblSettings to change it.
+ * hard-coded rule: each can be stored in tblSettings to change it, and the
+ * admin settings editor does exactly that.
  *
  * @param string        $prefix     'verification_resend' or 'password_reset_request'
  * @param callable|null $getSetting Called as $getSetting(string $key, mixed $default);
@@ -613,31 +639,31 @@ function authLinkRequestLimitSettings(string $prefix, ?callable $getSetting = nu
         }
     }
 
-    $defaults = [
-        $prefix . '_min_gap_seconds' => 60,
-        $prefix . '_daily_cap'       => 5,
-        $prefix . '_ip_per_hour'     => 10,
-    ];
-    $values = [];
+    $bounds = authLinkRequestLimitBounds();
+    $clamped = [];
 
-    foreach ($defaults as $key => $default) {
+    foreach ($bounds as $suffix => $bound) {
+        $key = $prefix . '_' . $suffix;
+
         try {
-            $raw = $getSetting($key, $default);
+            $raw = $getSetting($key, $bound['default']);
         } catch (\Throwable $e) {
-            $raw = $default;
+            $raw = $bound['default'];
         }
 
         if (is_int($raw) || (is_string($raw) && preg_match('/^\d{1,9}$/', $raw) === 1)) {
-            $values[$key] = (int) $raw;
+            $number = (int) $raw;
         } else {
-            $values[$key] = $default;
+            $number = $bound['default'];
         }
+
+        $clamped[$suffix] = cuercodeClampInt($number, $bound['min'], $bound['max']);
     }
 
     return [
-        'minGapSeconds' => cuercodeClampInt($values[$prefix . '_min_gap_seconds'], 10, 86400),
-        'dailyCap'      => cuercodeClampInt($values[$prefix . '_daily_cap'], 1, 50),
-        'ipPerHour'     => cuercodeClampInt($values[$prefix . '_ip_per_hour'], 1, 1000),
+        'minGapSeconds' => $clamped['min_gap_seconds'],
+        'dailyCap'      => $clamped['daily_cap'],
+        'ipPerHour'     => $clamped['ip_per_hour'],
     ];
 }
 
