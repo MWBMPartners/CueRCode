@@ -421,7 +421,18 @@ foreach ($migDefinition0002['steps'] as $migStep) {
     }
 }
 assertContains("AND `description` = 'Active bot protection provider (none, turnstile, recaptcha)'", $migProviderUpdate, 'migration 0002: provider description only changes while it is still the original wording');
-assertContains("'Active bot protection provider (none, turnstile, recaptcha)'", (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'sql' . DIRECTORY_SEPARATOR . 'seed_data.sql'), 'seed_data.sql: the original provider wording the update looks for is still exactly the seeded text');
+// 📝 Codex round 2 finding R1-3 (2026-11-25): the seed now writes the NEW
+//    wording itself, so the result is the same whichever runs first - the
+//    installer (seed, then 0002's update finds nothing to change) or the
+//    upgrade tool (0002 runs before the row exists, then the seed). 0002's
+//    file is NOT edited: it has already been applied on existing databases,
+//    and the runner warns about a migration changed after it was applied. It
+//    still updates databases seeded with the old wording.
+$migSeedForProvider = (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'sql' . DIRECTORY_SEPARATOR . 'seed_data.sql');
+assertContains("SET `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'", $migProviderUpdate, 'migration 0002: the new provider wording');
+assertContains("'bot_protection_provider', 'none', 'string', 0, 1, 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'", $migSeedForProvider, 'seed_data.sql (R1-3): seeds exactly the wording migration 0002 sets, so the order does not matter');
+assertFalse(str_contains($migSeedForProvider, "'Active bot protection provider (none, turnstile, recaptcha)'"), 'seed_data.sql (R1-3): the old wording is no longer seeded');
+assertEquals('7dc796cd', substr(migrationChecksumForContents((string) file_get_contents(migrationDefaultDirectory() . '0002_admin_audit_log_and_settings.php')), 0, 8), 'R1-3: migration 0002 itself is unchanged (an edit would warn on every database that already applied it)');
 
 // The two email clean-up rows are identical to the seed_data.sql rows.
 $migSeedSource = (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'sql' . DIRECTORY_SEPARATOR . 'seed_data.sql');

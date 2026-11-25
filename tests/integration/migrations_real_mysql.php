@@ -557,6 +557,8 @@ if (isset($itLedgerRows[0]['appliedBy'])) {
 }
 itCheck('A fresh database', str_starts_with($itLedgerAppliedByA, 'cli:'), 'ledger: appliedBy records the real CLI label (cli:<os user>)');
 itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'billing_vat_mode' AND `settingValue` = 'inclusive'")->num_rows === 1, '0002 seeded billing_vat_mode = inclusive');
+// 📝 Codex round 2 finding R1-3: installer order (seed first, then the upgrades).
+itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'installer order (seed, then upgrades): the bot-protection description names hCaptcha (R1-3)');
 
 $itSchemaA = itSchemaSnapshot($itA);
 
@@ -882,6 +884,11 @@ $itSeedAfterCliJ = migrationDbRunSeedSql($itJ, $itSeedSql);
 itCheck('J empty db then seed check', $itSeedAfterCliJ['ok'] === true, 'the web installer\'s seed load then SUCCEEDS on top of the CLI-created settings: ' . $itSeedAfterCliJ['error']);
 $itSeedStateJ = migrationDbSeedDataState($itJ);
 itCheck('J empty db then seed check', $itSeedStateJ['ok'] === true && $itSeedStateJ['state'] === 'complete', 'and the starting data is then complete');
+// 📝 Codex round 2 finding R1-3: upgrade-tool order (0002 ran before the row
+//    existed, then the seed). Before the fix this kept the OLD wording for ever.
+itCheck('J empty db then seed check', $itJ->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'upgrade-tool order (upgrades, then seed): the bot-protection description ALSO names hCaptcha (R1-3)');
+$itCliResultJ2 = itCli($itDbJ, 'status');
+itCheck('J empty db then seed check', $itCliResultJ2['exit'] === 0 && !str_contains($itCliResultJ2['out'] . $itCliResultJ2['err'], 'changed after it was applied'), 'and the upgrade tool reports up to date with no "changed after it was applied" warning (migration 0002 was not edited)');
 
 // ==============================================================================
 // 🅺 Scenario K: the upgrade lock name includes the database (review finding

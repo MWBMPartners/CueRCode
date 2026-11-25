@@ -87,7 +87,12 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 ('security', 'turnstile_secret_key', '', 'string', 1, 1, 'CloudFlare Turnstile secret key'),
 ('security', 'recaptcha_site_key', '', 'string', 1, 1, 'Google reCAPTCHA site key'),
 ('security', 'recaptcha_secret_key', '', 'string', 1, 1, 'Google reCAPTCHA secret key'),
-('security', 'bot_protection_provider', 'none', 'string', 0, 1, 'Active bot protection provider (none, turnstile, recaptcha)'),
+-- 📝 Independent review, Codex round 2 finding R1-3 (2026-11-25): this wording
+--    already names hcaptcha, the same as migration 0002's update. Before,
+--    running the upgrade tool first (migrate.php --apply on an empty
+--    database) applied 0002 while this row did not exist yet, so the seed
+--    then wrote the old wording and nothing ever corrected it.
+('security', 'bot_protection_provider', 'none', 'string', 0, 1, 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'),
 
 -- 🎨 Branding Settings
 ('branding', 'primary_color', '#2c7a7b', 'color', 0, 1, 'Primary brand colour'),
