@@ -37,3 +37,22 @@ Legal review of Terms/Privacy (#38, owner + counsel); bot protection keys (Turns
 
 ## E. After the install gate (owner's build order)
 7n Phases 2-7 (plans and prices, features, discounts, lifetime deals, pay-as-you-go, housekeeping) → 7j dynamic + dual-function QR → 7r passkeys, translations, image fills, JPEG XL → 7m prompt-cache add-on → 7q SSO plan wording.
+
+## F. Carried over from earlier sessions (audit of 2026-11-25; sessions named: 2026-10-05 AI-rules/polish session, 2026-11-22 resumed cloud session; two further sessions could not be matched to any record)
+Facts: local `work-in-progress` is 30 commits ahead of `origin/work-in-progress` (`b25a3d1`); nothing since 2026-08 has gone through alpha; no stray branches; only open PR is Dependabot #152; `security-propagate.yml` exists only on `main`; `codeql.yml`/`semgrep.yml`/`ci.yml` on WIP lag `main`/`release-candidate`.
+| # | Item | Home | Who |
+|---|---|---|---|
+| F1 | Push local `work-in-progress` after the Opus re-check (decision 0008) | now | lead |
+| F2 | Codex review owed for everything since 2026-09-25 (7n 1A-1C, #128, #113 B-tasks, decisions 0010-0015, #151, #137, #138, #145) plus the never-finished chunk 3 (docs/portal/spec/#117/#111). Split into small pieces (decision from 2026-09-25) | after push | Codex or Opus stand-in, recorded as stand-in |
+| F3 | Close issues that are built and reviewed, with a commit link and the done label, only after a check: #112 #117 #122 #123 #124 #125 #126 #127 #153 (and #128, #113, #138 once verified) | B11 | lead |
+| F4 | Reconcile stale handoff rows: task 7 (superseded), 7a ("waiting to move"), 7i vs 7g (#126 done), Q6 (answered by decision 0007) | handoff rewrite | lead |
+| F5 | Plans need a terminal line and a move to a history folder: `112-email-queue-runner.md`, `122-123-126-email-privacy.md`, `codex-review-chunk-1a/1b/2`, `codex-catch-up-review-brief.md` (keep chunk 3 and the 7n plan live) | docs | lead |
+| F6 | Before the one `work-in-progress -> alpha` PR (task 9): conflict check on `.github/workflows/*`; bring `security-propagate.yml` and the newer codeql/semgrep/ci across; check release-candidate is in the triggers (#110); after merge the source branch is auto-deleted, recreate WIP from alpha | task 9 | lead |
+| F7 | `.OpenAI/` memory refresh owed (last 2026-11-18) | docs | Haiku |
+| F8 | #139 monthly watch job for hand-downloaded libraries: now more important because the libraries are committed (decision 0011) | queue | Sonnet |
+| F9 | #137 optional follow-ups: official brand logos + retire Skype (overlaps B10/#65), accessibility statement page, Light/Dark/Auto menu, styled confirm dialogs, "why CueRCode" section; live DB settings still hold the old tagline; FontAwesome SRI second source | after install gate | Sonnet |
+| F10 | 7m prompt-cache add-on as our own reusable copy (owner 2026-11-22), 7q SSO plan wording (#131), 7r passkeys/translations/image fills/JPEG XL, 7j dynamic + dual-function QR, 7n Phases 2-7 | section E | per plan |
+| F11 | #154 admin inline-script tightening; #129/#130 privacy and clock items | section D | Sonnet |
+
+### Owner-only items collected (one list, deduplicated)
+Add secrets `SFTP_KNOWN_HOSTS` (org) and `SFTP_REMOTE_BASE` (repo); set `SFTP_ENABLED`; re-run the failed secret-scan check on Dependabot PR #152 (alpha); GitHub App for #121 (7o); `abuse@` mailbox (before dynamic QR is public); ask DreamHost about libbrotli (#150); after deploy open `/admin/` and read "Visitor address check" (behind Cloudflare?) and compare the Cloudflare ranges with cloudflare.com/ips; decide whether the privacy page names Cloudflare; enter the real Microsoft details on `/admin/settings/`; decide #136 (instruction audit report); the 9 legal placeholders (#38); approve deleting the old backup branch and leftover Dependabot branches; the `~/.claude/bin/watchdog.sh` `-L` fix (WebMS-Intra #564) was approved but cannot be verified from here.
