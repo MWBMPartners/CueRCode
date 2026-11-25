@@ -995,6 +995,14 @@ made on the server:
    give the password any other way. An account that is already active, with a
    checked email address, is not reset.
 
+   **`grant` without `--activate` is refused** for an account that is not yet
+   active with a checked email address (exit 2, nothing changed). Otherwise it
+   would hand the Global Admin role to an account whose password may be a
+   stranger's, and the ordinary emailed verification link could then activate
+   it without the new-password step. As a second lock, `verifyEmailToken()`
+   also refuses to activate any account that already holds the Global Admin
+   role, so that link can never be the way in.
+
    It refuses (exit 2, nothing changed) when no account or more than one has
    that email, when the account is suspended or deleted, when it has no
    password (a Global Admin must re-type a password before every change), and
@@ -1033,6 +1041,26 @@ end earlier sign-ins. If you must use it:
    ```
 
    It should say "1 row affected".
+   Then **look for anything a stranger could have added** while the account
+   was open to them, and remove it. Use the `userID` from step 1:
+
+   ```sql
+   -- API keys (anything you did not create yourself is the stranger's)
+   SELECT `apiKeyID`, `apiKeyPrefix`, `isActive`, `createdAt` FROM `tblAPIKeys` WHERE `userID` = 123;
+   DELETE FROM `tblAPIKeys` WHERE `userID` = 123;
+
+   -- Linked Google / Microsoft sign-ins
+   SELECT `provider`, `linkedAt` FROM `tblUserOAuth` WHERE `userID` = 123;
+   DELETE FROM `tblUserOAuth` WHERE `userID` = 123;
+
+   -- Passkeys, other sign-ins and unused password-reset links
+   DELETE FROM `tblWebAuthnCredentials` WHERE `userID` = 123;
+   UPDATE `tblUserSessions` SET `revokedAt` = UTC_TIMESTAMP() WHERE `userID` = 123 AND `revokedAt` IS NULL;
+   UPDATE `tblPasswordResets` SET `usedAt` = UTC_TIMESTAMP() WHERE `userID` = 123 AND `usedAt` IS NULL;
+   ```
+
+   (Replace `123` with the real `userID`. These names were checked against
+   `install.sql`; if one is rejected, `SHOW COLUMNS FROM` that table.)
 3. **Straight after, sign in and set a fresh password.** Use "Change
    password" at `/account/`, which also ends every other sign-in. Or use the
    "Forgot password" email, once email sending works. If your own password
@@ -1083,7 +1111,16 @@ admin.
   list in `adminAuditActionNames()`.
 - **Headers**: `public_html/admin/.htaccess` and the PHP code both send
   `Cache-Control: no-store`, `X-Frame-Options: DENY`, `X-Robots-Tag: noindex,
-  nofollow` and a content policy with `frame-ancestors 'none'`. The admin
+  nofollow` and a content policy with `frame-ancestors 'none'`. Each is sent
+  ONCE: the site file uses plain `Header set` (kept separately by Apache and
+  applied to successful answers only), so on a normal page "Header always
+  set" alone sent the site value AND the admin value. The admin file now
+  removes each one (`Header unset` and `Header always unset`) before
+  `Header always set`, and switches `mod_expires` off so static files get no
+  second `Cache-Control`. Checked on a real Apache 2.4.71 in Docker (200 and
+  404 inside `/admin/`: one of each header; a page outside `/admin/` is
+  unchanged). The earlier claim that "always set replaces the site value" was
+  wrong. The admin
   content policy is the site policy with that one change; a test keeps the
   two in step. `/admin/` is deliberately not in `robots.txt`.
 - **No API**: there is no `/api/v1/admin` route and none in `openapi.json`
@@ -1130,7 +1167,9 @@ database; see `tests/README.md`).
 - **Libraries are committed** in `web/CueRCode.net/_libraries/` (chillerlan/php-qrcode 5.0.5, php-settings-container 3.2.1, FPDF 1.86, tc-lib-barcode 2.12.0, tc-lib-color 2.13.1): runtime code and licence files only. `_libraries/PINNED_VERSIONS.json` holds each version and a fingerprint of every file; `php tools/check_vendored_libraries.php` checks them (CI runs it instead of cloning) and `--update` rewrites the fingerprints after a deliberate upgrade (the monthly watch #139 proposes upgrades: replace the folder, run `--update`, review the diff). Test: `tests/test_vendored_libraries.php`.
 - **Installer checks** (`_functions/fn_install_checks.php`, tested by `tests/test_install_checks.php`): PHP extensions `mysqli, mbstring, gd, json, openssl, zip, bcmath, curl` each with a plain-words purpose; after connecting but BEFORE any SQL it refuses MySQL below 8.0.13 and MariaDB below 10.6 (handles the `5.5.5-` MariaDB prefix, refuses an unreadable version); `_uploads` and `_backups` must exist and be writable. MariaDB 10.6 itself has not been run against yet (B9).
 - **Credentials template:** `_auth_keys/auth_creds.example.php.dist` (placeholders only, not ignored; `auth_creds.php` still is). Test: `tests/test_credentials_template.php`.
-- **Fresh install order:** deploy; create `auth_creds.php` from the `.dist` template; open `install/` by renaming `install/.htaccess` to `.htaccess.off`; run the installer (all rows green); rename it back or delete `install/`. Each later deploy re-uploads `install/` with its deny-all `.htaccess`, so confirm it is in place.
+- **Fresh install order:** deploy; create `auth_creds.php` from the `.dist` template; open `install/` by renaming `install/.htaccess` to `.htaccess.off`; run the installer (all rows green); rename it back (do NOT delete `install/`, see below). Each later deploy re-uploads `install/` with its deny-all `.htaccess`, so confirm it is in place.
+- **Installer lock (review fix M8):** the lock file is now `_auth_keys/.installed.lock` (outside `install/`, not in git, never overwritten by a deploy, because the SFTP mirror only adds and updates files). The old `install/.installed.lock` still counts, so earlier installs stay locked. If `_auth_keys/` is not writable the installer falls back to the old place and says so. Chosen over a database marker because a partly finished install (seed loaded, upgrades failed) has database rows too, and a database check would then wrongly refuse the legitimate retry. Deleting `install/` is advised against: a deploy brings it back, and on an old install it took the lock with it.
+- **Installer server-side re-check (review fix M7):** the POST handler runs `installPreflightProblems()` (PHP version, the eight extensions, `_uploads` and `_backups` writable) and refuses with the same messages the page shows, before any credentials load or database call. Hiding the button was not a safeguard.
 - **Not checked:** the installer page in a browser or on a live database (B9 dry run); DreamHost's alpha/beta hostnames are not recorded in the repo (open on #150); deploy re-uploads `install/` every time (a follow-up could exclude it).
 
 ## ✉️ Asking for a new verification link (2026-11-25, #128)

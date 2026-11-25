@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Independent review findings I1 and M1-M8, plus small nits (2026-11-25)
+
+- **I1 (important):** `admin_access.php grant` on an account that is not yet active with a checked email address is now REFUSED unless `--activate` is given, so the new password of decision 0010 always happens. As a second lock, the emailed verification link (`verifyEmailToken()`) refuses to activate any account that already holds the Global Admin role.
+- **M1:** the admin pages sent four security headers twice on real Apache (the site's plain `Header set` and the admin `Header always set`). `admin/.htaccess` now removes the site value first and switches `mod_expires` off there. Checked on a real Apache 2.4.71 in Docker: one of each header on a 200 and a 404 inside `/admin/`, and pages outside `/admin/` unchanged.
+- **M2:** the "first seen" admin check now locks the admin's own `tblUsers` row (short transaction) instead of a server-wide named lock that other customers on a shared MySQL server could block.
+- **M3:** asking for a new verification link when over the limit writes at most one `verification_link_resend_limited` row per account per hour, and every answer takes at least 250 ms, so timing does not reveal whether an address is waiting.
+- **M4:** a new verification link cancels only EARLIER links (`<`, not `<>`), so two requests at the same moment cannot cancel each other's new link.
+- **M5:** corrected a code comment that said nothing in a log holds the address (the shared `email_queued` row does).
+- **M6:** the phpMyAdmin last-resort steps now include finding and removing API keys, linked sign-ins, passkeys and sessions a stranger could have added.
+- **M7:** the installer's POST handler re-checks PHP version, extensions and writable folders and refuses with the same plain messages as the page.
+- **M8:** the installer lock now lives in `_auth_keys/.installed.lock` (outside `install/`); the old `install/.installed.lock` still counts. README no longer advises deleting `install/`.
+- **Nits:** the role number is no longer written bare in `fn_api_account.php`; the password prompt discards pasted-ahead input and prints the `stty sane` hint when the terminal cannot be restored; the installer reads `5.5.5-10.6.12` as MariaDB and refuses Aurora with a clear message; the library pin check reports symbolic links and ignores `.DS_Store`.
+
 ### Added - Fresh-install readiness and a way to ask for a new verification link (2026-11-25, #113, #128)
 
 - The QR, PDF and barcode libraries are now committed in `_libraries/` with a pin check (decision 0011), so the normal deploy ships them. CI checks the pins instead of cloning.
