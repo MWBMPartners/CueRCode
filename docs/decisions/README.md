@@ -19,3 +19,4 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0007](0007-payg-monthly-cap-means-money-spent-on-packs.md) | 2026-11-24 | Owner: the pay-as-you-go monthly cap is money spent on credit packs, per currency | Current |
 | [0008](0008-push-work-in-progress-after-each-reviewed-phase.md) | 2026-11-24 | Owner: push `work-in-progress` (only) after each reviewed phase | Current |
 | [0009](0009-admin-sign-in-redirect-means-area-not-secret.md) | 2026-11-24 | Lead (owner has not approved; may overrule): signed-out visitors to `/admin/` are sent to sign-in, so the area's existence is not secret; the gate is the protection | Current (unapproved) |
+| [0010](0010-first-admin-activation-sets-a-new-password.md) | 2026-11-24 | Owner: activating a waiting account as first Global Admin sets a new password and signs out old sessions | Current |
