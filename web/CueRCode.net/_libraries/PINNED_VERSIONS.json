@@ -1,5 +1,5 @@
 {
-    "note": "Pinned third-party libraries (decision 0011). Checked by tools/check_vendored_libraries.php. Upgrade deliberately, then run it with --update.",
+    "note": "Pinned third-party libraries (decision 0011). Checked by tools/check_vendored_libraries.php. Upgrade deliberately, then run it with --update. The \"frontend\" and \"watch\" sections feed the monthly library watch (tools/check_library_updates.php, #139); the fingerprint check reads only \"libraries\".",
     "libraries": {
         "chillerlan/php-qrcode": {
             "version": "5.0.5",
@@ -47,6 +47,159 @@
                 "regex": "/^\\s*(\\S+)/"
             },
             "sha256": "770936e54e9045368c9dcb0d3c5055a713cd23a88ad0727ee113dbb5b118272d"
+        }
+    },
+    "frontend": {
+        "twbs/bootstrap": {
+            "version": "5.3.3",
+            "path": "public_html/assets/vendor/bootstrap",
+            "source": "https://www.npmjs.com/package/bootstrap",
+            "licence": "MIT",
+            "marker": {
+                "file": "css/bootstrap.min.css",
+                "regex": "/Bootstrap\\s+v([0-9.]+)/"
+            }
+        },
+        "jquery/jquery": {
+            "version": "3.7.1",
+            "path": "public_html/assets/vendor/jquery",
+            "source": "https://www.npmjs.com/package/jquery",
+            "licence": "MIT",
+            "marker": {
+                "file": "jquery.min.js",
+                "regex": "/jQuery v([0-9.]+)/"
+            }
+        },
+        "fortawesome/fontawesome-free": {
+            "version": "6.5.1",
+            "path": "public_html/assets/vendor/fontawesome",
+            "source": "https://www.npmjs.com/package/@fortawesome/fontawesome-free",
+            "licence": "Icons CC BY 4.0, Fonts SIL OFL 1.1, Code MIT",
+            "marker": {
+                "file": "css/all.min.css",
+                "regex": "/Font Awesome Free ([0-9.]+)/"
+            }
+        },
+        "swagger-api/swagger-ui": {
+            "version": "5.33.0",
+            "path": "public_html/assets/vendor/swagger-ui",
+            "source": "https://www.npmjs.com/package/swagger-ui-dist",
+            "licence": "Apache-2.0",
+            "marker": {
+                "file": "README.md",
+                "regex": "/\\*\\*([0-9.]+)\\*\\*/"
+            }
+        },
+        "jdecked/twemoji": {
+            "versionFrom": {
+                "file": "tools/emoji_vendor_version.json",
+                "key": "vendoredTag"
+            },
+            "path": "public_html/assets/img/emoji",
+            "source": "https://github.com/jdecked/twemoji",
+            "licence": "CC-BY-4.0 (graphics)"
+        }
+    },
+    "watch": {
+        "chillerlan/php-qrcode": {
+            "latest": {
+                "type": "github_tags",
+                "repo": "chillerlan/php-qrcode"
+            },
+            "osv": {
+                "ecosystem": "Packagist",
+                "name": "chillerlan/php-qrcode"
+            }
+        },
+        "chillerlan/php-settings-container": {
+            "latest": {
+                "type": "github_tags",
+                "repo": "chillerlan/php-settings-container"
+            },
+            "osv": {
+                "ecosystem": "Packagist",
+                "name": "chillerlan/php-settings-container"
+            }
+        },
+        "setasign/fpdf": {
+            "latest": {
+                "type": "github_tags",
+                "repo": "Setasign/FPDF"
+            },
+            "osv": {
+                "ecosystem": "Packagist",
+                "name": "setasign/fpdf"
+            },
+            "upstreamVersion": "1.8.6",
+            "upstreamVersionNote": "FPDF calls its release 1.86; its GitHub tag for the same release is 1.8.6."
+        },
+        "tecnickcom/tc-lib-barcode": {
+            "latest": {
+                "type": "github_tags",
+                "repo": "tecnickcom/tc-lib-barcode"
+            },
+            "osv": {
+                "ecosystem": "Packagist",
+                "name": "tecnickcom/tc-lib-barcode"
+            }
+        },
+        "tecnickcom/tc-lib-color": {
+            "latest": {
+                "type": "github_tags",
+                "repo": "tecnickcom/tc-lib-color"
+            },
+            "osv": {
+                "ecosystem": "Packagist",
+                "name": "tecnickcom/tc-lib-color"
+            }
+        },
+        "twbs/bootstrap": {
+            "latest": {
+                "type": "npm",
+                "package": "bootstrap"
+            },
+            "osv": {
+                "ecosystem": "npm",
+                "name": "bootstrap"
+            }
+        },
+        "jquery/jquery": {
+            "latest": {
+                "type": "npm",
+                "package": "jquery"
+            },
+            "osv": {
+                "ecosystem": "npm",
+                "name": "jquery"
+            }
+        },
+        "fortawesome/fontawesome-free": {
+            "latest": {
+                "type": "npm",
+                "package": "@fortawesome/fontawesome-free"
+            },
+            "osv": {
+                "ecosystem": "npm",
+                "name": "@fortawesome/fontawesome-free"
+            }
+        },
+        "swagger-api/swagger-ui": {
+            "latest": {
+                "type": "npm",
+                "package": "swagger-ui-dist"
+            },
+            "osv": {
+                "ecosystem": "npm",
+                "name": "swagger-ui-dist"
+            }
+        },
+        "jdecked/twemoji": {
+            "latest": {
+                "type": "github_tags",
+                "repo": "jdecked/twemoji"
+            },
+            "osv": null,
+            "osvNote": "Twemoji is artwork, not code, and has no advisory feed."
         }
     }
 }
