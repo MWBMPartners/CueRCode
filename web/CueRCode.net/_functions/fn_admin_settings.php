@@ -779,6 +779,20 @@ function adminSettingsSecretIntent(#[\SensitiveParameter] string $typed, bool $r
  *    standard 443; no user name or password; and ASCII only (an international
  *    name must be written in its "xn--" form).
  *
+ * 🧹 Final review N-3 (2026-11-25): also refused - a name with only one part
+ *    ("intranet"), and names that only ever point inside a network or are
+ *    made to point anywhere: *.localhost, *.local, *.internal, *.localdomain,
+ *    *.home.arpa, and the "address inside the name" services *.nip.io,
+ *    *.sslip.io and *.xip.io (where 10.0.0.1.nip.io means 10.0.0.1).
+ *
+ *    ⚠️ This is HYGIENE, not protection against the site being tricked into
+ *    calling something private: any public name can be pointed at a private
+ *    address by whoever controls it, and no list of names can stop that. The
+ *    real controls are in fn_oauth.php's fetches: the certificate must be
+ *    valid for the name (TLS checks on), redirects are never followed, and
+ *    only https is spoken. This list just stops obvious mistakes and makes a
+ *    plainly wrong address fail here, with a clear message, rather than later.
+ *
  * @param string $text The trimmed address
  * @return array{ok: bool, value: string, error: string}
  */
@@ -834,11 +848,34 @@ function adminSettingsValidateHttpsAddress(string $text): array
         return $refuse('The address must name a website with a proper domain, such as login.example.com.');
     }
 
+    // 🧹 N-3: names that only work inside a network, or that turn any
+    //    address into a name (hygiene - see the docblock).
+    $lowerHost = strtolower($host);
+    foreach (adminSettingsRefusedHostSuffixes() as $suffix) {
+        if ($lowerHost === $suffix || str_ends_with($lowerHost, '.' . $suffix)) {
+            return $refuse('The address must be a public website name, such as login.example.com. Names ending in .' . $suffix . ' are not accepted.');
+        }
+    }
+
     if (parse_url($text) === false) {
         return $refuse('That does not look like a web address.');
     }
 
     return ['ok' => true, 'value' => $text, 'error' => ''];
+}
+
+/**
+ * 🧹 The name endings a discovery address may not have (final review N-3).
+ *    PURE. Names that only ever point inside a network (localhost, local,
+ *    internal, localdomain, home.arpa) and services that turn an address
+ *    written into the name into that address (nip.io, sslip.io, xip.io).
+ *    Hygiene only - see adminSettingsValidateHttpsAddress().
+ *
+ * @return array<int, string> Lower-case endings, without the leading dot
+ */
+function adminSettingsRefusedHostSuffixes(): array
+{
+    return ['localhost', 'local', 'internal', 'localdomain', 'home.arpa', 'nip.io', 'sslip.io', 'xip.io'];
 }
 
 /**

@@ -821,6 +821,32 @@ $asDecimalOdd = adminSettingsValidateValue($asRegistry['billing_vat_rate_percent
 assertContains('with up to two decimal places', $asDecimalOdd['error'], 'M-4: a decimal box names its range and the two decimal places');
 assertFalse(str_contains($asDecimalOdd['error'], 'no zero at the start'), 'M-4: ...without a leading-zero reason that does not apply');
 
+// 🧹 Final review N-3: discovery addresses - hygiene on the name (the real
+//    controls are in fn_oauth.php: TLS, no redirects, https only).
+foreach ([
+    'https://login.localhost/x', 'https://LOCALHOST/x', 'https://printer.local/x', 'https://idp.corp.internal/x',
+    'https://sso.localdomain/x', 'https://router.home.arpa/x', 'https://10.0.0.1.nip.io/x', 'https://127-0-0-1.sslip.io/x',
+    'https://169.254.169.254.xip.io/x', 'https://nip.io/x', 'https://intranet/x', 'https://idp/x',
+] as $asInternal) {
+    assertFalse($asValidate('sso_microsoft_discovery_url', $asInternal)['ok'], 'N-3: a discovery address ' . $asInternal . ' is refused');
+}
+assertContains('Names ending in .nip.io are not accepted.', $asValidate('sso_microsoft_discovery_url', 'https://10.0.0.1.nip.io/x')['error'], 'N-3: ...with a plain reason naming the ending');
+foreach (['https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration', 'https://accounts.google.com/.well-known/openid-configuration', 'https://local.example.com/x', 'https://notlocalhost.example/x', 'https://nip.io.example.com/x'] as $asPublic) {
+    assertTrue($asValidate('sso_microsoft_discovery_url', $asPublic)['ok'], 'N-3: a public address ' . $asPublic . ' is still accepted');
+}
+assertContains('HYGIENE, not protection', $asFunctions, 'N-3: the code says plainly that the name list is hygiene, not the real control');
+requireFn('fn_oauth.php');
+$asOauth = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_oauth.php');
+$asSafety = (string) substr($asOauth, (int) strpos($asOauth, 'function oauthApplyCurlSafety('), 1500);
+assertContains('CURLOPT_FOLLOWLOCATION => false', $asSafety, 'N-3: sign-in provider calls never follow a redirect (stated, not left to the default)');
+assertContains("CURLOPT_PROTOCOLS_STR, 'https'", $asSafety, 'N-3: ...and speak https only');
+assertContains('CURLOPT_PROTOCOLS, CURLPROTO_HTTPS', $asSafety, 'N-3: ...with the older form for an older libcurl');
+assertEquals(3, substr_count($asOauth, 'if (!oauthApplyCurlSafety($curlHandle)) {'), 'N-3: all three provider calls (discovery/keys, token, user details) use it, and give up if it fails');
+if (function_exists('curl_init')) {
+    $asHandle = curl_init();
+    assertTrue(oauthApplyCurlSafety($asHandle), 'N-3: the settings are accepted by this PHP\'s cURL');
+}
+
 // ❗ M6: required boxes say so; the unsaved-changes warning is on.
 foreach ($asRegistry as $asKey => $asField) {
     $asBox = adminSettingsRenderField($asField, ['state' => ['exists' => true, 'hasValue' => false, 'value' => '', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);

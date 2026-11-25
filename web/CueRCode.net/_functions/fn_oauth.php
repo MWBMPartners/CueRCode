@@ -620,6 +620,46 @@ function ssoProviderUiMeta(string $provider): array
 // ==============================================================================
 
 /**
+ * 🔒 The safety settings every sign-in provider call uses (final review N-3).
+ *    Sets them on the handle and says whether that worked; the caller gives
+ *    up (null) when it did not, so a call is never made without them.
+ *
+ *   - certificates are checked, and must be valid for the name called;
+ *   - redirects are NEVER followed (stated, not left to cURL's default), so
+ *     an answer cannot send the site on to another address;
+ *   - only https is spoken, also for the addresses a provider's discovery
+ *     document names (the token, key and user-details addresses).
+ *
+ * These - not the list of refused names in the settings editor - are what
+ * stop the site being steered to something it should not call.
+ *
+ * @param \CurlHandle $curlHandle The handle about to be used
+ * @return bool True when every setting was accepted
+ *
+ * @see https://curl.se/libcurl/c/CURLOPT_PROTOCOLS_STR.html
+ */
+function oauthApplyCurlSafety(\CurlHandle $curlHandle): bool
+{
+    $applied = curl_setopt_array($curlHandle, [
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+    ]);
+
+    if ($applied !== true) {
+        return false;
+    }
+
+    // 🌐 https only. The text form needs libcurl 7.85 or later; older ones
+    //    take the number form, which every supported libcurl understands.
+    if (defined('CURLOPT_PROTOCOLS_STR') && curl_setopt($curlHandle, CURLOPT_PROTOCOLS_STR, 'https') === true) {
+        return true;
+    }
+
+    return curl_setopt($curlHandle, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS) === true;
+}
+
+/**
  * 🌐 GET a URL and decode a JSON object response. Generic helper shared by
  * the discovery-document and JWKS fetchers.
  *
@@ -645,6 +685,11 @@ function oauthHttpGetJson(string $url): ?array
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
     ]);
+
+    // 🔒 No redirects, https only, certificates checked (final review N-3).
+    if (!oauthApplyCurlSafety($curlHandle)) {
+        return null;
+    }
 
     $responseBody = curl_exec($curlHandle);
     $curlErrno    = curl_errno($curlHandle);
@@ -841,6 +886,11 @@ function oauthExchangeCodeForTokens(
         CURLOPT_SSL_VERIFYHOST => 2,
     ]);
 
+    // 🔒 No redirects, https only, certificates checked (final review N-3).
+    if (!oauthApplyCurlSafety($curlHandle)) {
+        return null;
+    }
+
     $responseBody = curl_exec($curlHandle);
     $curlErrno    = curl_errno($curlHandle);
     $curlError    = curl_error($curlHandle);
@@ -906,6 +956,11 @@ function oauthFetchUserInfo(string $userinfoEndpoint, string $accessToken): ?arr
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
     ]);
+
+    // 🔒 No redirects, https only, certificates checked (final review N-3).
+    if (!oauthApplyCurlSafety($curlHandle)) {
+        return null;
+    }
 
     $responseBody = curl_exec($curlHandle);
     $curlErrno    = curl_errno($curlHandle);
