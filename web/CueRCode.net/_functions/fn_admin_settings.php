@@ -124,6 +124,23 @@ if (!defined('CUERCODE_ADMIN_TEST_RESULT_REASON')) {
     define('CUERCODE_ADMIN_TEST_RESULT_REASON', 'Test finished');
 }
 
+/** @var string The reason text on the audit row of a test refused by the limit (final review N-1). */
+if (!defined('CUERCODE_ADMIN_TEST_LIMITED_REASON')) {
+    define('CUERCODE_ADMIN_TEST_LIMITED_REASON', 'Refused: too many tests in 10 minutes (the test was not run)');
+}
+
+/**
+ * @var string Added to a test's action name on the row written BEFORE it runs
+ *             (final review N-2): "setting.test_graph.started". The row's
+ *             outcome column can only say success, refused or failed - the
+ *             database upgrade tool only ever adds, and widening that list
+ *             would mean rewriting the column - so the action name is what
+ *             says "started".
+ */
+if (!defined('CUERCODE_ADMIN_TEST_STARTED_SUFFIX')) {
+    define('CUERCODE_ADMIN_TEST_STARTED_SUFFIX', '.started');
+}
+
 /** @var string $_SESSION key holding the times of recent test emails. */
 if (!defined('CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY')) {
     define('CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY', 'cuercode_admin_test_email_times');
@@ -1911,7 +1928,11 @@ function adminSettingsSaveSection(array $admin, string $sectionId, string $poste
  *    audit rows, so the limit holds across browsers, tabs and sessions - a
  *    session-only count could be dodged by signing in again.) Only the rows
  *    written BEFORE a test runs are counted: one per attempt, whether or not
- *    the test worked.
+ *    the test worked - and, since final review N-1, whether or not the limit
+ *    then refused it (every press counts, so pressing again while refused
+ *    keeps it refused). Those rows are named ACTION + ".started" (N-2); rows
+ *    written before that change (the plain action with the "Test started"
+ *    reason) still count, so the limit carries on across the upgrade.
  *
  * @param int    $userID        The admin's user id
  * @param string $action        'setting.test_graph' or 'setting.test_email'
@@ -1932,10 +1953,11 @@ function adminSettingsRecentAttemptTimes(int $userID, string $action, int $now, 
         // sum are in the database's own clock), so no time-zone maths here.
         $stmt = dbQuery(
             'SELECT TIMESTAMPDIFF(SECOND, `createdAt`, NOW()) AS `ageSeconds` FROM `tblAdminAuditLog` '
-            . 'WHERE `actorUserID` = ? AND `action` = ? AND `reason` = ? AND `createdAt` >= DATE_SUB(NOW(), INTERVAL ? SECOND) '
+            . 'WHERE `actorUserID` = ? AND `createdAt` >= DATE_SUB(NOW(), INTERVAL ? SECOND) '
+            . 'AND (`action` = ? OR (`action` = ? AND `reason` = ?)) '
             . 'ORDER BY `auditID`',
-            'issi',
-            [$userID, $action, CUERCODE_ADMIN_TEST_ATTEMPT_REASON, $windowSeconds]
+            'iisss',
+            [$userID, $windowSeconds, $action . CUERCODE_ADMIN_TEST_STARTED_SUFFIX, $action, CUERCODE_ADMIN_TEST_ATTEMPT_REASON]
         );
         $result = $stmt->get_result();
         while ($row = $result->fetch_assoc()) {
@@ -1960,8 +1982,12 @@ function adminSettingsRecentAttemptTimes(int $userID, string $action, int $now, 
 
 /**
  * 🧾 Write the audit row that says a test is ABOUT to run. Written first, so a
- *    test that cannot be recorded is not run at all. It counts toward the
- *    limit. (The outcome says "failed" until the next row says otherwise.)
+ *    test that cannot be recorded is not run at all, and BEFORE the limit is
+ *    counted (final review N-1), so two presses at the same moment both see
+ *    each other. It counts toward the limit. Its action is ACTION + ".started"
+ *    (final review N-2); the outcome column says "failed" because it cannot
+ *    say "started" (see CUERCODE_ADMIN_TEST_STARTED_SUFFIX) - the next row
+ *    says how the test really ended.
  *
  * @param array<string, mixed> $admin  From requireGlobalAdminPage()
  * @param string               $action 'setting.test_graph' or 'setting.test_email'
@@ -1970,7 +1996,44 @@ function adminSettingsRecentAttemptTimes(int $userID, string $action, int $now, 
  */
 function adminSettingsWriteTestAttempt(array $admin, string $action, string $entity): bool
 {
-    return adminAuditWrite(adminAuditEntryForAdmin($admin, $action, 'setting', $entity, 'failed', [], CUERCODE_ADMIN_TEST_ATTEMPT_REASON));
+    return adminAuditWrite(adminAuditEntryForAdmin($admin, $action . CUERCODE_ADMIN_TEST_STARTED_SUFFIX, 'setting', $entity, 'failed', [], CUERCODE_ADMIN_TEST_ATTEMPT_REASON));
+}
+
+/**
+ * 🚦 After the attempt row is written: is this attempt within the limit?
+ *    The count INCLUDES this attempt (final review N-1). When it is over the
+ *    limit, a "refused" row is written to say the test did not run.
+ *
+ * @param array<string, mixed> $admin  From requireGlobalAdminPage()
+ * @param string               $action 'setting.test_graph' or 'setting.test_email'
+ * @param string               $entity The entity key for the rows
+ * @param int                  $now    Now (Unix time)
+ * @param int                  $max    Attempts allowed in the window
+ * @return array{allowed: bool, unreadable: bool, waitSeconds: int}
+ */
+function adminSettingsAttemptWithinLimit(array $admin, string $action, string $entity, int $now, int $max): array
+{
+    $times = adminSettingsRecentAttemptTimes((int) $admin['userID'], $action, $now, CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS);
+
+    if ($times === null) {
+        adminAuditWrite(adminAuditEntryForAdmin($admin, $action, 'setting', $entity, 'refused', [], CUERCODE_ADMIN_TEST_LIMITED_REASON));
+        return ['allowed' => false, 'unreadable' => true, 'waitSeconds' => 0];
+    }
+
+    // 📌 This attempt is already among $times, so "allowed" means at most
+    //    $max in the window (one more than the window helper's own test).
+    $including = adminSettingsTestEmailWindow($times, $now, $max + 1);
+    if ($including['allowed']) {
+        return ['allowed' => true, 'unreadable' => false, 'waitSeconds' => 0];
+    }
+
+    // ⏱️ When will a NEW press (which adds itself) fit? When enough of these
+    //    have left the window: exactly the window helper's answer for $max.
+    $wait = adminSettingsTestEmailWindow($times, $now, $max)['waitSeconds'];
+
+    adminAuditWrite(adminAuditEntryForAdmin($admin, $action, 'setting', $entity, 'refused', [], CUERCODE_ADMIN_TEST_LIMITED_REASON));
+
+    return ['allowed' => false, 'unreadable' => false, 'waitSeconds' => max(1, (int) $wait)];
 }
 
 /**
@@ -2024,20 +2087,20 @@ function adminSettingsTestGraph(array $admin, ?callable $tokenFetcher = null, ?i
         $tokenFetcher = 'getGraphAccessToken';
     }
 
-    // 🚦 At most 10 in 10 minutes for this admin, counted from the audit log.
-    $earlier = adminSettingsRecentAttemptTimes((int) $admin['userID'], 'setting.test_graph', $now, CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS);
-    if ($earlier === null) {
-        return ['ok' => false, 'message' => 'The limit on checks could not be read, so nothing was checked. Please try again.'];
-    }
-    $window = adminSettingsTestEmailWindow($earlier, $now, CUERCODE_ADMIN_TEST_GRAPH_MAX);
-    if (!$window['allowed']) {
-        $minutes = (int) ceil($window['waitSeconds'] / 60);
-        return ['ok' => false, 'message' => 'Too many connection checks just now (the limit is ' . CUERCODE_ADMIN_TEST_GRAPH_MAX . ' in 10 minutes). Try again in about ' . $minutes . ' minute(s).'];
-    }
-
-    // 🧾 Record the attempt FIRST: no record, no check.
+    // 🧾 Record the attempt FIRST: no record, no check. (Final review N-1:
+    //    before the limit is counted, so the count includes this attempt.)
     if (!adminSettingsWriteTestAttempt($admin, 'setting.test_graph', 'graph_connection')) {
         return ['ok' => false, 'message' => 'This check could not be recorded in the admin change log, so it was not run. Please try again.'];
+    }
+
+    // 🚦 At most 10 in 10 minutes for this admin, counted from the audit log.
+    $limit = adminSettingsAttemptWithinLimit($admin, 'setting.test_graph', 'graph_connection', $now, CUERCODE_ADMIN_TEST_GRAPH_MAX);
+    if ($limit['unreadable']) {
+        return ['ok' => false, 'message' => 'The limit on checks could not be read, so nothing was checked. Please try again.'];
+    }
+    if (!$limit['allowed']) {
+        $minutes = (int) ceil($limit['waitSeconds'] / 60);
+        return ['ok' => false, 'message' => 'Too many connection checks just now (the limit is ' . CUERCODE_ADMIN_TEST_GRAPH_MAX . ' in 10 minutes). Try again in about ' . $minutes . ' minute(s).'];
     }
 
     $allThreeSet = (adminSettingHasValue('graph_tenant_id') && adminSettingHasValue('graph_client_id') && adminSettingHasValue('graph_client_secret'));
@@ -2119,22 +2182,25 @@ function adminSettingsSendTestEmail(array $admin, ?callable $sender = null, ?int
         $earlier = $_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY];
     }
     $window = adminSettingsTestEmailWindow($earlier, $now);
+    $tooManyMessage = 'Too many test emails just now (the limit is ' . CUERCODE_ADMIN_TEST_EMAIL_MAX . ' in 10 minutes). Try again in about ';
 
-    $auditTimes = adminSettingsRecentAttemptTimes((int) $admin['userID'], 'setting.test_email', $now, CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS);
-    if ($auditTimes === null) {
-        return ['ok' => false, 'message' => 'The limit on test emails could not be read, so none was sent. Please try again.'];
-    }
-    $auditWindow = adminSettingsTestEmailWindow($auditTimes, $now);
-
-    if (!$window['allowed'] || !$auditWindow['allowed']) {
-        $wait = max((int) $window['waitSeconds'], (int) $auditWindow['waitSeconds']);
-        $minutes = (int) ceil($wait / 60);
-        return ['ok' => false, 'message' => 'Too many test emails just now (the limit is ' . CUERCODE_ADMIN_TEST_EMAIL_MAX . ' in 10 minutes). Try again in about ' . $minutes . ' minute(s).'];
+    // 🍪 This browser's own count first: nothing is written when it alone says no.
+    if (!$window['allowed']) {
+        return ['ok' => false, 'message' => $tooManyMessage . (int) ceil($window['waitSeconds'] / 60) . ' minute(s).'];
     }
 
-    // 🧾 Record the attempt FIRST: no record, no email.
+    // 🧾 Record the attempt FIRST: no record, no email. (Final review N-1:
+    //    before the audit-log limit is counted, so the count includes it.)
     if (!adminSettingsWriteTestAttempt($admin, 'setting.test_email', 'email_enabled')) {
         return ['ok' => false, 'message' => 'This test could not be recorded in the admin change log, so no email was sent. Please try again.'];
+    }
+
+    $limit = adminSettingsAttemptWithinLimit($admin, 'setting.test_email', 'email_enabled', $now, CUERCODE_ADMIN_TEST_EMAIL_MAX);
+    if ($limit['unreadable']) {
+        return ['ok' => false, 'message' => 'The limit on test emails could not be read, so none was sent. Please try again.'];
+    }
+    if (!$limit['allowed']) {
+        return ['ok' => false, 'message' => $tooManyMessage . (int) ceil($limit['waitSeconds'] / 60) . ' minute(s).'];
     }
 
     // The attempt counts whether or not it works.

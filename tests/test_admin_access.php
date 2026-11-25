@@ -248,13 +248,14 @@ assertEquals(
     [
         'reauth.success', 'reauth.failed', 'reauth.lockout', 'admin.grant', 'admin.revoke', 'admin.first_seen', 'schema.migrate',
         'setting.update', 'setting.secret_set', 'setting.secret_replace', 'setting.secret_clear', 'setting.test_graph', 'setting.test_email',
+        'setting.test_graph.started', 'setting.test_email.started',
         'plan.create', 'plan.update', 'plan.update_reduction', 'plan.new_version', 'plan.retire', 'plan.restore', 'plan.delete',
         'price.create', 'price.update', 'price.retire', 'price.delete', 'entitlement.update', 'apikeys.resync',
         'discount.create', 'discount.update', 'discount.disable', 'discount.eligibility_grant', 'discount.eligibility_revoke',
         'customer.lookup', 'deal.create', 'deal.start', 'deal.update', 'deal.end', 'payg.pack_create', 'payg.pack_update', 'payg.cap_update',
     ],
     adminAuditActionNames(),
-    'audit action names are exactly the plan §6.7 list'
+    'audit action names are exactly the plan §6.7 list, plus the two ".started" rows (final review N-2)'
 );
 
 $aaSecret = 'S3cr3t-Value-Do-Not-Log-7f2a';

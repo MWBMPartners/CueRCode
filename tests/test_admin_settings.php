@@ -716,8 +716,33 @@ for ($asI = 0; $asI < 10; $asI++) {
 }
 assertFalse(adminSettingsTestEmailWindow($asGraphTimes, $asNow, CUERCODE_ADMIN_TEST_GRAPH_MAX)['allowed'], 'the 11th connection check inside 10 minutes is refused');
 assertTrue(adminSettingsTestEmailWindow(array_slice($asGraphTimes, 1), $asNow, CUERCODE_ADMIN_TEST_GRAPH_MAX)['allowed'], 'the 10th connection check is allowed');
-assertContains("adminSettingsRecentAttemptTimes((int) \$admin['userID'], 'setting.test_graph'", $asFunctions, 'the connection check counts the admin\'s own setting.test_graph audit rows');
-assertContains("adminSettingsRecentAttemptTimes((int) \$admin['userID'], 'setting.test_email'", $asFunctions, 'the test email also counts the admin\'s own setting.test_email audit rows');
+assertContains("adminSettingsAttemptWithinLimit(\$admin, 'setting.test_graph', 'graph_connection', \$now, CUERCODE_ADMIN_TEST_GRAPH_MAX)", $asFunctions, 'the connection check counts the admin\'s own setting.test_graph audit rows');
+assertContains("adminSettingsAttemptWithinLimit(\$admin, 'setting.test_email', 'email_enabled', \$now, CUERCODE_ADMIN_TEST_EMAIL_MAX)", $asFunctions, 'the test email also counts the admin\'s own setting.test_email audit rows');
+assertContains('adminSettingsRecentAttemptTimes((int) $admin[\'userID\'], $action, $now, CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS)', $asFunctions, '...from the audit log');
+// 🚦 Final review N-1: the attempt row is written FIRST, then the limit counted including it.
+foreach (['function adminSettingsTestGraph(' => '$tokenFetcher()', 'function adminSettingsSendTestEmail(' => '$sender($address'] as $asFnStart => $asRunsAt) {
+    $asFnBody = (string) substr($asFunctions, (int) strpos($asFunctions, $asFnStart), 6000);
+    assertTrue(
+        strpos($asFnBody, 'adminSettingsWriteTestAttempt(') < strpos($asFnBody, 'adminSettingsAttemptWithinLimit(')
+        && strpos($asFnBody, 'adminSettingsAttemptWithinLimit(') < strpos($asFnBody, $asRunsAt),
+        'N-1 ' . $asFnStart . ': the attempt row is written first, then the limit is counted (including it), then the test runs'
+    );
+}
+$asWithin = (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsAttemptWithinLimit('), 2500);
+assertContains('adminSettingsTestEmailWindow($times, $now, $max + 1)', $asWithin, 'N-1: this attempt is already counted, so up to $max in the window are allowed');
+assertContains("'refused', [], CUERCODE_ADMIN_TEST_LIMITED_REASON", $asWithin, 'N-1: a refused press is recorded as refused');
+// ⏱️ N-1 arithmetic: with this attempt included, exactly MAX in the window are allowed.
+$asIncl = [];
+for ($asI = 0; $asI < CUERCODE_ADMIN_TEST_GRAPH_MAX; $asI++) {
+    $asIncl[] = $asNow - $asI;
+}
+assertTrue(adminSettingsTestEmailWindow($asIncl, $asNow, CUERCODE_ADMIN_TEST_GRAPH_MAX + 1)['allowed'], 'N-1: the 10th press (10 rows including itself) is allowed');
+$asIncl[] = $asNow;
+assertFalse(adminSettingsTestEmailWindow($asIncl, $asNow, CUERCODE_ADMIN_TEST_GRAPH_MAX + 1)['allowed'], 'N-1: the 11th (11 rows including itself) is refused');
+// 🏷️ Final review N-2: the "about to run" row has its own action name.
+assertEquals('.started', CUERCODE_ADMIN_TEST_STARTED_SUFFIX, 'N-2: the about-to-run row is ACTION.started');
+assertContains('$action . CUERCODE_ADMIN_TEST_STARTED_SUFFIX', (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsWriteTestAttempt('), 800), 'N-2: the attempt row is written under ACTION.started');
+assertTrue(in_array('setting.test_graph.started', adminAuditActionNames(), true) && in_array('setting.test_email.started', adminAuditActionNames(), true), 'N-2: the audit log accepts the two new names');
 $asGraphBody = (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsTestGraph('), 4200);
 assertTrue(strpos($asGraphBody, 'adminSettingsWriteTestAttempt(') < strpos($asGraphBody, '$tokenFetcher()'), 'the connection check writes its audit row BEFORE it runs');
 $asEmailBody = (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsSendTestEmail('), 6000);

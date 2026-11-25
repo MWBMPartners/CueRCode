@@ -384,9 +384,11 @@ function asSetting(\mysqli $asDb, string $asKey): ?array
  */
 function asAuditRows(\mysqli $asDb, string $asAction, string $asEntityKey = ''): array
 {
-    $asSql = 'SELECT `action`, `entityType`, `entityKey`, `outcome`, `changesJSON`, `actorUserID`, `reason` FROM `tblAdminAuditLog` WHERE `action` = ?';
-    $asTypes = 's';
-    $asParams = [$asAction];
+    // 🧾 Final review N-2: a test's "about to run" row is named ACTION.started,
+    //    so the rows of a test action include those.
+    $asSql = 'SELECT `action`, `entityType`, `entityKey`, `outcome`, `changesJSON`, `actorUserID`, `reason` FROM `tblAdminAuditLog` WHERE (`action` = ? OR `action` = ?)';
+    $asTypes = 'ss';
+    $asParams = [$asAction, $asAction . '.started'];
     if ($asEntityKey !== '') {
         $asSql .= ' AND `entityKey` = ?';
         $asTypes .= 's';
@@ -740,7 +742,7 @@ asCheck('G', $asResult['ok'] === true && str_contains($asResult['message'], 'Con
 asCheck('G', $asSeenCache === '', 'the saved token was cleared BEFORE asking for a new one');
 asCheck('G', !str_contains(json_encode($asResult), 'FAKE-ACCESS-TOKEN'), 'the token is not in the answer');
 $asAudit = asAuditRows($asServer, 'setting.test_graph');
-asCheck('G', count($asAudit) === 2 && $asAudit[0]['outcome'] === 'failed' && $asAudit[0]['reason'] === CUERCODE_ADMIN_TEST_ATTEMPT_REASON && $asAudit[1]['outcome'] === 'success' && $asAudit[1]['reason'] === CUERCODE_ADMIN_TEST_RESULT_REASON && $asAudit[1]['changesJSON'] === null, 'audited as setting.test_graph: an attempt row first, then a success row, no details');
+asCheck('G', count($asAudit) === 2 && $asAudit[0]['action'] === 'setting.test_graph.started' && $asAudit[1]['action'] === 'setting.test_graph' && $asAudit[0]['outcome'] === 'failed' && $asAudit[0]['reason'] === CUERCODE_ADMIN_TEST_ATTEMPT_REASON && $asAudit[1]['outcome'] === 'success' && $asAudit[1]['reason'] === CUERCODE_ADMIN_TEST_RESULT_REASON && $asAudit[1]['changesJSON'] === null, 'audited: a setting.test_graph.started row first (N-2), then a setting.test_graph success row, no details');
 
 $asBadFetcher = static function (): ?string {
     return null;
@@ -783,12 +785,17 @@ for ($asI = 1; $asI < 5; $asI++) {
 asCheck('G', count($asSentTo) === 5, 'five test emails are allowed');
 $asResult = adminSettingsSendTestEmail($asAdmin, $asSender, 1800000010);
 asCheck('G', $asResult['ok'] === false && count($asSentTo) === 5 && str_contains($asResult['message'], 'Too many'), 'the sixth within 10 minutes is refused');
+asCheck('G', count(asAuditRows($asServer, 'setting.test_email')) === 10, 'N-1: refused by THIS browser\'s own count: nothing more is written (5 attempts, 5 results)');
 // 🍪 Signing in again (an empty session list) does not reset the limit: it is counted from the admin's own audit rows.
 $_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY] = [];
 $asResult = adminSettingsSendTestEmail($asAdmin, $asSender, 1800000010);
 asCheck('G', $asResult['ok'] === false && count($asSentTo) === 5 && str_contains($asResult['message'], 'Too many'), 'with a brand-new session the sixth is STILL refused (counted from the audit rows)');
+$asRefusedRows = array_values(array_filter(asAuditRows($asServer, 'setting.test_email'), static function (array $asRow): bool {
+    return $asRow['reason'] === CUERCODE_ADMIN_TEST_LIMITED_REASON;
+}));
+asCheck('G', count(asAuditRows($asServer, 'setting.test_email')) === 12 && count($asRefusedRows) === 1 && $asRefusedRows[0]['outcome'] === 'refused' && $asRefusedRows[0]['action'] === 'setting.test_email', 'N-1: the press refused by the audit-log count is recorded (a started row, then a "refused" row)');
 // ⏩ The audit rows are made 11 minutes older (the test cannot wait; the clock stand-in only moves PHP's time).
-$asServer->query("UPDATE `tblAdminAuditLog` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 11 MINUTE) WHERE `action` = 'setting.test_email'");
+$asServer->query("UPDATE `tblAdminAuditLog` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 11 MINUTE) WHERE `action` IN ('setting.test_email', 'setting.test_email.started')");
 $asResult = adminSettingsSendTestEmail($asAdmin, $asSender, 1800000000 + 601);
 asCheck('G', $asResult['ok'] === true && count($asSentTo) === 6, 'after 10 minutes it is allowed again');
 $asFailingSender = static function (): array {
@@ -803,7 +810,7 @@ $asEmailAttempts = array_values(array_filter($asAudit, static function (array $a
 $asEmailResults = array_values(array_filter($asAudit, static function (array $asRow): bool {
     return $asRow['reason'] === CUERCODE_ADMIN_TEST_RESULT_REASON;
 }));
-asCheck('G', count($asAudit) === 14 && count($asEmailAttempts) === 7 && count($asEmailResults) === 7 && $asEmailResults[0]['outcome'] === 'success' && $asEmailResults[6]['outcome'] === 'failed', 'test emails are audited before and after (7 attempts, 7 results; success and failed)');
+asCheck('G', count($asAudit) === 16 && count($asEmailAttempts) === 8 && count($asEmailResults) === 7 && $asEmailResults[0]['outcome'] === 'success' && $asEmailResults[6]['outcome'] === 'failed', 'test emails are audited before and after (8 attempts - one refused by the limit - 7 results; success and failed)');
 asCheck('G', str_contains($asResult['message'], 'activity log') && !str_contains($asResult['message'], 'server error log'), 'a failed test email points at the activity log (where the detail really is)');
 setConfig('email_enabled', '0', ['group' => 'email', 'type' => 'boolean']);
 
@@ -817,7 +824,7 @@ $asCountingFetcher = static function () use (&$asFetcherCalls): string {
     return 'FAKE-ACCESS-TOKEN-' . bin2hex(random_bytes(4));
 };
 $asAgeRows = static function (string $asAction) use ($asServer): void {
-    $asServer->query("UPDATE `tblAdminAuditLog` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 11 MINUTE) WHERE `action` = '" . $asAction . "'");
+    $asServer->query("UPDATE `tblAdminAuditLog` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 11 MINUTE) WHERE `action` IN ('" . $asAction . "', '" . $asAction . ".started')");
 };
 $asAgeRows('setting.test_graph');
 $asRows = count(asAuditRows($asServer, 'setting.test_graph'));
@@ -829,7 +836,9 @@ for ($asI = 1; $asI <= 10; $asI++) {
 }
 asCheck('N', $asFetcherCalls === 10 && count(asAuditRows($asServer, 'setting.test_graph')) === $asRows + 20, 'ten connection checks in 10 minutes are allowed (20 audit rows: before and after)');
 $asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
-asCheck('N', $asAnswer['ok'] === false && str_contains($asAnswer['message'], 'Too many connection checks') && $asFetcherCalls === 10 && count(asAuditRows($asServer, 'setting.test_graph')) === $asRows + 20, 'the 11th is refused: no check was run and no audit row was added');
+asCheck('N', $asAnswer['ok'] === false && str_contains($asAnswer['message'], 'Too many connection checks') && $asFetcherCalls === 10 && count(asAuditRows($asServer, 'setting.test_graph')) === $asRows + 22, 'the 11th is refused: no check was run; the refused press is recorded (N-1: a started row, then a "refused" row)');
+$asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
+asCheck('N', $asAnswer['ok'] === false && $asFetcherCalls === 10, 'N-1: pressing again while refused is refused again (every press counts)');
 $asAgeRows('setting.test_graph');
 $asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
 asCheck('N', $asAnswer['ok'] === true && $asFetcherCalls === 11, 'ten minutes later it is allowed again');
@@ -837,7 +846,7 @@ $asAgeRows('setting.test_graph');
 
 // 🧾 If the audit row cannot be written first, the check is NOT run.
 $asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
-$asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` = \'setting.test_graph\' THEN SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'; END IF; END');
+$asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` LIKE \'setting.test_graph%\' THEN SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'; END IF; END');
 $asBeforeCalls = $asFetcherCalls;
 $asAnswer = adminSettingsTestGraph($asAdmin, $asCountingFetcher);
 $asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
@@ -855,7 +864,7 @@ setConfig('email_enabled', '1', ['group' => 'email', 'type' => 'boolean']);
 $_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY] = [];
 $asAgeRows('setting.test_email');
 $asSentBefore = count($asSentTo);
-$asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` = \'setting.test_email\' THEN SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'; END IF; END');
+$asServer->query('CREATE TRIGGER `asForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` LIKE \'setting.test_email%\' THEN SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'; END IF; END');
 $asAnswer = adminSettingsSendTestEmail($asAdmin, $asSender, 1800009000);
 $asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
 asCheck('N', $asAnswer['ok'] === false && count($asSentTo) === $asSentBefore && str_contains($asAnswer['message'], 'so no email was sent'), 'Send test email: an audit row that cannot be written means NO email is sent, and it says so');
