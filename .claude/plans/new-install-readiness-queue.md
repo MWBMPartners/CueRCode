@@ -29,6 +29,7 @@ Already fine (no work): Bootstrap/jQuery/FontAwesome fallback copies are committ
 | B8 | One ordered fresh-install runbook: register, first admin, secrets, email on, verify, generate | S-M | #113 |
 |  | ↳ **LANDED 2026-11-25, UNREVIEWED.** `docs/INSTALL.md`, linked from README. Checked against code, not run live (B9 still owed). | | |
 | B9 | Fresh-install dry run end to end on a throwaway MySQL and MariaDB 10.6; fix what breaks | M | #13 |
+|  | ↳ **DRY RUN DONE, FINDINGS 3, 4, 6b, 7, 8, 9 FIXED 2026-11-25, UNREVIEWED.** Fixed: `site_url` now on `/admin/settings/` (3); `grant --activate` cancels the account's waiting verification/reset emails (4, 6b; INSTALL.md also says the command line is the owner's only way to the first admin); exit-0-can-mean-retry wording in the cron help, INSTALL.md and DEV_NOTES (7); verify page wording for a replaced link (8); no-scope API keys now warned about, default not widened (9); cron help wording about addresses (9). Open: a dry run on a LIVE DreamHost server (the whole guide is still not run there). | | |
 | B10 | Predefined brand logos: commit PNG copies or document the Imagick need (#65) | M | #65 |
 | B11 | Close or comment stale issues with evidence once verified: #112, #117, #122, #124, #125, #127, #138 (only after a check, never on assumption) | S | |
 

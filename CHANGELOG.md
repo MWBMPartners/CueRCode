@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed and added - Fresh-install dry run findings (2026-11-25, queue B9, #113)
+
+- **New "Website address" setting on `/admin/settings/`** (`site_url`). Emailed links and the Microsoft/Google callback addresses are built from it; it was fixed at `https://cuercode.net` with no way to change it, so test sites (alpha, beta) emailed links to the live site. https only, website name only (no path, port, IP number, `localhost` or internal names), trailing slash removed, audited. Install guide step added before email is turned on.
+- **`admin_access.php grant --activate` cancels the account's waiting verification and password-reset emails** in the same transaction (they would only arrive later, pointing at an already-verified account). The change-log row records counts only. Install guide updated; a no-SSH route still leaves the email to be ignored.
+- **Verify page** says "This link has already been used or has been replaced by a newer one. Please use the newest email we sent you, or ask for a new link." (was "has already been used"). OpenAPI example updated.
+- **Email runner help, install guide and DEV_NOTES:** exit 0 can still mean "delivery failed this time and will retry"; the runner's printed output has no addresses but the activity log in the database does keep recipient addresses.
+- **API keys:** the create message warns when no scopes were chosen; the account page, developer guide, OpenAPI text and install troubleshooting say a key needs at least one scope (default not widened). Install guide explains that the first admin is reached through the command line.
+- Tests: suite 5740/5740 across 41 files (PHP 8.5.12). Real databases (Docker, MySQL 8.0 and MariaDB 10.6): `admin_settings_real_mysql.php` 227 checks, `admin_access_real_mysql.php` 150 checks, `account_recovery_real_mysql.php` 171 checks, all passing on both.
+
 ### Security - A password change, erase or confirmation can no longer act on a password that changed meanwhile, and other final-review fixes (2026-11-25, #31, decision 0016)
 
 - **A password change already under way can no longer overwrite a password reset that finished in between** (I-1). The old password is checked and the new one prepared first; then, in one quick locked step, the site makes sure the password is still the one that was checked and that this sign-in is still valid, and only then saves. Otherwise nothing changes: "Your sign-in has ended" (401) or "Your password was changed somewhere else while this was being saved" (new `409 PASSWORD_CHANGED_MEANWHILE`, in `openapi.json`). The change still signs you out everywhere else - now including a sign-in that is still being checked - keeps you signed in, and leaves API keys and linked Google/Microsoft sign-ins alone (decision 0016).

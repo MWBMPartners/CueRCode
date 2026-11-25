@@ -50,9 +50,9 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 109 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 565 |
-| `test_admin_settings.php` | 1147 |
-| `test_api_keys.php` | 108 |
+| `test_admin_access.php` | 574 |
+| `test_admin_settings.php` | 1190 |
+| `test_api_keys.php` | 114 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
 | `test_barcode.php` | 120 |
@@ -65,7 +65,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
-| `test_email_queue_runner.php` | 476 |
+| `test_email_queue_runner.php` | 479 |
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 136 |
 | `test_features.php` | 91 |
@@ -84,10 +84,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_pricing_flex.php` | 51 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| `test_resend_verification.php` | 67 |
+| `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **5669** |
+| **Total** | **5740** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 

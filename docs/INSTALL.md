@@ -19,7 +19,7 @@ Written 2026-11-25 (queue task B8, #113). One ordered list, from an empty DreamH
 > 1. Choose and pay for the DreamHost plan; create the domain, database and SSH user (steps 0 to 2).
 > 2. Create the GitHub secrets `SFTP_HOST`, `SFTP_PORT`, `SFTP_USER`, `SFTP_KEY` (or `SFTP_PASSWORD`), `SFTP_REMOTE_BASE`, `SFTP_KNOWN_HOSTS` and the variable `SFTP_ENABLED` (step 1).
 > 3. Put `auth_creds.php` on the server, with your own database password and encryption key (step 2).
-> 4. Create the Microsoft 365 app registration and shared mailbox, and type the details into `/admin/settings/` (step 6).
+> 4. Set the website address, then create the Microsoft 365 app registration and shared mailbox, and type the details into `/admin/settings/` (step 6).
 > 5. Add the DreamHost cron job (step 7).
 > 6. Decide when to switch on the HTTPS redirect (step 8).
 > 7. Anything in step 10 (passwords for the alpha and beta sites, bot-protection keys, key rotation).
@@ -124,7 +124,9 @@ On an **existing site that has just received new code**, apply upgrades **immedi
 
 No web page can make the first admin (a "first visitor becomes admin" page would let a stranger claim a fresh site before you). It is done on the server.
 
-1. Open `https://your-domain/register/` and sign up with **your own** email address and a password. The account stays **pending**: no verification email can arrive yet, because email is not set up.
+**Why the command line is the way in (read this once).** On a fresh install email is off, so no verification email reaches you. The verification link exists only inside the waiting email's row in the email queue table (`tblEmailQueue`), and the queue wipes a link as soon as the email is sent or skipped (#122), so it cannot be fetched from there later. **If you cannot read `tblEmailQueue` (no phpMyAdmin), the owner reaches the first admin only through the command line** (SSH, step 5.2). With phpMyAdmin but no SSH, see the last-resort route at the end of this step.
+
+1. Open `https://your-domain/register/` and sign up with **your own** email address and a password. The account stays **pending**. Signing up also **queues** a "please verify your email" email for that address. Nothing sends it yet because email is off.
 2. Over SSH, run (replace the address with yours):
 
    ```bash
@@ -135,9 +137,10 @@ No web page can make the first admin (a "first visitor becomes admin" page would
 3. It shows the account's email, display name and **when it was registered**. Check that is you and that time. **If you did not register this account at that time, stop.** A stranger may have signed up with your address first (decision 0010).
 4. Type your email address again to confirm.
 5. It asks for a **new password**, twice. Your typing is hidden. This needs a real terminal (an SSH session you are typing in); from a script it refuses. The new password replaces the one the account was registered with, and every earlier way into the account is removed: signed-in sessions, API keys, unused password-reset links, linked Microsoft or Google sign-ins, and passkeys.
-6. Check with `php .../admin_access.php list` (addresses are partly hidden).
+6. **The waiting emails for that account are cancelled for you.** In the same step, `grant --activate` marks any verification or password-reset email still waiting in the queue for that address as skipped (it would only arrive later, when you turn email on, pointing at an account that is already verified). The command prints how many it cancelled (for example "Waiting emails cancelled: 1 verification, 0 password-reset."). An email that was already being sent at that moment, or already sent, is not affected: if one such email does arrive, ignore it.
+7. Check with `php .../admin_access.php list` (addresses are partly hidden).
 
-**Last resort only, if you have no SSH at all (phpMyAdmin):** `DEV_NOTES.md`, "Admin area and the first Global Admin", has the exact SQL. Read its warnings first. This route **cannot set a safe password**: it keeps whatever password the account was registered with, so if a stranger registered your address first, their password becomes an admin password, and earlier sign-ins are not ended. If you use it, check `createdAt` and the display name first, remove anything a stranger could have added (API keys, linked sign-ins, sessions, reset links), and set a fresh password at `/account/` straight after. If your own password does not sign you in, someone else registered first: remove the role at once and use the command line.
+**Last resort only, if you have no SSH at all (phpMyAdmin):** `DEV_NOTES.md`, "Admin area and the first Global Admin", has the exact SQL. Read its warnings first. This route **cannot set a safe password**: it keeps whatever password the account was registered with, so if a stranger registered your address first, their password becomes an admin password, and earlier sign-ins are not ended. If you use it, check `createdAt` and the display name first, remove anything a stranger could have added (API keys, linked sign-ins, sessions, reset links), and set a fresh password at `/account/` straight after. If your own password does not sign you in, someone else registered first: remove the role at once and use the command line. This route does **not** cancel the waiting verification email (only the command line does): when you turn email on it will be sent, pointing at an already-verified account. Ignore it.
 
 ---
 
@@ -146,17 +149,18 @@ No web page can make the first admin (a "first visitor becomes admin" page would
 1. Sign in at `/login/` with the **new** password, then open `/admin/` (or "Admin" in your account menu). Anyone who is not a Global Admin sees an ordinary "page not found".
 2. **Confirm password.** Every change needs your password again if you have not typed it within 15 minutes, and at most every 60. The settings page has an **Unlock editing** button for this.
 3. **Visitor address check** (admin overview). It shows the address your own request arrived from, which header was used, and whether the connection is inside a Cloudflare range. Compare "address the site will use" with what a "what is my IP" website shows for you. **If the site is behind Cloudflare**, also compare the built-in Cloudflare list with the current one at <https://www.cloudflare.com/ips/> and read any warning shown (decision 0014). The command-line version, `php .../visitor_address.php`, only shows the settings and can test a pretend request. It cannot see a real visitor.
-4. **Create the Microsoft 365 side** (owner-only, in Microsoft's admin pages; menu names may change, so verify live):
+4. **Set the website address (before you turn email on).** In `/admin/settings/`, the first box, **Website address**, ("Website address used in emailed links"), holds the address of THIS copy of the site. Every link in an email (verify your email, reset your password) and the Microsoft and Google callback addresses shown on the settings page are built from it. It starts as `https://cuercode.net`, so **on an alpha or beta site, or any other domain, emails would point people at the live site until you change it.** Type the address of this site, for example `https://alpha.example.com`, press **Save website address**, and check that the callback addresses shown in the sign-in section now start with your address. Rules: it must start with `https://`; only the website name (no page path, no `?` or `#` part, no port, no user name); no IP number, `localhost` or internal-only names (`.local`, `.internal` and similar); a trailing `/` is removed for you. The change is recorded in the admin audit log like any other setting.
+5. **Create the Microsoft 365 side** (owner-only, in Microsoft's admin pages; menu names may change, so verify live):
    1. A **shared mailbox** the site will send as, for example `notifications@yourdomain`.
    2. An **app registration** (Microsoft Entra ID, then App registrations, then New registration).
    3. On it, add the **`Mail.Send` application permission** (application, not delegated) and have a Global Admin of the Microsoft tenant **grant admin consent**.
    4. Under Certificates and secrets, create a **client secret** and copy its **Value** (not the Secret ID) at once; Microsoft shows it only once.
    5. Copy the **Directory (tenant) ID** and **Application (client) ID** from the app's Overview page.
    6. Set up DKIM and DMARC for the sending domain so that receivers do not mark the mail as spam.
-5. Open `/admin/settings/`, press **Unlock editing** and type your password. In the **Email (Microsoft 365)** section fill in the tenant ID, the app (client) ID, the app secret, the sending mailbox and the sender name, then press **Save email settings**. A secret box is always shown empty; leaving it empty keeps what is saved; the saved value is never shown again.
-6. Press **Check Microsoft connection**. It must say **Connected**. If not, re-check the three Microsoft details (the page never shows Microsoft's own error text).
-7. Turn on **Send emails**, tick the confirming box and save. (Emails already waiting start to send.)
-8. Press **Send me a test email**. It goes to your own address only, needs email switched on, and is limited to 5 in 10 minutes. **It will not arrive until the cron job in step 7 exists**, because the site only queues emails and a separate job sends them.
+6. Open `/admin/settings/`, press **Unlock editing** and type your password. In the **Email (Microsoft 365)** section fill in the tenant ID, the app (client) ID, the app secret, the sending mailbox and the sender name, then press **Save email settings**. A secret box is always shown empty; leaving it empty keeps what is saved; the saved value is never shown again.
+7. Press **Check Microsoft connection**. It must say **Connected**. If not, re-check the three Microsoft details (the page never shows Microsoft's own error text).
+8. Turn on **Send emails**, tick the confirming box and save. (Emails already waiting start to send.)
+9. Press **Send me a test email**. It goes to your own address only, needs email switched on, and is limited to 5 in 10 minutes. **It will not arrive until the cron job in step 7 exists**, because the site only queues emails and a separate job sends them.
 
 ---
 
@@ -171,7 +175,8 @@ Sign-up and password-reset emails are only **queued** by the site. Without this 
    /usr/local/php84/bin/php ~/CueRCode.net/_includes/cron/process_email_queue.php --check
    ```
 
-3. **Add the job** in the DreamHost panel (menu names: **verify on your panel**; DEV_NOTES says Advanced, then Cron Jobs, then Add New Cron Job). Pick your shell user, a title such as "CueRCode email queue", and **every minute** (if the panel's shortest interval is longer, emails simply wait that long). Command, with the full path to your home folder:
+3. **Know what the exit code tells you.** Exit code 0 means "the run finished normally". It does **not** mean every email was delivered: if sending an email fails this time but it has attempts left, the runner tries again on a later run and still ends with 0 (without `--quiet` its summary line says "will retry N"; with `--quiet`, as in the cron command below, it prints nothing for that). Exit code 4 means sending is blocked (settings or Microsoft) and 5 means it gave up on at least one email after all its attempts. The runner's printed output never has email addresses in it, but the site's activity log in the database does keep the full recipient address of each queued and sent email.
+4. **Add the job** in the DreamHost panel (menu names: **verify on your panel**; DEV_NOTES says Advanced, then Cron Jobs, then Add New Cron Job). Pick your shell user, a title such as "CueRCode email queue", and **every minute** (if the panel's shortest interval is longer, emails simply wait that long). Command, with the full path to your home folder:
 
    ```
    /usr/local/php84/bin/php /home/YOUR-USER/CueRCode.net/_includes/cron/process_email_queue.php --quiet
@@ -179,7 +184,7 @@ Sign-up and password-reset emails are only **queued** by the site. Without this 
 
    - Set **Email output** to your own address. With `--quiet` it prints nothing on a normal run, so you are only emailed when something needs attention. If sending is blocked you will get an email every minute; pause the job while you fix it.
    - If the panel offers **"Use locking"**, leave it **unticked**. The runner has its own lock.
-4. No cron at all? On `/admin/settings/` (Email section), the box "Also send queued emails when someone visits a page" (`email_queue_autoprocess`) makes the site send up to 2 emails at the end of ordinary page visits. It is off by default because it slows pages and stalls on a quiet site. See DEV_NOTES, "Email queue runner".
+5. No cron at all? On `/admin/settings/` (Email section), the box "Also send queued emails when someone visits a page" (`email_queue_autoprocess`) makes the site send up to 2 emails at the end of ordinary page visits. It is off by default because it slows pages and stalls on a quiet site. See DEV_NOTES, "Email queue runner".
 
 ---
 
@@ -261,8 +266,11 @@ Together they say: if the visit is not over HTTPS, send the visitor to the same 
 | Exit code 3 from `migrate.php --status` | Command line | Upgrades are waiting. Run `--apply`. |
 | Check says "Could not connect" | `/admin/settings/` | Tenant ID, client ID or secret wrong; the `Mail.Send` permission lacks admin consent; or the secret expired. Re-enter the secret **Value**. |
 | Test email says sending is off | `/admin/settings/` | Turn on **Send emails** first. |
-| No verification email | Inbox | Is "Send emails" on? Is the cron job running (`process_email_queue.php --check`)? Look in spam. Cron exit code 4 means sending is blocked by settings or Microsoft; 5 means it gave up on an email. Re-sending given-up emails: `DEV_NOTES.md`, "Email queue runner". |
+| No verification email | Inbox | Is "Send emails" on? Is the cron job running (`process_email_queue.php --check`)? Look in spam. Cron exit code 4 means sending is blocked by settings or Microsoft; 5 means it gave up on an email. **Exit code 0 can still hide a failed delivery that will be retried** (the summary line says "will retry"; `--quiet` hides it): wait a few minutes, or run the runner once without `--quiet`. Re-sending given-up emails: `DEV_NOTES.md`, "Email queue runner". |
 | Verification link says the password is wrong or the link is too old | Verify page | Use **Send me a new verification link**, or **Forgot password**. |
+| `This link has already been used or has been replaced by a newer one. Please use the newest email we sent you, or ask for a new link.` | Verify page | Either the link was already used, or you asked for a newer link (that retires the older ones). Open the newest email, or use **Send me a new verification link**. |
+| Verification or reset emails link to the wrong website (for example the live site, from an alpha or beta site) | Inbox | The **Website address** setting is still `https://cuercode.net`. Set it in `/admin/settings/` (step 6.4). Emails already queued keep the address they were made with; ask for a new link. |
+| An API key gives `403 INSUFFICIENT_SCOPE` on every call | API client | The key was created with no scopes ticked, so it can do nothing. A key's scopes cannot be changed later. **Revoke** it and create a new one with at least one scope ticked (for example **Generate**). The free plan allows one active key, so revoke first. Rotating a key keeps its (empty) scopes and does not help. |
 | `/admin/` shows "page not found" | Browser | The account is not a Global Admin, not active, or has no checked email. |
 | Settings page: "Database upgrade needed" | `/admin/settings/` | Apply upgrades (step 4). |
 
