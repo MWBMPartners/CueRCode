@@ -1,0 +1,180 @@
+# =============================================================================
+# 🔭 CueRCode - Library Watch (Issue #139)
+# =============================================================================
+# Our third-party libraries are downloaded by hand and committed to the
+# repository (decision 0011), so GitHub's Dependabot cannot see them. Once a
+# month this workflow runs tools/check_library_updates.php, which:
+#   1. reads the pinned versions from
+#      web/CueRCode.net/_libraries/PINNED_VERSIONS.json (the single list),
+#   2. asks each library's home for its newest release, and
+#   3. asks the OSV advisory database for known security problems that affect
+#      the version we use.
+#
+# It then keeps ONE tracking issue, "Library watch: updates / advisories", up to
+# date with a plain-English report. It never opens a second issue while one is
+# open, never closes anything, and never changes a library or opens a pull
+# request. The report says how to upgrade by hand.
+#
+# Red run = a known security advisory affects a pinned version (tool exit 20).
+# An upstream outage is NOT a failure: the report says "could not check" for
+# that library, the run goes green and a warning is shown. (A crash of the tool
+# itself, which is a bug here and not an upstream problem, also fails the run so
+# it cannot go unnoticed.)
+#
+# Scheduled workflows only run from the default branch (main), so this starts
+# working once promoted. Use "Run workflow" to try it by hand.
+#
+# Least-privilege permissions: contents read (checkout only) + issues write.
+# No secrets other than the automatic, short-lived GitHub token.
+#
+# @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: Library Watch
+
+on:
+  schedule:
+    # 🗓️ 07:17 UTC on the 1st of every month. The odd minute keeps clear of the
+    # top-of-the-hour rush (and of the emoji check at 06:00).
+    - cron: '17 7 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: library-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Check library releases and advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45 # v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      # -----------------------------------------------------------------------
+      # 🔎 Run the check. The tool's exit code is captured, not allowed to stop
+      # the step: 0 = fine, 10 = updates, 20 = security advisory. Anything
+      # else means the tool itself broke.
+      # GITHUB_TOKEN is sent to api.github.com only (higher rate limit).
+      # -----------------------------------------------------------------------
+      - name: Run the library check
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          php tools/check_library_updates.php \
+            --report="${RUNNER_TEMP}/library-watch.md" \
+            --json="${RUNNER_TEMP}/library-watch.json" > /dev/null
+          CODE=$?
+          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "Library check finished with exit code ${CODE}."
+
+          # 📋 Show the report on the run's summary page.
+          if [ -f "${RUNNER_TEMP}/library-watch.md" ]; then
+            cat "${RUNNER_TEMP}/library-watch.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # ⚠️ Count libraries whose lookup failed (an outage is a warning, not a failure).
+          UNCHECKED=0
+          if [ -f "${RUNNER_TEMP}/library-watch.json" ]; then
+            UNCHECKED=$(jq -r '.counts.unchecked // 0' "${RUNNER_TEMP}/library-watch.json")
+          fi
+          echo "unchecked=${UNCHECKED}" >> "$GITHUB_OUTPUT"
+          if [ "${UNCHECKED}" != "0" ]; then
+            echo "::warning title=Library watch::Could not check ${UNCHECKED} librar(ies) this time (see the report). They are tried again next month."
+          fi
+
+      # -----------------------------------------------------------------------
+      # 🗂️ Find the ONE open tracking issue (exact title match), if any.
+      # -----------------------------------------------------------------------
+      - name: Find the open tracking issue
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          NUMBER=$(gh issue list \
+            --repo "${REPO}" \
+            --state open \
+            --search '"Library watch: updates / advisories" in:title' \
+            --json number,title \
+            --jq '[.[] | select(.title == "Library watch: updates / advisories")] | sort_by(.number) | .[0].number // empty')
+          echo "number=${NUMBER}" >> "$GITHUB_OUTPUT"
+          if [ -n "${NUMBER}" ]; then
+            echo "Found open tracking issue #${NUMBER}."
+          else
+            echo "No open tracking issue yet."
+          fi
+
+      # -----------------------------------------------------------------------
+      # ✏️ Update the open issue (always - so it also shows "all clear" once
+      # things are fixed - and add a comment on a security advisory so people
+      # who follow the issue are notified).
+      # -----------------------------------------------------------------------
+      - name: Update the tracking issue
+        if: steps.existing.outputs.number != '' && steps.check.outputs.code != '' && (steps.check.outputs.code == '0' || steps.check.outputs.code == '10' || steps.check.outputs.code == '20')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.existing.outputs.number }}
+          CODE: ${{ steps.check.outputs.code }}
+        run: |
+          set -euo pipefail
+          gh issue edit "${NUMBER}" --repo "${REPO}" --body-file "${RUNNER_TEMP}/library-watch.md"
+          if [ "${CODE}" = "20" ]; then
+            gh issue comment "${NUMBER}" --repo "${REPO}" \
+              --body "Security advisory found by the monthly library watch. Details are in the issue description above (updated now)."
+          fi
+
+      # -----------------------------------------------------------------------
+      # 🆕 Open the issue only when there is something to say: an update, a
+      # security advisory, or a check that could not be done. A clean month
+      # with no open issue creates nothing.
+      # -----------------------------------------------------------------------
+      - name: Open the tracking issue
+        if: steps.existing.outputs.number == '' && (steps.check.outputs.code == '10' || steps.check.outputs.code == '20' || (steps.check.outputs.code == '0' && steps.check.outputs.unchecked != '0'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --repo "${REPO}" \
+            --title "Library watch: updates / advisories" \
+            --label "security" \
+            --label "infrastructure" \
+            --body-file "${RUNNER_TEMP}/library-watch.md"
+
+      - name: Nothing to report
+        if: steps.existing.outputs.number == '' && steps.check.outputs.code == '0' && steps.check.outputs.unchecked == '0'
+        run: echo "All libraries are up to date, no advisories, and no open tracking issue to update."
+
+      # -----------------------------------------------------------------------
+      # 🚦 Last step, so the issue is always written first. Red = a known
+      # security advisory (20), or the tool itself crashed (anything not
+      # 0/10/20). Updates alone (10) and outages stay green.
+      # -----------------------------------------------------------------------
+      - name: Fail on a security advisory
+        if: steps.check.outputs.code == '20'
+        run: |
+          echo "::error title=Library watch::A known security advisory affects a pinned library version. See the tracking issue."
+          exit 1
+
+      - name: Fail if the check itself broke
+        if: steps.check.outputs.code != '0' && steps.check.outputs.code != '10' && steps.check.outputs.code != '20'
+        run: |
+          echo "::error title=Library watch::The check tool did not finish properly (exit code '${{ steps.check.outputs.code }}')."
+          exit 1

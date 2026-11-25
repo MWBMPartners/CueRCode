@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Monthly library watch (2026-11-25, queue F8, #139)
+
+- **New monthly check of the hand-downloaded libraries** (`.github/workflows/library-watch.yml`, also has a "Run workflow" button). It looks up the newest release of each of the 10 libraries we keep (chillerlan/php-qrcode, php-settings-container, FPDF, tc-lib-barcode, tc-lib-color, Bootstrap, jQuery, Font Awesome, Swagger UI, Twemoji) and asks the OSV security-advisory database whether any known advisory affects the version we use.
+- **One tracking issue, "Library watch: updates / advisories"**, is created or refreshed with a plain-English report and how to upgrade by hand. Nothing is upgraded or closed automatically. A red run means a security advisory; a failed lookup is reported as "could not check" and never as "up to date".
+- **One list of pinned versions:** `web/CueRCode.net/_libraries/PINNED_VERSIONS.json` now also lists the front-end libraries and where to look upstream. Twemoji's version still comes from `tools/emoji_vendor_version.json`, so nothing is typed twice.
+- **First real dry run (read-only):** 9 of 10 libraries have a newer release (several are new major versions); no known security advisories affect any pinned version. These are not upgraded here.
+- Tests: new `tests/test_library_updates.php` (120 checks, no network). `actionlint` and `shellcheck` clean. Not verified: a real scheduled run on GitHub (it only runs from `main`).
+
 ### Fixed - Predefined centre-logos now work without Imagick (2026-11-25, queue B10, #65)
 
 - **The 26 predefined brand logos now come with committed PNG copies** (512 x 512, transparent) beside the SVGs in `public_html/assets/img/logos/`. Picking one as the QR centre icon now works for PNG, JPG, GIF and WebP codes on DreamHost with no Imagick; SVG codes still embed the SVG. The path fix and the "use the PNG copy" code had already landed (commit 495e765); only the PNG files were missing, so the logo was still silently left off.
