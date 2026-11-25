@@ -298,3 +298,67 @@ foreach ($uses[1] as $ref) {
     assertMatches('/^[\w.\-]+\/[\w.\-\/]+@[0-9a-f]{40}$/', $ref, 'action pinned by full commit SHA: ' . $ref);
 }
 assertEquals(count($uses[1]), preg_match_all('/uses:\s*\S+@[0-9a-f]{40}\s+#\s*v?\d/', $workflow), 'every pinned action carries a version comment');
+
+// ------------------------------------------------------------------------------
+// 🔒 Independent review (Codex C5 findings 4-7, 2026-11-25)
+// ------------------------------------------------------------------------------
+// C5-5: after a redirect PHP lists EVERY reply's status line; the FIRST is the
+// redirect (3xx). Measured on PHP 8.4.27 and 8.5.12 with two local servers:
+// first line "HTTP/1.1 302 Found", last line "HTTP/1.1 200 OK".
+$redirectHeaders = ['HTTP/1.1 302 Found', 'Location: https://example.test/x', 'HTTP/1.1 200 OK', 'Content-Type: application/json'];
+assertEquals(200, libwatchFinalStatus($redirectHeaders), 'C5-5: after a redirect the FINAL status (200) is used, not the first (302)');
+assertEquals(404, libwatchFinalStatus(['HTTP/2 404']), 'C5-5: a single reply is read as before');
+assertEquals(0, libwatchFinalStatus([]), 'C5-5: no reply at all reads as 0 (not a success)');
+assertEquals(0, libwatchFinalStatus(['Content-Type: text/html']), 'C5-5: no status line reads as 0');
+assertContains('libwatchFinalStatus(is_array($responseHeaders)', (string) file_get_contents($root . '/tools/check_library_updates.php'), 'C5-5: the real fetcher uses the final status');
+
+// C5-4 (token sent on to another host after a redirect): measured FALSE on
+// PHP 8.4.27 and 8.5.12 - PHP's own client drops the Authorization header when
+// a redirect goes to a different host OR port, and keeps it only for the same
+// host and port. The tool still only ever ADDS the token for api.github.com.
+assertContains("\$host === 'api.github.com'", (string) file_get_contents($root . '/tools/check_library_updates.php'), 'C5-4: the token is only added for api.github.com');
+
+// C5-6: an "upstreamVersion" mapping must say which pin it was written for;
+// a mapping that no longer matches the pin is reported, never used silently.
+$c56Manifest = [
+    'libraries' => ['setasign/fpdf' => ['version' => '1.87', 'source' => 'x']],
+    'watch'     => ['setasign/fpdf' => [
+        'latest' => ['type' => 'github_tags', 'repo' => 'Setasign/FPDF'],
+        'osv'    => ['ecosystem' => 'Packagist', 'name' => 'setasign/fpdf'],
+        'upstreamVersion' => '1.8.6', 'upstreamVersionForPin' => '1.86', 'upstreamVersionNote' => 'n',
+    ]],
+];
+$c56Pins = libwatchBuildPins($c56Manifest, $root);
+assertTrue($c56Pins[0]['compareAs'] !== '1.8.6', 'C5-6: a mapping written for pin 1.86 is NOT used once the pin is 1.87');
+$fx = libwatchTestFetcher([
+    'https://api.github.com/repos/Setasign/FPDF/tags' => ['body' => '[{"name":"1.8.6"}]'],
+    'https://api.osv.dev/v1/query'                   => ['body' => '{}'],
+]);
+$c56Result = libwatchCheckAll($c56Pins, $fx);
+assertEquals(1, $c56Result['counts']['unchecked'], 'C5-6: ...the library is reported as NOT checked');
+assertContains('upstreamVersion', implode(' ', $c56Result['libraries'][0]['problems']), 'C5-6: ...with a plain reason naming the stale mapping');
+assertFalse($c56Result['libraries'][0]['advisoryChecked'], 'C5-6: ...and no advisory check ran against the wrong version');
+$c56Manifest['watch']['setasign/fpdf']['upstreamVersionForPin'] = '1.87';
+$c56Manifest['watch']['setasign/fpdf']['upstreamVersion'] = '1.8.7';
+assertEquals('1.8.7', libwatchBuildPins($c56Manifest, $root)[0]['compareAs'], 'C5-6: a mapping written for the current pin is used');
+unset($c56Manifest['watch']['setasign/fpdf']['upstreamVersionForPin']);
+assertTrue(libwatchBuildPins($c56Manifest, $root)[0]['mappingProblem'] !== '', 'C5-6: a mapping that does not say which pin it is for is a problem too');
+foreach ($pins as $pin) {
+    assertEquals('', $pin['mappingProblem'], 'C5-6: the REAL pinned list has no stale version mapping (' . $pin['name'] . ') - update upstreamVersion and upstreamVersionForPin together');
+}
+
+// C5-7: only a real OSV answer counts as "checked". OSV answers {} for no
+// advisories, or {"vulns": [...]}.
+$c57Osv = ['ecosystem' => 'Packagist', 'name' => 'acme/lib'];
+$c57Fetch = static function (string $body): callable {
+    return static function (string $url, ?string $jsonBody = null) use ($body): array {
+        return ['ok' => true, 'status' => 200, 'body' => $body, 'error' => ''];
+    };
+};
+assertEquals('', libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{}'))['error'], 'C5-7: {} (no advisories) is a good answer');
+assertEquals('', libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[]}'))['error'], 'C5-7: {"vulns": []} is a good answer');
+assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"error":"unexpected response"}'))['error'] !== '', 'C5-7: an error object is NOT taken as "no advisories"');
+assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"code":3,"message":"Invalid query"}'))['error'] !== '', 'C5-7: OSV\'s own error shape is NOT taken as "no advisories"');
+assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":"nope"}'))['error'] !== '', 'C5-7: a vulns value that is not a list is refused');
+assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('[]'))['error'] !== '', 'C5-7: a JSON list instead of an object is refused');
+assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[],"next_page_token":"abc"}'))['error'] !== '', 'C5-7: a reply with more pages to fetch is reported as not fully checked');

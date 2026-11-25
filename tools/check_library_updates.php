@@ -395,11 +395,33 @@ function libwatchBuildPins(array $manifest, string $repoRoot): array
 
             $config = (array) ($watch[$name] ?? []);
 
+            // 🔁 The number to compare with upstream (can differ, e.g. FPDF 1.86 =
+            //    tag 1.8.6). Codex C5 finding 6 (2026-11-25): a mapping must say
+            //    which pin it was written for ("upstreamVersionForPin"). If the
+            //    pin has since changed, the old mapping would quietly check the
+            //    OLD version for releases and advisories, so it is not used: the
+            //    library is reported as not checked, with the reason.
+            $compareAs      = $version;
+            $mappingProblem = '';
+            if (isset($config['upstreamVersion'])) {
+                $mappedFor = (string) ($config['upstreamVersionForPin'] ?? '');
+                if ($mappedFor === '') {
+                    $mappingProblem = 'its upstreamVersion mapping does not say which pin it is for (add "upstreamVersionForPin": "' . $version . '" once checked)';
+                    $compareAs      = '';
+                } elseif ($mappedFor !== $version) {
+                    $mappingProblem = 'its upstreamVersion mapping was written for pin ' . $mappedFor . ' but the pin is now ' . $version
+                        . ' (update "upstreamVersion" and "upstreamVersionForPin" together in PINNED_VERSIONS.json)';
+                    $compareAs      = '';
+                } else {
+                    $compareAs = (string) $config['upstreamVersion'];
+                }
+            }
+
             $pins[] = [
                 'name'            => (string) $name,
                 'pinned'          => $version,
-                // The number to compare with upstream (can differ, e.g. FPDF 1.86 = tag 1.8.6).
-                'compareAs'       => (string) ($config['upstreamVersion'] ?? $version),
+                'compareAs'       => $compareAs,
+                'mappingProblem'  => $mappingProblem,
                 'compareAsNote'   => (string) ($config['upstreamVersionNote'] ?? ''),
                 'latest'          => $config['latest'] ?? null,
                 'osv'             => $config['osv'] ?? null,
@@ -467,13 +489,12 @@ function libwatchHttpFetch(string $url, ?string $jsonBody = null): array
         ];
     }
 
-    $status = 0;
     // 📌 PHP 8.4+ offers a function for the reply headers (the old magic
     // variable is deprecated in 8.5), and 8.4 is our minimum version.
+    // Codex C5 finding 5 (2026-11-25): after a redirect this lists EVERY
+    // reply, so the status that counts is the LAST one, not the first.
     $responseHeaders = http_get_last_response_headers();
-    if (isset($responseHeaders[0]) && preg_match('#HTTP/\S+\s+(\d{3})#', $responseHeaders[0], $m) === 1) {
-        $status = (int) $m[1];
-    }
+    $status          = libwatchFinalStatus(is_array($responseHeaders) ? $responseHeaders : []);
 
     return [
         'ok'     => $status >= 200 && $status < 300,
@@ -481,6 +502,35 @@ function libwatchHttpFetch(string $url, ?string $jsonBody = null): array
         'body'   => (string) $body,
         'error'  => ($status >= 200 && $status < 300) ? '' : $host . ' answered HTTP ' . $status,
     ];
+}
+
+/**
+ * 🔢 The status code of the LAST reply in a list of response headers
+ *    (Codex C5 finding 5, 2026-11-25).
+ *
+ * When PHP follows a redirect, its header list holds every reply in turn:
+ * "HTTP/1.1 302 Found", ..., "HTTP/1.1 200 OK", ... Only the last status line
+ * says how the request really ended. Measured on PHP 8.4.27 and 8.5.12.
+ *
+ * Note on Codex C5 finding 4 (checked, not a fault): PHP's client drops the
+ * Authorization header itself when a redirect goes to another host or port
+ * (measured on the same two versions), so the GitHub token cannot follow a
+ * redirect elsewhere; and it is only ever added for api.github.com.
+ *
+ * @param array<int,string> $headers Response header lines.
+ *
+ * @return int The final status, or 0 when there is none.
+ */
+function libwatchFinalStatus(array $headers): int
+{
+    $status = 0;
+    foreach ($headers as $line) {
+        if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string) $line, $m) === 1) {
+            $status = (int) $m[1];
+        }
+    }
+
+    return $status;
 }
 
 /**
@@ -563,6 +613,26 @@ function libwatchFetchAdvisories(array $osv, string $version, callable $fetcher)
         return ['advisories' => [], 'error' => 'OSV gave an answer we could not read'];
     }
 
+    // 🔎 Codex C5 finding 7 (2026-11-25): only a genuine OSV answer counts as
+    //    "checked". OSV answers {} when there are no advisories, or an object
+    //    whose "vulns" is a list. Anything else (an error object, a JSON list,
+    //    unknown keys) is "could not check", never "no advisories". A reply
+    //    that says there are more pages is not fully checked either.
+    // A PHP array cannot tell {} from [], so the outer shape is read as an object.
+    if (!(json_decode((string) $reply['body']) instanceof \stdClass)) {
+        return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (not an object)'];
+    }
+    $unexpectedKeys = array_diff(array_keys($data), ['vulns', 'next_page_token']);
+    if ($unexpectedKeys !== []) {
+        return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (' . libwatchCleanText(implode(', ', $unexpectedKeys), 60) . ')'];
+    }
+    if (isset($data['vulns']) && (!is_array($data['vulns']) || !array_is_list($data['vulns']))) {
+        return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (vulns is not a list)'];
+    }
+    if (isset($data['next_page_token']) && (string) $data['next_page_token'] !== '') {
+        return ['advisories' => [], 'error' => 'OSV has more results than one page; check this library by hand'];
+    }
+
     $found = [];
     foreach ((array) ($data['vulns'] ?? []) as $vuln) {
         if (!is_array($vuln) || empty($vuln['id'])) {
@@ -612,6 +682,13 @@ function libwatchCheckAll(array $pins, callable $fetcher): array
             'notes'           => [],
             'problems'        => [], // things we could not check
         ];
+
+        // ❓ A stale version mapping (C5-6) is a problem to report, not a pass.
+        if (($pin['mappingProblem'] ?? '') !== '') {
+            $row['problems'][] = 'not checked: ' . $pin['mappingProblem'];
+            $libraries[]       = $row;
+            continue;
+        }
 
         // ❓ A pin we cannot read is a problem to report, not a pass.
         if (libwatchParseVersion($pin['compareAs']) === null) {

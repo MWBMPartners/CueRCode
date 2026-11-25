@@ -159,7 +159,7 @@ No web page can make the first admin (a "first visitor becomes admin" page would
    6. Set up DKIM and DMARC for the sending domain so that receivers do not mark the mail as spam.
 6. Open `/admin/settings/`, press **Unlock editing** and type your password. In the **Email (Microsoft 365)** section fill in the tenant ID, the app (client) ID, the app secret, the sending mailbox and the sender name, then press **Save email settings**. A secret box is always shown empty; leaving it empty keeps what is saved; the saved value is never shown again.
 7. Press **Check Microsoft connection**. It must say **Connected**. If not, re-check the three Microsoft details (the page never shows Microsoft's own error text).
-8. Turn on **Send emails**, tick the confirming box and save. (Emails already waiting start to send.)
+8. Turn on **Send emails**, tick the confirming box and save. Emails already waiting are now allowed to go, but **nothing is actually sent until the email queue job in step 7 is running** (or, without a job, the "send queued emails when someone visits a page" option in step 7.5 is on).
 9. Press **Send me a test email**. It goes to your own address only, needs email switched on, and is limited to 5 in 10 minutes. **It will not arrive until the cron job in step 7 exists**, because the site only queues emails and a separate job sends them.
 
 ---

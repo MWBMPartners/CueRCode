@@ -131,6 +131,7 @@
                 "name": "setasign/fpdf"
             },
             "upstreamVersion": "1.8.6",
+            "upstreamVersionForPin": "1.86",
             "upstreamVersionNote": "FPDF calls its release 1.86; its GitHub tag for the same release is 1.8.6."
         },
         "tecnickcom/tc-lib-barcode": {
