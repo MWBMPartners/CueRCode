@@ -15,16 +15,16 @@
  * install.sql, and the real command-line tool (_includes/cli/migrate.php)
  * end to end - every acceptance bullet of task 7n Phase 1A, plan §9:
  *
- *   A. a fresh database: install.sql + seed_data.sql + migrations 0001 and
- *      0002 all succeed; install.sql runs a SECOND time with no error;
- *      tblSchemaMigrations lists both migrations; running the migrations a
+ *   A. a fresh database: install.sql + seed_data.sql + migrations 0001,
+ *      0002 and 0003 all succeed; install.sql runs a SECOND time with no error;
+ *      tblSchemaMigrations lists every migration; running the migrations a
  *      second time changes nothing ("already up to date"); the real
  *      command-line tool's exit codes (0/2/3) on a real database.
  *   B. a database built by the OLD install.sql (before task 7n Phase 1A moved
  *      the #70 columns out into migration 0001) upgrades cleanly: 0001 skips
- *      every step (the columns are already there), 0002 applies; the
+ *      every step (the columns are already there), 0002 and 0003 apply; the
  *      finished schema is byte-for-byte identical to the fresh path's, apart
- *      from the two brand-new tables.
+ *      from the two brand-new tables and 0003's two new columns.
  *   C. owner-edited setting values are never overwritten by a re-run.
  *   D. a database missing a baseline table (one of install.sql's own) gets it
  *      re-created from install.sql; a database missing a baseline COLUMN is
@@ -506,6 +506,7 @@ $itCliResult = itCli($itDbA, 'apply');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: --apply exit 0');
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0001_subscription_price_snapshot_columns'), 'real CLI: output says 0001 applied');
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0002_admin_audit_log_and_settings'), 'real CLI: output says 0002 applied');
+itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0003_sessions_valid_from'), 'real CLI: output says 0003 applied (review finding 1)');
 
 $itCliResult = itCli($itDbA, 'apply');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: a SECOND --apply exit 0');
@@ -515,9 +516,15 @@ $itCliResult = itCli($itDbA, 'status');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: --status exit 0 once up to date');
 
 $itLedgerRows = $itA->query('SELECT `migrationKey`, `appliedBy` FROM `tblSchemaMigrations` ORDER BY `migrationKey`')->fetch_all(MYSQLI_ASSOC);
-itCheck('A fresh database', count($itLedgerRows) === 2, 'tblSchemaMigrations lists both migrations (' . count($itLedgerRows) . ')');
+itCheck('A fresh database', count($itLedgerRows) === 3, 'tblSchemaMigrations lists all three migrations (' . count($itLedgerRows) . ')');
 itCheck('A fresh database', isset($itLedgerRows[0]['migrationKey']) && $itLedgerRows[0]['migrationKey'] === '0001_subscription_price_snapshot_columns', 'ledger: first row is 0001');
 itCheck('A fresh database', isset($itLedgerRows[1]['migrationKey']) && $itLedgerRows[1]['migrationKey'] === '0002_admin_audit_log_and_settings', 'ledger: second row is 0002');
+itCheck('A fresh database', isset($itLedgerRows[2]['migrationKey']) && $itLedgerRows[2]['migrationKey'] === '0003_sessions_valid_from', 'ledger: third row is 0003');
+$itNewColumns = $itA->query("SELECT `TABLE_NAME`, `COLUMN_NAME`, `COLUMN_TYPE`, `IS_NULLABLE` FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `COLUMN_NAME` IN ('sessionsValidFrom', 'sessionsValidFromSeen') ORDER BY `COLUMN_NAME`")->fetch_all(MYSQLI_ASSOC);
+itCheck('A fresh database', $itNewColumns === [
+    ['TABLE_NAME' => 'tblUsers', 'COLUMN_NAME' => 'sessionsValidFrom', 'COLUMN_TYPE' => 'datetime(6)', 'IS_NULLABLE' => 'YES'],
+    ['TABLE_NAME' => 'tblUserSessions', 'COLUMN_NAME' => 'sessionsValidFromSeen', 'COLUMN_TYPE' => 'datetime(6)', 'IS_NULLABLE' => 'YES'],
+], '0003 added tblUsers.sessionsValidFrom and tblUserSessions.sessionsValidFromSeen as nullable datetime(6): ' . json_encode($itNewColumns));
 // 🔤 No `??` (house rule) - an explicit isset() check instead.
 $itLedgerAppliedByA = '';
 if (isset($itLedgerRows[0]['appliedBy'])) {
@@ -559,13 +566,22 @@ itCheck(
     isset($itUpgradeResult['migrations'][1]) && $itUpgradeResult['migrations'][1]['key'] === '0002_admin_audit_log_and_settings' && $itUpgradeResult['migrations'][1]['outcome'] === 'applied',
     '0002 applies normally'
 );
+itCheck(
+    'B old install.sql upgrades',
+    isset($itUpgradeResult['migrations'][2]) && $itUpgradeResult['migrations'][2]['key'] === '0003_sessions_valid_from' && $itUpgradeResult['migrations'][2]['outcome'] === 'applied',
+    '0003 applies normally'
+);
 
 $itSchemaB = itSchemaSnapshot($itB);
 itCheck('B old install.sql upgrades', $itSchemaA === $itSchemaB, 'the fresh path (A) and the old-database upgrade path (B) give byte-for-byte identical finished schemas');
 
 $itSchemaAWithoutNewTables = $itSchemaA;
 unset($itSchemaAWithoutNewTables['tblSchemaMigrations'], $itSchemaAWithoutNewTables['tblAdminAuditLog']);
-itCheck('B old install.sql upgrades', $itSchemaAWithoutNewTables === $itOldSchema, 'apart from the two brand-new tables, the finished schema matches exactly what the OLD install.sql produced (nothing else moved or changed)');
+// 🕐 0003's two new columns are taken out too (one line each in SHOW CREATE TABLE).
+foreach (['tblUsers', 'tblUserSessions'] as $itTableWithNewColumn) {
+    $itSchemaAWithoutNewTables[$itTableWithNewColumn] = (string) preg_replace('/^\s*`sessionsValidFrom(Seen)?` [^\n]*\n/m', '', $itSchemaAWithoutNewTables[$itTableWithNewColumn]);
+}
+itCheck('B old install.sql upgrades', $itSchemaAWithoutNewTables === $itOldSchema, 'apart from the two brand-new tables and 0003\'s two new columns, the finished schema matches exactly what the OLD install.sql produced (nothing else moved or changed)');
 
 // ==============================================================================
 // 🅲 Scenario C: owner-edited setting values are never overwritten by a re-run
