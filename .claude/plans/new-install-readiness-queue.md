@@ -48,7 +48,7 @@ Facts: local `work-in-progress` is 30 commits ahead of `origin/work-in-progress`
 | # | Item | Home | Who |
 |---|---|---|---|
 | F1 | Push local `work-in-progress` after the Opus re-check (decision 0008) | now | lead |
-| F2 | Codex review owed for everything since 2026-09-25 (7n 1A-1C, #128, #113 B-tasks, decisions 0010-0015, #151, #137, #138, #145) plus the never-finished chunk 3 (docs/portal/spec/#117/#111). Split into small pieces (decision from 2026-09-25) | after push | Codex or Opus stand-in, recorded as stand-in |
+| F2 | Codex review owed for everything since 2026-09-25. **DONE 2026-11-25 for the new-install work (chunks C1-C6, 29 findings, commits d9d95e2..11776e8, see "F2 outcome" below).** Still owed: chunk 3 (docs/portal/spec/#117/#111) and a Codex re-check of the fixes | after push | Codex or Opus stand-in, recorded as stand-in |
 | F3 | Close issues that are built and reviewed, with a commit link and the done label, only after a check: #112 #117 #122 #123 #124 #125 #126 #127 #153 (and #128, #113, #138 once verified) | B11 | lead |
 | F4 | Reconcile stale handoff rows: task 7 (superseded), 7a ("waiting to move"), 7i vs 7g (#126 done), Q6 (answered by decision 0007) | handoff rewrite | lead |
 | F5 | Plans need a terminal line and a move to a history folder: `112-email-queue-runner.md`, `122-123-126-email-privacy.md`, `codex-review-chunk-1a/1b/2`, `codex-catch-up-review-brief.md` (keep chunk 3 and the 7n plan live) | docs | lead |
@@ -64,3 +64,38 @@ Add secrets `SFTP_KNOWN_HOSTS` (org) and `SFTP_REMOTE_BASE` (repo); set `SFTP_EN
 
 Sessions the owner named but that left no trace in the repository, git, the handoff or local Claude records (links starting `cshk_019ejJ4A` and `cshk_013pdKYC`): owner decided 2026-11-25 to treat them as covered by this audit.
 F5 done 2026-11-25: finished plans moved to `.claude/plans/history/` with an outcome line.
+
+### F2 outcome (2026-11-25): Codex review of the new-install work
+Codex (read-only; could not run PHP 8.4 or MySQL) reported 29 findings in six chunks. Each was reproduced or disproved by Claude Opus against the real code (MySQL 8.0.36 and MariaDB 10.6 in Docker, PHP 8.4.27 and 8.5.12, ImageMagick 7.1.1) before any change. Result: 27 real and fixed with tests; 1 real and fixed in the named files with the rest tracked (C3-6, #157); 1 not a fault (C5-4, measured). Within C2-1, a failed audit row for a WRONG password or a lock-out is deliberately not fail-closed (the attempt still counts and the lock-out still happens; the failure is logged). Extra faults found while fixing: the seed could never load after `migrate.php --apply` (fixed, d9d95e2); ImageMagick 7 dropped SVG logos from raster QR codes (fixed, d2f87cb); expiry checks are wrong if `site_timezone` is not UTC (#158).
+
+| ID | Verdict | Outcome | Commit |
+| --- | --- | --- | --- |
+| C1-1 | real (reproduced end to end) | seed all-or-nothing, part-loaded refused, complete before lock | d9d95e2 |
+| C1-2 | real (reproduced) | per-database installer lock, lock file re-checked | d9d95e2 |
+| C1-3 | real (reproduced) | missing seed file is an error | d9d95e2 |
+| C1-4 | real | a failed check is an error, not "no data" | d9d95e2 |
+| C1-5 | real (PHP 8.4.27, 8.5.12) | `installOpenDatabase()`; plain page for anything else | d9d95e2 |
+| C1-6 | real | test finds the real require; proven on a broken copy | d9d95e2 |
+| C2-1 | real | unlock only after the audit row (fail closed) | 3123240, 2578216 |
+| C2-2 | real | `schema.migrate.started` row before any upgrade | 3123240 |
+| C2-3 | real (low) | http Origin refused when the server knows it is HTTPS | 3123240 |
+| C3-1 | real | reset form keeps its link (`accountLinkTokenForForm()`) | c773370 |
+| C3-2 | real (reproduced) | erase removes passkeys, links, waiting emails | c773370 |
+| C3-3 | real (reproduced) | claim requires `expiresAt > NOW()` | c773370 |
+| C3-4 | real (reproduced) | resets/changes refused until 0003 (choice for the owner) | c773370 |
+| C3-5 | real (1.47 s vs 0.25 s) | `FOR UPDATE NOWAIT` (choice for the owner) | c773370 |
+| C3-6 | real | named and touched files rewritten; guard; rest #157 | c773370, 11776e8 |
+| C4-1 | real (reproduced) | cache cleared inside the save; failure refuses it | 5882361 |
+| C4-2 | real (reproduced) | empty ciphertext allowed; nothing stores one today | 5882361 |
+| C5-1 | real, high (exploit reproduced) | temp folder not allowed; content must be an image | d2f87cb |
+| C5-2 | real (1.95 GB measured) | SVG canvas limit 4096 px, at intake and before Imagick | d2f87cb |
+| C5-3 | real | temp files deleted in `finally` | d2f87cb |
+| C5-4 | false (measured) | PHP drops Authorization on a cross-host redirect | none |
+| C5-5 | real (measured) | final status after redirects | a6e6394 |
+| C5-6 | real | mapping must name its pin; stale = "not checked" | a6e6394 |
+| C5-7 | real | only `{}` / `{"vulns": [...]}` counts as checked | a6e6394 |
+| C5-8 | real | install guide wording | a6e6394 |
+| C6-1 | real (judged Medium) | no API key in browser samples; warning | 18a87c9 |
+| C6-2 | real | rotation advice honest; second-key route | 18a87c9 |
+| C6-3 | real | iframe advice removed | 18a87c9 |
+| C6-4 | real | both Swagger globals checked | 18a87c9 |

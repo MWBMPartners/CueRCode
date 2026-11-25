@@ -6,16 +6,17 @@
 ## 0. ⚡ LATEST — 2026-11-25
 
 ### Where the work is
-- **Branch `work-in-progress`.** Pushed to GitHub at `5fa3892` (owner decision 0008: push this branch only, after each reviewed phase). Nothing local is unpushed. No other branch has been touched; Dependabot PR #152 (alpha) is open and waits for the owner.
-- **Built, reviewed by Opus and pushed:** 7n Phase 1A (database upgrade tool, migrations 0001-0003), 1B (Global Admin access, re-confirm password, first admin from the command line with a forced new password, decision 0010), 1C (settings editor incl. editable website address `site_url`), #128 (ask for a new verification link), decisions 0013/0014/0015/0016 (sign-up-first fix, visitor address, password change), install readiness (committed libraries, installer checks, credentials template, `docs/INSTALL.md`), predefined logo PNGs (#65), library watch job (#139, cannot run until promoted to `main`: GitHub only runs schedules from the default branch). #153 closed; #122 #123 #126 closed.
-- **Tests:** `php tests/run.php` 6141/6141 at `5fa3892`; real-database scripts in `tests/integration/*real_mysql.php` pass on MySQL 8.0 and MariaDB 10.6 (some also on 8.4). A fresh-install dry run (docs/INSTALL.md, MySQL 8.0 and MariaDB 10.6, Docker, curl only, Microsoft faked) passed after one installer crash was fixed.
-- **Not verified anywhere:** a real browser pass (six widths, light/dark, keyboard) on any new page; DreamHost itself; real Microsoft mail; HTTPS/HSTS; Codex review of anything since 2026-09-25 (running now, see below).
+- **Branch `work-in-progress`.** GitHub has `5fa3892`. **Local only, not pushed (`5fa3892..HEAD`: the handoff note 641a4da plus 10 review commits from d9d95e2 onwards):** the fixes from the Codex review (F2), waiting for the lead's check and push (decision 0008). No other branch touched; Dependabot PR #152 (alpha) waits for the owner.
+- **Built, reviewed by Opus and pushed:** 7n Phase 1A-1C, #128, decisions 0013-0016, install readiness, predefined logo PNGs (#65), library watch (#139, runs only from `main`).
+- **Codex review F2 DONE (29 findings, chunks C1-C6):** 27 real and fixed with tests, C3-6 fixed in the named files with the rest in #157, C5-4 not a fault (measured). Full table: queue file, "F2 outcome". New issues: #157 (remaining shorthand), #158 (expiry checks if `site_timezone` is not UTC).
+- **Tests:** `php tests/run.php` 6302/6302 (45 files, PHP 8.5.12); php86 scan 0; polish check 0 problems (9 legal-placeholder warnings). All six `tests/integration/*real_mysql.php` pass on MySQL 8.0.36 and MariaDB 10.6.28 (counts in tests/README.md). Real installer page run end to end on both (5 scenarios). Real Imagick 7 checked for the SVG fixes.
+- **Not verified anywhere:** a real browser pass on any changed page (developer samples/authentication, admin re-confirm, reset password); DreamHost; real Microsoft mail; HTTPS/HSTS; a Codex re-check of these fixes.
 
 ### In flight (watched)
-- Codex review driver (background agent): six small read-only chunks C1-C6 against an export of `5fa3892`, results saved in the session scratchpad and summarised on completion. If Codex runs out of allowance it stops and reports the reset time (owner rule: never buy extra allowance; split small and retry later). If this session dies: re-run the chunks listed in the queue file, item F2.
+- Nothing running. (The throwaway Docker containers `f2review-*` were removed at the end of the session.)
 
 ### Next (order)
-1. Triage Codex findings, fix real ones, re-check. 2. Close built-and-verified issues with a commit link and the `completed` label: #117 #125 (after Codex), #124 #127 #138 (after a real deploy), #112 (after a real Microsoft send). 3. #156 review leftovers, #155 deploy gate decision. 4. Browser pass on the new admin, verify, resend and settings pages (owner-visible polish rule). 6. After the install gate: 7n Phases 2-7, then dynamic QR (7j), then passkeys/translations/image fills/JPEG XL, 7m, 7q (owner's build order).
+1. Lead: check and push `5fa3892..HEAD`; owner answers the two "choices" (C3-4 resets refused before upgrade 0003; C3-5 a busy known account gets the usual answer without a link). 2. Codex re-check of the fixes, and chunk 3 (docs/portal/spec). 3. Close built-and-verified issues with a commit link and the `completed` label. 4. Browser pass on the changed pages. 5. #156, #155, #157, #158. 6. After the install gate: 7n Phases 2-7, then 7j, 7r, 7m, 7q.
 - Model tiers (decision 0001): gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium (security core Opus); every check or review = Opus.
 
 ### Waiting on the owner

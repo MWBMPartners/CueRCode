@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-25, after the final review of 68ad1fb..bffdff3 - I-1, M-1 to M-4, N-1 to N-3; earlier the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-25, after the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 
@@ -48,18 +48,18 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | --- | --- |
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
-| `test_account_recovery.php` | 109 |
+| `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 574 |
+| `test_admin_access.php` | 585 |
 | `test_admin_settings.php` | 1211 |
-| `test_api_keys.php` | 114 |
+| `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
 | `test_barcode.php` | 120 |
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
 | `test_client_ip.php` | 246 |
-| `test_core.php` | 143 |
+| `test_core.php` | 146 |
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
 | `test_dynamic_redirect_s0.php` | 97 |
@@ -67,14 +67,15 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_email.php` | 69 |
 | `test_email_queue_runner.php` | 479 |
 | `test_emoji_logo.php` | 123 |
-| `test_error_catalogue.php` | 136 |
+| `test_error_catalogue.php` | 137 |
 | `test_features.php` | 91 |
-| `test_install_checks.php` | 85 |
-| `test_installer_load_order.php` | 6 |
-| `test_library_updates.php` | 116 |
+| `test_full_notation.php` | 41 |
+| `test_install_checks.php` | 99 |
+| `test_installer_load_order.php` | 9 |
+| `test_library_updates.php` | 145 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 392 |
+| `test_migrations.php` | 399 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -85,14 +86,36 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_predefined_logo_png.php` | 264 |
 | `test_pricing.php` | 107 |
 | `test_pricing_flex.php` | 51 |
-| `test_qr_logo.php` | 178 |
+| `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **6141** |
+| **Total** | **6302** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+### Real-database runs after the Codex review (2026-11-25, queue F2)
+
+Every `tests/integration/*real_mysql.php` script passed on throwaway Docker
+servers **MySQL 8.0.36** and **MariaDB 10.6.28**, run one after the other
+(not in parallel, so the timing checks were not disturbed):
+
+| Script | MySQL 8.0.36 | MariaDB 10.6.28 | New in this review |
+| --- | --- | --- | --- |
+| `migrations_real_mysql.php` | 90 | 90 | Scenario L (seed all-or-nothing, part-loaded and unreadable states, installer lock) and J extended (seed loads after `migrate.php --apply`) |
+| `account_recovery_real_mysql.php` | 192 | 192 | P (resets/changes refused before 0003, same link works after) and CX (erase removes passkeys/links/waiting emails; a link expiring while it waits is refused; a busy known account answers in 0.25 s) |
+| `admin_access_real_mysql.php` | 159 | 159 | L (no unlock and no upgrade unless the change-log row is written; a child process with a real PHP session) |
+| `admin_settings_real_mysql.php` | 232 | 232 | F (a save whose token cache cannot be cleared is refused) |
+| `email_queue_real_mysql.php` | all scenarios | all scenarios | none |
+| `resend_verification_real_mysql.php` | 32 | 32 | none |
+
+The real installer page (`public_html/install/index.php`) was also run end
+to end with PHP's built-in web server on both servers (wrong password,
+missing seed file, a seed failing part-way then a retry, a part-loaded
+database, a second installer while one holds the lock). That harness lived in
+the session scratchpad and is not part of the suite; the same behaviour is
+covered by the scripts above.
 
 ## Optional real-database check (email queue)
 

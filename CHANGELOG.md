@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security and fixes - Independent cross-system review by Codex (2026-11-25, queue F2, #113)
+
+Codex (OpenAI) reviewed the new-install work read-only and reported 29 findings. Each was checked against the real code first (on throwaway MySQL 8.0 and MariaDB 10.6, PHP 8.4 and 8.5, and real Imagick 7 where it mattered); 27 were real and are fixed with tests, 1 is fixed in the files Codex named with the rest tracked in #157, and 1 was not a fault (measured).
+
+- **Logos (two high).** A request could name any readable file in the server's temp folder as its "logo" and get its contents back inside an SVG QR code (reproduced). Request-supplied paths may now only point into uploads/logos, and the SVG overlay embeds only a real PNG, JPEG, GIF, WebP or SVG image. A 116-byte SVG asking to be drawn 12000 x 12000 pixels made Imagick use about 1.95 GB (measured); SVG logos are now refused above 4096 x 4096. Base64 logos no longer leave temp files behind. On ImageMagick 7, raster QR codes now really get their SVG logo (they silently lost it before). Commit d2f87cb.
+- **Installer.** The starting data now loads all-or-nothing, a part-loaded database is recognised and refused instead of being locked in as "done" with no logos or plans (reproduced), only one installer can run at a time, a missing seed file stops the install, a failed check is an error, and a wrong database password shows the plain message instead of crashing with the database's own text (reproduced on PHP 8.4.27 and 8.5.12). The seed's settings insert now skips settings an upgrade already added, so the install also works after `migrate.php --apply`. Commit d9d95e2.
+- **Account recovery.** The reset form keeps its link after "passwords do not match"; erasing an account also removes its passkeys, its emailed links and any email still waiting for it; a link that expires while the request waits is refused; resets and password changes wait (with a plain message, `503 DATABASE_UPGRADE_NEEDED`) until database upgrade 0003 is applied; "Forgot password" no longer answers more slowly for a known, busy account (1.47 s before, 0.25 s now). Commit c773370.
+- **Admin.** Editing unlocks only if the confirmation was written to the change log; upgrades record that they are starting before they change anything; an `http://` Origin is refused on a request the server knows came over HTTPS. Commits 3123240, 2578216.
+- **Settings and encryption.** Clearing the Microsoft token cache is now part of the save, and a save whose cache cannot be cleared is refused; an encrypted empty value can be decrypted. Commit 5882361.
+- **Developer pages.** No sample puts an API key in browser code any more (with a plain warning); key rotation advice now says there is a gap and how to avoid it; the iframe advice is gone (the site refuses other websites' frames); the Swagger page shows its fallback link if either library fails. Commit 18a87c9.
+- **Library watch and guide.** The watch reads the final status after a redirect, reports a stale version mapping instead of checking the wrong version, and only counts a real OSV answer as checked; the install guide no longer says emails start sending before the cron job exists. Commit a6e6394.
+- **Code standards.** Shorthand (`??`, ternaries) rewritten in the files the review named; a new test stops it growing anywhere (183 older uses tracked in #157). Commit 11776e8. Suite: 6302 assertions in 45 files.
+
 ### Fixed - Website address setting: wrong advice about test sites, and new warnings (2026-11-25, review follow-up)
 
 - **Wrong advice removed.** Live, alpha and beta all use one database, so they share ONE Website address. The help text, `docs/INSTALL.md`, DEV_NOTES and the changelog no longer say a test site needs its own address; they now say it must stay the live address unless that copy has its own database.

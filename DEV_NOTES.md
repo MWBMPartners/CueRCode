@@ -1336,6 +1336,20 @@ An independent Opus review of commits `a3e28fb..68ad1fb` found ten problems. All
 
 **Known limits / not checked:** a real browser for the changed pages (callback error page, forgot-password, verify-email); DreamHost; MySQL 8.4 for the new scenarios (8.0.36 and MariaDB 10.6.28 only). The plan's future migration numbers (`0003`-`0006` in `.claude/plans/7n-admin-commerce-plan.md`) now take the next free numbers, because `0003` is used here.
 
+## 🔁 Independent Codex review: what changed and why (2026-11-25, queue F2, #113)
+
+Codex (OpenAI) reviewed the new-install work read-only (29 findings). Each was reproduced or disproved against the real code before anything changed; the full table is in the F2 row of `.claude/plans/new-install-readiness-queue.md`. What a developer needs to know:
+
+- **Installer.** `seed_data.sql` is loaded in ONE transaction by `migrationDbRunSeedSql()`, so a failure leaves nothing behind. This works only because every starting-data table is InnoDB and the file holds only `SET` and `INSERT` statements (MySQL commits silently before any `CREATE`/`ALTER`/`DROP`/`TRUNCATE`); `tests/test_migrations.php` checks that. `migrationDbSeedDataState()` answers none / partial / complete, and the installer refuses "partial" instead of skipping, and checks "complete" again before writing its lock file. A named lock per database (`CUERCODE_INSTALLER_LOCK_NAME`) means one installer at a time. **The settings insert in `seed_data.sql` now ends `` ON DUPLICATE KEY UPDATE `settingKey` = `settingKey` ``** because migration 0002 adds some of the same settings: without it, the seed could never load after `migrate.php --apply` had run (reproduced). Only that statement skips existing rows.
+- **mysqli throws.** Since PHP 8.1 a failed `new \mysqli(...)` THROWS; `@` does not stop it (measured on 8.4.27 and 8.5.12). Use `installOpenDatabase()` in the installer, and catch `mysqli_sql_exception` anywhere a database error must become a plain message.
+- **Logos.** A request-supplied logo path may only point into `uploads/logos/` (never the temp folder). Internally created temp files are passed straight through and deleted afterwards with `cleanUpLogoPath()` in a `finally` block - call it after every `getLogoPath()` (a test counts the pairs). The SVG overlay embeds only content that is a real image (`detectEmbeddableLogoMime()`). SVG logos are refused above 4096 x 4096 px (`measureSvgLogoCanvas()`, at intake and before Imagick). On ImageMagick 7, `setFormat('svg')` before reading also fixes the OUTPUT format, so `loadLogoImage()` sets `setFormat('png32')` after reading.
+- **Emailed links.** The final "use the link" step checks expiry in SQL (`expiresAt > NOW()`), with the clock that set it. The two request forms lock the account row with `FOR UPDATE NOWAIT` (`authLockAccountRowNoWait()`; MySQL reports a busy row as 3572, MariaDB as 1205): a busy row gets the usual answer, so a known account is never slower than an unknown one.
+- **Before upgrade 0003,** password resets and changes are refused (`authUpgradeNeededResult()`, `503 DATABASE_UPGRADE_NEEDED`, link not used up). Sign-in still works the old way, so the admin can apply the upgrade.
+- **Erase** also deletes passkeys and emailed links and stops waiting emails to the erased address (`skipped`, details removed). Sent emails and the activity log: #129.
+- **Admin audit order.** Unlock editing only through `adminReauthRecordSuccess()` (row first, fail closed). `adminRunUpgrades()` writes `schema.migrate.started` before changing anything. Settings `afterSave` cache clearing runs inside the save's transaction and a failure refuses the save.
+- **Full notation.** `tests/test_full_notation.php` (with `tests/lib/shorthand_scan.php`) fails if shorthand appears in a file that has none, or grows in one of the 21 older files still listed (#157).
+- **Not a fault:** PHP's own web client drops the Authorization header when a redirect goes to another host or port (measured), so the library watch's token cannot leak that way.
+
 ## 🔍 Site Polish Check & Template Comments (2026-10-05, #137)
 
 - **`php tools/check_site_polish.php`** - source-only (no database, no web
