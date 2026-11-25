@@ -80,54 +80,17 @@ CueRCode/
 
 ### Installation
 
-This is how a fresh copy gets onto DreamHost. **Nothing is cloned on the server:** GitHub Actions uploads the files over SFTP (`.github/workflows/deploy.yml`) whenever the `alpha`, `beta` or `main` branch is pushed, and only when the repository variable `SFTP_ENABLED` is set. The repository secrets `SFTP_*`, `SFTP_REMOTE_BASE` (the server folder that holds `CueRCode.net/`, for example `/home/your-user`) and `SFTP_KNOWN_HOSTS` must be set first (see DEV_NOTES.md).
+**The full, ordered, plain-English runbook is [docs/INSTALL.md](docs/INSTALL.md)**: what you need, the GitHub deploy secrets, the database and credentials file, running and locking the installer, database upgrades, making the first Global Admin, entering the email settings, the DreamHost cron job, switching on HTTPS, a sign-up test, a lock-down checklist and a troubleshooting table. It is checked against the code but **not yet run on a live DreamHost server** (#13).
 
-1. **📤 Get the files onto the server.** Each branch uploads the private folders (`_auth_keys`, `_functions`, `_includes`, `_libraries`, `_uploads`, `_backups`) plus ONE public folder:
+In short:
 
-   | Branch | Public folder it uploads | Point the matching DreamHost domain at it |
-   | --- | --- | --- |
-   | `main` | `public_html/` | the live site (production) |
-   | `beta` | `public_html_dev_beta/` | the beta site |
-   | `alpha` | `public_html_dev_alpha/` | the alpha site |
-
-   In the DreamHost panel (Websites > Manage Websites), set each domain's "web directory" to the matching folder. Which hostname is used for alpha and beta is your choice; this repository does not fix it.
-
-2. **📦 Third-party libraries need no separate step.** The QR, PDF and barcode libraries (chillerlan/php-qrcode 5.0.5, php-settings-container 3.2.1, FPDF 1.86, tc-lib-barcode 2.12.0, tc-lib-color 2.13.1) are committed under `web/CueRCode.net/_libraries/` (decision 0011) and ship with the normal deploy. Their pinned versions are in `_libraries/PINNED_VERSIONS.json`; `php tools/check_vendored_libraries.php` confirms the committed copies match. Bootstrap, jQuery, FontAwesome and Swagger UI fallback copies are committed too, under `public_html/assets/vendor/`.
-
-3. **🔐 Create the credentials file on the server** (it is never in git). A template is committed at `web/CueRCode.net/_auth_keys/auth_creds.example.php.dist`. On the server, in the `_auth_keys` folder:
-
-   ```bash
-   cp auth_creds.example.php.dist auth_creds.php
-   chmod 640 auth_creds.php
-   ```
-
-   Then edit `auth_creds.php` and replace every `REPLACE_ME` (database host, name, user and password, and an `ENCRYPTION_KEY` made with `openssl rand -hex 32`). Keep a safe copy of the key. (The site-specific file is loaded first; `web/_auth_keys/auth_creds.php` - the server-wide equivalent - is the fallback.)
-
-4. **🗄️ Run the database installer.** The folder `public_html/install/` ships with an `.htaccess` that **denies all web access**, on purpose, so nobody can reach the installer by accident. To run it once:
-   1. On the server, rename `install/.htaccess` to `install/.htaccess.off` (with your SFTP program or File Manager).
-   2. Open `https://your-domain/install/`. Check every line of the prerequisites list is green (PHP version, the eight extensions, the credentials file, `_uploads` and `_backups`), then press **Install Database**. It checks the database version, creates the tables, loads the starting data and applies the numbered database upgrades, then writes a lock file at `_auth_keys/.installed.lock` (outside the `install/` folder) and disables itself. Sites installed earlier have the lock at `install/.installed.lock`, which still counts.
-   3. **Close it again straight away:** rename `install/.htaccess.off` back to `install/.htaccess`. **Do not delete the `install/` folder:** the next deploy would upload it again, and an old setup kept the lock inside that folder, so a deleted folder meant an unlocked installer. Keep the folder on the server with its deny-all `.htaccess` in place, and check that `.htaccess` is there after each deploy. The lock is now kept in `_auth_keys/`, which a deploy never overwrites; keep that file too.
-
-   **Upgrading an existing site later:** run `php web/CueRCode.net/_includes/cli/migrate.php --apply` on the server, or use **Database upgrades** in the admin area (`/admin/upgrades/`). See DEV_NOTES.md "Changing the database from now on".
-
-5. **🌍 Check the domain points at the right folder** (step 1) and that `https://your-domain/` loads the home page.
-
-6. **🛡️ Make yourself the first Global Admin:** sign up at `/register/`, then on the server run
-   `php web/CueRCode.net/_includes/cli/admin_access.php grant you@example.com --activate`
-   in an SSH terminal. It shows when the account was registered, so you can check it is
-   yours. Then it asks you to type a **new password** (decision 0010: someone could have
-   signed up with your email address before you). Sign in with that new password and open
-   `/admin/`. With no SSH at all, DEV_NOTES.md "First Global Admin" has a phpMyAdmin
-   **last resort**, which cannot set a safe password, so follow its steps exactly.
-
-7. **🔑 Enter the email secrets, in this order** (sign in as the Global Admin, open `/admin/settings/`, press "Unlock editing" and type your password):
-   1. In the **Email (Microsoft 365)** section fill in the tenant ID, the app (client) ID, the app secret value, the sending mailbox and the sender name, then press **Save email settings**. (A secret box is always empty; leave it empty to keep what is saved. Nothing secret is ever shown again.)
-   2. Press **Check Microsoft connection**. It must say "Connected" (if not, re-check the three details; the page never shows Microsoft's error text).
-   3. Turn on **Send emails**, tick the confirming box and save.
-   4. Press **Send me a test email** and check it arrives in your own inbox.
-   5. Do step 8 (the cron job) so queued emails are really sent.
-
-8. **⏱️ Set up the email queue job (once email is configured):** add the DreamHost cron job described under "⏱️ The email queue job (DreamHost cron)" below. Without it, sign-up and password-reset emails are queued but never sent.
+1. **Deploy.** Nothing is cloned on the server. GitHub Actions uploads the files by SFTP (`.github/workflows/deploy.yml`) when `alpha`, `beta` or `main` is pushed, and only when the repository variable `SFTP_ENABLED` is `true`. The secrets `SFTP_*`, `SFTP_REMOTE_BASE` and `SFTP_KNOWN_HOSTS` must be set first (DEV_NOTES.md, "CI/CD").
+2. **Credentials.** Copy `_auth_keys/auth_creds.example.php.dist` to `auth_creds.php` on the server and fill it in.
+3. **Installer.** `public_html/install/` is deny-all by default: rename its `.htaccess` to `.htaccess.off`, run `/install/`, then rename it back. Never delete the folder.
+4. **Database upgrades** later: `php web/CueRCode.net/_includes/cli/migrate.php --apply`, or `/admin/upgrades/`. Apply them straight after every deploy.
+5. **First Global Admin:** register at `/register/`, then `php web/CueRCode.net/_includes/cli/admin_access.php grant you@example.com --activate` (you type a new password; decision 0010).
+6. **Email:** enter the Microsoft 365 details on `/admin/settings/`, check the connection, turn email on, then add the cron job under "The email queue job (DreamHost cron)" below.
+7. **HTTPS redirect:** off until go-live; the switch-on and rollback steps are in INSTALL.md step 8.
 
 ### 🧪 Development Environments
 

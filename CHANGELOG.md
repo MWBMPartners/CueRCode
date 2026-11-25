@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Fresh install runbook, SFTP_KNOWN_HOSTS notes, HTTPS switch-on steps (2026-11-25, queue B5, B6, B8, #113, #155)
+
+- **New `docs/INSTALL.md`:** one ordered, plain-English runbook from an empty DreamHost account to a working sign-up (what you need, GitHub deploy secrets and branch-to-domain table, database and `auth_creds.php`, running and locking the installer, database upgrades and why straight after deploy, first Global Admin with the new-password prompt and the phpMyAdmin last resort, admin sign-in, Visitor address check, Microsoft 365 email settings, the DreamHost cron job, HTTPS switch-on and rollback, a sign-up test, a lock-down checklist, a troubleshooting table of real messages, and what is not ready). Checked against the code; **not yet run on a live DreamHost server**.
+- **README:** the install section is now short and points to `docs/INSTALL.md`.
+- **DEV_NOTES (CI/CD):** how to make and store `SFTP_KNOWN_HOSTS`; the question whether the full test suite should gate the deploy (recommendation: yes) written down and opened as #155 (the workflow is unchanged); the HTTPS redirect and HSTS switch-on, rollback and caution; two stale deploy notes corrected (libraries are uploaded; host-key checking is on).
+
 ### Fixed and added - Second independent review of the settings editor (2026-11-25, #31)
 
 - **A settings form opened earlier can no longer undo a newer change** (plan §7.5). Each section form carries a fingerprint of what it showed; the save locks the section's rows, recomputes it and, if anything changed since (another tab, another admin, a replaced secret), refuses with "Someone changed these settings while you were editing. Nothing was saved. Reload the page and try again." Typed values are kept; secret boxes stay empty; pressing Save again is refused until the page is reloaded.

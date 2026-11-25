@@ -22,9 +22,12 @@ Already fine (no work): Bootstrap/jQuery/FontAwesome fallback copies are committ
 | B3 | Commit a credentials template (`.dist` name the ignore rule allows) and fix README | S | #113 |
 | B4 | `/install/` is deny-all by default (`install/.htaccess`) but README never says so: write the exact open/close steps; README step 1 (git clone) corrected for the SFTP deploy, with branch folder to domain mapping | S | #113 |
 | B5 | Document `SFTP_KNOWN_HOSTS` in DEV_NOTES; decide whether the full test suite should gate deploy | S | #44 |
+|  | ↳ **LANDED 2026-11-25, UNREVIEWED.** DEV_NOTES CI/CD documents it; the gate question is written down with a recommendation and opened as #155 (workflow not changed; owner decides). | | |
 | B6 | HTTPS redirect: ready-to-switch step in the install guide (still off until go-live) | S | |
+|  | ↳ **LANDED 2026-11-25, UNREVIEWED.** `docs/INSTALL.md` step 8 and DEV_NOTES CI/CD: switch-on, rollback, HSTS caution. Redirect itself still off. | | |
 | B7 | Installer/app check that `_uploads` and `_backups` are writable | S | #113 |
 | B8 | One ordered fresh-install runbook: register, first admin, secrets, email on, verify, generate | S-M | #113 |
+|  | ↳ **LANDED 2026-11-25, UNREVIEWED.** `docs/INSTALL.md`, linked from README. Checked against code, not run live (B9 still owed). | | |
 | B9 | Fresh-install dry run end to end on a throwaway MySQL and MariaDB 10.6; fix what breaks | M | #13 |
 | B10 | Predefined brand logos: commit PNG copies or document the Imagick need (#65) | M | #65 |
 | B11 | Close or comment stale issues with evidence once verified: #112, #117, #122, #124, #125, #127, #138 (only after a check, never on assumption) | S | |

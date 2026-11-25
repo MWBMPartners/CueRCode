@@ -1511,12 +1511,40 @@ Pushing a version tag creates a GitHub Release (`release.yml`):
 | `SFTP_KEY` | SSH private key (primary auth) | PEM format private key |
 | `SFTP_PASSWORD` | SFTP password (fallback if key empty) | `p@ssw0rd` |
 | `SFTP_REMOTE_BASE` | Base remote directory on server | `/home/user/` |
+| `SFTP_KNOWN_HOSTS` | The server's SSH identity (host key lines). Without it both upload steps refuse to connect (#127) | output of `ssh-keyscan -p 22 host` |
 
 ### Required GitHub Variables
 
 | Variable | Description | Value |
 | --- | --- | --- |
 | `SFTP_ENABLED` | Master switch for deployments | `true` |
+
+### `SFTP_KNOWN_HOSTS`: what it is and how to make it (B5, #127)
+
+**In plain English:** when GitHub connects to DreamHost it must be sure it is talking to the real server and not an impostor, because it sends the whole site and a key or password. The server's identity is its **host key**. `SFTP_KNOWN_HOSTS` is a saved copy of that key, so GitHub can compare. Both upload steps in `deploy.yml` stop with a plain message if it is empty, and connect with `StrictHostKeyChecking=yes` against only that copy. ("Trust on first use" was removed on purpose.)
+
+**How to produce the value:**
+
+1. On a computer you trust (not on a GitHub runner), run `ssh-keyscan -p 22 your-sftp-host` with your real host and port (the same as `SFTP_HOST` and `SFTP_PORT`). It prints one or more lines such as `your-sftp-host ssh-ed25519 AAAA...`.
+2. Check the fingerprint against DreamHost's own records for that server (for example `ssh-keyscan -p 22 your-sftp-host | ssh-keygen -lf -` prints it) and compare it with what DreamHost's panel or support gives you. Do not skip this: the whole point is that the first look was not done by an attacker.
+3. Paste **all the printed lines** as the secret value.
+
+**Where to store it:** GitHub, Settings, Secrets and variables, Actions. Put it at **organisation** level next to `SFTP_HOST` when several repositories deploy to the same server (one value to keep right), or at **repository** level when only this one does. `SFTP_REMOTE_BASE` is different: it is a path specific to this site, so it belongs at repository level. Update the value only when DreamHost changes the server (a wrong or stale value makes the deploy refuse to connect, which is the safe failure).
+
+### Should the full test suite gate the deploy? (B5, open owner question, issue #155)
+
+Facts from `.github/workflows/deploy.yml` (checked 2026-11-25): the `deploy` job has `needs: php-checks` and nothing else. `php-checks` runs `php -l` and the PHP 8.6 compatibility scan on PHP 8.4, 8.5 and 8.6 (8.6 is allowed to fail, decisions 0002 and 0005). The full test suite (`php tests/run.php`) runs only in `ci.yml`, a different workflow that a push triggers independently, so the deploy does not wait for it. The comment in `deploy.yml` that the tests need library downloads is out of date, because the libraries are committed (decision 0011). **Recommendation:** the deploy should also require the full test job (PHP 8.4 and 8.5 blocking; 8.6 stays report-only), either by adding a `tests` job to `deploy.yml` and listing it in `needs`, or by calling `ci.yml` as a reusable workflow. It costs a few minutes per deploy and stops code whose tests fail from reaching the live server. **The workflow has not been changed**: this waits for the owner's answer on #155.
+
+### HTTPS redirect and HSTS: switch-on and rollback (B6)
+
+`public_html/.htaccess` has a "Force HTTPS" block with two lines commented out:
+
+```apache
+# RewriteCond %{HTTPS} off
+# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+```
+
+If a visit is not over HTTPS they send the visitor to the same address on `https://` with a **permanent (301)** redirect. They are off so local plain-HTTP testing works, and because a redirect to a broken HTTPS endpoint would lock visitors out. **Switch on at go-live only**, once the domain has a valid certificate and `https://` loads without a warning: remove the leading `# ` on the two lines, deploy, then check `curl -I http://host/` (301 and a `Location: https://` line) and `curl -I https://host/` (200 and a `Strict-Transport-Security` header). **Rollback:** put the `# ` back and deploy; browsers that already followed a 301 may keep going to `https://` for a while. **HSTS caution:** the active line `Header always set Strict-Transport-Security "max-age=15768000; includeSubDomains" env=HTTPS` already tells browsers that have seen it over HTTPS to refuse plain HTTP for 6 months, for every subdomain, and removing the redirect does not undo that in those browsers; an expired certificate then becomes a hard error for them. The commented-out `preload` variant is much harder to reverse (shipped inside browsers) and needs an owner decision. Step-by-step wording for the owner is in `docs/INSTALL.md` step 8.
 
 ### Authentication Priority
 
@@ -1545,22 +1573,16 @@ Pushing a version tag creates a GitHub Release (`release.yml`):
   `true`, so every run so far (30 of them) has finished as "skipped". Whether
   the SFTP secrets (`SFTP_HOST`/`SFTP_USER`/etc.) have been filled in can't be
   seen from the repo - check them in the repository settings before enabling.
-- **Vendored libraries and CDN fallbacks are NOT uploaded.** The deploy
-  workflow copies `web/` as committed - it does not download or stage
-  chillerlan/php-qrcode, FPDF, tecnickcom's barcode libraries, or the local
-  copies of Bootstrap/jQuery/FontAwesome (all gitignored - see the
-  "Installation" step in the root README). Those still have to be placed on
-  the server by hand, once, outside this workflow. **Of those three, only
-  Bootstrap's and jQuery's copies are genuine CDN fallbacks today** -
-  `header.php`/`footer.php` check whether the CDN version loaded and switch
-  to the local file if not. FontAwesome's local copy is not wired up to
-  anything yet (`header.php` loads it from cdnjs only, no fallback check,
-  tracked in #119), so placing it on the server currently has no effect.
-- **TLS/host-key checks are currently turned off (#44).** The `lftp` SFTP
-  transfer step runs with `StrictHostKeyChecking=no` (skips SSH host-key
-  verification) and `set ssl:verify-certificate no` (skips TLS certificate
-  verification) - a known, tracked weakening that should be tightened before
-  this workflow is trusted to run automatically.
+- **Libraries and CDN fallbacks ARE uploaded (corrected 2026-11-25).** The
+  QR/PDF/barcode libraries are committed in `_libraries/` (decision 0011) and
+  the Bootstrap, jQuery, FontAwesome and Swagger UI fallback copies are
+  committed under `public_html/assets/vendor/`, so the normal deploy carries
+  them. (Older notes here said they had to be placed by hand; that was true
+  before decision 0011.)
+- **Host-key checking is on (#127, #44).** Both upload steps use
+  `StrictHostKeyChecking=yes` against `SFTP_KNOWN_HOSTS` and refuse to run
+  without it; `set ssl:verify-certificate no` was removed. See the
+  `SFTP_KNOWN_HOSTS` section above. Still unproven live.
 
 ### Known documentation-level gaps
 
