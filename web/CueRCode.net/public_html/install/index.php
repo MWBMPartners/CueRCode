@@ -55,6 +55,10 @@ $installSQLPath = $siteRoot . '_includes' . $ds . 'sql' . $ds . 'install.sql';
 /** @var string Path to SQL seed data script */
 $seedSQLPath = $siteRoot . '_includes' . $ds . 'sql' . $ds . 'seed_data.sql';
 
+// 🔧 Pure readiness-check helpers (PHP extensions, database version, writable
+// folders) - kept in their own file so they can be unit tested (#113 B2, B7).
+require_once $siteRoot . '_functions' . $ds . 'fn_install_checks.php';
+
 // ==============================================================================
 // 🔒 Lock File Check - Prevent Re-Execution
 // ==============================================================================
@@ -224,6 +228,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
             $results[] = [
                 'status' => 'error',
                 'message' => 'Database connection failed. Please verify your credentials in _auth_keys/auth_creds.php and ensure the database server is running.'
+            ];
+        } elseif (!($dbVersionCheck = installCheckDatabaseVersion((string) $mysqli->server_info))['ok']) {
+            // 🗄️ Decision 0012: refuse a database older than MySQL 8.0.13 /
+            // MariaDB 10.6 BEFORE running any SQL, so nothing is half-created.
+            $results[] = [
+                'status' => 'error',
+                'message' => $dbVersionCheck['message']
             ];
         } else {
             // Set charset and SQL mode
@@ -582,25 +593,43 @@ $phpVersion = PHP_VERSION;
 $phpOk = version_compare($phpVersion, '8.4.0', '>=');
 $prerequisites[] = [
     'name' => 'PHP Version',
-    'required' => '>= 8.4.0',
+    'required' => '>= 8.4.0 (8.4, 8.5 or 8.6)',
     'current' => $phpVersion,
     'ok' => $phpOk
 ];
 
-// Required PHP Extensions
-$requiredExtensions = ['mysqli', 'mbstring', 'gd', 'json', 'openssl'];
-foreach ($requiredExtensions as $ext) {
-    $extLoaded = extension_loaded($ext);
-    if ($extLoaded) {
+// Required PHP Extensions (decision 0012 list; each row says what it is for)
+foreach (installExtensionChecks(get_loaded_extensions()) as $extCheck) {
+    if ($extCheck['ok']) {
         $extCurrentStatus = 'Loaded';
     } else {
-        $extCurrentStatus = 'Not loaded';
+        $extCurrentStatus = 'Not loaded - ' . $extCheck['message'];
     }
     $prerequisites[] = [
-        'name' => "PHP Extension: {$ext}",
-        'required' => 'Loaded',
+        'name' => 'PHP Extension: ' . $extCheck['name'],
+        'required' => 'Loaded (' . $extCheck['purpose'] . ')',
         'current' => $extCurrentStatus,
-        'ok' => $extLoaded
+        'ok' => $extCheck['ok']
+    ];
+}
+
+// Storage folders PHP must be able to write to (#113 B7)
+$storageFolders = [
+    '_uploads' => 'user-uploaded logos and files',
+    '_backups' => 'database and file backups',
+];
+foreach ($storageFolders as $folderName => $folderPurpose) {
+    $folderCheck = installCheckWritableFolder($siteRoot . $folderName, $folderName, $folderPurpose);
+    if ($folderCheck['ok']) {
+        $folderCurrentStatus = 'Exists and writable';
+    } else {
+        $folderCurrentStatus = $folderCheck['message'];
+    }
+    $prerequisites[] = [
+        'name' => 'Folder: ' . $folderName,
+        'required' => 'Exists and writable',
+        'current' => $folderCurrentStatus,
+        'ok' => $folderCheck['ok']
     ];
 }
 
@@ -835,7 +864,9 @@ foreach ($prerequisites as $prereq) {
 
                     <?php if ($allPrereqsMet) { ?>
                         <div class="alert alert-success" role="alert">
-                            All prerequisites met. Ready to install.
+                            All prerequisites met. Ready to install. The database version
+                            (MySQL 8.0.13 or newer, or MariaDB 10.6 or newer) is checked when
+                            you press the button, before anything is created.
                         </div>
                         <form method="POST" action="">
                             <input type="hidden" name="install_csrf_token" value="<?php echo htmlspecialchars($installCsrfToken, ENT_QUOTES, 'UTF-8'); ?>">
