@@ -605,7 +605,11 @@ function libwatchFetchAdvisories(array $osv, string $version, callable $fetcher)
 
     $reply = $fetcher('https://api.osv.dev/v1/query', (string) $query);
     if (empty($reply['ok'])) {
-        return ['advisories' => [], 'error' => (string) ($reply['error'] ?? 'lookup failed')];
+        $lookupError = 'lookup failed';
+        if (isset($reply['error'])) {
+            $lookupError = (string) $reply['error'];
+        }
+        return ['advisories' => [], 'error' => $lookupError];
     }
 
     $data = json_decode((string) $reply['body'], true);
@@ -619,32 +623,66 @@ function libwatchFetchAdvisories(array $osv, string $version, callable $fetcher)
     //    unknown keys) is "could not check", never "no advisories". A reply
     //    that says there are more pages is not fully checked either.
     // A PHP array cannot tell {} from [], so the outer shape is read as an object.
-    if (!(json_decode((string) $reply['body']) instanceof \stdClass)) {
+    $dataObject = json_decode((string) $reply['body']);
+    if (!($dataObject instanceof \stdClass)) {
         return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (not an object)'];
     }
     $unexpectedKeys = array_diff(array_keys($data), ['vulns', 'next_page_token']);
     if ($unexpectedKeys !== []) {
         return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (' . libwatchCleanText(implode(', ', $unexpectedKeys), 60) . ')'];
     }
-    if (isset($data['vulns']) && (!is_array($data['vulns']) || !array_is_list($data['vulns']))) {
-        return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (vulns is not a list)'];
+
+    // 🔎 Codex round 2 finding R3-1 (2026-11-25): isset() treated
+    //    "vulns": null as if "vulns" were absent, and an advisory with no id
+    //    was skipped, so both read as "checked, no advisories" and could hide
+    //    a warning. "vulns" must now be absent, or a real JSON list (read from
+    //    the object decoding, because {"0": ...} decodes to a PHP list too)
+    //    whose every entry is an object with a non-empty text id. Anything
+    //    else is "could not check".
+    $vulnsList = [];
+    if (property_exists($dataObject, 'vulns')) {
+        if (!is_array($dataObject->vulns)) {
+            return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (vulns is not a list)'];
+        }
+        foreach ($dataObject->vulns as $vulnIndex => $vulnObject) {
+            if (!($vulnObject instanceof \stdClass)) {
+                return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (advisory ' . (int) $vulnIndex . ' is not an object)'];
+            }
+            if (!property_exists($vulnObject, 'id') || !is_string($vulnObject->id) || trim($vulnObject->id) === '') {
+                return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (advisory ' . (int) $vulnIndex . ' has no id)'];
+            }
+        }
+        $vulnsList = $data['vulns'];
     }
-    if (isset($data['next_page_token']) && (string) $data['next_page_token'] !== '') {
-        return ['advisories' => [], 'error' => 'OSV has more results than one page; check this library by hand'];
+
+    // 📄 A page token must be text; a non-empty one means there are more pages.
+    if (property_exists($dataObject, 'next_page_token')) {
+        if (!is_string($dataObject->next_page_token)) {
+            return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (next_page_token is not text)'];
+        }
+        if ($dataObject->next_page_token !== '') {
+            return ['advisories' => [], 'error' => 'OSV has more results than one page; check this library by hand'];
+        }
     }
 
     $found = [];
-    foreach ((array) ($data['vulns'] ?? []) as $vuln) {
-        if (!is_array($vuln) || empty($vuln['id'])) {
-            continue;
-        }
+    foreach ($vulnsList as $vuln) {
         if (!libwatchAdvisoryAffects($vuln, (string) $osv['ecosystem'], (string) $osv['name'], $version)) {
             continue;
         }
+        // 🔤 Full notation (house rule): optional text fields, '' when absent.
+        $summary = '';
+        if (isset($vuln['summary']) && is_scalar($vuln['summary'])) {
+            $summary = (string) $vuln['summary'];
+        }
+        $severity = '';
+        if (isset($vuln['database_specific']['severity']) && is_scalar($vuln['database_specific']['severity'])) {
+            $severity = (string) $vuln['database_specific']['severity'];
+        }
         $found[] = [
             'id'       => (string) $vuln['id'],
-            'summary'  => (string) ($vuln['summary'] ?? ''),
-            'severity' => (string) ($vuln['database_specific']['severity'] ?? ''),
+            'summary'  => $summary,
+            'severity' => $severity,
             'fixedIn'  => libwatchAdvisoryFixedIn($vuln, (string) $osv['ecosystem'], (string) $osv['name']),
         ];
     }

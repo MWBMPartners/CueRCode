@@ -362,3 +362,26 @@ assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"code":3,"messa
 assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":"nope"}'))['error'] !== '', 'C5-7: a vulns value that is not a list is refused');
 assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('[]'))['error'] !== '', 'C5-7: a JSON list instead of an object is refused');
 assertTrue(libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[],"next_page_token":"abc"}'))['error'] !== '', 'C5-7: a reply with more pages to fetch is reported as not fully checked');
+
+// Codex round 2 finding R3-1 (2026-11-25): isset() treated "vulns": null as
+// absent, and an advisory with no id was skipped - both read as "checked, no
+// advisories". Now vulns must be absent, an empty list, or a list of objects
+// each with a non-empty string id; anything else is "could not check".
+$r31Cases = [
+    '{"vulns":null}'                         => 'vulns is null',
+    '{"vulns":[{}]}'                         => 'an advisory with no id',
+    '{"vulns":[{"id":""}]}'                  => 'an advisory with an empty id',
+    '{"vulns":[{"id":123}]}'                 => 'an advisory whose id is not text',
+    '{"vulns":["GHSA-xxxx"]}'                => 'an advisory that is not an object',
+    '{"vulns":[{"id":"GHSA-good"},{}]}'      => 'one good advisory and one with no id',
+    '{"vulns":{"0":{"id":"GHSA-x"}}}'        => 'vulns as an object, not a list',
+    '{"vulns":[],"next_page_token":null}'    => 'a page token that is null',
+    '{"vulns":[],"next_page_token":5}'       => 'a page token that is not text',
+];
+foreach ($r31Cases as $r31Body => $r31What) {
+    $r31Result = libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch($r31Body));
+    assertTrue($r31Result['error'] !== '' && $r31Result['advisories'] === [], 'R3-1: ' . $r31What . ' is "could not check", never "no advisories" (' . $r31Body . ')');
+}
+assertEquals('', libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[],"next_page_token":""}'))['error'], 'R3-1: an empty page token (no more pages) is still a good answer');
+$r31Good = libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[{"id":"GHSA-good-0001","summary":"x","affected":[{"package":{"ecosystem":"Packagist","name":"acme/lib"},"versions":["1.0.0"]}]}]}'));
+assertTrue($r31Good['error'] === '' && count($r31Good['advisories']) === 1 && $r31Good['advisories'][0]['id'] === 'GHSA-good-0001', 'R3-1: a well-formed advisory is still found ' . json_encode($r31Good));
