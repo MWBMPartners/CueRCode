@@ -149,17 +149,28 @@ if (!is_dir($logosDirectory)) {
 // @see https://www.php.net/manual/en/function.extension-loaded.php
 // ==============================================================================
 
-if (!extension_loaded('imagick')) {
-    fwrite(STDERR, 'ERROR: The PHP "imagick" extension is not loaded on this system.' . PHP_EOL);
+// 🔧 Two rasterisers are supported, tried in this order:
+//     1. the PHP `imagick` extension, if loaded;
+//     2. the `rsvg-convert` command-line tool (librsvg), if on the PATH.
+//    (#65: this is how the committed PNG twins were made - rsvg-convert 2.63.4.)
+//    Nothing is ever faked: with neither available the tool stops, non-zero.
+$useImagick      = extension_loaded('imagick');
+$rsvgConvertPath = '';
+
+if (!$useImagick) {
+    // @see https://www.php.net/manual/en/function.shell-exec.php
+    $whichOutput = trim((string) shell_exec('command -v rsvg-convert 2>/dev/null'));
+    if ($whichOutput !== '') {
+        $rsvgConvertPath = $whichOutput;
+    }
+}
+
+if (!$useImagick && $rsvgConvertPath === '') {
+    fwrite(STDERR, 'ERROR: No SVG rasteriser found (no PHP "imagick" extension, no rsvg-convert).' . PHP_EOL);
     fwrite(STDERR, PHP_EOL);
-    fwrite(STDERR, 'This tool requires an SVG rasteriser to generate PNG twins of the' . PHP_EOL);
-    fwrite(STDERR, 'predefined logo SVGs. Install/enable php-imagick (which delegates SVG' . PHP_EOL);
-    fwrite(STDERR, 'rasterisation to librsvg) and re-run:' . PHP_EOL);
+    fwrite(STDERR, 'Install librsvg (macOS: brew install librsvg; Debian: apt install librsvg2-bin)' . PHP_EOL);
+    fwrite(STDERR, 'or enable php-imagick, then re-run:' . PHP_EOL);
     fwrite(STDERR, '    php tools/render_logo_pngs.php' . PHP_EOL);
-    fwrite(STDERR, PHP_EOL);
-    fwrite(STDERR, 'This is expected to FAIL inside this repository\'s sandboxed dev/test' . PHP_EOL);
-    fwrite(STDERR, 'environment - no rasteriser is installed there by design. Run this tool' . PHP_EOL);
-    fwrite(STDERR, 'from a developer workstation or a CI job that has imagick installed.' . PHP_EOL);
     exit(1);
 }
 
@@ -231,38 +242,56 @@ foreach ($svgFiles as $svgPath) {
     }
 
     // ==================================================================
-    // 🖌️ Rasterise via Imagick (librsvg-backed SVG delegate).
+    // 🖌️ Rasterise via rsvg-convert, or Imagick (librsvg-backed) if loaded.
     // @see https://www.php.net/manual/en/imagick.readimage.php
     // @see https://www.php.net/manual/en/imagick.setimageformat.php
     // ==================================================================
     try {
-        $imagickInstance = new \Imagick();
+        if ($rsvgConvertPath !== '') {
+            // 🖌️ rsvg-convert: a square 512x512 transparent PNG. All 26 logos
+            //    use a square 0 0 64 64 viewBox, so the logo keeps exactly the
+            //    same margins as the SVG (no trimming, no distortion).
+            //    escapeshellarg() quotes every path (no shell injection).
+            $rsvgCommand = escapeshellarg($rsvgConvertPath)
+                . ' --format=png --width=512 --height=512 --output='
+                . escapeshellarg($pngTwinPath) . ' ' . escapeshellarg($svgPath) . ' 2>&1';
+            $rsvgOutput = [];
+            $rsvgStatus = 0;
+            exec($rsvgCommand, $rsvgOutput, $rsvgStatus);
 
-        // 📌 A higher resolution than the default gives a crisper source
-        //    bitmap for GD's own subsequent imagecopyresampled() downscale
-        //    inside overlayLogoOnRaster() - the logo is always resized down
-        //    to a percentage of the QR code's width at overlay time, so a
-        //    generously-sized source PNG avoids visible softness.
-        // @see https://www.php.net/manual/en/imagick.setresolution.php
-        $imagickInstance->setResolution(300, 300);
-        $imagickInstance->setBackgroundColor(new \ImagickPixel('transparent'));
+            if ($rsvgStatus !== 0) {
+                throw new \RuntimeException('rsvg-convert failed: ' . implode(' ', $rsvgOutput));
+            }
+        } else {
+            $imagickInstance = new \Imagick();
 
-        $imagickInstance->readImage($svgPath);
-        $imagickInstance->setImageFormat('png32');
+            // 📌 A higher resolution than the default gives a crisper source
+            //    bitmap for GD's own subsequent imagecopyresampled() downscale
+            //    inside overlayLogoOnRaster() - the logo is always resized down
+            //    to a percentage of the QR code's width at overlay time, so a
+            //    generously-sized source PNG avoids visible softness.
+            // @see https://www.php.net/manual/en/imagick.setresolution.php
+            $imagickInstance->setResolution(300, 300);
+            $imagickInstance->setBackgroundColor(new \ImagickPixel('transparent'));
 
-        // 📌 Trim any incidental surrounding transparent margin so the
-        //    logo fills its bounding box consistently, matching how a
-        //    typical square icon SVG is expected to overlay.
-        $imagickInstance->trimImage(0.0);
-        $imagickInstance->setImagePage(0, 0, 0, 0);
+            $imagickInstance->readImage($svgPath);
+            $imagickInstance->setImageFormat('png32');
 
-        $writeResult = $imagickInstance->writeImage($pngTwinPath);
+            // 📌 Trim any incidental surrounding transparent margin so the
+            //    logo fills its bounding box consistently, matching how a
+            //    typical square icon SVG is expected to overlay.
+            $imagickInstance->trimImage(0.0);
+            $imagickInstance->setImagePage(0, 0, 0, 0);
 
-        $imagickInstance->clear();
-        $imagickInstance->destroy();
+            $writeResult = $imagickInstance->writeImage($pngTwinPath);
 
-        if ($writeResult !== true) {
-            throw new \RuntimeException('Imagick::writeImage() returned false.');
+            $imagickInstance->clear();
+            $imagickInstance->destroy();
+
+            if ($writeResult !== true) {
+                throw new \RuntimeException('Imagick::writeImage() returned false.');
+            }
+
         }
 
         // 📌 Sanity-check the written file is actually a decodable PNG
