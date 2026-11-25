@@ -394,6 +394,20 @@ if ($arFreshlyLoaded) {
     $arP = arUser('p', 'active', $arStrangerPassword, true);
     $arPLogin = loginUser('ar-p@ar.cuercode.invalid', $arStrangerPassword, '203.0.113.50', 'integration-check');
     arCheck($arPLogin['success'] === true && currentUser() !== null, '...and sign-in still works the old way (nobody is locked out before the upgrade)');
+
+    // 🔒 Independent review (Codex C3 finding 4, 2026-11-25): before 0003 a
+    //    reset or password change cannot end a sign-in that is already under
+    //    way, so both are refused (plainly) until the upgrade is applied.
+    //    Sign-in itself - and so /admin/upgrades/ - keeps working, and the
+    //    command-line upgrade tool always works.
+    $arPLink   = arResetLink($arP);
+    $arPReset  = resetPasswordWithToken($arPLink, 'Before-0003-' . $arStrangerPassword);
+    arCheck($arPReset['success'] === false && $arPReset['errorCode'] === 'DATABASE_UPGRADE_NEEDED' && $arPReset['httpCode'] === 503, 'before 0003: a password reset is refused with a plain "try again later" (C3-4) (' . (string) $arPReset['errorCode'] . ')');
+    arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arP]) === 1, 'before 0003: ...and the reset link is NOT used up (it works once the upgrade is applied)');
+    require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_api_account.php';
+    $arPChange = changeUserPassword($arP, $arStrangerPassword, 'Before-0003-' . $arStrangerPassword, null);
+    arCheck($arPChange['success'] === false && $arPChange['errorCode'] === 'DATABASE_UPGRADE_NEEDED', 'before 0003: a password change is refused the same way (C3-4)');
+    arCheck(verifyPassword($arStrangerPassword, (string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arP])['passwordHash']), 'before 0003: ...and the password is unchanged');
 } else {
     echo '    (skipped: the database already existed, so it may already have upgrade 0003)' . PHP_EOL;
 }
@@ -404,6 +418,8 @@ arCheck($arUpgrade['status'] === 'ok', 'the waiting upgrades applied (' . $arUpg
 arCheck(authSessionsValidFromReady() === true, 'after upgrade 0003 the protection is on');
 if ($arFreshlyLoaded) {
     arCheck(currentUser() !== null, 'a session made before the upgrade still works after it (account never reset)');
+    $arPResetAfter = resetPasswordWithToken($arPLink, 'After-0003-' . $arStrangerPassword);
+    arCheck($arPResetAfter['success'] === true, 'after 0003: the SAME reset link that was refused before now works (C3-4)');
 }
 
 // ==============================================================================
@@ -1259,6 +1275,80 @@ $arUnknownOuts = arManyAtOnce('forgot', 5, static function (int $arN): array {
     return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-nobody-' . $arN . '@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.' . (50 + $arN)];
 });
 arCheck(arShortest($arUnknownOuts)['min'] >= 0.25, 'unknown addresses (no account, no lock taken) still take at least 250 ms');
+
+// ==============================================================================
+// CX. Independent review (Codex C3 findings 2 and 3, 2026-11-25)
+// ==============================================================================
+echo PHP_EOL . 'CX. Codex review: erase removes passkeys and links; a link that expires while waiting is refused' . PHP_EOL;
+
+// 🗑️ C3-2: erasing an account removes its passkeys, its unused emailed links
+//    (they also hold the requesting address) and any email still waiting to
+//    go to it. Sent emails and the activity log are issue #129's.
+$arCx = arUser('cx', 'active', $arStrangerPassword, true);
+arGiveWaysIn($arCx, 'cx');
+arExec("INSERT INTO `tblEmailQueue` (`toAddress`, `toName`, `templateKey`, `paramsJSON`, `subject`, `status`) VALUES ('ar-cx@ar.cuercode.invalid', 'Cx', 'password_reset', '{\"resetUrl\":\"https://x.invalid/r?token=abc\"}', 'Reset', 'queued')");
+arExec("INSERT INTO `tblEmailQueue` (`toAddress`, `templateKey`, `subject`, `status`, `sentAt`) VALUES ('ar-cx@ar.cuercode.invalid', 'verification', 'Verify', 'sent', NOW())");
+arCheck(arCount('SELECT COUNT(*) FROM `tblWebAuthnCredentials` WHERE `userID` = ?', 'i', [$arCx]) === 1, 'erase (C3-2): the account starts with a passkey');
+$arCxErase = eraseUserAccount($arCx, $arStrangerPassword, true);
+arCheck($arCxErase['success'] === true, 'erase (C3-2): the erase succeeds');
+arCheck(arCount('SELECT COUNT(*) FROM `tblWebAuthnCredentials` WHERE `userID` = ?', 'i', [$arCx]) === 0, 'erase (C3-2): its passkeys are deleted');
+arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arCx]) === 0, 'erase (C3-2): its password-reset links (and their request addresses) are deleted');
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$arCx]) === 0, 'erase (C3-2): its verification links are deleted');
+arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = 'ar-cx@ar.cuercode.invalid' AND `status` IN ('queued', 'failed')") === 0, 'erase (C3-2): no email is still waiting to go to the erased address');
+arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = ? AND `status` = 'skipped' AND `paramsJSON` IS NULL AND `toName` IS NULL", 's', [buildErasedAccountEmail($arCx)]) === 1, 'erase (C3-2): ...it is marked skipped, with its link, name and address removed');
+arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = 'ar-cx@ar.cuercode.invalid' AND `status` = 'sent'") === 1, 'erase (C3-2): an already-sent email is left for the normal clean-up (issue #129)');
+
+// ⏰ C3-3: a reset link checked as valid, then held at the account lock while
+//    it expires, must be refused when the lock is released.
+$arCr = arUser('cr', 'active', $arStrangerPassword, true);
+$arCrLink = arResetLink($arCr);
+$arCrHashBefore = (string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arCr])['passwordHash'];
+arHoldAccount($arCr);
+$arCrChild = arSpawn('reset', $arItEnv + ['CUERCODE_IT_CHILD_TOKEN' => $arCrLink, 'CUERCODE_IT_CHILD_PASSWORD' => 'Expired-' . $arOwnerPassword]);
+$arCrWaiting = arWaitUntilWaiting($arWaitForUsersLock, 1);
+arExec('UPDATE `tblPasswordResets` SET `expiresAt` = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE `userID` = ?', 'i', [$arCr]);
+$arConn->commit();
+$arCrOut = arCollect($arCrChild);
+arCheck($arCrWaiting && isset($arCrOut['success']) && $arCrOut['success'] === false && $arCrOut['errorCode'] === 'RESET_TOKEN_INVALID', 'reset (C3-3): a link that expires while the reset waits for the account is refused (' . json_encode($arCrOut) . ')');
+arCheck((string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arCr])['passwordHash'] === $arCrHashBefore, 'reset (C3-3): ...and the password is unchanged');
+
+// ⏰ C3-3: the same for a verification link.
+$arCv = arUser('cv', 'pending', $arStrangerPassword, false);
+$arCvLink = arVerifyLink($arCv);
+arHoldAccount($arCv);
+$arCvChild = arSpawn('verify', $arItEnv + ['CUERCODE_IT_CHILD_TOKEN' => $arCvLink, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword]);
+$arCvWaiting = arWaitUntilWaiting($arWaitForUsersLock, 1);
+arExec('UPDATE `tblEmailVerifications` SET `expiresAt` = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE `userID` = ?', 'i', [$arCv]);
+$arConn->commit();
+$arCvOut = arCollect($arCvChild);
+arCheck($arCvWaiting && isset($arCvOut['success']) && $arCvOut['success'] === false && $arCvOut['errorCode'] === 'VERIFICATION_TOKEN_INVALID', 'verification (C3-3): a link that expires while it waits for the account is refused (' . json_encode($arCvOut) . ')');
+arCheck(arSnapshot($arCv)['user']['status'] === 'pending', 'verification (C3-3): ...and the account is still waiting');
+
+// ⏱️ C3-5: while a KNOWN account's row is busy, "Forgot password" and "Send me
+//    a new link" must not wait for it - waiting made the answer slower than
+//    for an address with no account, which tells a prober the address exists.
+//    The row is held for 1.5 seconds; the answer must still come within the
+//    usual 250 ms floor (plus a little), and say the usual thing.
+arExec("DELETE FROM `tblAPIRateLog` WHERE `apiKeyID` IS NULL AND `endpoint` IN ('auth/request-password-reset', 'page/resend-verification')");
+$arCk = arUser('ck', 'active', $arStrangerPassword, true);
+arHoldAccount($arCk);
+$arCkChild = arSpawn('forgot', $arItEnv + ['CUERCODE_IT_CHILD_EMAIL' => 'ar-ck@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.71']);
+usleep(1500000);
+$arConn->commit();
+$arCkOut = arCollect($arCkChild);
+arCheck(isset($arCkOut['seconds']) && $arCkOut['seconds'] >= 0.25 && $arCkOut['seconds'] < 0.6, 'forgot password (C3-5): a known account whose row is busy answers in the usual time, not after the wait (' . json_encode($arCkOut['seconds'] ?? $arCkOut) . ' s)');
+$arCuOut = arCollect(arSpawn('forgot', $arItEnv + ['CUERCODE_IT_CHILD_EMAIL' => 'ar-nobody-ck@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.72']));
+arCheck(isset($arCkOut['message'], $arCuOut['message']) && $arCkOut['message'] === $arCuOut['message'], 'forgot password (C3-5): ...with exactly the message an unknown address gets');
+
+$arCw = arUser('cw', 'pending', $arStrangerPassword, false);
+arHoldAccount($arCw);
+$arCwChild = arSpawn('resend', $arItEnv + ['CUERCODE_IT_CHILD_EMAIL' => 'ar-cw@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.73']);
+usleep(1500000);
+$arConn->commit();
+$arCwOut = arCollect($arCwChild);
+arCheck(isset($arCwOut['seconds']) && $arCwOut['seconds'] >= 0.25 && $arCwOut['seconds'] < 0.6, 'send me a new link (C3-5): a waiting account whose row is busy answers in the usual time (' . json_encode($arCwOut['seconds'] ?? $arCwOut) . ' s)');
+$arCwAgain = arCollect(arSpawn('resend', $arItEnv + ['CUERCODE_IT_CHILD_EMAIL' => 'ar-cw@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.74']));
+arCheck(isset($arCwAgain['seconds']) && arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arCw]) === 1, 'send me a new link (C3-5): once the row is free again, asking again sends the link as usual');
 
 // 🧹 Tidy up.
 arUseSession(null);

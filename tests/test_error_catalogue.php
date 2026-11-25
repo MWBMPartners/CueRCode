@@ -494,9 +494,12 @@ assertEquals(
 );
 
 assertEquals(
-    95,
+    96,
     count($xErrorCodes),
-    'ErrorResponse.x-error-codes has exactly 95 entries (PASSWORD_CHANGED_MEANWHILE - '
+    'ErrorResponse.x-error-codes has exactly 96 entries (DATABASE_UPGRADE_NEEDED - '
+    . 'independent review, Codex C3 finding 4, fn_auth.php authUpgradeNeededResult(): a '
+    . 'password reset or change is refused until database upgrade 0003 is applied - plus '
+    . 'the 95 earlier codes: PASSWORD_CHANGED_MEANWHILE - '
     . 'final review I-1, fn_api_account.php changeUserPassword()/eraseUserAccount(): the '
     . 'password was changed or reset while the request was being handled - plus the 94 '
     . 'earlier codes: GLOBAL_ADMIN_CANNOT_ERASE - '

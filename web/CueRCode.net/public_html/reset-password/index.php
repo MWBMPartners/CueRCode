@@ -79,8 +79,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_submit'])) {
         $postedToken = '';
     }
 
-    $newPassword    = isset($_POST['new_password']) ? (string) $_POST['new_password'] : '';
-    $confirmPassword = isset($_POST['new_password_confirm']) ? (string) $_POST['new_password_confirm'] : '';
+    // 📌 Full notation (project rule; Codex C3 finding 6).
+    if (isset($_POST['new_password'])) {
+        $newPassword = (string) $_POST['new_password'];
+    } else {
+        $newPassword = '';
+    }
+    if (isset($_POST['new_password_confirm'])) {
+        $confirmPassword = (string) $_POST['new_password_confirm'];
+    } else {
+        $confirmPassword = '';
+    }
+
+    // 🔁 Codex C3 finding 1 (2026-11-25): keep the link in the form, so a
+    //    mismatched or too-weak password can simply be typed again. (The
+    //    form posts to the bare page address, so $rawToken from the web
+    //    address is empty here.)
+    $rawToken = accountLinkTokenForForm($rawToken, $postedToken);
 
     if (!$csrfValid) {
         $resetResult = ['success' => false, 'message' => 'Your session has expired. Please reload the page and try again.'];

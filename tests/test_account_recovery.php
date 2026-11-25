@@ -156,8 +156,8 @@ assertTrue(
 );
 assertContains('hash(\'sha256\', $databaseName . \'|\' . $endpoint . \'|\'', $arRecordCount, 'M-1: the lock name is a hash (never the address itself), per database and per form');
 assertTrue(
-    strpos($arRequest, 'begin_transaction()') < strpos($arRequest, "SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
-    && strpos($arRequest, 'FOR UPDATE') < strpos($arRequest, 'authLinkHistory(\'tblPasswordResets\', $userID)')
+    strpos($arRequest, 'begin_transaction()') < strpos($arRequest, "authLockAccountRowNoWait(\$userID, '`status`')")
+    && strpos($arRequest, 'authLockAccountRowNoWait(') < strpos($arRequest, 'authLinkHistory(\'tblPasswordResets\', $userID)')
     && strpos($arRequest, 'authLinkHistory(\'tblPasswordResets\', $userID)') < strpos($arRequest, 'INSERT INTO `tblPasswordResets`')
     && strpos($arRequest, 'INSERT INTO `tblPasswordResets`') < strrpos($arRequest, '$db->commit()'),
     'M-1: Forgot password locks the account row, then reads the history, decides and writes the link - one transaction'
@@ -180,7 +180,8 @@ $arOrder = [
     'hashPassword($newPassword)',
     'begin_transaction()',
     'FOR UPDATE',
-    "'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL'",
+    // Codex C3 finding 3 (2026-11-25): the claim also requires "not expired".
+    "'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL AND `expiresAt` > NOW()'",
     'adminUserHoldsGlobalAdminRole($userID)',
     '`passwordHash` = ?',
     'accountRemoveOtherWaysIn($userID, true)',
@@ -264,3 +265,30 @@ assertTrue(isset($arSpec['components']['schemas']['VerifyEmailRequest']['propert
 assertEquals(['token'], $arSpec['components']['schemas']['VerifyEmailRequest']['required'], 'OpenAPI: "password" is not marked required (accounts with no password do not send one)');
 assertContains('decision 0013', $arSpec['paths']['/auth/reset-password']['post']['description'], 'OpenAPI: the reset route describes what a reset also does');
 assertContains('waiting for email verification', $arSpec['paths']['/auth/request-password-reset']['post']['description'], 'OpenAPI: request-password-reset says waiting accounts get a link');
+
+// ==============================================================================
+// 🔁 Independent review (Codex C3 finding 1, 2026-11-25): after a mistake
+//    (passwords that do not match, or too weak), the reset form is shown
+//    again. Its hidden link token used to come only from the web address,
+//    which the form does not post back to, so it was EMPTY and the next try
+//    failed with "invalid or expired". The rule is now one function, used by
+//    both the reset page and the verify page.
+// ==============================================================================
+assertEquals('fromlink', accountLinkTokenForForm('fromlink', 'posted'), 'C3-1: the token in the web address wins');
+assertEquals('posted', accountLinkTokenForForm('', 'posted'), 'C3-1: with no token in the address, the posted one is kept for the next try');
+assertEquals('', accountLinkTokenForForm('', ''), 'C3-1: no token anywhere gives none');
+assertEquals('', accountLinkTokenForForm('', str_repeat('a', 129)), 'C3-1: an over-long posted token is not put back');
+assertEquals(str_repeat('a', 128), accountLinkTokenForForm('', str_repeat('a', 128)), 'C3-1: a 128-character posted token is kept');
+$arResetPostPos   = strpos($arResetPage, '$postedToken = trim((string) $_POST[\'token\']);');
+$arResetKeepPos   = strpos($arResetPage, '$rawToken = accountLinkTokenForForm($rawToken, $postedToken);');
+$arResetRenderPos = strpos($arResetPage, 'name="token" id="reset-token"');
+assertTrue($arResetPostPos !== false && $arResetKeepPos !== false && $arResetPostPos < $arResetKeepPos && $arResetKeepPos < $arResetRenderPos, 'C3-1: the reset page keeps the posted token for the redisplayed form (after reading it, before drawing the form)');
+assertContains('$rawToken = accountLinkTokenForForm($rawToken, $postedToken);', $arVerifyPage, 'C3-1: the verify page uses the same rule');
+
+// ⏱️ Codex C3 finding 5 (2026-11-25): the two emailed-link request forms lock
+//    the account row WITHOUT waiting (the timing itself is measured on a real
+//    database in tests/integration/account_recovery_real_mysql.php, CX).
+$arNoWait = arFunctionBody($arAuth, 'authLockAccountRowNoWait');
+assertContains('FOR UPDATE NOWAIT', $arNoWait, 'C3-5: the account row is locked with NOWAIT');
+assertContains('[3572, 1205]', $arNoWait, 'C3-5: both engines\' "row is busy" codes are recognised (MySQL 3572, MariaDB 1205)');
+assertContains('throw $lockError;', $arNoWait, 'C3-5: any other database error is still raised, not treated as "busy"');

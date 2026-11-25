@@ -211,7 +211,7 @@ foreach (['tblAPIKeys', 'tblUserOAuth', 'tblWebAuthnCredentials', 'accountRemove
 $svErase = svBody($svAccount, 'eraseUserAccount');
 assertTrue(
     strpos($svErase, 'verifyPassword($currentPassword, $storedHash)') < strpos($svErase, 'begin_transaction()')
-    && strpos($svErase, 'begin_transaction()') < strpos($svErase, "SELECT `passwordHash`, `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
+    && strpos($svErase, 'begin_transaction()') < strpos($svErase, "SELECT `passwordHash`, `status`, `email` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
     && strpos($svErase, 'FOR UPDATE') < strpos($svErase, 'hash_equals($storedHash, $storedNow)')
     && strpos($svErase, 'hash_equals($storedHash, $storedNow)') < strpos($svErase, '`erasedAt` = NOW()'),
     'I-1 erase: the account is locked and the checked password re-confirmed in the transaction, before anything is erased'

@@ -240,8 +240,8 @@ assertContains('resendLimitedRowWrittenRecently($userID)', $rvSection, 'M3: the 
 $rvWork = substr($rvSection, (int) strpos($rvSection, 'function requestNewVerificationLinkWork('));
 assertContains('authRecordThenCountLinkRequest($ipAddress, CUERCODE_RESEND_VERIFICATION_ENDPOINT)', $rvWork, 'M-1: the address allowance records THIS request, then counts including it');
 assertTrue(
-    strpos($rvWork, 'begin_transaction()') < strpos($rvWork, "SELECT `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
-    && strpos($rvWork, 'FOR UPDATE') < strpos($rvWork, 'authLinkHistory(\'tblEmailVerifications\', $userID)')
+    strpos($rvWork, 'begin_transaction()') < strpos($rvWork, "authLockAccountRowNoWait(\$userID, '`status`, `emailVerifiedAt`')")
+    && strpos($rvWork, 'authLockAccountRowNoWait(') < strpos($rvWork, 'authLinkHistory(\'tblEmailVerifications\', $userID)')
     && strpos($rvWork, 'authLinkHistory(\'tblEmailVerifications\', $userID)') < strpos($rvWork, 'issueEmailVerificationLink($userID')
     && strpos($rvWork, 'issueEmailVerificationLink($userID') < strrpos($rvWork, '$db->commit()'),
     'M-1: the account row is locked, then the history read, the decision and the new link - one transaction'

@@ -833,6 +833,13 @@ function changeUserPassword(int $userID, #[\SensitiveParameter] string $currentP
         return $unavailableResult;
     }
 
+    // 🔒 Independent review (Codex C3 finding 4, 2026-11-25): before database
+    //    upgrade 0003 a change cannot end a sign-in already under way, so it
+    //    is refused (plainly) until the upgrade is applied.
+    if (!authSessionsValidFromReady()) {
+        return authUpgradeNeededResult('change');
+    }
+
     // ------------------------------------------------------------------
     // 🔍 Step 1: read the stored password (no lock) and check the typed one.
     // ------------------------------------------------------------------
@@ -1961,7 +1968,7 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
         //    The account row is the first thing locked, the same order as a
         //    reset, so the two never wait for each other in a circle.
         $lockStmt = dbQuery(
-            'SELECT `passwordHash`, `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE',
+            'SELECT `passwordHash`, `status`, `email` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE',
             'i',
             [$userID]
         );
@@ -2048,6 +2055,37 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
         // 🔗 Unlink ALL SSO providers.
         $oauthStmt = dbQuery('DELETE FROM `tblUserOAuth` WHERE `userID` = ?', 'i', [$userID]);
         $oauthStmt->close();
+
+        // 🔑 Independent review (Codex C3 finding 2, 2026-11-25): delete ALL
+        // passkeys too. They were left behind (reproduced on real MySQL),
+        // and, like the SSO links above, mean nothing once the account is
+        // anonymised.
+        $passkeysStmt = dbQuery('DELETE FROM `tblWebAuthnCredentials` WHERE `userID` = ?', 'i', [$userID]);
+        $passkeysStmt->close();
+
+        // 🎫 ...and every emailed password-reset and verification link of the
+        // account (used or not). They can do nothing for an erased account,
+        // and the reset rows also hold the address each request came from.
+        $resetLinksStmt = dbQuery('DELETE FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$userID]);
+        $resetLinksStmt->close();
+        $verifyLinksStmt = dbQuery('DELETE FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$userID]);
+        $verifyLinksStmt->close();
+
+        // 📧 ...and stop any email still WAITING to go to the erased address
+        // (queued, or given up but still able to be re-sent): it is marked skipped, and its
+        // link, name and address are removed. An email being sent at this
+        // very moment is left to finish; already-sent emails are removed by
+        // the queue's normal clean-up. The activity log's copies of
+        // addresses are issue #129.
+        $erasedEmailAddress = (string) $lockedRow['email'];
+        $queueStmt = dbQuery(
+            "UPDATE `tblEmailQueue` SET `status` = 'skipped', `paramsJSON` = NULL, `toName` = NULL, `toAddress` = ?, "
+            . "`lastError` = 'Account erased before this email was sent' "
+            . "WHERE `toAddress` = ? AND `status` IN ('queued', 'failed') AND `sentAt` IS NULL",
+            'ss',
+            [$anonymizedEmail, $erasedEmailAddress]
+        );
+        $queueStmt->close();
 
         // 📚 Soft-delete ALL saved QR codes (same mechanism as
         // DELETE /api/v1/qrcodes/{uuid} - tblQRCodes.deletedAt).

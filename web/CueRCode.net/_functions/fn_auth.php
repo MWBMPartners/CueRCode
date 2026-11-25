@@ -222,6 +222,35 @@ function computeLockoutExpiry(
 // ==============================================================================
 
 /**
+ * 🔁 Which emailed-link token to put back into a reset or verify form when the
+ *    page is shown again after a mistake (independent review, Codex C3
+ *    finding 1, 2026-11-25).
+ *
+ * The link opens the page with ?token=... in the web address, but the form
+ * posts to the bare page address. After "passwords do not match", "too weak"
+ * or "wrong password" the form is drawn again; if the token came only from
+ * the web address it was now empty, and the next try failed as "invalid or
+ * expired". The token typed into the form's hidden box is kept instead.
+ *
+ * @param string $tokenFromAddress Token from the web address ('' if none)
+ * @param string $tokenFromForm    Token the form posted ('' if none)
+ *
+ * @return string The token to put in the hidden box ('' if none usable)
+ */
+function accountLinkTokenForForm(string $tokenFromAddress, string $tokenFromForm): string
+{
+    if ($tokenFromAddress !== '') {
+        return $tokenFromAddress;
+    }
+
+    if ($tokenFromForm !== '' && mb_strlen($tokenFromForm) <= 128) {
+        return $tokenFromForm;
+    }
+
+    return '';
+}
+
+/**
  * 🔗 Build the absolute URL for an emailed account-action link.
  *
  * ⚠️ The target pages themselves (public_html/verify-email.php,
@@ -1019,6 +1048,68 @@ function limitedRowWrittenRecently(int $userID, string $activityType): bool
 }
 
 /**
+ * 🔒 Lock one account row WITHOUT waiting, for the two emailed-link request
+ *    forms (independent review, Codex C3 finding 5, 2026-11-25).
+ *
+ * "Forgot password" and "Send me a new link" answer in at least 250 ms
+ * whatever happens, so the answer time does not show whether an address has
+ * an account. But a KNOWN account's request locks its row, and while another
+ * request holds that row it used to WAIT - measured 1.47 s against 0.25 s for
+ * an unknown address on MySQL 8.0 - which did show it. With NOWAIT (MySQL
+ * 8.0 and MariaDB 10.3+) a busy row is reported at once instead. The caller
+ * then gives the usual answer and does nothing more: whoever holds the row
+ * is already dealing with that account, and the one-link-a-minute rule would
+ * refuse a second link anyway.
+ *
+ * Run inside the caller's transaction, on the site connection. The column
+ * list is fixed text from the caller, never visitor input.
+ *
+ * @param int    $userID  The account
+ * @param string $columns Back-quoted column list, e.g. "`status`"
+ * @return array{busy: bool, row: array<string, mixed>|null}
+ * @throws \Throwable Any database error other than "row is busy"
+ */
+function authLockAccountRowNoWait(int $userID, string $columns): array
+{
+    // 🔢 MySQL reports a NOWAIT miss as 3572 (ER_LOCK_NOWAIT); MariaDB as 1205.
+    $busyCodes = [3572, 1205];
+    $db        = getDB();
+
+    $statement = $db->prepare('SELECT ' . $columns . ' FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE NOWAIT');
+    if ($statement === false) {
+        throw new \RuntimeException('Could not prepare the account lock: ' . $db->error);
+    }
+
+    try {
+        $statement->bind_param('i', $userID);
+        if (!$statement->execute()) {
+            $errorNumber = $statement->errno;
+            $errorText   = $statement->error;
+            $statement->close();
+            if (in_array($errorNumber, $busyCodes, true)) {
+                return ['busy' => true, 'row' => null];
+            }
+            throw new \RuntimeException('Could not lock the account: ' . $errorText);
+        }
+    } catch (\mysqli_sql_exception $lockError) {
+        $statement->close();
+        if (in_array((int) $lockError->getCode(), $busyCodes, true)) {
+            return ['busy' => true, 'row' => null];
+        }
+        throw $lockError;
+    }
+
+    $lockedRow = $statement->get_result()->fetch_assoc();
+    $statement->close();
+
+    if (!is_array($lockedRow)) {
+        $lockedRow = null;
+    }
+
+    return ['busy' => false, 'row' => $lockedRow];
+}
+
+/**
  * 📨 The real work of requestNewVerificationLink(), without the fixed minimum
  *    time. Call requestNewVerificationLink() instead.
  *
@@ -1112,9 +1203,15 @@ function requestNewVerificationLinkWork(string $email, string $ipAddress): array
         $db->begin_transaction();
         $started = true;
 
-        $lockStmt = dbQuery('SELECT `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
-        $locked   = $lockStmt->get_result()->fetch_assoc();
-        $lockStmt->close();
+        // ⏱️ Codex C3 finding 5: never WAIT for a busy account row (the wait
+        //    would make a known address answer more slowly than an unknown
+        //    one). Busy: the usual answer, nothing more.
+        $lockAttempt = authLockAccountRowNoWait($userID, '`status`, `emailVerifiedAt`');
+        if ($lockAttempt['busy']) {
+            authRollbackQuietly($db);
+            return $genericResult;
+        }
+        $locked = $lockAttempt['row'];
 
         // 🔁 Still waiting? (It may have been verified or reset meanwhile.)
         if (!is_array($locked) || (string) $locked['status'] !== 'pending' || $locked['emailVerifiedAt'] !== null) {
@@ -1574,9 +1671,13 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
         // 🔒 Atomically claim the token (usedAt IS NULL guard) BEFORE
         // activating the account, closing the race window between two
         // simultaneous requests for the same token.
+        // ⏰ Independent review (Codex C3 finding 3, 2026-11-25): the claim
+        // also requires "not expired" (database clock), because the expiry
+        // was otherwise only checked before the slow password check and the
+        // wait for the account lock (reproduced on real MySQL).
         $claimStmt = dbQuery(
             'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() '
-            . 'WHERE `verificationID` = ? AND `usedAt` IS NULL',
+            . 'WHERE `verificationID` = ? AND `usedAt` IS NULL AND `expiresAt` > NOW()',
             'i',
             [(int) $row['verificationID']]
         );
@@ -1585,9 +1686,16 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
 
         if (!$claimed) {
             // 📌 Lost a race to another concurrent verification attempt for
-            // the same token.
+            // the same token - or the link expired while this one waited.
+            $claimCheckStmt = dbQuery('SELECT `usedAt` FROM `tblEmailVerifications` WHERE `verificationID` = ? LIMIT 1', 'i', [(int) $row['verificationID']]);
+            $claimCheckRow  = $claimCheckStmt->get_result()->fetch_assoc();
+            $claimCheckStmt->close();
             authRollbackQuietly($db);
-            return $alreadyUsedResult;
+
+            if (is_array($claimCheckRow) && $claimCheckRow['usedAt'] !== null) {
+                return $alreadyUsedResult;
+            }
+            return $invalidResult;
         }
 
         if ($accountStatus === 'active') {
@@ -1960,6 +2068,42 @@ function authSessionsValidFromReady(bool $forget = false): bool
     //    written on every page view. The admin overview already lists 0003
     //    as a waiting database upgrade.
     return $ready;
+}
+
+/**
+ * 🔒 The answer given when a password reset or change is asked for before
+ *    database upgrade 0003 is applied (independent review, Codex C3
+ *    finding 4, 2026-11-25).
+ *
+ * Without upgrade 0003 a reset or change cannot end a sign-in that is already
+ * under way (one that checked the OLD password a moment before), so the two
+ * are refused - plainly, and without using up the emailed link - until the
+ * upgrade is applied. Sign-in itself keeps working (so the Global Admin can
+ * apply the upgrade at /admin/upgrades/), and the command-line tool
+ * (_includes/cli/migrate.php --apply) always works. A warning is logged each
+ * time, so the owner can see why people could not reset.
+ *
+ * @param string $what 'reset' or 'change' (only used in the log line)
+ * @return array{success: bool, httpCode: int, errorCode: string, message: string, data: array}
+ */
+function authUpgradeNeededResult(string $what): array
+{
+    if (function_exists('logError')) {
+        logError(
+            'warning',
+            'Password ' . $what . ' refused: database upgrade 0003 (sessions valid from) is not applied yet',
+            'Apply it at /admin/upgrades/ or run _includes/cli/migrate.php --apply'
+        );
+    }
+
+    return [
+        'success'   => false,
+        'httpCode'  => 503,
+        'errorCode' => 'DATABASE_UPGRADE_NEEDED',
+        'message'   => 'Passwords cannot be reset or changed for a short while because the site is being updated. '
+            . 'Nothing has been changed and your link still works. Please try again later.',
+        'data'      => [],
+    ];
 }
 
 // ==============================================================================
@@ -2795,9 +2939,14 @@ function requestPasswordResetWork(string $email, string $ipAddress): array
         $db->begin_transaction();
         $started = true;
 
-        $lockStmt = dbQuery('SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
-        $locked   = $lockStmt->get_result()->fetch_assoc();
-        $lockStmt->close();
+        // ⏱️ Codex C3 finding 5: never WAIT for a busy account row (see
+        //    authLockAccountRowNoWait()). Busy: the usual answer, nothing more.
+        $lockAttempt = authLockAccountRowNoWait($userID, '`status`');
+        if ($lockAttempt['busy']) {
+            authRollbackQuietly($db);
+            return $genericResult;
+        }
+        $locked = $lockAttempt['row'];
 
         // 🔁 Still one that can be reset? (It may have been suspended meanwhile.)
         $lockedStatus = '';
@@ -2959,6 +3108,13 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
         return $invalidResult;
     }
 
+    // 🔒 Codex C3 finding 4: refused until database upgrade 0003 is applied
+    //    (see authUpgradeNeededResult()). Checked before the link is touched,
+    //    so the link stays usable for afterwards.
+    if (!authSessionsValidFromReady()) {
+        return authUpgradeNeededResult('reset');
+    }
+
     $tokenHash = hashToken($rawToken);
 
     try {
@@ -3066,8 +3222,13 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
         // 🔒 2. Atomically claim the token BEFORE applying the password change.
         //    A second reset of the same account waited at step 1 for this one
         //    to finish, so here it finds its link already cancelled.
+        //    Independent review (Codex C3 finding 3, 2026-11-25): the link's
+        //    expiry was only checked BEFORE the slow password hashing and the
+        //    wait for the account lock, so a link that ran out meanwhile still
+        //    worked (reproduced on real MySQL). The claim now also requires
+        //    "not expired", judged by the database clock that set expiresAt.
         $claimStmt = dbQuery(
-            'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL',
+            'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL AND `expiresAt` > NOW()',
             'i',
             [(int) $row['resetID']]
         );
@@ -3075,8 +3236,16 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
         $claimStmt->close();
 
         if (!$claimed) {
+            // 🔎 Used meanwhile, or expired meanwhile? Each has its own answer.
+            $claimCheckStmt = dbQuery('SELECT `usedAt` FROM `tblPasswordResets` WHERE `resetID` = ? LIMIT 1', 'i', [(int) $row['resetID']]);
+            $claimCheckRow  = $claimCheckStmt->get_result()->fetch_assoc();
+            $claimCheckStmt->close();
             authRollbackQuietly($db);
-            return $alreadyUsedResult;
+
+            if (is_array($claimCheckRow) && $claimCheckRow['usedAt'] !== null) {
+                return $alreadyUsedResult;
+            }
+            return $invalidResult;
         }
 
         $status = '';

@@ -96,9 +96,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['verify_submit'])) {
     }
 
     // 🔁 Keep the link in the form, so a wrong password can simply be retyped.
-    if ($rawToken === '' && $postedToken !== '' && mb_strlen($postedToken) <= 128) {
-        $rawToken = $postedToken;
-    }
+    //    (One shared rule with the reset page: accountLinkTokenForForm().)
+    $rawToken = accountLinkTokenForForm($rawToken, $postedToken);
 
     if (!$csrfValid) {
         $verifyResult = [
