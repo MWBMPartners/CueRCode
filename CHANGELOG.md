@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - Making the first Global Admin from a waiting account sets a new password (2026-11-25, decision 0010, #31)
+
+- **The problem (Phase 1B review finding 1):** a stranger could sign up with the owner's email
+  address first. The sign-up page gives the same reply either way, so nobody would notice. Then
+  `admin_access.php grant <email> --activate` would have made the stranger's account the admin,
+  and the stranger's password would have opened it.
+- **Now**, when `--activate` vouches for an email address nobody has proved (a `pending` account),
+  the command:
+  - shows the account's email, display name and registration time, with *"if you did not
+    register this account at that time, stop"*;
+  - asks for a NEW password, typed twice and hidden;
+  - in the **same transaction** as the role change and its `admin.grant` change-log row, stores
+    that password, ends every signed-in session, switches off API keys, cancels unused
+    password-reset links, and removes linked Microsoft/Google sign-ins and passkeys.
+- The change-log row says `password_reset: true` and how many of each were removed. It never
+  holds the password or its hash.
+- The password is only ever read from a real terminal with its echo switched off. From a pipe,
+  a file or a scheduled job the command refuses before asking anything. There is no password
+  option. An unknown option is now repeated back without anything after `=`.
+- An account that is already active with a checked email address is unchanged (no reset).
+- `hashPassword()` and `validatePasswordPolicy()` now hide the password from stack traces.
+- DEV_NOTES.md: the phpMyAdmin route is now marked as a **last resort**, because it cannot set a
+  safe password. It now says to check the account first and to change the password straight
+  after.
+- Tests: `tests/test_admin_access.php` grows to 534 checks.
+  `tests/integration/admin_access_real_mysql.php` has 134 checks and passes on MySQL 8.0.36,
+  MySQL 8.4.11 and MariaDB 11.4.13. It drives the real command in a pretend terminal, proves
+  the typed passwords never appear on screen, and forces database failures part-way through
+  to prove nothing changes.
+
 ### Fixed - Phase 1B independent review findings (2026-11-24, #31, #153)
 
 - **Sign-in page open redirect (#153, older than 1B):** `/login/?next=` now refuses tabs, line

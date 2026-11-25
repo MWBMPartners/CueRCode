@@ -432,6 +432,7 @@ New file `_functions/fn_admin.php` (loaded only by admin pages and the CLI tools
 - Small additive change: `currentUser()` (`fn_auth.php:948-993`) also selects and returns `roleID`, so `header.php` can show the "Admin" menu item without an extra query. The menu item is only a convenience — the gate above is what protects the pages.
 
 ### 6.2 Creating the FIRST Global Admin safely
+> **Steps 3-4 refined by decision 0010** (`docs/decisions/0010-first-admin-activation-sets-a-new-password.md`, implemented 2026-11-25): `grant --activate` on a `pending` account asks for a NEW password at the terminal (hidden, twice) and removes every earlier way in, in the same transaction; the phpMyAdmin line is a last resort (see DEV_NOTES.md "First Global Admin").
 No web page can make the first admin (a "first visitor becomes admin" page would let a stranger claim a fresh site before the owner). Steps, documented in DEV_NOTES.md "First Global Admin":
 1. Fresh install as today (`/install/`, now also running the migrations) — or `php _includes/cli/migrate.php --apply` on an existing install.
 2. The owner registers normally at `/register/`. The account stays **pending** because email is not set up yet (this is the chicken-and-egg problem — no email, so no verification link).

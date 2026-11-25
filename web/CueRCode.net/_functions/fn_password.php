@@ -129,7 +129,7 @@ if (!defined('CUERCODE_COMMON_PASSWORD_DENYLIST')) {
  *   $hash = hashPassword('correct horse battery staple');
  *   // Store $hash in tblUsers.passwordHash
  */
-function hashPassword(string $plainPassword): string
+function hashPassword(#[\SensitiveParameter] string $plainPassword): string
 {
     // @see https://www.php.net/manual/en/function.password-hash.php
     $hash = password_hash($plainPassword, PASSWORD_ARGON2ID, CUERCODE_PASSWORD_ARGON2ID_OPTIONS);
@@ -252,7 +252,7 @@ function passwordNeedsRehash(string $hash): bool
  *       errorResponse($policy['error'], 422, 'WEAK_PASSWORD');
  *   }
  */
-function validatePasswordPolicy(string $plainPassword, ?int $minLength = null): array
+function validatePasswordPolicy(#[\SensitiveParameter] string $plainPassword, ?int $minLength = null): array
 {
     if ($minLength === null || $minLength < 1) {
         $minLength = CUERCODE_PASSWORD_MIN_LENGTH_DEFAULT;

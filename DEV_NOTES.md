@@ -968,17 +968,41 @@ made on the server:
    php _includes/cli/admin_access.php grant you@example.com --activate
    ```
 
-   It shows what it will do and asks you to type the email address again
-   (add `--yes` to skip that). `--activate` also marks the account active
-   with a checked email address - allowed here because whoever can run
-   commands on the server already controls the site. It refuses (exit 2,
-   nothing changed) when no account or more than one has that email, when the
-   account is suspended or deleted, when it has no password (a Global Admin
-   must re-type a password before every change), and when the database has
-   not been upgraded yet (it needs the admin change log table). The role
-   change and its change-log row are written together in one transaction.
-4. Sign in, open `/admin/` (or "Admin" in your account menu), and confirm
-   your password to unlock editing.
+   It shows the account's email address, display name and **when it was
+   registered**, then asks you to type the email address again (add `--yes`
+   to skip that). `--activate` also marks the account active with a checked
+   email address - allowed here because whoever can run commands on the
+   server already controls the site.
+
+   **A waiting (`pending`) account gets a NEW password (decision 0010).** A
+   stranger could sign up with your email address before you do (the sign-up
+   page gives the same reply either way), and their password would then open
+   your admin account. So when `--activate` vouches for an email address
+   nobody has proved, the tool shows the warning *"if you did not register
+   this account at that time, stop"*, then asks you to type a new password
+   twice. Your typing is hidden. The same password rules as sign-up apply,
+   and you get three tries. In the **same transaction** as the role change, it then:
+   - stores the new password; the old one stops working;
+   - ends every signed-in session of that account;
+   - switches off its API keys;
+   - cancels any unused password-reset links;
+   - removes any linked Microsoft/Google sign-ins and passkeys.
+
+   The change-log row says `password_reset: true` and how many of each
+   were removed. It never holds the password. This needs a **real terminal**
+   (an SSH session you are typing in). From a script, a pipe or a scheduled
+   job it refuses before asking anything. There is deliberately no option to
+   give the password any other way. An account that is already active, with a
+   checked email address, is not reset.
+
+   It refuses (exit 2, nothing changed) when no account or more than one has
+   that email, when the account is suspended or deleted, when it has no
+   password (a Global Admin must re-type a password before every change), and
+   when the database has not been upgraded yet (it needs the admin change log
+   table). The role change and its change-log row are written together in one
+   transaction.
+4. Sign in with the **new** password, open `/admin/` (or "Admin" in your
+   account menu), and confirm your password to unlock editing.
 
 Other commands: `list` (the Global Admins, email addresses partly hidden),
 `revoke <email>` (refuses to remove the **last** working Global Admin) and
@@ -987,17 +1011,43 @@ Other commands: `list` (the Global Admins, email addresses partly hidden),
 DreamHost the command-line PHP is probably `/usr/local/php84/bin/php` (not yet
 checked on the live server).
 
-**No SSH? Use phpMyAdmin** (DreamHost panel). Type the email address
-carefully - this changes whichever account has it:
+**LAST RESORT ONLY - no SSH at all: phpMyAdmin** (DreamHost panel). Use the
+command line above whenever you possibly can. This route **cannot set a safe
+password**. It keeps the password the account was registered with, so it
+has the weakness decision 0010 fixes: if a stranger registered your email
+address first, their password becomes an admin password. It also does not
+end earlier sign-ins. If you must use it:
 
-```sql
-UPDATE `tblUsers` SET `roleID` = 1, `status` = 'active', `emailVerifiedAt` = COALESCE(`emailVerifiedAt`, UTC_TIMESTAMP()) WHERE `email` = 'you@example.com' AND `status` IN ('pending','active') AND `passwordHash` IS NOT NULL;
-```
+1. Check the account is really yours **before** changing anything. Look at
+   `createdAt` (UTC) and `displayName`. If you did not register it at that
+   time, or the name is not yours, **stop**.
 
-It should say "1 row affected". A Global Admin made this way has no "grant"
-row in the change log, so the first time they open the admin area the site
-writes one `admin.first_seen` row (actor "system"). The log is never silent
-about how someone became an admin.
+   ```sql
+   SELECT `userID`, `email`, `displayName`, `createdAt`, `status` FROM `tblUsers` WHERE `email` = 'you@example.com';
+   ```
+
+2. Type the email address carefully; this changes whichever account has it:
+
+   ```sql
+   UPDATE `tblUsers` SET `roleID` = 1, `status` = 'active', `emailVerifiedAt` = COALESCE(`emailVerifiedAt`, UTC_TIMESTAMP()) WHERE `email` = 'you@example.com' AND `status` IN ('pending','active') AND `passwordHash` IS NOT NULL;
+   ```
+
+   It should say "1 row affected".
+3. **Straight after, sign in and set a fresh password.** Use "Change
+   password" at `/account/`, which also ends every other sign-in. Or use the
+   "Forgot password" email, once email sending works. If your own password
+   does **not** sign you in, somebody else registered the account first.
+   Remove the role at once, then use the command line as soon as you have
+   SSH access:
+
+   ```sql
+   UPDATE `tblUsers` SET `roleID` = NULL WHERE `email` = 'you@example.com';
+   ```
+
+A Global Admin made this way has no "grant" row in the change log, so the
+first time they open the admin area the site writes one `admin.first_seen`
+row (actor "system"). The log is never silent about how someone became an
+admin.
 
 ### How the admin area protects itself
 

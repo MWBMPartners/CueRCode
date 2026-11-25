@@ -114,7 +114,11 @@ This is how a fresh copy gets onto DreamHost. **Nothing is cloned on the server:
 
 6. **🛡️ Make yourself the first Global Admin:** sign up at `/register/`, then on the server run
    `php web/CueRCode.net/_includes/cli/admin_access.php grant you@example.com --activate`
-   (no SSH? DEV_NOTES.md "First Global Admin" has a phpMyAdmin alternative). Then sign in and open `/admin/`.
+   in an SSH terminal. It shows when the account was registered, so you can check it is
+   yours. Then it asks you to type a **new password** (decision 0010: someone could have
+   signed up with your email address before you). Sign in with that new password and open
+   `/admin/`. With no SSH at all, DEV_NOTES.md "First Global Admin" has a phpMyAdmin
+   **last resort**, which cannot set a safe password, so follow its steps exactly.
 
 7. **⏱️ Set up the email queue job (once email is configured):** add the DreamHost cron job described under "⏱️ The email queue job (DreamHost cron)" below. Without it, sign-up and password-reset emails are queued but never sent.
 

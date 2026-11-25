@@ -31,6 +31,9 @@
  *      (a time that does not exist, or happens twice) refused in plain words.
  *   5. 💻 The command-line helpers behind _includes/cli/admin_access.php
  *      (grant / list / revoke), which is how the FIRST Global Admin is made.
+ *      Activating an account that has not proved its email address sets a
+ *      NEW password typed hidden at the keyboard and removes every earlier
+ *      way into the account, in the same transaction (decision 0010).
  *
  * WHO IS A GLOBAL ADMIN (plan §6.1) - all of these, checked fresh each time:
  *   - tblUsers.roleID = 1 (CUERCODE_ROLE_GLOBAL_ADMIN, install.sql "1=Global
@@ -61,8 +64,9 @@
  * @package     CueRCode
  * @subpackage  Admin
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0 (2026-11-25: decision 0010 - first admin activation sets a new password)
  * @since       2026-11-24 (task 7n Phase 1B, #31)
+ * @see         docs/decisions/0010-first-admin-activation-sets-a-new-password.md
  * @see         .claude/plans/7n-admin-commerce-plan.md §6 (access model), §7.4, §8.4
  * @see         _includes/cli/admin_access.php - grant / list / revoke from the command line
  * @see         public_html/admin/ - the admin pages (each calls requireGlobalAdminPage() first)
@@ -1249,7 +1253,15 @@ function adminCliParseArgs(array $argv): array
         } elseif ($argument === '--yes') {
             $result['yes'] = true;
         } elseif (str_starts_with($argument, '-')) {
-            $result['error'] = 'Unknown option: ' . adminCliSafeEcho($argument);
+            // 🤐 Repeat only the option's NAME, never a value after "=": a
+            //    mistaken "--password=..." must not be printed back on screen
+            //    (there is no such option - decision 0010).
+            $optionName = $argument;
+            $equalsAt = strpos($argument, '=');
+            if ($equalsAt !== false) {
+                $optionName = substr($argument, 0, $equalsAt) . '=...';
+            }
+            $result['error'] = 'Unknown option: ' . adminCliSafeEcho($optionName);
             return $result;
         } else {
             $positional[] = $argument;
@@ -1339,7 +1351,12 @@ function adminCliUsage(): array
         '  php admin_access.php grant <email> [--activate] [--yes]',
         '      Make an existing account a Global Admin.',
         '      --activate  also mark the account active and its email as checked',
-        '                  (for the very first admin, before email sending works)',
+        '                  (for the very first admin, before email sending works).',
+        '                  If the account is still waiting for its email check, you',
+        '                  must type a NEW password for it (hidden, twice) and every',
+        '                  earlier sign-in, API key and linked sign-in is removed.',
+        '                  This needs a real terminal; there is no option to give',
+        '                  the password any other way (decision 0010).',
         '      --yes       do not ask you to type the email address again',
         '  php admin_access.php list',
         '      List the Global Admins (email addresses partly hidden).',
@@ -1378,15 +1395,27 @@ function adminCliConfirmationMatches(string|false $typed, string $email): bool
  * 🚦 Decide what `grant` may do with the account(s) found for an email
  *    (plan §6.2). PURE.
  *
+ * 🔐 Decision 0010 (docs/decisions/0010-first-admin-activation-sets-a-new-password.md):
+ *    when --activate would mark an email address as checked that nobody has
+ *    proved, 'resetsPassword' is true. A stranger can register with the
+ *    owner's email before the owner does (the sign-up page answers the same
+ *    either way), so that account's password, sessions and keys may belong to
+ *    the stranger. The operator must then type a NEW password, and every
+ *    earlier way into the account is removed, in the same transaction as the
+ *    role change. 'resetsPassword' always equals 'activates': both are true
+ *    exactly when the account is 'pending' or has no checked email, and
+ *    --activate was given. An active account with a checked email is never
+ *    reset.
+ *
  * @param array<int, array> $rows     Accounts with that email (keys userID, roleID,
  *                                    status, emailVerifiedAt, hasPassword)
  * @param bool              $activate --activate was given
- * @return array{outcome: string, code: string, message: string, activates: bool, warnings: array<int, string>}
+ * @return array{outcome: string, code: string, message: string, activates: bool, resetsPassword: bool, warnings: array<int, string>}
  *         outcome 'grant' (change something), 'nothing' (already done) or 'refuse'
  */
 function adminGrantDecision(array $rows, bool $activate): array
 {
-    $decision = ['outcome' => 'refuse', 'code' => '', 'message' => '', 'activates' => false, 'warnings' => []];
+    $decision = ['outcome' => 'refuse', 'code' => '', 'message' => '', 'activates' => false, 'resetsPassword' => false, 'warnings' => []];
 
     if (count($rows) === 0) {
         $decision['code']    = 'unknown_email';
@@ -1429,6 +1458,8 @@ function adminGrantDecision(array $rows, bool $activate): array
 
     if ($needsActivation && $activate) {
         $decision['activates'] = true;
+        // 🔐 Decision 0010: vouching for an unproved email = a new password.
+        $decision['resetsPassword'] = true;
     }
 
     if ($needsActivation && !$activate) {
@@ -1450,7 +1481,232 @@ function adminGrantDecision(array $rows, bool $activate): array
         $decision['message'] = 'The account will be made a Global Admin.';
     }
 
+    if ($decision['resetsPassword']) {
+        $decision['message'] .= ' Its email address has not been checked yet, so you will set a NEW password for it and every earlier way into it will be removed (decision 0010).';
+    }
+
     return $decision;
+}
+
+/**
+ * 🧽 Make text from the DATABASE safe to print on a terminal. PURE.
+ *
+ * A display name is typed by whoever registered - possibly a stranger - so
+ * it must not be able to move the cursor, clear the screen, recolour text or
+ * reverse the direction of the line (all of which a terminal does for
+ * control and formatting characters). Removes every control character
+ * (including the "C1" ones some terminals obey), every invisible formatting
+ * character (including right-to-left overrides) and line/paragraph
+ * separators; text that is not valid UTF-8 keeps its plain ASCII letters
+ * only. Each removed run becomes "?".
+ *
+ * @param mixed $value     Any value (non-text gives '')
+ * @param int   $maxLength Most characters to keep ("..." is added when cut)
+ * @return string
+ */
+function adminCliSafeDisplay(mixed $value, int $maxLength = 100): string
+{
+    if ($value === null || !is_scalar($value)) {
+        return '';
+    }
+
+    $text = (string) $value;
+
+    // 🔤 Not valid UTF-8: keep printable ASCII only.
+    if (!mb_check_encoding($text, 'UTF-8')) {
+        $text = (string) preg_replace('/[^\x20-\x7E]+/', '?', $text);
+    }
+
+    // @see https://www.php.net/manual/en/regexp.reference.unicode.php
+    $clean = preg_replace('/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/u', '?', $text);
+    if (!is_string($clean)) {
+        $clean = (string) preg_replace('/[^\x20-\x7E]+/', '?', $text);
+    }
+
+    $clean = trim($clean);
+
+    if ($maxLength > 0 && mb_strlen($clean) > $maxLength) {
+        $clean = mb_substr($clean, 0, $maxLength) . '...';
+    }
+
+    return $clean;
+}
+
+/**
+ * 🪪 What `grant` shows about the account BEFORE asking for confirmation
+ *    (decision 0010). PURE.
+ *
+ * The registration time is the operator's best clue that somebody else
+ * registered with their email address first, so it is always shown, with
+ * its time zone (the database runs in UTC). When the grant will reset the
+ * password, the lines end with the warning and with what is about to happen.
+ *
+ * @param array $row      The one account row (email, displayName, createdAt, status, emailVerifiedAt)
+ * @param array $decision From adminGrantDecision()
+ * @return array<int, string> Lines to print, in order
+ */
+function adminGrantPreviewLines(array $row, array $decision): array
+{
+    $email = '';
+    if (isset($row['email'])) {
+        $email = adminCliSafeDisplay($row['email'], 255);
+    }
+
+    $displayName = '';
+    if (isset($row['displayName'])) {
+        $displayName = adminCliSafeDisplay($row['displayName'], 100);
+    }
+    if ($displayName === '') {
+        $displayName = '(none given)';
+    }
+
+    $createdAt = '(unknown)';
+    if (isset($row['createdAt']) && is_string($row['createdAt'])) {
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $row['createdAt']) === 1) {
+            $createdAt = $row['createdAt'] . ' UTC';
+        } else {
+            $createdAt = adminCliSafeDisplay($row['createdAt'], 40);
+        }
+    }
+
+    $status = '';
+    if (isset($row['status'])) {
+        $status = adminCliSafeDisplay($row['status'], 20);
+    }
+    if (isset($row['emailVerifiedAt']) && trim((string) $row['emailVerifiedAt']) !== '') {
+        $status .= ', email address checked';
+    } else {
+        $status .= ', email address NOT checked yet';
+    }
+
+    $lines = [
+        '  Email address:  ' . $email,
+        '  Display name:   ' . $displayName,
+        '  Registered at:  ' . $createdAt,
+        '  Status now:     ' . $status,
+    ];
+
+    if (isset($decision['resetsPassword']) && $decision['resetsPassword'] === true) {
+        $lines[] = 'WARNING: if you did not register this account at that time, stop now (press Ctrl+C).'
+            . ' Someone else may have signed up with your email address.';
+        $lines[] = 'Because this account has not proved its email address, you will now type a NEW password for it.'
+            . ' Its old password will stop working, and every earlier sign-in, API key, password-reset link,'
+            . ' linked Microsoft/Google sign-in and passkey will be removed (decision 0010).';
+    }
+
+    return $lines;
+}
+
+/**
+ * 📏 The password rules, in words, for the command line. PURE.
+ *
+ * @param int $minLength Fewest characters allowed
+ * @return string
+ */
+function adminCliPasswordRulesText(int $minLength): string
+{
+    $maxLength = 256;
+    if (defined('CUERCODE_PASSWORD_MAX_LENGTH')) {
+        $maxLength = (int) CUERCODE_PASSWORD_MAX_LENGTH;
+    }
+
+    return 'The new password needs at least ' . $minLength . ' characters (at most ' . $maxLength . '),'
+        . ' must not be a common password and must not be one character repeated. Your typing will not be shown.';
+}
+
+/**
+ * ✂️ One typed line without its line ending (spaces are KEPT - the sign-up
+ *    page does not trim passwords either). PURE.
+ *
+ * @param string|false $line What fgets() returned (false = the input ended)
+ * @return string|null Null when nothing could be read
+ */
+function adminCliStripLineEnding(#[\SensitiveParameter] string|false $line): ?string
+{
+    if ($line === false) {
+        return null;
+    }
+
+    if (str_ends_with($line, "\n")) {
+        $line = substr($line, 0, -1);
+    }
+
+    if (str_ends_with($line, "\r")) {
+        $line = substr($line, 0, -1);
+    }
+
+    return $line;
+}
+
+/**
+ * ✅ Is the new password, typed twice, acceptable? PURE (uses the site's own
+ *    rules, validatePasswordPolicy() in fn_password.php - the same check as
+ *    sign-up and "Forgot password").
+ *
+ * The answer never contains the password.
+ *
+ * @param string|null $first     First typing (null = nothing could be read)
+ * @param string|null $second    Second typing
+ * @param int         $minLength Fewest characters allowed (password_min_length)
+ * @return array{ok: bool, error: string}
+ */
+function adminCliNewPasswordCheck(
+    #[\SensitiveParameter] ?string $first,
+    #[\SensitiveParameter] ?string $second,
+    int $minLength
+): array {
+    if ($first === null || $second === null) {
+        return ['ok' => false, 'error' => 'Nothing could be read (the input ended).'];
+    }
+
+    if (!hash_equals($first, $second)) {
+        return ['ok' => false, 'error' => 'The two passwords did not match.'];
+    }
+
+    // 🛑 Fail closed: without the site's rules, no password is accepted.
+    if (!function_exists('validatePasswordPolicy')) {
+        return ['ok' => false, 'error' => 'The password rules could not be loaded, so no password can be set.'];
+    }
+
+    $policy = validatePasswordPolicy($first, $minLength);
+
+    if (!isset($policy['valid']) || $policy['valid'] !== true) {
+        $error = 'That password is not allowed.';
+        if (isset($policy['error']) && is_string($policy['error']) && $policy['error'] !== '') {
+            $error = $policy['error'];
+        }
+        return ['ok' => false, 'error' => $error];
+    }
+
+    return ['ok' => true, 'error' => ''];
+}
+
+/**
+ * 🧾 "What was removed" in plain words, for the operator. PURE.
+ *
+ * @param array<string, int> $removed From adminCliRemoveEarlierAccess()
+ * @return string
+ */
+function adminCliRemovedSummary(array $removed): string
+{
+    $labels = [
+        'sessions_ended'                 => 'sign-in session(s) ended',
+        'api_keys_turned_off'            => 'API key(s) switched off',
+        'password_reset_links_cancelled' => 'unused password-reset link(s) cancelled',
+        'linked_sign_ins_removed'        => 'linked Microsoft/Google sign-in(s) removed',
+        'passkeys_removed'               => 'passkey(s) removed',
+    ];
+
+    $parts = [];
+    foreach ($labels as $key => $label) {
+        $count = 0;
+        if (isset($removed[$key])) {
+            $count = (int) $removed[$key];
+        }
+        $parts[] = $count . ' ' . $label;
+    }
+
+    return implode(', ', $parts) . '.';
 }
 
 /**
@@ -2782,7 +3038,9 @@ function adminCliFindAccounts(string $email, bool $forUpdate = false): ?array
         return null;
     }
 
-    $sql = 'SELECT `userID`, `email`, `roleID`, `status`, `emailVerifiedAt`, '
+    // 🪪 displayName and createdAt are shown to the operator before they
+    //    confirm (decision 0010). The password hash itself is never read here.
+    $sql = 'SELECT `userID`, `email`, `displayName`, `createdAt`, `roleID`, `status`, `emailVerifiedAt`, '
         . "(`passwordHash` IS NOT NULL AND `passwordHash` <> '') AS `hasPassword` "
         . 'FROM `tblUsers` WHERE `email` = ? LIMIT 2';
     if ($forUpdate) {
@@ -2849,6 +3107,405 @@ function adminRollbackQuietly(\mysqli $db): void
     }
 }
 
+// ==============================================================================
+// ⌨️ COMMAND LINE: typing a new password without showing it (decision 0010)
+// ==============================================================================
+// The new password is ONLY ever read from a real terminal, with the
+// terminal's echo switched off by the standard "stty" command. There is no
+// command-line option, environment variable or pipe that can supply it: an
+// option would land in the shell history and the process list, and a pipe or
+// a file means a copy of the password exists somewhere else. If the input is
+// not a terminal, or the typing cannot be hidden, the command refuses rather
+// than read a password that might be shown or stored.
+//
+// "stty" is run with proc_open() and an ARGUMENT LIST (no shell is involved),
+// with the process's own keyboard input handed to it, so it changes the
+// operator's terminal. The only arguments ever passed are "-g", "-a",
+// "-echo" or the saved settings that "stty -g" printed (checked against a
+// strict pattern first).
+// @see https://www.php.net/manual/en/function.proc-open.php
+// @see https://www.php.net/manual/en/function.stream-isatty.php
+// ==============================================================================
+
+/** @var string The shape of the saved settings "stty -g" prints (BSD/macOS and GNU/Linux). */
+if (!defined('CUERCODE_ADMIN_STTY_SETTINGS_PATTERN')) {
+    define('CUERCODE_ADMIN_STTY_SETTINGS_PATTERN', '/^[A-Za-z0-9][A-Za-z0-9:=._-]{0,1023}$/');
+}
+
+/** @var int How many times the operator may try to type an acceptable new password. */
+if (!defined('CUERCODE_ADMIN_CLI_PASSWORD_TRIES')) {
+    define('CUERCODE_ADMIN_CLI_PASSWORD_TRIES', 3);
+}
+
+/**
+ * 🖥️ Run "stty" on this process's own terminal, with no shell.
+ *
+ * @param array<int, string> $arguments '-g', '-a', '-echo' or saved settings ONLY
+ * @return string|null What stty printed, or null when it could not run or failed
+ */
+function adminCliRunStty(array $arguments): ?string
+{
+    if (!defined('STDIN') || !function_exists('proc_open')) {
+        return null;
+    }
+
+    // 🛡️ Allow-list every argument (no shell is used, but nothing unexpected
+    //    reaches stty either).
+    foreach ($arguments as $argument) {
+        $argument = (string) $argument;
+        $isFixed  = in_array($argument, ['-g', '-a', '-echo'], true);
+        $isSaved  = (preg_match(CUERCODE_ADMIN_STTY_SETTINGS_PATTERN, $argument) === 1);
+        if (!$isFixed && !$isSaved) {
+            return null;
+        }
+    }
+
+    // 0 = OUR keyboard input (so stty changes the operator's terminal);
+    // 1 and 2 = pipes (stty's own output and error text are kept out of view).
+    $descriptors = [0 => STDIN, 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $pipes = [];
+
+    try {
+        $process = proc_open(array_merge(['stty'], array_values($arguments)), $descriptors, $pipes);
+    } catch (\Throwable $e) {
+        return null;
+    }
+
+    if (!is_resource($process)) {
+        return null;
+    }
+
+    $output = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    if ($exitCode !== 0 || !is_string($output)) {
+        return null;
+    }
+
+    return $output;
+}
+
+/**
+ * 🗃️ Remember (or recall, or forget) the terminal settings to put back.
+ *
+ * @param string $action   'remember', 'forget' or 'get'
+ * @param string $settings With 'remember': the output of "stty -g"
+ * @return string The remembered settings ('' when none)
+ */
+function adminCliTerminalState(string $action, string $settings = ''): string
+{
+    static $saved = '';
+
+    if ($action === 'remember') {
+        $saved = $settings;
+    } elseif ($action === 'forget') {
+        $saved = '';
+    }
+
+    return $saved;
+}
+
+/**
+ * ↩️ Put the terminal back as it was (typing visible again). Safe to call
+ *    any number of times; also registered as a shutdown function and called
+ *    from the Ctrl+C handler, so the terminal is not left "blind".
+ *
+ * @return void
+ */
+function adminCliTerminalRestore(): void
+{
+    $saved = adminCliTerminalState('get');
+
+    if ($saved !== '') {
+        adminCliRunStty([$saved]);
+        adminCliTerminalState('forget');
+    }
+}
+
+/**
+ * 🚦 Why a hidden password cannot be typed here ('' when it can).
+ *
+ * Checked BEFORE anything is asked, so the operator is never asked to
+ * confirm and then refused.
+ *
+ * @return string A plain-English reason, or '' when everything is in place
+ */
+function adminCliHiddenInputProblem(): string
+{
+    if (!defined('STDIN')) {
+        return 'there is no keyboard input (this is not the command line)';
+    }
+
+    if (!function_exists('stream_isatty') || !stream_isatty(STDIN)) {
+        return 'its input is not a terminal (it is coming from a file, a pipe or a scheduled job)';
+    }
+
+    if (!function_exists('proc_open')) {
+        return 'this server does not let PHP run the "stty" command, which hides what you type';
+    }
+
+    $settings = adminCliRunStty(['-g']);
+
+    if ($settings === null || preg_match(CUERCODE_ADMIN_STTY_SETTINGS_PATTERN, trim($settings)) !== 1) {
+        return 'the terminal settings could not be read, so your typing could not be hidden';
+    }
+
+    return '';
+}
+
+/**
+ * ⌨️ Read ONE line from the terminal with the typing hidden.
+ *
+ * Refuses (reads nothing) when the terminal's echo cannot be switched off
+ * AND confirmed off ("stty -a" must list "-echo").
+ *
+ * @param string $prompt What to print before reading
+ * @return array{ok: bool, line: string|null, error: string}
+ */
+function adminCliReadHiddenLine(string $prompt): array
+{
+    $settings = adminCliRunStty(['-g']);
+
+    if ($settings === null || preg_match(CUERCODE_ADMIN_STTY_SETTINGS_PATTERN, trim($settings)) !== 1) {
+        return ['ok' => false, 'line' => null, 'error' => 'the terminal settings could not be read, so your typing could not be hidden'];
+    }
+
+    adminCliTerminalState('remember', trim($settings));
+
+    $switchedOff = adminCliRunStty(['-echo']);
+    $nowSettings = adminCliRunStty(['-a']);
+
+    if ($switchedOff === null || $nowSettings === null || preg_match('/(^|\s)-echo(\s|$)/', $nowSettings) !== 1) {
+        adminCliTerminalRestore();
+        return ['ok' => false, 'line' => null, 'error' => 'your typing could not be hidden, so nothing was read'];
+    }
+
+    fwrite(STDOUT, $prompt);
+    $raw = fgets(STDIN);
+    adminCliTerminalRestore();
+
+    // ⏎ The Enter key was not shown either, so move to a new line ourselves.
+    fwrite(STDOUT, PHP_EOL);
+
+    $line = adminCliStripLineEnding($raw);
+    unset($raw);
+
+    if ($line === null) {
+        return ['ok' => false, 'line' => null, 'error' => 'nothing could be read (the input ended)'];
+    }
+
+    return ['ok' => true, 'line' => $line, 'error' => ''];
+}
+
+/**
+ * 🛑 While the password is being typed, make Ctrl+C (and a "terminate"
+ *    signal) put the terminal back before stopping. Needs the pcntl
+ *    extension, which many hosts leave out - the caller then prints how to
+ *    get the typing back ("stty sane").
+ *
+ * @param bool $on True to install, false to put the normal behaviour back
+ * @return bool True when the signals are being handled
+ */
+function adminCliGuardSignalsWhileTyping(bool $on): bool
+{
+    if (!function_exists('pcntl_signal') || !function_exists('pcntl_async_signals') || !defined('SIGINT') || !defined('SIGTERM') || !defined('SIG_DFL')) {
+        return false;
+    }
+
+    if (!$on) {
+        pcntl_signal(SIGINT, SIG_DFL);
+        pcntl_signal(SIGTERM, SIG_DFL);
+        return true;
+    }
+
+    // @see https://www.php.net/manual/en/function.pcntl-async-signals.php
+    pcntl_async_signals(true);
+
+    $handler = static function (int $signal): void {
+        adminCliTerminalRestore();
+        fwrite(STDERR, PHP_EOL . 'Stopped. Nothing was changed.' . PHP_EOL);
+        if (!defined('CUERCODE_ADMIN_CLI_FINISHED')) {
+            define('CUERCODE_ADMIN_CLI_FINISHED', true);
+        }
+        exit(CUERCODE_ADMIN_CLI_EXIT_REFUSED);
+    };
+
+    pcntl_signal(SIGINT, $handler);
+    pcntl_signal(SIGTERM, $handler);
+
+    return true;
+}
+
+/**
+ * 📏 The fewest characters a password may have: the password_min_length
+ *    setting, as sign-up and "Forgot password" use it.
+ *
+ * @return int
+ */
+function adminCliPasswordMinLength(): int
+{
+    $minLength = 8;
+    if (defined('CUERCODE_PASSWORD_MIN_LENGTH_DEFAULT')) {
+        $minLength = (int) CUERCODE_PASSWORD_MIN_LENGTH_DEFAULT;
+    }
+
+    if (function_exists('getConfig')) {
+        $minLength = (int) getConfig('password_min_length', $minLength);
+    }
+
+    if ($minLength < 1) {
+        $minLength = 8;
+    }
+
+    return $minLength;
+}
+
+/**
+ * 🔑 Ask the operator for the NEW password (hidden, twice, up to three
+ *    tries), check it with the site's rules and hash it with the site's own
+ *    hashPassword() (Argon2id). The plain password never leaves this function.
+ *
+ * Hashing happens here, BEFORE the database transaction starts, so the
+ * account row is locked only for the few quick statements that change it.
+ *
+ * @return array{ok: bool, hash: string|null, exitCode: int, message: string}
+ */
+function adminCliAskNewPasswordHash(): array
+{
+    $result = ['ok' => false, 'hash' => null, 'exitCode' => CUERCODE_ADMIN_CLI_EXIT_REFUSED, 'message' => ''];
+
+    if (!function_exists('hashPassword') || !function_exists('validatePasswordPolicy')) {
+        $result['exitCode'] = CUERCODE_ADMIN_CLI_EXIT_FAILED;
+        $result['message']  = 'Nothing was changed: the password functions (fn_password.php) could not be loaded.';
+        return $result;
+    }
+
+    $minLength = adminCliPasswordMinLength();
+
+    // 🧯 Whatever happens next, the terminal gets its typing back.
+    register_shutdown_function('adminCliTerminalRestore');
+    $signalsGuarded = adminCliGuardSignalsWhileTyping(true);
+
+    fwrite(STDOUT, adminCliPasswordRulesText($minLength) . PHP_EOL);
+    if (!$signalsGuarded) {
+        fwrite(STDOUT, '(If you stop with Ctrl+C and your typing stays invisible afterwards, type "stty sane" and press Enter.)' . PHP_EOL);
+    }
+
+    try {
+        for ($attempt = 1; $attempt <= CUERCODE_ADMIN_CLI_PASSWORD_TRIES; $attempt++) {
+            $first = adminCliReadHiddenLine('New password: ');
+            if ($first['ok'] !== true) {
+                $result['message'] = 'Nothing was changed: ' . $first['error'] . '.';
+                return $result;
+            }
+
+            $second = adminCliReadHiddenLine('Type the new password again: ');
+            if ($second['ok'] !== true) {
+                unset($first);
+                $result['message'] = 'Nothing was changed: ' . $second['error'] . '.';
+                return $result;
+            }
+
+            $check = adminCliNewPasswordCheck($first['line'], $second['line'], $minLength);
+
+            if ($check['ok'] === true) {
+                try {
+                    $hash = hashPassword((string) $first['line']);
+                } catch (\Throwable $e) {
+                    unset($first, $second);
+                    $result['exitCode'] = CUERCODE_ADMIN_CLI_EXIT_FAILED;
+                    $result['message']  = 'Nothing was changed: the new password could not be stored safely (hashing failed - see the error log).';
+                    if (function_exists('logError')) {
+                        logError('error', 'Command-line Global Admin grant: password hashing failed', get_class($e));
+                    }
+                    return $result;
+                }
+
+                unset($first, $second);
+                $result['ok']       = true;
+                $result['hash']     = $hash;
+                $result['exitCode'] = CUERCODE_ADMIN_CLI_EXIT_OK;
+                return $result;
+            }
+
+            unset($first, $second);
+
+            $triesLeft = CUERCODE_ADMIN_CLI_PASSWORD_TRIES - $attempt;
+            if ($triesLeft > 0) {
+                $triesWord = 'tries';
+                if ($triesLeft === 1) {
+                    $triesWord = 'try';
+                }
+                fwrite(STDOUT, $check['error'] . ' Please try again (' . $triesLeft . ' more ' . $triesWord . ').' . PHP_EOL);
+            } else {
+                fwrite(STDOUT, $check['error'] . PHP_EOL);
+            }
+        }
+    } finally {
+        adminCliGuardSignalsWhileTyping(false);
+        adminCliTerminalRestore();
+    }
+
+    $result['message'] = 'Nothing was changed: no acceptable new password was typed after ' . CUERCODE_ADMIN_CLI_PASSWORD_TRIES . ' tries.';
+
+    return $result;
+}
+
+/**
+ * 🚪 Remove every EARLIER way into an account (decision 0010). Runs inside
+ *    the caller's transaction; any database error is thrown so the caller
+ *    rolls EVERYTHING back.
+ *
+ * What exists in this database that could let an earlier registrant stay in:
+ *   - tblUserSessions: signed-in sessions -> ended (revokedAt set);
+ *   - tblAPIKeys: the account's API keys -> switched off (isActive = 0, the
+ *     same as the "revoke" button);
+ *   - tblPasswordResets: unused reset links -> cancelled (usedAt set);
+ *   - tblUserOAuth: linked Microsoft/Google sign-ins -> removed (a link has
+ *     no "off" switch; the owner can link their own again afterwards);
+ *   - tblWebAuthnCredentials: passkeys -> removed (not in use yet, but
+ *     removed so nothing is left behind when they are).
+ * There are no "remember me" tokens on this site. Unused email-check links
+ * (tblEmailVerifications) are left: they only work on a 'pending' account,
+ * and the account stops being pending in the same transaction.
+ *
+ * A pending account cannot sign in, so normally every count is 0; this is
+ * the belt-and-braces step for anything that got there some other way.
+ *
+ * @param int $userID The account
+ * @return array<string, int> How many of each were removed (no secrets)
+ * @throws \RuntimeException On any database error
+ */
+function adminCliRemoveEarlierAccess(int $userID): array
+{
+    $statements = [
+        'sessions_ended'                 => 'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
+        'api_keys_turned_off'            => 'UPDATE `tblAPIKeys` SET `isActive` = 0 WHERE `userID` = ? AND `isActive` = 1',
+        'password_reset_links_cancelled' => 'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `userID` = ? AND `usedAt` IS NULL',
+        'linked_sign_ins_removed'        => 'DELETE FROM `tblUserOAuth` WHERE `userID` = ?',
+        'passkeys_removed'               => 'DELETE FROM `tblWebAuthnCredentials` WHERE `userID` = ?',
+    ];
+
+    $removed = [];
+
+    foreach ($statements as $key => $sql) {
+        $stmt = dbQuery($sql, 'i', [$userID]);
+        $count = $stmt->affected_rows;
+        $stmt->close();
+
+        if (!is_int($count) || $count < 0) {
+            throw new \RuntimeException('earlier access could not be removed');
+        }
+
+        $removed[$key] = $count;
+    }
+
+    return $removed;
+}
+
 /**
  * ✅ `grant`: make the account a Global Admin (and, with --activate, active
  *    with a checked email), and write the admin.grant audit row - in ONE
@@ -2856,15 +3513,44 @@ function adminRollbackQuietly(\mysqli $db): void
  *
  * The account is read again, locked, inside the transaction and the decision
  * is re-made on that fresh copy, so nothing that changed in the meantime can
- * slip through.
+ * slip through. It must also still be the account the operator was shown
+ * ($expectedUserID).
  *
- * @param string $email      Normalised email
- * @param bool   $activate   --activate was given
- * @param string $actorLabel From adminCliActorLabel()
+ * 🔐 Decision 0010: when the decision says 'resetsPassword' (a pending
+ *    account, or one with no checked email, with --activate), the SAME
+ *    transaction also stores the new password hash, clears any sign-in
+ *    lock-out and removes every earlier way into the account
+ *    (adminCliRemoveEarlierAccess()). The audit row records
+ *    password_reset: true and HOW MANY of each thing were removed - never
+ *    the password or its hash. Without a new hash such an account is
+ *    refused; a hash for an account that no longer needs one is refused too
+ *    (it changed while the operator was typing).
+ *
+ * @param string      $email           Normalised email
+ * @param bool        $activate        --activate was given
+ * @param string      $actorLabel      From adminCliActorLabel()
+ * @param int|null    $expectedUserID  The account number shown to the operator (null = not checked)
+ * @param string|null $newPasswordHash From adminCliAskNewPasswordHash() (a hash, never the password)
  * @return array{exitCode: int, message: string, warnings: array<int, string>}
  */
-function adminCliGrant(string $email, bool $activate, string $actorLabel): array
-{
+function adminCliGrant(
+    string $email,
+    bool $activate,
+    string $actorLabel,
+    ?int $expectedUserID = null,
+    #[\SensitiveParameter] ?string $newPasswordHash = null
+): array {
+    $hasNewHash = ($newPasswordHash !== null && $newPasswordHash !== '');
+
+    // 🛡️ Only a real password hash is ever stored - never plain text by mistake.
+    //    @see https://www.php.net/manual/en/function.password-get-info.php
+    if ($hasNewHash) {
+        $hashInfo = password_get_info((string) $newPasswordHash);
+        if (!isset($hashInfo['algoName']) || $hashInfo['algoName'] === 'unknown') {
+            return ['exitCode' => CUERCODE_ADMIN_CLI_EXIT_FAILED, 'message' => 'Nothing was changed: the new password was not in its stored (hashed) form.', 'warnings' => []];
+        }
+    }
+
     if (!function_exists('getDB') || !function_exists('dbQuery')) {
         return ['exitCode' => CUERCODE_ADMIN_CLI_EXIT_FAILED, 'message' => 'The database is not available.', 'warnings' => []];
     }
@@ -2894,10 +3580,57 @@ function adminCliGrant(string $email, bool $activate, string $actorLabel): array
         $row    = $rows[0];
         $userID = (int) $row['userID'];
 
+        // 🪪 Still the account the operator was shown? (Email addresses are
+        //    unique, so a different number means it was replaced meanwhile.)
+        if ($expectedUserID !== null && $userID !== $expectedUserID) {
+            adminRollbackQuietly($db);
+            return [
+                'exitCode' => CUERCODE_ADMIN_CLI_EXIT_REFUSED,
+                'message'  => 'Nothing was changed: the account with that email address is not the one you were shown a moment ago. Run the command again and check the details.',
+                'warnings' => [],
+            ];
+        }
+
+        // 🔐 Decision 0010: a new password exactly when one is needed.
+        if ($decision['resetsPassword'] && !$hasNewHash) {
+            adminRollbackQuietly($db);
+            return [
+                'exitCode' => CUERCODE_ADMIN_CLI_EXIT_REFUSED,
+                'message'  => 'Nothing was changed: this account has not proved its email address, so it can only be activated with a new password typed at the keyboard (decision 0010).',
+                'warnings' => [],
+            ];
+        }
+
+        if (!$decision['resetsPassword'] && $hasNewHash) {
+            adminRollbackQuietly($db);
+            return [
+                'exitCode' => CUERCODE_ADMIN_CLI_EXIT_REFUSED,
+                'message'  => 'Nothing was changed: the account changed while you were typing (it no longer needs a new password). Run the command again.',
+                'warnings' => [],
+            ];
+        }
+
         $before = ['roleID' => $row['roleID'], 'status' => (string) $row['status'], 'emailVerifiedAt' => $row['emailVerifiedAt']];
         $after  = ['roleID' => CUERCODE_ROLE_GLOBAL_ADMIN, 'status' => (string) $row['status'], 'emailVerifiedAt' => $row['emailVerifiedAt']];
 
-        if ($decision['activates']) {
+        $removed = [];
+
+        if ($decision['resetsPassword']) {
+            // 🔐 Decision 0010: role, activation, the NEW password and a clean
+            //    lock-out counter in one statement. The old password (which may
+            //    be a stranger's) stops working at commit.
+            $stmt = dbQuery(
+                "UPDATE `tblUsers` SET `roleID` = ?, `status` = 'active', `emailVerifiedAt` = COALESCE(`emailVerifiedAt`, UTC_TIMESTAMP()), "
+                . '`passwordHash` = ?, `failedLoginCount` = 0, `lockedUntil` = NULL '
+                . "WHERE `userID` = ? AND `status` IN ('pending', 'active') AND `passwordHash` IS NOT NULL",
+                'isi',
+                [CUERCODE_ROLE_GLOBAL_ADMIN, (string) $newPasswordHash, $userID]
+            );
+            $after['status'] = 'active';
+            if ($row['emailVerifiedAt'] === null) {
+                $after['emailVerifiedAt'] = 'set to now (UTC)';
+            }
+        } elseif ($decision['activates']) {
             // ✳️ --activate: whoever can run commands on the server already
             //    controls the site, so marking this email as checked is safe.
             $stmt = dbQuery(
@@ -2924,6 +3657,25 @@ function adminCliGrant(string $email, bool $activate, string $actorLabel): array
             throw new \RuntimeException('the account changed while it was being updated');
         }
 
+        $changes = adminAuditChanges($before, $after, []);
+        $reason  = null;
+
+        if ($decision['resetsPassword']) {
+            // 🚪 Every earlier way in, removed in THIS transaction.
+            $removed = adminCliRemoveEarlierAccess($userID);
+
+            // 🧾 What happened - counts only, never the password or its hash.
+            $changes['password_reset'] = ['old' => false, 'new' => true];
+            $changes['access_removed'] = ['old' => null, 'new' => $removed];
+
+            $registeredAt = 'an unknown time';
+            if (isset($row['createdAt'])) {
+                $registeredAt = adminCliSafeDisplay($row['createdAt'], 40) . ' UTC';
+            }
+            $reason = 'Decision 0010: the account had not proved its email address, so a new password was typed at the keyboard'
+                . ' and every earlier way in was removed. Registered at ' . $registeredAt . ' (shown to the operator before confirming).';
+        }
+
         $audited = adminAuditWrite([
             'actorType'   => 'cli',
             'actorUserID' => null,
@@ -2932,7 +3684,8 @@ function adminCliGrant(string $email, bool $activate, string $actorLabel): array
             'entityType'  => 'user',
             'entityKey'   => (string) $userID,
             'outcome'     => 'success',
-            'changes'     => adminAuditChanges($before, $after, []),
+            'changes'     => $changes,
+            'reason'      => $reason,
         ]);
 
         if (!$audited) {
@@ -2951,7 +3704,10 @@ function adminCliGrant(string $email, bool $activate, string $actorLabel): array
     }
 
     $message = 'Done: the account is now a Global Admin.';
-    if ($decision['activates']) {
+    if ($decision['resetsPassword']) {
+        $message = 'Done: the account is now an active Global Admin with a checked email address and the new password you typed.'
+            . ' Removed: ' . adminCliRemovedSummary($removed);
+    } elseif ($decision['activates']) {
         $message = 'Done: the account is now an active Global Admin with a checked email address.';
     }
 

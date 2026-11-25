@@ -17,10 +17,24 @@
  *      waiting upgrade for a Global Admin, records "admin:<userID>" in
  *      tblSchemaMigrations, then writes its schema.migrate audit row into
  *      the table the upgrade has just created.
- *   C. CLI grant: `grant --activate --yes` on a PENDING account makes it an
- *      active, verified Global Admin with an admin.grant audit row (actor
- *      cli:<user>), in one transaction; the typed-confirmation path (no
- *      --yes) works and a wrong confirmation is refused.
+ *   C. CLI grant, with decision 0010 (a pending account gets a NEW password):
+ *      C1 from a pipe (not a terminal) it is refused before anything is
+ *         asked, even with a password piped in, and nothing changes;
+ *      C2 one transaction: a database trigger forces a failure at the audit
+ *         row (last step) and at removing linked sign-ins (middle step) -
+ *         password, role, status, sessions, keys, links and audit are all
+ *         exactly as before; no hash / a different account number refused;
+ *      C3 the REAL command in a pretend terminal (the `script` tool): the
+ *         account details and "stop" warning come first, the typed
+ *         confirmation, then a weak password, a mismatch and a good one; the
+ *         typing never appears; the old password stops working, the new one
+ *         works, every session / API key / reset link / linked sign-in /
+ *         passkey of that account is removed (another account's are not),
+ *         and the audit row says password_reset: true with the counts and no
+ *         password or hash. (Without a usable `script` tool C3 is reported
+ *         as NOT RUN and the grant is made in-process instead.)
+ *      Also: an ACTIVE account is granted through a pipe with NO reset; the
+ *      typed-confirmation path works and a wrong confirmation is refused.
  *   D. CLI refusals (exit 2, nothing changed): suspended, deleted, password-
  *      less (SSO-only) and unknown accounts.
  *   E. CLI list shows the admins with their email addresses partly hidden.
@@ -38,8 +52,9 @@
  *   J. Password re-confirmation: a wrong password counts toward the normal
  *      account lock-out, the right one resets it, and a locked account is
  *      refused even with the right password.
- *   K. No password typed during the run appears anywhere in the audit log,
- *      the activity log or the error log tables.
+ *   K. No password typed or piped during the run (including the owner's
+ *      old one and the refused ones) and no new password HASH appears
+ *      anywhere in the audit log, the activity log or the error log tables.
  *
  * Not covered (needs a browser and a web server): the pages' redirects, the
  * 404, the headers and the forms - see the independent review notes.
@@ -266,6 +281,47 @@ foreach ($aiAccounts as $aiKey => $aiAccount) {
     $aiInsert->close();
 }
 
+// 🚪 Decision 0010: "earlier ways in" on the PENDING owner account, as if a
+//    stranger had registered it first. (A pending account cannot sign in, so
+//    these cannot normally exist - the grant must remove them anyway.) Plus a
+//    few already-dead ones that must not be counted, and live ones on the
+//    ACTIVE "second" account that a grant must NOT touch.
+/**
+ * 🧱 Insert test rows with one prepared statement per row.
+ */
+function aiInsertRows(\mysqli $aiDb, string $aiSql, string $aiTypes, array $aiRows): void
+{
+    foreach ($aiRows as $aiRowValues) {
+        $aiStatement = $aiDb->prepare($aiSql);
+        $aiStatement->bind_param($aiTypes, ...$aiRowValues);
+        $aiStatement->execute();
+        $aiStatement->close();
+    }
+}
+$aiOwnerID  = $aiUserIDs['owner'];
+$aiSecondID = $aiUserIDs['second'];
+aiInsertRows($aiServer, 'INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `expiresAt`, `revokedAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 DAY), ?)', 'sis', [
+    [bin2hex(random_bytes(32)), $aiOwnerID, null],
+    [bin2hex(random_bytes(32)), $aiOwnerID, null],
+    [bin2hex(random_bytes(32)), $aiOwnerID, '2026-11-01 09:00:00'],
+    [bin2hex(random_bytes(32)), $aiSecondID, null],
+]);
+aiInsertRows($aiServer, 'INSERT INTO `tblAPIKeys` (`apiKeyHash`, `apiKeyPrefix`, `userID`, `isActive`) VALUES (?, ?, ?, ?)', 'ssii', [
+    [hash('sha256', random_bytes(16)), 'cuercode_it1', $aiOwnerID, 1],
+    [hash('sha256', random_bytes(16)), 'cuercode_it2', $aiOwnerID, 0],
+    [hash('sha256', random_bytes(16)), 'cuercode_it3', $aiSecondID, 1],
+]);
+aiInsertRows($aiServer, 'INSERT INTO `tblPasswordResets` (`userID`, `tokenHash`, `expiresAt`, `usedAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR), ?)', 'iss', [
+    [$aiOwnerID, hash('sha256', random_bytes(16)), null],
+    [$aiOwnerID, hash('sha256', random_bytes(16)), '2026-11-01 09:00:00'],
+]);
+aiInsertRows($aiServer, 'INSERT INTO `tblUserOAuth` (`userID`, `provider`, `providerSubjectID`) VALUES (?, ?, ?)', 'iss', [
+    [$aiOwnerID, 'google', 'stranger-google-subject-' . bin2hex(random_bytes(4))],
+]);
+aiInsertRows($aiServer, 'INSERT INTO `tblWebAuthnCredentials` (`userID`, `credentialID`, `publicKey`) VALUES (?, ?, ?)', 'iss', [
+    [$aiOwnerID, 'stranger-passkey-' . bin2hex(random_bytes(4)), 'not-a-real-key'],
+]);
+
 // ==============================================================================
 // 🧰 Helpers
 // ==============================================================================
@@ -279,6 +335,10 @@ function aiCheck(string $aiScenario, bool $aiPassed, string $aiWhat): void
     if (!isset($GLOBALS['aiChecks'][$aiScenario])) {
         $GLOBALS['aiChecks'][$aiScenario] = true;
     }
+    if (!isset($GLOBALS['aiCheckCount'])) {
+        $GLOBALS['aiCheckCount'] = 0;
+    }
+    $GLOBALS['aiCheckCount']++;
     if (!$aiPassed) {
         $GLOBALS['aiChecks'][$aiScenario] = false;
         echo '    FAIL ';
@@ -340,7 +400,125 @@ function aiCount(\mysqli $aiDb, string $aiSql, string $aiTypes = '', array $aiPa
     return (int) array_values($aiFetched)[0];
 }
 
+/**
+ * 🖥️ Run the REAL admin_access.php inside a PRETEND TERMINAL (a "pseudo-
+ *    terminal", made by the standard `script` tool), answering its prompts
+ *    one at a time, the way a person at the keyboard would. Each step waits
+ *    for its prompt to appear AFTER the previous answer, then types.
+ *
+ * Returns null when this machine has no `script` tool this knows how to use
+ * (macOS/BSD and Linux are supported).
+ *
+ * @param array<int, array{0: string, 1: string}> $aiSteps [prompt to wait for, line to type]
+ * @return array{exit: int, out: string, stepsDone: int}|null
+ */
+function aiCliTty(string $aiDb, array $aiCliArguments, array $aiSteps): ?array
+{
+    $aiScriptTool = '';
+    foreach (['/usr/bin/script', '/bin/script'] as $aiCandidate) {
+        if (is_executable($aiCandidate)) {
+            $aiScriptTool = $aiCandidate;
+            break;
+        }
+    }
+    if ($aiScriptTool === '') {
+        return null;
+    }
+
+    $aiInner = array_merge([PHP_BINARY, __FILE__, '--run-admin-cli', '--db=' . $aiDb], $aiCliArguments);
+
+    if (PHP_OS_FAMILY === 'Darwin' || PHP_OS_FAMILY === 'BSD') {
+        // BSD/macOS: script -q <transcript file> <command...>
+        $aiCommand = array_merge([$aiScriptTool, '-q', '/dev/null'], $aiInner);
+    } elseif (PHP_OS_FAMILY === 'Linux') {
+        // util-linux: script -q -e (pass the exit code on) -c "<command>" <transcript file>
+        $aiQuoted = [];
+        foreach ($aiInner as $aiPart) {
+            $aiQuoted[] = escapeshellarg($aiPart);
+        }
+        $aiCommand = [$aiScriptTool, '-q', '-e', '-c', implode(' ', $aiQuoted), '/dev/null'];
+    } else {
+        return null;
+    }
+
+    $aiProcess = proc_open($aiCommand, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $aiPipes);
+    if (!is_resource($aiProcess)) {
+        return null;
+    }
+
+    stream_set_blocking($aiPipes[1], false);
+    stream_set_blocking($aiPipes[2], false);
+
+    $aiOut        = '';
+    $aiStep       = 0;
+    $aiSearchFrom = 0;
+    $aiDeadline   = microtime(true) + 90;
+
+    while (microtime(true) < $aiDeadline) {
+        $aiRead   = [$aiPipes[1], $aiPipes[2]];
+        $aiWrite  = null;
+        $aiExcept = null;
+        if (stream_select($aiRead, $aiWrite, $aiExcept, 0, 100000) > 0) {
+            foreach ($aiRead as $aiReadable) {
+                $aiChunk = fread($aiReadable, 8192);
+                if (is_string($aiChunk)) {
+                    $aiOut .= $aiChunk;
+                }
+            }
+        }
+
+        if ($aiStep < count($aiSteps)) {
+            $aiPromptAt = strpos($aiOut, $aiSteps[$aiStep][0], $aiSearchFrom);
+            if ($aiPromptAt !== false) {
+                fwrite($aiPipes[0], $aiSteps[$aiStep][1] . "\n");
+                $aiSearchFrom = $aiPromptAt + strlen($aiSteps[$aiStep][0]);
+                $aiStep++;
+            }
+        }
+
+        $aiStatus = proc_get_status($aiProcess);
+        if (!$aiStatus['running']) {
+            $aiOut .= (string) stream_get_contents($aiPipes[1]);
+            $aiOut .= (string) stream_get_contents($aiPipes[2]);
+            break;
+        }
+    }
+
+    fclose($aiPipes[0]);
+    fclose($aiPipes[1]);
+    fclose($aiPipes[2]);
+
+    // proc_get_status() reports the exit code once; proc_close() after that gives -1.
+    $aiExit = -1;
+    if (isset($aiStatus) && !$aiStatus['running']) {
+        $aiExit = (int) $aiStatus['exitcode'];
+        proc_close($aiProcess);
+    } else {
+        proc_terminate($aiProcess);
+        proc_close($aiProcess);
+    }
+
+    return ['exit' => $aiExit, 'out' => $aiOut, 'stepsDone' => $aiStep];
+}
+
+/**
+ * 📸 Everything a grant could change about the owner account, so "nothing
+ *    changed" can be checked exactly.
+ */
+function aiOwnerSnapshot(\mysqli $aiDb, int $aiUserID): array
+{
+    $aiSnapshot = aiRow($aiDb, 'SELECT `roleID`, `status`, `emailVerifiedAt`, `passwordHash`, `failedLoginCount`, `lockedUntil` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiUserID]);
+    $aiSnapshot['liveSessions'] = aiCount($aiDb, 'SELECT COUNT(*) FROM `tblUserSessions` WHERE `userID` = ? AND `revokedAt` IS NULL', 'i', [$aiUserID]);
+    $aiSnapshot['activeKeys']   = aiCount($aiDb, 'SELECT COUNT(*) FROM `tblAPIKeys` WHERE `userID` = ? AND `isActive` = 1', 'i', [$aiUserID]);
+    $aiSnapshot['unusedResets'] = aiCount($aiDb, 'SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$aiUserID]);
+    $aiSnapshot['oauthLinks']   = aiCount($aiDb, 'SELECT COUNT(*) FROM `tblUserOAuth` WHERE `userID` = ?', 'i', [$aiUserID]);
+    $aiSnapshot['passkeys']     = aiCount($aiDb, 'SELECT COUNT(*) FROM `tblWebAuthnCredentials` WHERE `userID` = ?', 'i', [$aiUserID]);
+    $aiSnapshot['grantRows']    = aiCount($aiDb, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'admin.grant' AND `entityKey` = ?", 's', [(string) $aiUserID]);
+    return $aiSnapshot;
+}
+
 $aiOwnerEmail = $aiAccounts['owner'][0];
+$aiSkipped    = [];
 
 // ==============================================================================
 // A. Before the upgrades, the CLI refuses
@@ -399,17 +577,103 @@ aiCheck('B', $aiAgain['ok'] === true && $aiAgain['applied'] === [], 'running it 
 // ==============================================================================
 // C. CLI grant
 // ==============================================================================
-echo PHP_EOL . 'C. Command-line grant' . PHP_EOL;
-$aiRun = aiCli($aiDbName, ['grant', $aiOwnerEmail, '--activate', '--yes']);
-aiCheck('C', $aiRun['exit'] === 0, 'grant --activate --yes on a pending account: exit 0 (got ' . $aiRun['exit'] . ', ' . trim($aiRun['err']) . ')');
-$aiOwnerRow = aiRow($aiServer, 'SELECT `roleID`, `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiUserIDs['owner']]);
-aiCheck('C', (int) $aiOwnerRow['roleID'] === 1, 'the account is now roleID 1');
-aiCheck('C', $aiOwnerRow['status'] === 'active', 'the account is now active');
-aiCheck('C', $aiOwnerRow['emailVerifiedAt'] !== null, 'the account now has a checked email (emailVerifiedAt set)');
-$aiGrantRow = aiRow($aiServer, "SELECT `actorUserID`, `actorType`, `actorLabel`, `outcome`, `changesJSON` FROM `tblAdminAuditLog` WHERE `action` = 'admin.grant' AND `entityKey` = ?", 's', [(string) $aiUserIDs['owner']]);
+echo PHP_EOL . 'C. Command-line grant (decision 0010: a pending account gets a new password)' . PHP_EOL;
+$aiOwnerBefore = aiOwnerSnapshot($aiServer, $aiOwnerID);
+aiCheck('C', $aiOwnerBefore['liveSessions'] === 2 && $aiOwnerBefore['activeKeys'] === 1 && $aiOwnerBefore['unusedResets'] === 1 && $aiOwnerBefore['oauthLinks'] === 1 && $aiOwnerBefore['passkeys'] === 1, 'set-up: the pending owner has 2 live sessions, 1 live API key, 1 unused reset link, 1 linked Google sign-in, 1 passkey');
+
+// C1. No terminal: refused BEFORE anything is asked, even with a password piped in.
+$aiPipedPassword = 'Piped-New-' . bin2hex(random_bytes(6));
+$aiRun = aiCli($aiDbName, ['grant', $aiOwnerEmail, '--activate', '--yes'], $aiPipedPassword . "\n" . $aiPipedPassword . "\n");
+aiCheck('C', $aiRun['exit'] === 2, 'C1 grant --activate --yes from a PIPE: exit 2, refused (got ' . $aiRun['exit'] . ')');
+aiCheck('C', str_contains($aiRun['err'], 'not a terminal') && str_contains($aiRun['err'], 'decision 0010'), 'C1 the refusal says its input is not a terminal (decision 0010)');
+aiCheck('C', str_contains($aiRun['out'], 'Registered at:') && str_contains($aiRun['out'], 'Display name:   IT owner') && str_contains($aiRun['out'], 'WARNING: if you did not register this account at that time, stop'), 'C1 the account details and the "stop" warning were still shown');
+aiCheck('C', !str_contains($aiRun['out'] . $aiRun['err'], $aiPipedPassword), 'C1 the piped password is never echoed');
+aiCheck('C', aiOwnerSnapshot($aiServer, $aiOwnerID) === $aiOwnerBefore, 'C1 nothing changed (role, status, password hash, sessions, keys, links, audit)');
+$aiRun = aiCli($aiDbName, ['grant', $aiOwnerEmail, '--activate'], $aiOwnerEmail . "\n" . $aiPipedPassword . "\n" . $aiPipedPassword . "\n");
+aiCheck('C', $aiRun['exit'] === 2 && !str_contains($aiRun['out'], 'Type the email address again'), 'C1 without --yes, from a pipe: refused before the typed confirmation is even asked');
+aiCheck('C', aiOwnerSnapshot($aiServer, $aiOwnerID) === $aiOwnerBefore, 'C1 ...and nothing changed');
+
+// C2. One transaction: force a failure part-way and prove NOTHING changed.
+//     A database trigger makes one statement fail: first the audit row (the
+//     LAST step, after the password, sessions, keys and links were changed),
+//     then removing the linked sign-in (a middle step).
+$aiForcedHash = hashPassword('Forced-' . bin2hex(random_bytes(8)));
+$aiForcedFailures = [
+    'the audit row (last step)'        => ['tblAdminAuditLog', 'INSERT'],
+    'removing linked sign-ins (middle)' => ['tblUserOAuth', 'DELETE'],
+];
+foreach ($aiForcedFailures as $aiWhere => $aiTrigger) {
+    $aiServer->query('DROP TRIGGER IF EXISTS `aiForcedFailure`');
+    $aiServer->query('CREATE TRIGGER `aiForcedFailure` BEFORE ' . $aiTrigger[1] . ' ON `' . $aiTrigger[0] . '` FOR EACH ROW SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'');
+    $aiForced = adminCliGrant($aiOwnerEmail, true, 'cli:integration-test', $aiOwnerID, $aiForcedHash);
+    $aiServer->query('DROP TRIGGER IF EXISTS `aiForcedFailure`');
+    aiCheck('C', $aiForced['exitCode'] === 1 && str_contains($aiForced['message'], 'Nothing was changed'), 'C2 forced failure at ' . $aiWhere . ': exit 1, "Nothing was changed"');
+    aiCheck('C', aiOwnerSnapshot($aiServer, $aiOwnerID) === $aiOwnerBefore, 'C2 forced failure at ' . $aiWhere . ': password, role, status, sessions, keys, links and audit are ALL exactly as before');
+}
+$aiForced = adminCliGrant($aiOwnerEmail, true, 'cli:integration-test', $aiOwnerID, null);
+aiCheck('C', $aiForced['exitCode'] === 2 && str_contains($aiForced['message'], 'new password typed at the keyboard'), 'C2 adminCliGrant() with no new password for a pending account: refused (exit 2)');
+$aiForced = adminCliGrant($aiOwnerEmail, true, 'cli:integration-test', $aiOwnerID + 1000, $aiForcedHash);
+aiCheck('C', $aiForced['exitCode'] === 2 && str_contains($aiForced['message'], 'not the one you were shown'), 'C2 a different account number from the one shown: refused (exit 2)');
+aiCheck('C', aiOwnerSnapshot($aiServer, $aiOwnerID) === $aiOwnerBefore, 'C2 ...and still nothing changed');
+
+// C3. The real command in a (pretend) terminal: details, warning, typed
+//     confirmation, then the new password - a weak one, a mismatch, then a
+//     good one (three tries).
+$aiOldOwnerPassword = $aiPasswords['owner'];
+$aiNewOwnerPassword = 'New-Owner-' . bin2hex(random_bytes(8));
+$aiWeakPassword     = 'password123';
+$aiTty = aiCliTty($aiDbName, ['grant', $aiOwnerEmail, '--activate'], [
+    ['Type the email address again to confirm: ', $aiOwnerEmail],
+    ['New password: ', $aiWeakPassword],
+    ['Type the new password again: ', $aiWeakPassword],
+    ['New password: ', $aiNewOwnerPassword],
+    ['Type the new password again: ', $aiNewOwnerPassword . 'x'],
+    ['New password: ', $aiNewOwnerPassword],
+    ['Type the new password again: ', $aiNewOwnerPassword],
+]);
+
+if ($aiTty === null) {
+    // 🟡 No pseudo-terminal tool here: do the same grant in-process so the
+    //    later scenarios still have an admin, and SAY that C3 did not run.
+    $aiSkipped[] = 'C3 (the real command in a pretend terminal) - no usable `script` tool on this machine; the grant was made in-process instead';
+    $aiFallback = adminCliGrant($aiOwnerEmail, true, 'cli:integration-test', $aiOwnerID, hashPassword($aiNewOwnerPassword));
+    aiCheck('C', $aiFallback['exitCode'] === 0, 'C3 (fallback, in-process) grant with a new password hash: exit 0');
+} else {
+    $aiTranscript = $aiTty['out'];
+    aiCheck('C', $aiTty['exit'] === 0 && $aiTty['stepsDone'] === 7, 'C3 in a terminal: all 7 prompts answered, exit 0 (got exit ' . $aiTty['exit'] . ', ' . $aiTty['stepsDone'] . ' prompts)');
+    $aiStopAt    = strpos($aiTranscript, 'WARNING: if you did not register this account at that time, stop');
+    $aiConfirmAt = strpos($aiTranscript, 'Type the email address again');
+    aiCheck('C', $aiStopAt !== false && $aiConfirmAt !== false && $aiStopAt < $aiConfirmAt && strpos($aiTranscript, 'Registered at:') < $aiConfirmAt && strpos($aiTranscript, 'Display name:   IT owner') < $aiConfirmAt, 'C3 email, display name, registration time and the "stop" warning come BEFORE the typed confirmation');
+    aiCheck('C', str_contains($aiTranscript, 'too common'), 'C3 a weak password is refused with the site\'s own rule ("too common")');
+    aiCheck('C', str_contains($aiTranscript, 'did not match'), 'C3 two different typings are refused ("did not match")');
+    aiCheck('C', !str_contains($aiTranscript, $aiNewOwnerPassword) && !str_contains($aiTranscript, $aiWeakPassword), 'C3 NOTHING typed as a password appears on the terminal (the typing was hidden)');
+    aiCheck('C', str_contains($aiTranscript, 'Removed: 2 sign-in session(s) ended, 1 API key(s) switched off, 1 unused password-reset link(s) cancelled, 1 linked Microsoft/Google sign-in(s) removed, 1 passkey(s) removed.'), 'C3 the operator is told exactly what was removed');
+}
+
+$aiOwnerAfter = aiOwnerSnapshot($aiServer, $aiOwnerID);
+aiCheck('C', (int) $aiOwnerAfter['roleID'] === 1, 'the account is now roleID 1');
+aiCheck('C', $aiOwnerAfter['status'] === 'active', 'the account is now active');
+aiCheck('C', $aiOwnerAfter['emailVerifiedAt'] !== null, 'the account now has a checked email (emailVerifiedAt set)');
+aiCheck('C', verifyPassword($aiOldOwnerPassword, (string) $aiOwnerAfter['passwordHash']) === false, 'the OLD password (possibly a stranger\'s) no longer works');
+aiCheck('C', verifyPassword($aiNewOwnerPassword, (string) $aiOwnerAfter['passwordHash']) === true, 'the NEW password works');
+aiCheck('C', str_starts_with((string) $aiOwnerAfter['passwordHash'], '$argon2id$') && passwordNeedsRehash((string) $aiOwnerAfter['passwordHash']) === false, 'the new password is stored with the site\'s own hashing (Argon2id, current settings)');
+aiCheck('C', $aiOwnerAfter['liveSessions'] === 0, 'every signed-in session of the account was ended');
+aiCheck('C', $aiOwnerAfter['activeKeys'] === 0, 'the account\'s API key was switched off');
+aiCheck('C', $aiOwnerAfter['unusedResets'] === 0, 'the unused password-reset link was cancelled');
+aiCheck('C', $aiOwnerAfter['oauthLinks'] === 0 && $aiOwnerAfter['passkeys'] === 0, 'the linked Google sign-in and the passkey were removed');
+aiCheck('C', aiCount($aiServer, 'SELECT COUNT(*) FROM `tblUserSessions` WHERE `userID` = ? AND `revokedAt` IS NULL', 'i', [$aiSecondID]) === 1 && aiCount($aiServer, 'SELECT COUNT(*) FROM `tblAPIKeys` WHERE `userID` = ? AND `isActive` = 1', 'i', [$aiSecondID]) === 1, 'another account\'s session and API key were NOT touched');
+$aiPasswords['owner'] = $aiNewOwnerPassword;
+
+$aiGrantRow = aiRow($aiServer, "SELECT `actorUserID`, `actorType`, `actorLabel`, `outcome`, `changesJSON`, `reason` FROM `tblAdminAuditLog` WHERE `action` = 'admin.grant' AND `entityKey` = ?", 's', [(string) $aiUserIDs['owner']]);
 aiCheck('C', $aiGrantRow !== null && $aiGrantRow['actorType'] === 'cli' && $aiGrantRow['actorUserID'] === null && str_starts_with((string) $aiGrantRow['actorLabel'], 'cli:'), 'admin.grant audit row: actor cli:<operating-system user>');
 $aiGrantChanges = json_decode((string) $aiGrantRow['changesJSON'], true);
 aiCheck('C', is_array($aiGrantChanges) && $aiGrantChanges['roleID']['new'] === 1 && $aiGrantChanges['status']['old'] === 'pending' && $aiGrantChanges['status']['new'] === 'active', 'the audit row records role and status before and after');
+aiCheck('C', is_array($aiGrantChanges) && isset($aiGrantChanges['password_reset']['new']) && $aiGrantChanges['password_reset']['new'] === true, 'the audit row says password_reset: true');
+aiCheck('C', is_array($aiGrantChanges) && isset($aiGrantChanges['access_removed']['new']) && $aiGrantChanges['access_removed']['new'] == ['sessions_ended' => 2, 'api_keys_turned_off' => 1, 'password_reset_links_cancelled' => 1, 'linked_sign_ins_removed' => 1, 'passkeys_removed' => 1], 'the audit row lists how many of each were removed (MySQL stores JSON keys in its own order, so order is not compared)');
+aiCheck('C', str_contains((string) $aiGrantRow['reason'], 'Decision 0010') && str_contains((string) $aiGrantRow['reason'], 'Registered at'), 'the audit reason names decision 0010 and the registration time shown');
+$aiAuditText = (string) $aiGrantRow['changesJSON'] . ' ' . (string) $aiGrantRow['reason'];
+aiCheck('C', !str_contains($aiAuditText, $aiNewOwnerPassword) && !str_contains($aiAuditText, $aiOldOwnerPassword) && !str_contains($aiAuditText, '$argon2') && !str_contains($aiAuditText, (string) $aiOwnerAfter['passwordHash']), 'the audit row holds no password and no password hash');
+$aiLogHashes = [(string) $aiOwnerAfter['passwordHash'], $aiForcedHash];
 
 $aiRun = aiCli($aiDbName, ['grant', $aiAccounts['second'][0]], "someone-else@it.cuercode.invalid\n");
 aiCheck('C', $aiRun['exit'] === 2 && str_contains($aiRun['err'], 'did not match'), 'a wrong typed confirmation is refused (exit 2)');
@@ -417,6 +681,15 @@ aiCheck('C', aiRow($aiServer, 'SELECT `roleID` FROM `tblUsers` WHERE `userID` = 
 $aiRun = aiCli($aiDbName, ['grant', $aiAccounts['second'][0]], ' SECOND@it.cuercode.invalid ' . "\n");
 aiCheck('C', $aiRun['exit'] === 0, 'the right typed confirmation (any case, spaces) grants (exit 0)');
 aiCheck('C', (int) aiRow($aiServer, 'SELECT `roleID` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiUserIDs['second']])['roleID'] === 1, 'second account is now a Global Admin');
+// 🔐 Decision 0010: an ACTIVE account with a checked email is NOT reset - no
+//    terminal needed (that grant came through a pipe), password unchanged,
+//    sessions and keys untouched, no password_reset in its audit row.
+aiCheck('C', !str_contains($aiRun['out'], 'NEW password') && !str_contains($aiRun['out'], 'WARNING: if you did not register'), 'active account: no new password asked, no "stop" warning');
+aiCheck('C', str_contains($aiRun['out'], 'Registered at:'), 'active account: its details are still shown before confirming');
+aiCheck('C', verifyPassword($aiPasswords['second'], (string) aiRow($aiServer, 'SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiSecondID])['passwordHash']) === true, 'active account: its own password still works (not reset)');
+aiCheck('C', aiCount($aiServer, 'SELECT COUNT(*) FROM `tblUserSessions` WHERE `userID` = ? AND `revokedAt` IS NULL', 'i', [$aiSecondID]) === 1 && aiCount($aiServer, 'SELECT COUNT(*) FROM `tblAPIKeys` WHERE `userID` = ? AND `isActive` = 1', 'i', [$aiSecondID]) === 1, 'active account: its session and API key are untouched');
+$aiSecondGrant = aiRow($aiServer, "SELECT `changesJSON`, `reason` FROM `tblAdminAuditLog` WHERE `action` = 'admin.grant' AND `entityKey` = ?", 's', [(string) $aiSecondID]);
+aiCheck('C', $aiSecondGrant !== null && !str_contains((string) $aiSecondGrant['changesJSON'], 'password_reset') && $aiSecondGrant['reason'] === null, 'active account: its audit row has no password_reset');
 $aiRun = aiCli($aiDbName, ['grant', $aiAccounts['second'][0], '--yes']);
 aiCheck('C', $aiRun['exit'] === 0 && str_contains($aiRun['out'], 'already a Global Admin'), 'granting an existing admin again: exit 0, nothing to do');
 aiCheck('C', aiCount($aiServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'admin.grant' AND `entityKey` = ?", 's', [(string) $aiUserIDs['second']]) === 1, '...and no second audit row');
@@ -534,7 +807,15 @@ aiCheck('J', $aiVerify['ok'] === false, 'an account with no password can never c
 // K. No password anywhere in the logs
 // ==============================================================================
 echo PHP_EOL . 'K. Passwords never reach a log' . PHP_EOL;
-foreach ($aiPasswords as $aiKey => $aiPlain) {
+// 🔐 Decision 0010: also every password typed or piped during the new-password
+//    runs, the owner's OLD password, and the new password HASHES.
+$aiScanForLeaks = $aiPasswords;
+$aiScanForLeaks['owner (old)']        = $aiOldOwnerPassword;
+$aiScanForLeaks['piped (refused)']    = $aiPipedPassword;
+$aiScanForLeaks['weak (refused)']     = $aiWeakPassword;
+$aiScanForLeaks['owner new hash']     = $aiLogHashes[0];
+$aiScanForLeaks['forced-failure hash'] = $aiLogHashes[1];
+foreach ($aiScanForLeaks as $aiKey => $aiPlain) {
     foreach (['tblAdminAuditLog' => 'changesJSON', 'tblActivityLog' => 'additionalData', 'tblErrorLog' => 'errorDetail'] as $aiTable => $aiColumn) {
         $aiTableHere = aiCount($aiServer, 'SELECT COUNT(*) FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?', 's', [$aiTable]);
         if ($aiTableHere !== 1) {
@@ -546,7 +827,7 @@ foreach ($aiPasswords as $aiKey => $aiPlain) {
             $aiColumns[] = 'COALESCE(CAST(`' . $aiColumnRow['Field'] . '` AS CHAR), \'\')';
         }
         $aiFound = aiCount($aiServer, 'SELECT COUNT(*) FROM `' . $aiTable . '` WHERE CONCAT_WS(\' \', ' . implode(', ', $aiColumns) . ') LIKE ?', 's', ['%' . $aiPlain . '%']);
-        aiCheck('K', $aiFound === 0, 'the ' . $aiKey . ' password is not in ' . $aiTable);
+        aiCheck('K', $aiFound === 0, 'the ' . $aiKey . ' value is not in ' . $aiTable);
     }
 }
 
@@ -556,7 +837,7 @@ foreach ($aiPasswords as $aiKey => $aiPlain) {
 $aiServer->query('DROP DATABASE IF EXISTS `' . $aiDbName . '`');
 $aiServer->close();
 
-echo PHP_EOL . 'Summary:' . PHP_EOL;
+echo PHP_EOL . 'Summary (' . $GLOBALS['aiCheckCount'] . ' checks):' . PHP_EOL;
 $aiAllPassed = true;
 foreach ($aiChecks as $aiScenario => $aiPassed) {
     if ($aiPassed) {
@@ -565,6 +846,11 @@ foreach ($aiChecks as $aiScenario => $aiPassed) {
         echo '  FAIL ' . $aiScenario . PHP_EOL;
         $aiAllPassed = false;
     }
+}
+
+// 🟡 Say plainly what did NOT run on this machine.
+foreach ($aiSkipped as $aiSkippedWhat) {
+    echo '  NOT RUN: ' . $aiSkippedWhat . PHP_EOL;
 }
 
 if ($aiAllPassed) {

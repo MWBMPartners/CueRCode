@@ -49,7 +49,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 423 |
+| `test_admin_access.php` | 535 |
 | `test_api_keys.php` | 108 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -220,7 +220,13 @@ against a real server, using one throwaway database built from
 role before the upgrades; `/admin/upgrades/`'s engine applying the upgrades
 before the change log table exists (audit entry falls back to the activity
 log, then `schema.migrate` lands in the new table); `grant --activate` on a
-pending account (with its `admin.grant` row), the typed confirmation, the
+pending account under decision 0010. That covers: refused from a pipe; one
+transaction, proved by database triggers that force failures part-way; the
+real command driven in a pretend terminal (the `script` tool), where typed
+passwords never appear; the old password stopping and the new one working;
+sessions, API keys, reset links, linked sign-ins and passkeys removed; and
+`password_reset: true` in its `admin.grant` row. Also: an active account
+granted with no reset, the typed confirmation, the
 refusals (suspended, deleted, no password, unknown), `list` with partly
 hidden addresses, `revoke` and the last-admin rule (all through the REAL
 `_includes/cli/admin_access.php` as a child process); the gate's fresh
@@ -240,9 +246,12 @@ CUERCODE_IT_DB_NAME=cuercode_it_p1b CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS
 docker stop cuercode-it
 ```
 
-Exit code 0 means every scenario passed. Last run 2026-11-24 (task 7n Phase
-1B): all 11 scenarios (79 checks) passed on MySQL 8.0.36, MySQL 8.4.13 and
-MariaDB 11.4.13. MariaDB 10.11 (named in the plan) was not available locally
+Exit code 0 means every scenario passed. Last run 2026-11-25 (decision
+0010): all 11 scenarios (134 checks) passed on MySQL 8.0.36, MySQL 8.4.11 and
+MariaDB 11.4.13, on macOS. The pretend-terminal step has a Linux form
+(`script -q -e -c`) that has not been run yet; without a usable `script`
+tool, that step is reported as NOT RUN. (2026-11-24, Phase 1B: 79 checks on
+MySQL 8.0.36, 8.4.13 and MariaDB 11.4.13.) MariaDB 10.11 (named in the plan) was not available locally
 and was not run.
 
 ## Syntax-checking the harness

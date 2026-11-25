@@ -23,6 +23,10 @@
  *      NEVER contains a secret, the 60 KB cap, adminAuditBuildRow() refusals.
  *   7. Dates and time zones (plan §8.4), including both clock changes.
  *   8. Command-line options, email masking, the grant and revoke decisions.
+ *      Decision 0010: when a grant resets the password, the account details
+ *      shown first (and safe against a hostile display name), the new-
+ *      password checks (typed twice, the site's own rules), no password
+ *      option, only a hash accepted, and the order of the steps.
  *   9. The HTML helpers escape everything.
  *  10. STATIC GUARDS (plan §9 Phase 1B):
  *      (a) every public_html/admin/** /index.php calls requireGlobalAdminPage(
@@ -33,7 +37,8 @@
  *      plus the admin .htaccess headers, the command-line guard, the header
  *      link, currentUser()'s roleID and the erasure guard.
  *  11. The real admin_access.php as a child process with --help and bad
- *      options ONLY (those exit before any database code is loaded).
+ *      options ONLY (those exit before any database code is loaded), plus a
+ *      database-free child that proves hidden typing refuses a pipe.
  *
  * ⚠️ NOT covered here (needs a real database): the real grant / revoke /
  *    list runs, the audit rows, the first-seen row, the erasure guard against
@@ -405,6 +410,101 @@ $aaGrant = adminGrantDecision([$aaAccount(['roleID' => 1])], true);
 assertTrue($aaGrant['outcome'] === 'grant' && $aaGrant['activates'], 'grant --activate on an admin that is still pending: activates');
 assertEquals('nothing', adminGrantDecision([$aaAccount(['roleID' => 1])], false)['outcome'], 'grant without --activate on a pending admin: nothing to do (with a warning)');
 
+// ------------------------------------------------------------------------------
+// 🔐 Decision 0010: activating an account that has not proved its email
+//    address sets a NEW password (and removes every earlier way in).
+// ------------------------------------------------------------------------------
+requireFn('fn_password.php');
+
+$aaGrant = adminGrantDecision([$aaAccount([])], true);
+assertTrue($aaGrant['resetsPassword'] === true, '0010: pending + --activate → the password is reset');
+assertContains('decision 0010', $aaGrant['message'], '0010: the preview message says a new password will be set');
+assertTrue(adminGrantDecision([$aaAccount(['roleID' => 1])], true)['resetsPassword'] === true, '0010: a pending account that already has role 1 + --activate → reset too');
+assertTrue(adminGrantDecision([$aaAccount(['status' => 'active', 'emailVerifiedAt' => null])], true)['resetsPassword'] === true, '0010: active but email never checked + --activate → reset (the email is being vouched for)');
+assertTrue(adminGrantDecision([$aaAccount([])], false)['resetsPassword'] === false, '0010: pending WITHOUT --activate → no reset (it is not activated, so it still cannot use the admin area)');
+$aaActiveVerified = adminGrantDecision([$aaAccount(['status' => 'active', 'emailVerifiedAt' => '2026-01-01 00:00:00'])], true);
+assertTrue($aaActiveVerified['resetsPassword'] === false && $aaActiveVerified['activates'] === false, '0010: an already active, verified account is NOT reset, even with --activate');
+assertFalse(str_contains($aaActiveVerified['message'], 'decision 0010'), '0010: ...and its message does not mention a new password');
+foreach ([[], [$aaAccount(['status' => 'suspended'])], [$aaAccount(['hasPassword' => 0])]] as $aaRefusedRows) {
+    assertTrue(adminGrantDecision($aaRefusedRows, true)['resetsPassword'] === false, '0010: a refusal never says resetsPassword');
+}
+foreach ([[$aaAccount([])], [$aaAccount(['status' => 'active', 'emailVerifiedAt' => '2026-01-01 00:00:00'])], [$aaAccount(['roleID' => 1])]] as $aaSameRows) {
+    $aaSame = adminGrantDecision($aaSameRows, true);
+    assertTrue($aaSame['resetsPassword'] === $aaSame['activates'], '0010: resetsPassword always equals activates');
+}
+
+// 🪪 What the operator is shown before confirming.
+$aaPreviewRow = ['userID' => 7, 'email' => 'owner@example.com', 'displayName' => 'Lance', 'createdAt' => '2026-11-20 08:15:02', 'status' => 'pending', 'emailVerifiedAt' => null];
+$aaPreview = implode("\n", adminGrantPreviewLines($aaPreviewRow, adminGrantDecision([$aaAccount([])], true)));
+assertContains('Email address:  owner@example.com', $aaPreview, '0010 preview: shows the email address');
+assertContains('Display name:   Lance', $aaPreview, '0010 preview: shows the display name');
+assertContains('Registered at:  2026-11-20 08:15:02 UTC', $aaPreview, '0010 preview: shows when the account was registered, with its time zone');
+assertContains('email address NOT checked yet', $aaPreview, '0010 preview: says the email is not checked');
+assertContains('WARNING: if you did not register this account at that time, stop', $aaPreview, '0010 preview: the "if you did not register it then, stop" warning');
+assertContains('NEW password', $aaPreview, '0010 preview: says a new password will be typed');
+$aaPreviewActive = implode("\n", adminGrantPreviewLines(array_merge($aaPreviewRow, ['status' => 'active', 'emailVerifiedAt' => '2026-11-21 10:00:00']), adminGrantDecision([$aaAccount(['status' => 'active', 'emailVerifiedAt' => '2026-11-21 10:00:00'])], true)));
+assertContains('Registered at:  2026-11-20 08:15:02 UTC', $aaPreviewActive, '0010 preview: the details are shown for an active account too');
+assertFalse(str_contains($aaPreviewActive, 'WARNING'), '0010 preview: no warning when nothing will be reset');
+assertContains('Display name:   (none given)', implode("\n", adminGrantPreviewLines(array_merge($aaPreviewRow, ['displayName' => null]), $aaGrant)), '0010 preview: an empty display name says "(none given)"');
+assertContains('Registered at:  (unknown)', implode("\n", adminGrantPreviewLines(array_merge($aaPreviewRow, ['createdAt' => null]), $aaGrant)), '0010 preview: a missing registration time says "(unknown)"');
+
+// 🧽 A stranger chooses the display name: it must not be able to drive the terminal.
+$aaHostile = adminGrantPreviewLines(array_merge($aaPreviewRow, ['displayName' => "Evil\x1b[2J\x1b]0;x\x07\nWARNING: all fine\u{202E}gnp.exe\u{009B}31m"]), $aaGrant);
+$aaHostileText = implode("\n", $aaHostile);
+assertFalse((bool) preg_match('/[\x00-\x09\x0B-\x1F\x7F]/', $aaHostileText), '0010 preview: no control characters from a display name reach the terminal');
+assertFalse(str_contains($aaHostileText, "\u{202E}") || str_contains($aaHostileText, "\u{009B}"), '0010 preview: no right-to-left override or C1 control character either');
+assertEquals(count(adminGrantPreviewLines($aaPreviewRow, $aaGrant)), count($aaHostile), '0010 preview: a line break in the display name cannot add a (fake) line');
+assertEquals('a?[b?c', adminCliSafeDisplay("a\x1b[b\u{200B}c"), 'adminCliSafeDisplay(): the escape character and invisible characters become "?" (a bare "[" is harmless)');
+assertEquals('?', adminCliSafeDisplay("\xff\xfe"), 'adminCliSafeDisplay(): invalid UTF-8 keeps plain ASCII only');
+assertEquals('', adminCliSafeDisplay(null), 'adminCliSafeDisplay(): null → empty');
+assertEquals('', adminCliSafeDisplay(['x']), 'adminCliSafeDisplay(): an array → empty');
+assertEquals('abcde...', adminCliSafeDisplay('abcdefghij', 5), 'adminCliSafeDisplay(): long text is cut with "..."');
+assertEquals('Zoë Ünïcode', adminCliSafeDisplay('Zoë Ünïcode'), 'adminCliSafeDisplay(): ordinary accented letters are kept');
+
+// ✂️ Line endings off, spaces kept (sign-up does not trim passwords).
+assertEquals(' pass word ', adminCliStripLineEnding(" pass word \n"), 'adminCliStripLineEnding(): spaces kept, newline removed');
+assertEquals('abc', adminCliStripLineEnding("abc\r\n"), 'adminCliStripLineEnding(): Windows line ending removed');
+assertEquals('abc', adminCliStripLineEnding('abc'), 'adminCliStripLineEnding(): no line ending (last line) is fine');
+assertEquals('', adminCliStripLineEnding("\n"), 'adminCliStripLineEnding(): just Enter → empty');
+assertEquals(null, adminCliStripLineEnding(false), 'adminCliStripLineEnding(): end of input → null');
+
+// ✅ The new password: typed twice, the site's own rules.
+$aaGood = 'Correct-Horse-' . bin2hex(random_bytes(4));
+assertTrue(adminCliNewPasswordCheck($aaGood, $aaGood, 8)['ok'], 'new password: a strong password typed twice the same is accepted');
+$aaMismatch = adminCliNewPasswordCheck($aaGood, $aaGood . 'x', 8);
+assertTrue($aaMismatch['ok'] === false && str_contains($aaMismatch['error'], 'did not match'), 'new password: two different typings are refused');
+foreach (['short' => 'Ab1!', 'common' => 'Password123', 'repeated' => 'aaaaaaaaaa', 'empty' => ''] as $aaWhy => $aaWeak) {
+    $aaWeakCheck = adminCliNewPasswordCheck($aaWeak, $aaWeak, 8);
+    assertTrue($aaWeakCheck['ok'] === false && $aaWeakCheck['error'] !== '', 'new password: a ' . $aaWhy . ' password is refused by the site rules');
+    assertTrue($aaWeak === '' || !str_contains($aaWeakCheck['error'], $aaWeak), 'new password: the refusal does not repeat the ' . $aaWhy . ' password');
+}
+assertEquals(validatePasswordPolicy('Ab1!', 8)['error'], adminCliNewPasswordCheck('Ab1!', 'Ab1!', 8)['error'], 'new password: the SAME rule and wording as sign-up (validatePasswordPolicy)');
+assertFalse(adminCliNewPasswordCheck('Exactly9!', 'Exactly9!', 12)['ok'], 'new password: the password_min_length setting is used (12 → 9 characters refused)');
+assertFalse(adminCliNewPasswordCheck(null, null, 8)['ok'], 'new password: nothing read → refused');
+assertFalse(adminCliNewPasswordCheck($aaGood, null, 8)['ok'], 'new password: second typing missing → refused');
+assertContains('at least 10 characters', adminCliPasswordRulesText(10), 'the rules text names the minimum length');
+assertContains('will not be shown', adminCliPasswordRulesText(10), 'the rules text says typing is hidden');
+
+assertEquals(
+    '2 sign-in session(s) ended, 1 API key(s) switched off, 0 unused password-reset link(s) cancelled, 1 linked Microsoft/Google sign-in(s) removed, 0 passkey(s) removed.',
+    adminCliRemovedSummary(['sessions_ended' => 2, 'api_keys_turned_off' => 1, 'password_reset_links_cancelled' => 0, 'linked_sign_ins_removed' => 1, 'passkeys_removed' => 0]),
+    'adminCliRemovedSummary(): every kind of access, in plain words'
+);
+assertContains('0 sign-in session(s) ended', adminCliRemovedSummary([]), 'adminCliRemovedSummary(): nothing removed → zeros');
+
+// 🛡️ Only a password HASH is ever stored: plain text handed to adminCliGrant()
+//    is refused before the database is touched.
+$aaPlainAsHash = adminCliGrant('owner@example.com', true, 'cli:test', 7, 'not-a-hash-' . bin2hex(random_bytes(4)));
+assertTrue($aaPlainAsHash['exitCode'] === CUERCODE_ADMIN_CLI_EXIT_FAILED && str_contains($aaPlainAsHash['message'], 'stored (hashed) form'), 'adminCliGrant(): plain text instead of a hash is refused (exit 1, nothing touched)');
+
+// 🚫 There is no option that carries a password.
+foreach (['--password', '--password=Secret123!', '--new-password=Secret123!', '-p'] as $aaPasswordOption) {
+    $aaParse = adminCliParseArgs(['x', 'grant', 'owner@example.com', '--activate', $aaPasswordOption]);
+    assertTrue($aaParse['ok'] === false && str_contains($aaParse['error'], 'Unknown option'), '0010: ' . strtok($aaPasswordOption, '=') . ' is not an option (a password is never taken from the command line)');
+    assertFalse(str_contains($aaParse['error'], 'Secret123!'), '0010: the refusal does not print the value given after "=" (' . strtok($aaPasswordOption, '=') . ')');
+}
+assertContains('Unknown option: --force', adminCliParseArgs(['x', 'grant', 'a@b.co', '--force'])['error'], 'an unknown option without "=" is still named in full');
+
 $aaAdminAccount = $aaAccount(['roleID' => '1', 'status' => 'active', 'emailVerifiedAt' => '2026-01-01 00:00:00']);
 assertEquals('unknown_email', adminRevokeDecision([], 2)['code'], 'revoke: unknown email refused');
 assertEquals('nothing', adminRevokeDecision([$aaAccount([])], 2)['outcome'], 'revoke: not an admin → nothing to do');
@@ -705,6 +805,41 @@ $aaWarnAt     = strpos($aaCliSource, "'WARNING: '");
 $aaRetypeAt   = strpos($aaCliSource, 'Type the email address again');
 assertTrue($aaWarnAt !== false && $aaRetypeAt !== false && $aaWarnAt < $aaRetypeAt, 'the command line prints its warnings BEFORE asking for the email to be retyped (review finding D)');
 
+// 🔐 Decision 0010, in the order the operator meets it.
+$aaPreviewAt  = strpos($aaCliSource, 'foreach (adminGrantPreviewLines(');
+$aaProblemAt  = strpos($aaCliSource, '$adminCliInputProblem = adminCliHiddenInputProblem();');
+$aaAskAt      = strpos($aaCliSource, '$adminCliAsked = adminCliAskNewPasswordHash();');
+$aaGrantAt    = strpos($aaCliSource, 'adminCliFinish(adminCliGrant(');
+assertTrue($aaPreviewAt !== false && $aaPreviewAt < $aaRetypeAt, '0010: the account details (email, name, registration time) are shown BEFORE the typed confirmation');
+assertTrue($aaProblemAt !== false && $aaProblemAt < $aaRetypeAt, '0010: "can the password be typed hidden here?" is checked BEFORE anything is asked');
+assertTrue($aaAskAt !== false && $aaAskAt > $aaRetypeAt && $aaAskAt < $aaGrantAt, '0010: the new password is asked AFTER the typed confirmation and BEFORE the change');
+assertContains('$adminCliShownUserID, $adminCliNewPasswordHash)', $aaCliSource, '0010: the grant gets the account number that was shown, and only the HASH');
+foreach (['getenv(', '$_ENV', 'STDIN_PASSWORD', "'--password'"] as $aaNoSource) {
+    assertFalse(str_contains($aaCliSource, $aaNoSource), '0010: admin_access.php never reads a password from ' . $aaNoSource);
+}
+$aaAdminSourceForCli = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php');
+foreach (['shell_exec(', 'passthru(', 'system(', 'popen(', 'exec(\''] as $aaNoShell) {
+    assertFalse(str_contains($aaAdminSourceForCli, $aaNoShell), 'fn_admin.php never starts a shell (' . $aaNoShell . ') - stty runs with an argument list');
+}
+assertContains("proc_open(array_merge(['stty'], array_values(\$arguments))", $aaAdminSourceForCli, '0010: stty is run with proc_open() and an argument list (no shell)');
+assertContains("[0 => STDIN,", $aaAdminSourceForCli, '0010: stty is handed the operator\'s own terminal');
+assertContains("preg_match('/(^|\\s)-echo(\\s|\$)/', \$nowSettings)", $aaAdminSourceForCli, '0010: the typing is read only after the terminal CONFIRMS echo is off');
+assertContains('#[\SensitiveParameter] ?string $newPasswordHash', $aaAdminSourceForCli, '0010: the new password hash is hidden from stack traces');
+assertContains('#[\SensitiveParameter] ?string $first', $aaAdminSourceForCli, '0010: the typed password is hidden from stack traces');
+$aaPasswordSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_password.php');
+assertContains('function hashPassword(#[\SensitiveParameter] string $plainPassword)', $aaPasswordSource, 'hashPassword() hides the password from stack traces');
+assertContains('function validatePasswordPolicy(#[\SensitiveParameter] string $plainPassword', $aaPasswordSource, 'validatePasswordPolicy() hides the password from stack traces');
+foreach (['tblUserSessions', 'tblAPIKeys', 'tblPasswordResets', 'tblUserOAuth', 'tblWebAuthnCredentials'] as $aaAccessTable) {
+    assertContains('`' . $aaAccessTable . '`', substr($aaAdminSourceForCli, (int) strpos($aaAdminSourceForCli, 'function adminCliRemoveEarlierAccess('), 3000), '0010: earlier access in ' . $aaAccessTable . ' is removed');
+}
+$aaGrantBody = substr($aaAdminSourceForCli, (int) strpos($aaAdminSourceForCli, 'function adminCliGrant('), 12000);
+assertTrue(
+    strpos($aaGrantBody, 'begin_transaction()') < strpos($aaGrantBody, 'adminCliRemoveEarlierAccess($userID)')
+    && strpos($aaGrantBody, 'adminCliRemoveEarlierAccess($userID)') < strpos($aaGrantBody, 'adminAuditWrite(')
+    && strpos($aaGrantBody, 'adminAuditWrite(') < strpos($aaGrantBody, '$db->commit()'),
+    '0010: password, earlier access and the audit row all change inside ONE transaction'
+);
+
 assertEquals('(`roleID` IS NULL OR `roleID` <> 1)', adminSqlNotGlobalAdminCondition(), 'the erase UPDATE condition keeps accounts with no role or a non-admin role only');
 
 // 🔁 One admin_denied row per session, not per request (finding F).
@@ -825,3 +960,30 @@ assertEquals(2, $aaCli['exit'], 'real admin_access.php grant with a bad email: e
 
 $aaCli = $aaRunCli(['revoke', 'owner@example.com', '--activate']);
 assertEquals(2, $aaCli['exit'], 'real admin_access.php revoke --activate: exit 2');
+
+$aaCli = $aaRunCli(['grant', 'owner@example.com', '--activate', '--password=Secret123!']);
+assertEquals(2, $aaCli['exit'], 'real admin_access.php grant --password=...: exit 2 (there is no such option)');
+assertFalse(str_contains($aaCli['out'] . $aaCli['err'], 'Secret123!'), 'real admin_access.php: the value after --password= is not printed back');
+
+// ⌨️ Decision 0010: with its input coming from a PIPE, the hidden-typing
+//    helpers refuse and read nothing. A separate PHP process that loads
+//    fn_admin.php ONLY (no database, no site start-up) is used, because this
+//    test runner's own input may be a terminal.
+$aaHiddenProbe = 'require ' . var_export(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php', true) . ';'
+    . ' echo json_encode(["problem" => adminCliHiddenInputProblem(), "read" => adminCliReadHiddenLine("New password: ")]);';
+$aaProbeProcess = proc_open([PHP_BINARY, '-r', $aaHiddenProbe], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $aaProbePipes);
+if (is_resource($aaProbeProcess)) {
+    fwrite($aaProbePipes[0], "Piped-Password-1!\nPiped-Password-1!\n");
+    fclose($aaProbePipes[0]);
+    $aaProbeOut = (string) stream_get_contents($aaProbePipes[1]);
+    fclose($aaProbePipes[1]);
+    stream_get_contents($aaProbePipes[2]);
+    fclose($aaProbePipes[2]);
+    proc_close($aaProbeProcess);
+    $aaProbe = json_decode($aaProbeOut, true);
+    assertTrue(is_array($aaProbe) && str_contains((string) $aaProbe['problem'], 'not a terminal'), '0010: input from a pipe → "its input is not a terminal"');
+    assertTrue(is_array($aaProbe) && $aaProbe['read']['ok'] === false && $aaProbe['read']['line'] === null, '0010: input from a pipe → no line is read as a password');
+    assertFalse(str_contains($aaProbeOut, 'Piped-Password-1!'), '0010: the piped text never comes back out');
+} else {
+    assertTrue(false, '0010: the pipe probe process could not be started');
+}

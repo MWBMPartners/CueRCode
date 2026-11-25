@@ -31,6 +31,24 @@
  * the first admin, who cannot receive a verification email before email
  * sending has been set up in the admin area.
  *
+ * 🔐 Decision 0010 (docs/decisions/0010-first-admin-activation-sets-a-new-password.md):
+ * a stranger could register with the owner's email address first. So when
+ * --activate vouches for an email address nobody has proved (a 'pending'
+ * account), the tool:
+ *   1. shows the account's email, display name and registration time, with
+ *      "if you did not register this account at that time, stop";
+ *   2. refuses straight away unless it is running in a real terminal that
+ *      can hide typing (never from a pipe, file, option or environment);
+ *   3. after the typed-email confirmation, asks for a NEW password twice,
+ *      hidden, checked with the site's own password rules and hashed with
+ *      the site's own hashPassword();
+ *   4. in the SAME transaction as the role change and the audit row, stores
+ *      that password and removes every earlier way in: signed-in sessions,
+ *      API keys, unused password-reset links, linked Microsoft/Google
+ *      sign-ins and passkeys. The audit row says password_reset: true and
+ *      how many of each were removed - never the password.
+ * An account that is already active with a checked email is not reset.
+ *
  * The role change and its audit row (tblAdminAuditLog, action admin.grant /
  * admin.revoke, actor "cli:<operating-system user>") are written in ONE
  * transaction. `revoke` refuses to remove the last working Global Admin.
@@ -41,8 +59,9 @@
  * was changed).
  *
  * The logic and its tests live in _functions/fn_admin.php (adminCliParseArgs(),
- * adminGrantDecision(), adminRevokeDecision(), adminCliGrant(), adminCliRevoke())
- * - this file is only the wrapper.
+ * adminGrantDecision(), adminGrantPreviewLines(), adminRevokeDecision(),
+ * adminCliHiddenInputProblem(), adminCliAskNewPasswordHash(), adminCliGrant(),
+ * adminCliRevoke()) - this file is only the wrapper.
  *
  * 🔒 COMMAND LINE ONLY, three layers (same as migrate.php and the email
  *    queue runner): it lives in _includes/, outside public_html/, so it has
@@ -57,7 +76,7 @@
  * @package     CueRCode
  * @subpackage  Admin
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0 (2026-11-25: decision 0010 - a pending account gets a new password)
  * @since       2026-11-24 (task 7n Phase 1B, #31)
  * @see         ../../_functions/fn_admin.php - every decision this tool makes
  * @see         ../cron/process_email_queue.php - the command-line guard and start-up pattern copied here
@@ -265,13 +284,48 @@ if ($adminCliPreview['outcome'] === 'nothing') {
     adminCliFinish(['exitCode' => CUERCODE_ADMIN_CLI_EXIT_OK, 'message' => $adminCliPreview['message'], 'warnings' => $adminCliPreviewWarnings]);
 }
 
-fwrite(STDOUT, 'Account #' . (int) $adminCliRows[0]['userID'] . ' (' . $adminCliEmail . '): ' . $adminCliPreview['message'] . PHP_EOL);
+$adminCliShownUserID = (int) $adminCliRows[0]['userID'];
+
+fwrite(STDOUT, 'Account #' . $adminCliShownUserID . ' (' . $adminCliEmail . '): ' . $adminCliPreview['message'] . PHP_EOL);
+
+// 🪪 Decision 0010: show WHO this account is - its email, display name and
+//    when it was registered - before anything is confirmed. When the grant
+//    will set a new password, this ends with the "if you did not register
+//    this account at that time, stop" warning.
+if ($adminCliParsed['command'] === 'grant') {
+    foreach (adminGrantPreviewLines($adminCliRows[0], $adminCliPreview) as $adminCliPreviewLine) {
+        fwrite(STDOUT, $adminCliPreviewLine . PHP_EOL);
+    }
+}
 
 // ⚠️ Show any warnings BEFORE asking the operator to retype the email, so
 //    they can read them and still say no.
 if (isset($adminCliPreview['warnings']) && is_array($adminCliPreview['warnings'])) {
     foreach ($adminCliPreview['warnings'] as $adminCliPreviewWarning) {
         fwrite(STDOUT, 'WARNING: ' . (string) $adminCliPreviewWarning . PHP_EOL);
+    }
+}
+
+// 🔐 Decision 0010: will this grant set a new password?
+$adminCliResetsPassword = false;
+if ($adminCliParsed['command'] === 'grant' && isset($adminCliPreview['resetsPassword']) && $adminCliPreview['resetsPassword'] === true) {
+    $adminCliResetsPassword = true;
+}
+
+// ⌨️ If so, make sure the password CAN be typed hidden BEFORE asking anything
+//    else: a real terminal, and a way to switch its echo off. A password is
+//    never read from a pipe, a file, an option or the environment.
+if ($adminCliResetsPassword) {
+    $adminCliInputProblem = adminCliHiddenInputProblem();
+
+    if ($adminCliInputProblem !== '') {
+        adminCliFinish([
+            'exitCode' => CUERCODE_ADMIN_CLI_EXIT_REFUSED,
+            'message'  => 'Nothing was changed. This account has not proved its email address, so a NEW password must be typed for it at a keyboard,'
+                . ' hidden (decision 0010) - but ' . $adminCliInputProblem . '. Run the command yourself in an SSH terminal,'
+                . ' not from a script, a pipe or a scheduled job.',
+            'warnings' => [],
+        ]);
     }
 }
 
@@ -284,11 +338,26 @@ if ($adminCliParsed['yes'] !== true) {
     }
 }
 
+// 🔑 Decision 0010: the new password, typed hidden twice and hashed here,
+//    before the database transaction starts. Only the HASH goes further.
+$adminCliNewPasswordHash = null;
+
+if ($adminCliResetsPassword) {
+    $adminCliAsked = adminCliAskNewPasswordHash();
+
+    if ($adminCliAsked['ok'] !== true) {
+        adminCliFinish(['exitCode' => $adminCliAsked['exitCode'], 'message' => $adminCliAsked['message'], 'warnings' => []]);
+    }
+
+    $adminCliNewPasswordHash = $adminCliAsked['hash'];
+    unset($adminCliAsked);
+}
+
 // ==============================================================================
 // ✍️ Step 10: make the change (the decision is re-made inside the transaction)
 // ==============================================================================
 if ($adminCliParsed['command'] === 'grant') {
-    adminCliFinish(adminCliGrant($adminCliEmail, $adminCliParsed['activate'], adminCliActorLabel()));
+    adminCliFinish(adminCliGrant($adminCliEmail, $adminCliParsed['activate'], adminCliActorLabel(), $adminCliShownUserID, $adminCliNewPasswordHash));
 }
 
 adminCliFinish(adminCliRevoke($adminCliEmail, adminCliActorLabel()));
