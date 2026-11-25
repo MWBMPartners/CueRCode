@@ -921,8 +921,8 @@ assertTrue(is_file(CUERCODE_INCLUDES_DIR . '.htaccess') && str_contains((string)
 
 // 🧱 currentUser() returns roleID; the header link is only for Global Admins.
 $aaAuthSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_auth.php');
-assertContains('u.`status`, u.`roleID` ', $aaAuthSource, 'currentUser() selects u.roleID');
-assertContains("'roleID'      => \$roleID,", $aaAuthSource, 'currentUser() returns roleID');
+assertContains('`u`.`status`, `u`.`roleID`', $aaAuthSource, 'currentUser() selects u.roleID');
+assertContains("'roleID'            => \$roleID,", $aaAuthSource, 'currentUser() returns roleID');
 $aaHeaderSource = (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'header.php');
 assertContains('adminRoleIsGlobalAdmin($headerCurrentUser[\'roleID\'])', $aaHeaderSource, 'header.php asks adminRoleIsGlobalAdmin() before showing "Admin"');
 assertMatches('/<\?php if \(\$headerShowAdminLink\) \{ \?>\s*<li role="presentation">\s*<a class="dropdown-item" role="menuitem" href="\/admin\/">/', $aaHeaderSource, 'header.php shows the /admin/ link only inside if ($headerShowAdminLink)');

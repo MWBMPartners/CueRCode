@@ -35,6 +35,28 @@
  *        trusts CF-Connecting-IP only from a Cloudflare range, and the
  *        activity log records the same address
  *
+ *   Independent review of 0013/0014 (2026-11-25):
+ *     P  before database upgrade 0003 sign-in still works (the old way);
+ *        the upgrade is applied and the protection switches on
+ *     R  finding 1 - a sign-in that read the OLD password before a reset
+ *        never ends with a working session: (a) TWO real processes, the
+ *        sign-in paused inside the database (a trigger) while the reset
+ *        runs; (b) the same steps called one by one in the bad order; the
+ *        reset's own follow-up sign-in, at once, works (the same-second
+ *        boundary); two marks in one instant differ; Google/Microsoft
+ *        sign-in in the same gap is refused too
+ *     L  finding 2 - a Google/Microsoft "link" request started before a reset
+ *        is refused afterwards (not signed in; signed in again but the mark
+ *        moved; the locked re-check refuses to write the link), and an API
+ *        key cannot be made with a session the reset ended
+ *     D2 finding 5 - two resets of one account at the same moment (two real
+ *        processes, five rounds): one wins, the other is told its link was
+ *        used, and there is no deadlock
+ *     W  finding 7 - eight wrong passwords at the same moment (eight
+ *        processes) all count
+ *     V  nit - a verification link for an already-active account says
+ *        nothing changed; for a suspended one, the usual invalid answer
+ *
  * Not run by tests/run.php (needs a database). CI syntax-checks it.
  *
  * ⚠️ SAFETY: it DELETES rows. It refuses to run (exit 2) unless the database
@@ -63,6 +85,15 @@ if (PHP_SAPI !== 'cli') {
     exit('Access denied.');
 }
 
+// 🎫 A PHP session for this command-line process, started BEFORE any output
+//    (PHP refuses to start one afterwards), so currentUser() and
+//    issueUserSession() can be used exactly as on a web page. Each "browser"
+//    is simulated by putting its session token into $_SESSION.
+ini_set('session.use_cookies', '0');
+ini_set('session.cache_limiter', '');
+session_save_path(sys_get_temp_dir());
+session_start();
+
 $arSiteRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'web' . DIRECTORY_SEPARATOR . 'CueRCode.net' . DIRECTORY_SEPARATOR;
 $arLoad     = in_array('--load-schema', array_slice($argv, 1), true);
 
@@ -84,6 +115,51 @@ if ($arEnv['PORT'] === '') {
     $arEnv['PORT'] = '3306';
 }
 $arPort = (int) $arEnv['PORT'];
+
+// ==============================================================================
+// 👶 Child mode: one step run by a SEPARATE process (for the "at the same
+//    moment" checks). Prints one line "CHILD-RESULT:{json}" and exits.
+// ==============================================================================
+$arChildMode = '';
+foreach (array_slice($argv, 1) as $arArgument) {
+    if (str_starts_with($arArgument, '--child=')) {
+        $arChildMode = substr($arArgument, 8);
+    }
+}
+
+if ($arChildMode !== '') {
+    define('DB_HOST', $arEnv['HOST']);
+    define('DB_PORT', $arPort);
+    define('DB_NAME', $arEnv['NAME']);
+    define('DB_USER', $arEnv['USER']);
+    define('DB_PASS', $arEnv['PASS']);
+    define('ENCRYPTION_KEY', bin2hex(random_bytes(16)));
+    $_SERVER['REMOTE_ADDR']     = '203.0.113.60';
+    $_SERVER['HTTP_USER_AGENT'] = 'integration-child';
+    require_once $arSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+    restore_error_handler();
+
+    // ⏱️ A shared start moment, so several children really act together.
+    $arStartAt = (float) getenv('CUERCODE_IT_CHILD_START');
+    while ($arStartAt > 0 && microtime(true) < $arStartAt) {
+        usleep(1000);
+    }
+
+    $arChildResult = ['mode' => $arChildMode];
+    if ($arChildMode === 'login') {
+        $arLogin = loginUser((string) getenv('CUERCODE_IT_CHILD_EMAIL'), (string) getenv('CUERCODE_IT_CHILD_PASSWORD'), '203.0.113.60', 'integration-child');
+        $arChildResult['loginSuccess']  = $arLogin['success'];
+        $arChildResult['currentUserOk'] = (currentUser() !== null);
+    } elseif ($arChildMode === 'reset') {
+        $arResetResult = resetPasswordWithToken((string) getenv('CUERCODE_IT_CHILD_TOKEN'), (string) getenv('CUERCODE_IT_CHILD_PASSWORD'));
+        $arChildResult['success']   = $arResetResult['success'];
+        $arChildResult['errorCode'] = $arResetResult['errorCode'];
+    } elseif ($arChildMode === 'wrongpw') {
+        $arChildResult['count'] = recordFailedLogin((int) getenv('CUERCODE_IT_CHILD_USERID'));
+    }
+    echo 'CHILD-RESULT:' . json_encode($arChildResult) . PHP_EOL;
+    exit(0);
+}
 
 // ⏳ Wait for the server (the Docker image restarts once while starting).
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
@@ -109,7 +185,9 @@ $arConn->select_db($arEnv['NAME']);
 
 // 📥 Load the schema if asked and the tables are missing.
 $arHas = $arConn->query("SELECT COUNT(*) AS `c` FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tblPasswordResets'");
+$arFreshlyLoaded = false;
 if ((int) $arHas->fetch_assoc()['c'] !== 1) {
+    $arFreshlyLoaded = true;
     if (!$arLoad) {
         fwrite(STDERR, 'The tables do not exist. Re-run with --load-schema.' . PHP_EOL);
         exit(2);
@@ -138,6 +216,13 @@ require_once $arSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
 
 restore_error_handler();
 ini_set('display_errors', 'stderr');
+// 🔇 On the command line, PHP cannot give the session a new id once this
+//    script has printed something; issueUserSession() asks it to (on a web
+//    page it works). That one warning is expected here and says nothing about
+//    the code under test, so it alone is not printed.
+set_error_handler(static function (int $arErrorNumber, string $arErrorText): bool {
+    return str_contains($arErrorText, 'Session ID cannot be regenerated after headers have already been sent');
+}, E_WARNING);
 set_exception_handler(static function (\Throwable $arError): void {
     fwrite(STDERR, 'Integration check crashed: ' . get_class($arError) . ': ' . $arError->getMessage() . PHP_EOL);
     exit(1);
@@ -147,9 +232,11 @@ $_SERVER['REMOTE_ADDR']     = '203.0.113.50';
 $_SERVER['HTTP_USER_AGENT'] = 'integration-check';
 
 $arFailures = 0;
+$arCheckCount = 0;
 
 function arCheck(bool $arPassed, string $arWhat): void
 {
+    $GLOBALS['arCheckCount']++;
     if (!$arPassed) {
         $GLOBALS['arFailures']++;
     }
@@ -263,6 +350,31 @@ function arSnapshot(int $arUserID): array
 arReset();
 $arStrangerPassword = 'Stranger-' . bin2hex(random_bytes(6));
 $arOwnerPassword    = 'Owner-New-' . bin2hex(random_bytes(6));
+
+// ==============================================================================
+// P. Before and after database upgrade 0003
+// ==============================================================================
+echo PHP_EOL . 'P. Database upgrade 0003 (sessions valid from)' . PHP_EOL;
+// 🧪 Guard: without a real session every "signed in?" check below would be
+//    trivially "no", and the refusals would pass for the wrong reason.
+arCheck(session_status() === PHP_SESSION_ACTIVE, 'sanity: this process has a real PHP session (so "refused" results mean something)');
+authSessionsValidFromReady(true);
+if ($arFreshlyLoaded) {
+    arCheck(authSessionsValidFromReady() === false, 'a database from install.sql alone: the new columns are not there yet');
+    $arP = arUser('p', 'active', $arStrangerPassword, true);
+    $arPLogin = loginUser('ar-p@ar.cuercode.invalid', $arStrangerPassword, '203.0.113.50', 'integration-check');
+    arCheck($arPLogin['success'] === true && currentUser() !== null, '...and sign-in still works the old way (nobody is locked out before the upgrade)');
+} else {
+    echo '    (skipped: the database already existed, so it may already have upgrade 0003)' . PHP_EOL;
+}
+require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_migrations.php';
+$arUpgrade = migrationApplyPending(getDB(), 'cli:integration', false);
+authSessionsValidFromReady(true);
+arCheck($arUpgrade['status'] === 'ok', 'the waiting upgrades applied (' . $arUpgrade['status'] . ')');
+arCheck(authSessionsValidFromReady() === true, 'after upgrade 0003 the protection is on');
+if ($arFreshlyLoaded) {
+    arCheck(currentUser() !== null, 'a session made before the upgrade still works after it (account never reset)');
+}
 
 // ==============================================================================
 // A. A verification link needs the account's password
@@ -446,13 +558,294 @@ arCheck(getClientIP() === '203.0.113.50', 'CF-Connecting-IP from outside Cloudfl
 unset($_SERVER['HTTP_CF_CONNECTING_IP']);
 arExec("DELETE FROM `tblSettings` WHERE `settingKey` = 'trusted_proxy_ips'");
 
+// ==============================================================================
+// 👶 Helpers for separate processes
+// ==============================================================================
+
+/**
+ * 🚀 Start this script again as a child process in the given mode.
+ *
+ * @param string               $arMode One of the child modes
+ * @param array<string, string> $arVars Extra environment values for the child
+ * @return array{process: resource, pipes: array}
+ */
+function arSpawn(string $arMode, array $arVars): array
+{
+    $arChildEnv = getenv();
+    foreach ($arVars as $arKey => $arValue) {
+        $arChildEnv[$arKey] = $arValue;
+    }
+    $arPipes = [];
+    $arProcess = proc_open([PHP_BINARY, __FILE__, '--child=' . $arMode], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $arPipes, null, $arChildEnv);
+    return ['process' => $arProcess, 'pipes' => $arPipes];
+}
+
+/**
+ * 📥 Wait for a child and read its result line.
+ *
+ * @param array $arChild From arSpawn()
+ * @return array The decoded result ('crashed' => output when there is none)
+ */
+function arCollect(array $arChild): array
+{
+    $arOut = (string) stream_get_contents($arChild['pipes'][1]) . (string) stream_get_contents($arChild['pipes'][2]);
+    fclose($arChild['pipes'][1]);
+    fclose($arChild['pipes'][2]);
+    proc_close($arChild['process']);
+    if (preg_match('/^CHILD-RESULT:(\{.*\})$/m', $arOut, $arMatch) === 1) {
+        $arDecoded = json_decode($arMatch[1], true);
+        if (is_array($arDecoded)) {
+            return $arDecoded;
+        }
+    }
+    return ['crashed' => substr($arOut, 0, 500)];
+}
+
+/** 🎫 Use a session token as "this browser" (null = signed out). */
+function arUseSession(?string $arToken): void
+{
+    if ($arToken === null) {
+        unset($_SESSION[CUERCODE_SESSION_TOKEN_KEY]);
+        return;
+    }
+    $_SESSION[CUERCODE_SESSION_TOKEN_KEY] = $arToken;
+}
+
+/** 🕐 The account's current "sessions valid from" mark. */
+function arMark(int $arUserID): ?string
+{
+    $arRow = arOne('SELECT `sessionsValidFrom` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arUserID]);
+    return $arRow['sessionsValidFrom'];
+}
+
+/** 🔢 Sessions of an account that currentUser() would accept (not ended, not expired, mark matches). */
+function arLiveSessions(int $arUserID): int
+{
+    return arCount(
+        'SELECT COUNT(*) FROM `tblUserSessions` AS `s` INNER JOIN `tblUsers` AS `u` ON `u`.`userID` = `s`.`userID` '
+        . 'WHERE `s`.`userID` = ? AND `s`.`revokedAt` IS NULL AND `s`.`expiresAt` > NOW() AND (`s`.`sessionsValidFromSeen` <=> `u`.`sessionsValidFrom`)',
+        'i',
+        [$arUserID]
+    );
+}
+
+$arItEnv = [
+    'CUERCODE_IT_DB_HOST' => $arEnv['HOST'],
+    'CUERCODE_IT_DB_PORT' => (string) $arPort,
+    'CUERCODE_IT_DB_NAME' => $arEnv['NAME'],
+    'CUERCODE_IT_DB_USER' => $arEnv['USER'],
+    'CUERCODE_IT_DB_PASS' => $arEnv['PASS'],
+];
+
+// ==============================================================================
+// R. Finding 1: a sign-in under way when the password is reset
+// ==============================================================================
+echo PHP_EOL . 'R. A sign-in under way during a password reset (finding 1)' . PHP_EOL;
+
+// (a) TWO real processes. The sign-in is paused INSIDE the database, after it
+//     has checked the old password and before it makes its session (a
+//     trigger on its "last sign-in" update sleeps 3 seconds). The reset runs
+//     in this process during the pause.
+$arRace = arUser('race', 'active', $arStrangerPassword, true);
+$arConn->query('DROP TRIGGER IF EXISTS `arPauseSignIn`');
+$arConn->query(
+    "CREATE TRIGGER `arPauseSignIn` BEFORE UPDATE ON `tblUsers` FOR EACH ROW BEGIN "
+    . "IF NEW.`email` = 'ar-race@ar.cuercode.invalid' AND NEW.`lastLoginAt` IS NOT NULL "
+    . "AND (OLD.`lastLoginAt` IS NULL OR NEW.`lastLoginAt` <> OLD.`lastLoginAt`) THEN SET @arPause = SLEEP(3); END IF; END"
+);
+$arRaceLink  = arResetLink($arRace);
+$arChild     = arSpawn('login', $arItEnv + ['CUERCODE_IT_CHILD_EMAIL' => 'ar-race@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword]);
+usleep(1500000);
+$arResetAt   = microtime(true);
+$arR         = resetPasswordWithToken($arRaceLink, $arOwnerPassword);
+$arChildOut  = arCollect($arChild);
+$arConn->query('DROP TRIGGER IF EXISTS `arPauseSignIn`');
+arCheck($arR['success'] === true, '(a) the owner\'s reset succeeds while the old-password sign-in is paused');
+arCheck(arOne('SELECT `lastLoginAt` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arRace])['lastLoginAt'] !== null, '(a) proof of the bad order: the other process DID pass the OLD password check before the reset');
+arCheck(isset($arChildOut['loginSuccess']) && $arChildOut['loginSuccess'] === false, '(a) ...yet its sign-in ends in failure (' . json_encode($arChildOut) . ')');
+arCheck(isset($arChildOut['currentUserOk']) && $arChildOut['currentUserOk'] === false, '(a) ...and it is not signed in');
+arCheck(arLiveSessions($arRace) === 0, '(a) no working session exists for the account');
+arCheck(arMark($arRace) !== null, '(a) the account\'s "sessions valid from" mark was set by the reset');
+$arR = loginUser('ar-race@ar.cuercode.invalid', $arOwnerPassword, '203.0.113.50', 'integration-check');
+arCheck($arR['success'] === true && currentUser() !== null, 'BOUNDARY: the owner signs in with the new password straight after the reset (same second) and IS signed in');
+
+// (b) The same, step by step in the bad order, with the real functions.
+$arM = arUser('m', 'active', $arStrangerPassword, true);
+$arMRow = arOne('SELECT `userID`, `passwordHash`, `sessionsValidFrom` FROM `tblUsers` WHERE `email` = ?', 's', ['ar-m@ar.cuercode.invalid']);
+arCheck(verifyPassword($arStrangerPassword, (string) $arMRow['passwordHash']) === true, '(b) step 1: a sign-in reads the account and the OLD password checks out');
+$arMLink = arResetLink($arM);
+arCheck(resetPasswordWithToken($arMLink, $arOwnerPassword)['success'] === true, '(b) step 2: the owner resets the password');
+$arMToken = issueUserSession($arM, '203.0.113.50', 'integration-check', $arMRow['sessionsValidFrom']);
+arCheck($arMToken === '', '(b) step 3: the sign-in now tries to make its session with what it read - refused (empty answer)');
+arCheck(arCount('SELECT COUNT(*) FROM `tblUserSessions` WHERE `userID` = ?', 'i', [$arM]) === 0, '(b) ...and no session row was written');
+$arForced = bin2hex(random_bytes(32));
+arExec('INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `expiresAt`, `sessionsValidFromSeen`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR), ?)', 'sis', [$arForced, $arM, $arMRow['sessionsValidFrom']]);
+arUseSession($arForced);
+arCheck(currentUser() === null, '(b) step 4: even a session row that slipped in AFTER the reset with the old mark is refused by currentUser()');
+$arForcedNull = bin2hex(random_bytes(32));
+arExec('INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `expiresAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR))', 'si', [$arForcedNull, $arM]);
+arUseSession($arForcedNull);
+arCheck(currentUser() === null, '(b) ...and so is one written the pre-upgrade way (no mark at all)');
+$arR = loginUser('ar-m@ar.cuercode.invalid', $arOwnerPassword, '203.0.113.50', 'integration-check');
+$arMCreated = arOne('SELECT `createdAt` FROM `tblUserSessions` WHERE `sessionID` = ?', 's', [(string) $_SESSION[CUERCODE_SESSION_TOKEN_KEY]]);
+arCheck($arR['success'] === true && currentUser() !== null, 'BOUNDARY: the new-password sign-in right after the reset works (session made ' . (string) $arMCreated['createdAt'] . ', mark ' . (string) arMark($arM) . ')');
+
+// 🕐 Two marks in one instant still differ, and a clock that went back cannot make a mark earlier.
+$arMarkBefore = arMark($arM);
+$arDb = getDB();
+$arDb->begin_transaction();
+arOne('SELECT `userID` FROM `tblUsers` WHERE `userID` = ? FOR UPDATE', 'i', [$arM]);
+accountRemoveOtherWaysIn($arM, true);
+$arMarkOne = arMark($arM);
+accountRemoveOtherWaysIn($arM, true);
+$arMarkTwo = arMark($arM);
+$arDb->commit();
+arCheck(strcmp((string) $arMarkOne, (string) $arMarkBefore) > 0 && strcmp((string) $arMarkTwo, (string) $arMarkOne) > 0, 'two marks set in the same instant are still in order and different (' . $arMarkOne . ' < ' . $arMarkTwo . ')');
+arExec('UPDATE `tblUsers` SET `sessionsValidFrom` = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 1 HOUR) WHERE `userID` = ?', 'i', [$arM]);
+$arFuture = arMark($arM);
+$arDb->begin_transaction();
+arOne('SELECT `userID` FROM `tblUsers` WHERE `userID` = ? FOR UPDATE', 'i', [$arM]);
+accountRemoveOtherWaysIn($arM, true);
+$arDb->commit();
+arCheck(strcmp((string) arMark($arM), (string) $arFuture) > 0, 'a mark ahead of the clock (clock went back) still moves FORWARD, by one millionth of a second');
+$arUtcNow = arOne('SELECT UTC_TIMESTAMP(6) AS `now`')['now'];
+$arE2 = arUser('utc', 'active', $arStrangerPassword, true);
+$arDb->begin_transaction();
+arOne('SELECT `userID` FROM `tblUsers` WHERE `userID` = ? FOR UPDATE', 'i', [$arE2]);
+accountRemoveOtherWaysIn($arE2, true);
+$arDb->commit();
+arCheck(abs(strtotime((string) arMark($arE2)) - strtotime((string) $arUtcNow)) <= 5, 'the mark is written in UTC (within 5 s of the server\'s UTC clock: ' . arMark($arE2) . ')');
+
+// 🔗 Google/Microsoft SIGN-IN in the same gap.
+$arG2 = arUser('g2', 'active', $arStrangerPassword, true);
+arExec("INSERT INTO `tblUserOAuth` (`userID`, `provider`, `providerSubjectID`) VALUES (?, 'google', 'ar-sub-g2')", 'i', [$arG2]);
+$arSignIn = applyOAuthAccountLink('google', 'ar-sub-g2', 'ar-g2@ar.cuercode.invalid', true, null, null, null);
+arCheck($arSignIn['success'] === true && $arSignIn['data']['action'] === 'login_existing', 'Google sign-in: the linked sign-in is found (step 1)');
+$arG2Link = arResetLink($arG2);
+arCheck(resetPasswordWithToken($arG2Link, $arOwnerPassword)['success'] === true, 'Google sign-in: the owner resets the password meanwhile (the link is removed)');
+arCheck(issueUserSession($arG2, '203.0.113.50', 'integration-check', $arSignIn['data']['sessionsValidFromSeen']) === '', 'Google sign-in: its session is then refused');
+arCheck(arLiveSessions($arG2) === 0, 'Google sign-in: ...no working session');
+
+// ==============================================================================
+// L. Finding 2: a "link" request and an API key across a reset
+// ==============================================================================
+echo PHP_EOL . 'L. Google/Microsoft link request and API key across a reset (finding 2)' . PHP_EOL;
+require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_api_keys.php';
+$arL = arUser('l', 'active', $arStrangerPassword, true);
+arCheck(loginUser('ar-l@ar.cuercode.invalid', $arStrangerPassword, '203.0.113.50', 'integration-check')['success'] === true, 'set-up: the stranger is signed in');
+$arStrangerToken = (string) $_SESSION[CUERCODE_SESSION_TOKEN_KEY];
+$arAtBegin = currentUser();
+$arSavedMark = $arAtBegin['sessionsValidFrom'];
+arCheck(oauthLinkRequestCheck(currentUser(), $arL, true, $arSavedMark) === 'ok', 'before any reset the link request would be allowed');
+arCheck(createApiKeyForUser($arL, 'ar-before', [])['success'] === true, 'before any reset an API key can be made');
+$arLLink = arResetLink($arL);
+arCheck(resetPasswordWithToken($arLLink, $arOwnerPassword)['success'] === true, 'the owner resets the password');
+arUseSession($arStrangerToken);
+arCheck(oauthLinkRequestCheck(currentUser(), $arL, true, $arSavedMark) === 'not_signed_in', 'the stranger comes back from Google: nobody is signed in any more - refused');
+$arKeysBefore = arCount('SELECT COUNT(*) FROM `tblAPIKeys` WHERE `userID` = ?', 'i', [$arL]);
+$arKey = createApiKeyForUser($arL, 'ar-after', []);
+arCheck($arKey['success'] === false && $arKey['httpCode'] === 401 && $arKey['errorCode'] === 'AUTH_REQUIRED', 'API key with the ended session (checked-then-acted gap): refused');
+arCheck(arCount('SELECT COUNT(*) FROM `tblAPIKeys` WHERE `userID` = ?', 'i', [$arL]) === $arKeysBefore, '...and no key was written');
+arCheck(loginUser('ar-l@ar.cuercode.invalid', $arOwnerPassword, '203.0.113.50', 'integration-check')['success'] === true, 'the owner signs in');
+arCheck(oauthLinkRequestCheck(currentUser(), $arL, true, $arSavedMark) === 'account_secured', 'a link request saved BEFORE the reset, completed in the owner\'s new session: refused (the mark moved)');
+$arStale = applyOAuthAccountLink('google', 'ar-sub-stale', 'x@ar.cuercode.invalid', true, null, null, $arL, $arSavedMark);
+arCheck($arStale['success'] === false && $arStale['errorCode'] === 'SSO_LINK_EXPIRED', 'the locked re-check also refuses the stale request');
+arCheck(arCount("SELECT COUNT(*) FROM `tblUserOAuth` WHERE `providerSubjectID` = 'ar-sub-stale'") === 0, '...and no link row was written');
+$arFresh = applyOAuthAccountLink('google', 'ar-sub-fresh', 'x@ar.cuercode.invalid', true, null, null, $arL, currentUser()['sessionsValidFrom']);
+arCheck($arFresh['success'] === true && $arFresh['data']['action'] === 'link_to_current', 'a link request started in the owner\'s NEW session is linked');
+arCheck(arCount("SELECT COUNT(*) FROM `tblUserOAuth` WHERE `providerSubjectID` = 'ar-sub-fresh' AND `userID` = ?", 'i', [$arL]) === 1, '...and the link row exists');
+arCheck(createApiKeyForUser($arL, 'ar-owner', [])['success'] === true, 'the owner can make an API key in the new session');
+
+// ==============================================================================
+// D2. Finding 5: two resets of one account at the same moment
+// ==============================================================================
+echo PHP_EOL . 'D2. Two resets of one account at the same moment (finding 5)' . PHP_EOL;
+$arErrorsBefore = arCount("SELECT COUNT(*) FROM `tblErrorLog` WHERE `errorTitle` LIKE '%Password reset failed%' OR `errorDetail` LIKE '%eadlock%'");
+$arD2 = arUser('d2', 'active', $arStrangerPassword, true);
+$arRounds = 5;
+$arGoodRounds = 0;
+for ($arRound = 1; $arRound <= $arRounds; $arRound++) {
+    $arLinkA = arResetLink($arD2);
+    $arLinkB = arResetLink($arD2);
+    $arStart = (string) (microtime(true) + 1.5);
+    $arChildA = arSpawn('reset', $arItEnv + ['CUERCODE_IT_CHILD_TOKEN' => $arLinkA, 'CUERCODE_IT_CHILD_PASSWORD' => 'Round-A-' . $arRound . '-' . $arOwnerPassword, 'CUERCODE_IT_CHILD_START' => $arStart]);
+    $arChildB = arSpawn('reset', $arItEnv + ['CUERCODE_IT_CHILD_TOKEN' => $arLinkB, 'CUERCODE_IT_CHILD_PASSWORD' => 'Round-B-' . $arRound . '-' . $arOwnerPassword, 'CUERCODE_IT_CHILD_START' => $arStart]);
+    $arOutA = arCollect($arChildA);
+    $arOutB = arCollect($arChildB);
+    $arWins = 0;
+    $arUsed = 0;
+    foreach ([$arOutA, $arOutB] as $arOut) {
+        if (isset($arOut['success']) && $arOut['success'] === true) {
+            $arWins++;
+        } elseif (isset($arOut['errorCode']) && $arOut['errorCode'] === 'RESET_TOKEN_ALREADY_USED') {
+            $arUsed++;
+        }
+    }
+    if ($arWins === 1 && $arUsed === 1) {
+        $arGoodRounds++;
+    } else {
+        echo '      round ' . $arRound . ': ' . json_encode($arOutA) . ' ' . json_encode($arOutB) . PHP_EOL;
+    }
+}
+arCheck($arGoodRounds === $arRounds, 'in every one of ' . $arRounds . ' rounds: exactly one reset wins and the other is told its link was used (' . $arGoodRounds . '/' . $arRounds . ')');
+arCheck(arCount("SELECT COUNT(*) FROM `tblErrorLog` WHERE `errorTitle` LIKE '%Password reset failed%' OR `errorDetail` LIKE '%eadlock%'") === $arErrorsBefore, '...and no reset failed or deadlocked (no new error-log rows)');
+arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arD2]) === 0, '...and no unused link is left behind');
+
+// ==============================================================================
+// W. Finding 7: wrong passwords at the same moment all count
+// ==============================================================================
+echo PHP_EOL . 'W. Wrong passwords at the same moment (finding 7)' . PHP_EOL;
+arExec("UPDATE `tblSettings` SET `settingValue` = '100' WHERE `settingKey` = 'max_login_attempts'");
+if (function_exists('clearConfigCache')) {
+    clearConfigCache();
+}
+$arW = arUser('w', 'active', $arStrangerPassword, true);
+$arStart = (string) (microtime(true) + 1.5);
+$arWChildren = [];
+for ($arChildNumber = 1; $arChildNumber <= 8; $arChildNumber++) {
+    $arWChildren[] = arSpawn('wrongpw', $arItEnv + ['CUERCODE_IT_CHILD_USERID' => (string) $arW, 'CUERCODE_IT_CHILD_START' => $arStart]);
+}
+$arWCounts = [];
+foreach ($arWChildren as $arWChild) {
+    $arOut = arCollect($arWChild);
+    $arWCounts[] = isset($arOut['count']) ? $arOut['count'] : -1;
+}
+sort($arWCounts);
+arCheck((int) arSnapshot($arW)['user']['failedLoginCount'] === 8, 'eight wrong passwords at the same moment: the count is 8 (' . implode(',', $arWCounts) . ')');
+arCheck($arWCounts === [1, 2, 3, 4, 5, 6, 7, 8] || max($arWCounts) === 8, '...and each process read back a real count');
+arExec("UPDATE `tblSettings` SET `settingValue` = '5' WHERE `settingKey` = 'max_login_attempts'");
+if (function_exists('clearConfigCache')) {
+    clearConfigCache();
+}
+$arW2 = arUser('w2', 'active', $arStrangerPassword, true);
+for ($arTry = 1; $arTry <= 5; $arTry++) {
+    loginUser('ar-w2@ar.cuercode.invalid', 'wrong-' . $arTry, '203.0.113.50', 'integration-check');
+}
+arCheck(arSnapshot($arW2)['user']['lockedUntil'] !== null, 'five wrong sign-ins one after another still lock the account (limit 5)');
+
+// ==============================================================================
+// V. Nit: what a verification link says when nothing is activated
+// ==============================================================================
+echo PHP_EOL . 'V. Verification link for an active or suspended account' . PHP_EOL;
+$arVA = arUser('va', 'active', $arStrangerPassword, true);
+$arVALink = arVerifyLink($arVA);
+$arR = verifyEmailToken($arVALink, $arStrangerPassword);
+arCheck($arR['success'] === false && $arR['httpCode'] === 409 && str_contains($arR['message'], 'nothing was changed') && !str_contains($arR['message'], 'can now log in'), 'an already-active account: "already confirmed, nothing was changed" (not "verified, you can now log in")');
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arVA]) === 0, '...and that pointless link is used up');
+$arVS = arUser('vs', 'suspended', $arStrangerPassword, true);
+$arVSLink = arVerifyLink($arVS);
+$arR = verifyEmailToken($arVSLink, $arStrangerPassword);
+arCheck($arR['success'] === false && $arR['errorCode'] === 'VERIFICATION_TOKEN_INVALID' && arSnapshot($arVS)['user']['status'] === 'suspended', 'a suspended account: the usual invalid answer, still suspended');
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arVS]) === 1, '...and nothing changed (the link is not used up)');
+
 // 🧹 Tidy up.
+arUseSession(null);
 arReset();
 
 echo PHP_EOL;
 if ($arFailures === 0) {
-    echo 'All account-recovery and visitor-address checks passed.' . PHP_EOL;
+    echo 'All ' . $arCheckCount . ' account-recovery and visitor-address checks passed.' . PHP_EOL;
     exit(0);
 }
-echo $arFailures . ' check(s) FAILED.' . PHP_EOL;
+echo $arFailures . ' of ' . $arCheckCount . ' check(s) FAILED.' . PHP_EOL;
 exit(1);

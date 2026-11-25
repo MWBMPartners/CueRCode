@@ -82,13 +82,25 @@ $arVerify = arFunctionBody($arAuth, 'verifyEmailToken');
 assertContains('function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $password = null): array', $arAuth, 'verifyEmailToken() takes the password and hides it from stack traces');
 assertContains('emailVerificationPasswordOutcome(', $arVerify, 'verifyEmailToken() asks the pure decision');
 assertTrue(strpos($arVerify, 'adminUserHoldsGlobalAdminRole($userID)') < strpos($arVerify, 'emailVerificationPasswordOutcome('), 'the Global Admin refusal (review fix I1) still comes first');
-assertContains('recordFailedLogin($userID, $failedCount + 1);', $arVerify, 'a wrong password counts toward the normal sign-in lock-out');
+assertContains('$recordedCount = recordFailedLogin($userID);', $arVerify, 'a wrong password counts toward the normal sign-in lock-out');
+assertContains('emailVerificationPasswordOutcome(true, true, false, false, $recordedCount, $maxAttempts)', $arVerify, 'F7: the "stop the link" decision is taken again with the REAL count the database returned');
 assertContains("logActivity('verification_link_stopped'", $arVerify, 'a link stopped after too many wrong passwords is logged (account number only)');
 assertTrue(
     strpos($arVerify, 'begin_transaction()') < strpos($arVerify, 'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() \'')
-    && strpos($arVerify, '`failedLoginCount` = 0') < strpos($arVerify, '$db->commit()'),
+    && strpos($arVerify, '`failedLoginCount` = 0') < strpos($arVerify, '$db->commit();' . "\n" . '    } catch'),
     'the link is used up and the account activated in ONE transaction (a failure leaves the link usable)'
 );
+// 🔐 Review finding 5: the account row is locked BEFORE the link is claimed (same order as a reset).
+assertTrue(
+    strpos($arVerify, 'begin_transaction()') < strpos($arVerify, "SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
+    && strpos($arVerify, "SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE") < strpos($arVerify, 'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() \''),
+    'F5: verify locks the account row first, then claims the link'
+);
+// 📣 Review nit: only a real activation says "verified, you can now log in".
+assertContains('$activatedRows = $activateStmt->affected_rows;', $arVerify, 'nit: the activation UPDATE\'s changed-row count is checked');
+assertContains('if ($activatedRows !== 1) {', $arVerify, 'nit: no change -> no "verified" message (rolled back)');
+assertContains('had already been confirmed, so nothing was changed', $arVerify, 'nit: an already-active account is told nothing changed');
+assertContains("if (\$accountStatus !== 'pending' && \$accountStatus !== 'active') {", $arVerify, 'nit: a suspended or deleted account gets the usual invalid answer');
 assertContains("`status` = 'active', `failedLoginCount` = 0, `lockedUntil` = NULL", $arVerify, 'activation also clears the lock-out counter');
 assertFalse(str_contains($arVerify, 'logActivity(\'verification_link_stopped\', $password'), 'the password never goes into a log call');
 
@@ -100,13 +112,13 @@ assertContains('#[\SensitiveParameter] string $newPassword', $arReset, 'the new 
 $arOrder = [
     'hashPassword($newPassword)',
     'begin_transaction()',
-    "'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL'",
     'FOR UPDATE',
+    "'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL'",
     'adminUserHoldsGlobalAdminRole($userID)',
     '`passwordHash` = ?',
     'accountRemoveOtherWaysIn($userID, true)',
-    "'password_reset_completed'",
     '$db->commit()',
+    "'password_reset_completed'",
 ];
 $arLast = -1;
 $arInOrder = true;
@@ -117,7 +129,8 @@ foreach ($arOrder as $arStep) {
     }
     $arLast = (int) $arAt;
 }
-assertTrue($arInOrder, 'reset: hash first (outside), then ONE transaction: use the link, lock the account, admin check, new password, remove every other way in, activity row, commit');
+assertTrue($arInOrder, 'reset: hash first (outside), then ONE transaction: lock the account FIRST (F5), use the link, admin check, new password, remove every other way in, commit; the activity row AFTER the commit (F6)');
+assertFalse(str_contains($arReset, '5. writes an activity row'), 'F6: the docblock no longer calls the activity row a step of the transaction');
 assertContains("`status` = 'active', `emailVerifiedAt` = COALESCE(`emailVerifiedAt`, NOW())", $arReset, 'reset on a waiting account activates it and marks the email checked');
 assertContains("`status` = 'pending' AND \" . adminSqlNotGlobalAdminCondition()", $arReset, '...never for a Global Admin (the UPDATE itself refuses one)');
 assertContains("if (\$status !== 'active' && \$status !== 'pending') {", $arReset, 'a suspended or deleted account cannot be reset');
@@ -138,6 +151,11 @@ foreach (['tblUserSessions', 'tblAPIKeys', 'tblPasswordResets', 'tblUserOAuth', 
 }
 assertContains('if ($alsoCancelVerificationLinks) {', $arDoors, 'verification links are cancelled only when asked (the reset asks; the admin grant does not)');
 assertContains('throw new \RuntimeException', $arDoors, 'any failure is thrown so the caller rolls everything back');
+// 🕐 Review finding 1: the shared function moves the "sessions valid from" mark first.
+assertTrue(strpos($arDoors, '`sessionsValidFrom` = CASE') !== false && strpos($arDoors, '`sessionsValidFrom` = CASE') < strpos($arDoors, '`tblUserSessions`'), 'F1: accountRemoveOtherWaysIn() moves the mark forward before ending sessions');
+assertContains('UTC_TIMESTAMP(6)', $arDoors, 'F1: the mark is UTC, to the millionth of a second');
+assertContains('DATE_ADD(`sessionsValidFrom`, INTERVAL 1 MICROSECOND)', $arDoors, 'F1: the new mark is always later than the old one (two resets in one instant still differ)');
+assertContains("throw new \RuntimeException('the sign-in mark could not be moved')", $arDoors, 'F1: a mark that did not move rolls everything back');
 assertFalse(str_contains($arAuth, 'CUERCODE_ROLE_GLOBAL_ADMIN'), 'fn_auth.php still never names the role number');
 
 // ==============================================================================
