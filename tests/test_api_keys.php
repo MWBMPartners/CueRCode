@@ -407,3 +407,32 @@ assertContains('Tick at least one. A key with no scopes ticked cannot call any s
 $b9DevGuide = (string) file_get_contents($b9SiteRoot . 'developers' . DIRECTORY_SEPARATOR . 'authentication' . DIRECTORY_SEPARATOR . 'index.php');
 assertContains('A key needs at least one scope to do anything useful.', $b9DevGuide, 'B9-9: the developer guide says a key needs a scope');
 assertContains('revoke</strong> it first and then create a new one', $b9DevGuide, 'B9-9: the developer guide says what to do with a zero-scope key on a one-key plan');
+
+// ==============================================================================
+// 📖 Independent review (Codex C6 findings 1-4, 2026-11-25): developer pages
+// ==============================================================================
+$c6Samples = (string) file_get_contents($b9SiteRoot . 'developers' . DIRECTORY_SEPARATOR . 'samples' . DIRECTORY_SEPARATOR . 'index.php');
+// C6-1: no JavaScript sample sends an API key except one that says it runs on a server.
+preg_match_all('#<h3 class="h6 mt-3">(JavaScript[^<]*)</h3>\s*(?:<p>.*?</p>\s*)?<pre[^>]*><code>(.*?)</code></pre>#s', $c6Samples, $c6JsBlocks, PREG_SET_ORDER);
+assertTrue(count($c6JsBlocks) >= 5, 'C6-1: the samples page still has its JavaScript samples (' . count($c6JsBlocks) . ')');
+foreach ($c6JsBlocks as $c6Block) {
+    if (str_contains($c6Block[2], 'X-API-Key')) {
+        assertContains('on your server', $c6Block[1], 'C6-1: a JavaScript sample that sends an API key is labelled as server code ("' . $c6Block[1] . '")');
+        assertContains('process.env.CUERCODE_API_KEY', $c6Block[2], 'C6-1: ...and reads the key from the environment, not from the code');
+        assertFalse(str_contains($c6Block[2], 'cuercode_your_api_key_here'), 'C6-1: ...with no key written into the code');
+    }
+}
+assertContains('Never put an API key in code that runs in a visitor\'s browser.', $c6Samples, 'C6-1: the samples page says plainly never to put a key in browser code');
+assertContains("'X-CSRF-Token': document.querySelector('meta[name=\"csrf-token\"]').content", $c6Samples, 'C6-1: the browser sample uses the page\'s CSRF token instead');
+// C6-2: rotation says there will be a gap, and how to avoid it.
+assertContains('stops working until you give it the new secret', $b9DevGuide, 'C6-2: the guide says a rotated key stops working until the new secret is put in');
+assertContains('create a second key', $b9DevGuide, 'C6-2: ...and suggests a second key, then revoking the old one');
+assertFalse(str_contains($b9DevGuide, 'update any integration using it' . "\n" . '                                before rotating'), 'C6-2: the impossible "update before rotating" advice is gone');
+// C6-3: no advice to put the site in another website's frame.
+assertFalse(str_contains($b9DevGuide, 'Embedding the generator inside your own web page'), 'C6-3: the iframe-embedding advice is gone');
+assertContains('does not allow being shown', $b9DevGuide, 'C6-3: the guide says the site cannot be shown inside another website\'s frame');
+$c6Htaccess = (string) file_get_contents($b9SiteRoot . '.htaccess');
+assertContains("frame-ancestors 'self'", $c6Htaccess, 'C6-3: (the reason) the site really does refuse other websites\' frames');
+// C6-4: the Swagger page needs both libraries before starting.
+$c6Swagger = (string) file_get_contents($b9SiteRoot . 'api' . DIRECTORY_SEPARATOR . 'docs' . DIRECTORY_SEPARATOR . 'index.php');
+assertContains("if (typeof SwaggerUIBundle !== 'undefined' && typeof SwaggerUIStandalonePreset !== 'undefined') {", $c6Swagger, 'C6-4: the docs page checks BOTH Swagger libraries before using them (else the raw-spec link shows)');

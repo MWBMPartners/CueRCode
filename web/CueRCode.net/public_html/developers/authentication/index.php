@@ -217,8 +217,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </p>
                         <ul>
                             <li><strong>Rotate</strong> a key to issue it a brand-new secret. The old secret
-                                stops working <strong>immediately</strong>, so update any integration using it
-                                before rotating.</li>
+                                stops working <strong>immediately</strong>, and the new one is shown only once, at
+                                that moment, so it cannot be put into an integration in advance: anything using
+                                the key <strong>stops working until you give it the new secret</strong>. To avoid
+                                that gap, if your plan lets you hold another key, <strong>create a second key</strong>
+                                with the same scopes, switch your integration to it, and then
+                                <strong>revoke</strong> the old one. If you can hold only one key (the free plan),
+                                rotate at a quiet time and put the new secret in straight away.</li>
                             <li><strong>Revoke</strong> a key you no longer need. This is a soft-revoke - the
                                 key stops authenticating straight away.</li>
                         </ul>
@@ -281,9 +286,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <ul class="mb-0">
                             <li><strong>Building a server-side integration, script, or app?</strong> Use an
                                 API key (Mode A).</li>
-                            <li><strong>Embedding the generator inside your own web page via an
-                                <code>&lt;iframe&gt;</code> to <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>,
-                                or just evaluating the API quickly?</strong> Start with anonymous
+                            <li><strong>Showing QR codes on your own website?</strong> Have your server call the
+                                API with your key (Mode A) and send the image to your page. Never put the key in
+                                the page itself (anyone can read it), and do not try to show
+                                <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?> pages inside an
+                                <code>&lt;iframe&gt;</code> on another website: the site does not allow being shown
+                                inside another website's frame, so the browser will refuse it.</li>
+                            <li><strong>Just evaluating the API quickly?</strong> Start with anonymous
                                 <code>/bulk-generate</code> (Section 2), then move to an API key once you
                                 need <code>/generate</code>, <code>/preview</code>, or higher rate limits.</li>
                             <li><strong>Contributing to the <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>

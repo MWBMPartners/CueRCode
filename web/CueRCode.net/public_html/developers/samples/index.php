@@ -70,9 +70,11 @@ $siteURLEscaped = htmlspecialchars($siteURL, ENT_QUOTES, 'UTF-8');
                         Code Samples
                     </h1>
                     <p class="text-body-secondary mb-4">
-                        Every sample below replaces <code>cuercode_your_api_key_here</code> with a real
-                        API key - see <a href="/developers/authentication/">Authentication</a>. Samples
-                        marked "anonymous OK" work with no credentials at all.
+                        Replace <code>cuercode_your_api_key_here</code> in the samples below with a real
+                        API key (the Node.js samples read it from the <code>CUERCODE_API_KEY</code>
+                        environment variable instead) - see <a href="/developers/authentication/">Authentication</a>.
+                        Samples marked "anonymous OK" work with no credentials at all. An API key belongs
+                        on a server only, <a href="#no-keys-in-browsers">never in a web page</a>.
                     </p>
 
                     <div class="legal-content">
@@ -141,14 +143,52 @@ if ($httpStatus === 200 && $result['success'] === true) {
     echo 'Error [' . $result['error_code'] . ']: ' . $result['message'] . PHP_EOL;
 }</code></pre>
 
-                        <h3 class="h6 mt-3">JavaScript (fetch)</h3>
-                        <pre class="bg-body-tertiary p-3 rounded"><code>const response = await fetch('<?php echo $siteURLEscaped; ?>/api/v1/generate', {
+                        <?php /* 🔒 Independent review (Codex C6 finding 1, 2026-11-25): this
+                             sample used to put an API key in browser code. A key in a web
+                             page can be read and reused by anyone who opens the page, so
+                             key-based JavaScript now runs on a server, and browser code on
+                             this site's own pages uses the session and its CSRF token. */ ?>
+                        <div class="alert alert-warning" role="note" id="no-keys-in-browsers">
+                            <strong>Never put an API key in code that runs in a visitor's browser.</strong>
+                            Anyone who opens the page can read the key and use it as you. Keep the key on
+                            your server and have your web page ask your server for the QR code. (Browsers
+                            also stop other websites' pages from reading the API's answers unless the site
+                            owner has allowed that website.)
+                        </div>
+
+                        <h3 class="h6 mt-3">JavaScript (Node.js 18 or later, on your server)</h3>
+                        <pre class="bg-body-tertiary p-3 rounded"><code>// Runs on your server, never in a browser. The key is read from an
+// environment variable, so it is not written in the code.
+const response = await fetch('<?php echo $siteURLEscaped; ?>/api/v1/generate', {
     method: 'POST',
     headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': 'cuercode_your_api_key_here',
-        // Same-origin browser session instead? Swap the header above for:
-        // 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content,
+        'X-API-Key': process.env.CUERCODE_API_KEY,
+    },
+    body: JSON.stringify({
+        type: 'url',
+        input: { url: 'https://example.com' },
+        customization: { format: 'png', size: 512, ecc: 'H' },
+    }),
+});
+
+const result = await response.json();
+
+if (response.ok && result.success) {
+    console.log('Download URL:', result.data.download_url);
+} else {
+    console.error(`Error [${result.error_code}]: ${result.message}`);
+}</code></pre>
+
+                        <h3 class="h6 mt-3">JavaScript (in the browser, on this website's own pages only)</h3>
+                        <p>Code running on a page of this website uses the visitor's browser session and
+                            the page's CSRF token instead of a key. It does not work from another website.</p>
+                        <pre class="bg-body-tertiary p-3 rounded"><code>const response = await fetch('/api/v1/generate', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content,
     },
     body: JSON.stringify({
         type: 'url',
@@ -308,21 +348,17 @@ if ($httpStatus === 200) {
     echo 'Download failed: ' . $fileBytes . PHP_EOL;
 }</code></pre>
 
-                        <h3 class="h6 mt-3">JavaScript (fetch)</h3>
-                        <pre class="bg-body-tertiary p-3 rounded"><code>const response = await fetch(
+                        <h3 class="h6 mt-3">JavaScript (Node.js 18 or later, on your server)</h3>
+                        <pre class="bg-body-tertiary p-3 rounded"><code>// Runs on your server, never in a browser (see the warning in section 1).
+import { writeFile } from 'node:fs/promises';
+
+const response = await fetch(
     `<?php echo $siteURLEscaped; ?>/api/v1/download/${uuid}`,
-    { headers: { 'X-API-Key': 'cuercode_your_api_key_here' } },
+    { headers: { 'X-API-Key': process.env.CUERCODE_API_KEY } },
 );
 
 if (response.ok) {
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = 'cuercode-qr.png';
-    link.click();
-    URL.revokeObjectURL(objectUrl);
+    await writeFile('cuercode-qr.png', Buffer.from(await response.arrayBuffer()));
 } else {
     const error = await response.json();
     console.error(`Error [${error.error_code}]: ${error.message}`);

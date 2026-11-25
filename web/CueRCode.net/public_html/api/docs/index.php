@@ -285,7 +285,12 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
          * @see https://swagger.io/docs/open-source-tools/swagger-ui/usage/configuration/
          */ ?>
         document.addEventListener('DOMContentLoaded', function() {
-            if (typeof SwaggerUIBundle !== 'undefined') {
+            <?php /* 🔒 Independent review (Codex C6 finding 4, 2026-11-25): BOTH
+                     libraries must have loaded - the set-up below uses the bundle AND
+                     the standalone preset. Checking only the bundle let a missing
+                     preset throw an error and leave the page blank, instead of
+                     showing the link to the raw specification. */ ?>
+            if (typeof SwaggerUIBundle !== 'undefined' && typeof SwaggerUIStandalonePreset !== 'undefined') {
                 var ui = SwaggerUIBundle({
                     <?php /* 📌 URL to the OpenAPI specification */ ?>
                     url: '/api/v1/openapi.json',
