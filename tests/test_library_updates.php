@@ -385,3 +385,39 @@ foreach ($r31Cases as $r31Body => $r31What) {
 assertEquals('', libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[],"next_page_token":""}'))['error'], 'R3-1: an empty page token (no more pages) is still a good answer');
 $r31Good = libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[{"id":"GHSA-good-0001","summary":"x","affected":[{"package":{"ecosystem":"Packagist","name":"acme/lib"},"versions":["1.0.0"]}]}]}'));
 assertTrue($r31Good['error'] === '' && count($r31Good['advisories']) === 1 && $r31Good['advisories'][0]['id'] === 'GHSA-good-0001', 'R3-1: a well-formed advisory is still found ' . json_encode($r31Good));
+
+// ------------------------------------------------------------------------------
+// 🕒 Codex round 3 finding 4 (2026-11-25): "withdrawn" hides an advisory, so it
+//    must be absent or a real RFC 3339 timestamp. Before, any non-empty value
+//    (true, "yes") hid the advisory: reproduced first with
+//    {"id":"GHSA-example","withdrawn":true} read as "no advisories".
+// ------------------------------------------------------------------------------
+$r34Bad = [
+    '{"vulns":[{"id":"GHSA-example","withdrawn":true}]}'                       => 'withdrawn is true',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":false}]}'                      => 'withdrawn is false',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":""}]}'                         => 'withdrawn is an empty string',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":"yes"}]}'                      => 'withdrawn is "yes"',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":1}]}'                          => 'withdrawn is a number',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":null}]}'                       => 'withdrawn is null',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":["2026-01-01T00:00:00Z"]}]}'   => 'withdrawn is a list',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":"2026-01-01"}]}'               => 'withdrawn is a date with no time',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":"2026-02-30T00:00:00Z"}]}'     => 'withdrawn is a day that does not exist',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":"2026-01-01T25:00:00Z"}]}'     => 'withdrawn has hour 25',
+    '{"vulns":[{"id":"GHSA-example","withdrawn":"2026-01-01T00:00:00"}]}'      => 'withdrawn has no time zone',
+];
+foreach ($r34Bad as $r34Body => $r34What) {
+    $r34Result = libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch($r34Body));
+    assertTrue($r34Result['error'] !== '' && $r34Result['advisories'] === [], 'round 3 (4): ' . $r34What . ' is "could not check", never "no advisories"');
+}
+$r34Good = libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[{"id":"GHSA-w-0001","withdrawn":"2026-01-01T00:00:00Z","affected":[{"package":{"ecosystem":"Packagist","name":"acme/lib"},"versions":["1.0.0"]}]}]}'));
+assertTrue($r34Good['error'] === '' && $r34Good['advisories'] === [], 'round 3 (4): a real timestamp withdraws the advisory (a good answer with no advisories) ' . json_encode($r34Good));
+$r34Fraction = libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[{"id":"GHSA-w-0002","withdrawn":"2026-01-01T10:30:00.123+01:00","affected":[{"package":{"ecosystem":"Packagist","name":"acme/lib"},"versions":["1.0.0"]}]}]}'));
+assertTrue($r34Fraction['error'] === '' && $r34Fraction['advisories'] === [], 'round 3 (4): fractional seconds and a numeric zone are valid timestamps');
+$r34Absent = libwatchFetchAdvisories($c57Osv, '1.0.0', $c57Fetch('{"vulns":[{"id":"GHSA-w-0003","affected":[{"package":{"ecosystem":"Packagist","name":"acme/lib"},"versions":["1.0.0"]}]}]}'));
+assertTrue($r34Absent['error'] === '' && count($r34Absent['advisories']) === 1, 'round 3 (4): with no withdrawn field the advisory is reported');
+// A direct caller (not through the answer check) is safe too: a bad value does not hide it.
+foreach ([true, 'yes', '', 1, ['x']] as $r34Value) {
+    assertTrue(libwatchAdvisoryAffects(['id' => 'W', 'withdrawn' => $r34Value], 'npm', 'p', '1.0.0'), 'round 3 (4): libwatchAdvisoryAffects() does not hide an advisory for withdrawn = ' . json_encode($r34Value));
+}
+assertTrue(libwatchIsRfc3339Timestamp('2026-12-31T23:59:60Z'), 'round 3 (4): a leap second is allowed');
+assertFalse(libwatchIsRfc3339Timestamp('2026-01-01T00:00:00+24:00'), 'round 3 (4): a zone offset of 24 hours is refused');

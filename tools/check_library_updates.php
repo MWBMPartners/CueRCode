@@ -206,6 +206,45 @@ function libwatchNewestStable(array $tags): ?string
 // ==============================================================================
 
 /**
+ * 🕒 Is this value a real RFC 3339 timestamp, such as 2026-01-01T00:00:00Z or
+ *    2026-01-01T10:30:00.123+01:00? (Codex round 3 finding 4.) It must be a
+ *    non-empty TEXT value (not true, 1, null or a list), have the full
+ *    date + time + zone shape, and name a date and time that exist.
+ *
+ * @param mixed $value Whatever OSV gave for "withdrawn".
+ *
+ * @return bool True only for a well-formed timestamp.
+ */
+function libwatchIsRfc3339Timestamp($value): bool
+{
+    if (!is_string($value) || $value === '') {
+        return false;
+    }
+
+    $parts = [];
+    $shape = '/^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](\d{2}):(\d{2}))$/D';
+    if (preg_match($shape, $value, $parts) !== 1) {
+        return false;
+    }
+
+    if (!checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])) {
+        return false;
+    }
+
+    // Hours 00-23, minutes 00-59, seconds 00-60 (60 is a leap second).
+    if ((int) $parts[4] > 23 || (int) $parts[5] > 59 || (int) $parts[6] > 60) {
+        return false;
+    }
+
+    // A numeric zone offset has its own hours and minutes.
+    if (isset($parts[7]) && ((int) $parts[7] > 23 || (int) $parts[8] > 59)) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * 🛡️ Does one OSV advisory really cover this package at this version?
  *
  * The OSV query already filters by version, but we double-check locally so a
@@ -222,8 +261,13 @@ function libwatchNewestStable(array $tags): ?string
  */
 function libwatchAdvisoryAffects(array $vuln, string $ecosystem, string $name, string $version): bool
 {
-    // A withdrawn advisory was retracted by its author - ignore it.
-    if (!empty($vuln['withdrawn'])) {
+    // A withdrawn advisory was retracted by its author - ignore it. Only a
+    // real RFC 3339 timestamp counts as "withdrawn" (Codex round 3 finding 4):
+    // before, any non-empty value (true, "yes", 1) hid the advisory. A value
+    // that is present but is not a timestamp does NOT hide it - failing closed.
+    // (libwatchOsvLookup() already refuses such an answer as "could not
+    // check"; this keeps a direct caller safe too.)
+    if (array_key_exists('withdrawn', $vuln) && libwatchIsRfc3339Timestamp($vuln['withdrawn'])) {
         return false;
     }
 
@@ -650,6 +694,12 @@ function libwatchFetchAdvisories(array $osv, string $version, callable $fetcher)
             }
             if (!property_exists($vulnObject, 'id') || !is_string($vulnObject->id) || trim($vulnObject->id) === '') {
                 return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (advisory ' . (int) $vulnIndex . ' has no id)'];
+            }
+            // 🕒 Codex round 3 finding 4: "withdrawn" hides an advisory, so it
+            //    must be absent or a real RFC 3339 timestamp. true, "yes",
+            //    "", null, a number or a list all mean "could not check".
+            if (property_exists($vulnObject, 'withdrawn') && !libwatchIsRfc3339Timestamp($vulnObject->withdrawn)) {
+                return ['advisories' => [], 'error' => 'OSV gave an answer in an unexpected shape (advisory ' . (int) $vulnIndex . ' has a withdrawn value that is not a timestamp)'];
             }
         }
         $vulnsList = $data['vulns'];
