@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Fresh-install readiness and a way to ask for a new verification link (2026-11-25, #113, #128)
+
+- The QR, PDF and barcode libraries are now committed in `_libraries/` with a pin check (decision 0011), so the normal deploy ships them. CI checks the pins instead of cloning.
+- The installer now checks the `zip`, `bcmath` and `curl` PHP extensions, refuses a database older than MySQL 8.0.13 or MariaDB 10.6 (decision 0012), and checks that `_uploads` and `_backups` are writable.
+- A credentials template (`auth_creds.example.php.dist`) and a rewritten README install section (SFTP deploy, branch to folder table, how to open and close `install/`).
+- New page `/resend-verification/` (#128): same answer for every address, limits per account and per IP, earlier unused links stop working.
+
 ### Security - Making the first Global Admin from a waiting account sets a new password (2026-11-25, decision 0010, #31)
 
 - **The problem (Phase 1B review finding 1):** a stranger could sign up with the owner's email

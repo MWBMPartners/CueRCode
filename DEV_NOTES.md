@@ -1125,6 +1125,23 @@ database; see `tests/README.md`).
 
 ---
 
+## 📦 Fresh install: committed libraries, installer checks, credentials template (2026-11-25, #113, decisions 0011 and 0012)
+
+- **Libraries are committed** in `web/CueRCode.net/_libraries/` (chillerlan/php-qrcode 5.0.5, php-settings-container 3.2.1, FPDF 1.86, tc-lib-barcode 2.12.0, tc-lib-color 2.13.1): runtime code and licence files only. `_libraries/PINNED_VERSIONS.json` holds each version and a fingerprint of every file; `php tools/check_vendored_libraries.php` checks them (CI runs it instead of cloning) and `--update` rewrites the fingerprints after a deliberate upgrade (the monthly watch #139 proposes upgrades: replace the folder, run `--update`, review the diff). Test: `tests/test_vendored_libraries.php`.
+- **Installer checks** (`_functions/fn_install_checks.php`, tested by `tests/test_install_checks.php`): PHP extensions `mysqli, mbstring, gd, json, openssl, zip, bcmath, curl` each with a plain-words purpose; after connecting but BEFORE any SQL it refuses MySQL below 8.0.13 and MariaDB below 10.6 (handles the `5.5.5-` MariaDB prefix, refuses an unreadable version); `_uploads` and `_backups` must exist and be writable. MariaDB 10.6 itself has not been run against yet (B9).
+- **Credentials template:** `_auth_keys/auth_creds.example.php.dist` (placeholders only, not ignored; `auth_creds.php` still is). Test: `tests/test_credentials_template.php`.
+- **Fresh install order:** deploy; create `auth_creds.php` from the `.dist` template; open `install/` by renaming `install/.htaccess` to `.htaccess.off`; run the installer (all rows green); rename it back or delete `install/`. Each later deploy re-uploads `install/` with its deny-all `.htaccess`, so confirm it is in place.
+- **Not checked:** the installer page in a browser or on a live database (B9 dry run); DreamHost's alpha/beta hostnames are not recorded in the repo (open on #150); deploy re-uploads `install/` every time (a follow-up could exclude it).
+
+## ✉️ Asking for a new verification link (2026-11-25, #128)
+
+- One token path: `issueEmailVerificationLink()` in `fn_auth.php` is used by `registerUser()` and `requestNewVerificationLink()`; the page is `/resend-verification/` (linked from verify-email and sign-in). Same answer for every address; earlier unused links stop working.
+- Settings (group `security`, NOT seeded: defaults live in code and are clamped): `verification_resend_min_gap_seconds` (60), `verification_resend_daily_cap` (5), `verification_resend_ip_per_hour` (10).
+- The per-IP count reads `tblAPIRateLog` rows with `endpoint = 'page/resend-verification'` (written by `recordAPIRequest()`), not `checkRateLimit()`, which would count all anonymous API traffic from that address. `fn_api_auth.php` is loaded lazily (a test pins that it is not loaded globally).
+- Quirks left as found: `queueEmail()` writes an `email_queued` activity row that names the recipient; login and forgot-password call `getClientIP()` behind `function_exists()` but it is never loaded there, so they use `REMOTE_ADDR`. No bot-protection widget (the other forms have none). No API route (OpenAPI unchanged).
+- Known limits: two simultaneous requests could both pass the per-account gap (the IP cap still applies); an older queued-but-unsent verification email arrives with a dead link; a waiting account answers a few milliseconds slower than an unknown address.
+- Tests: `tests/test_resend_verification.php` (45 checks); `tests/integration/resend_verification_real_mysql.php` (7 scenarios on mysql:8.4 in Docker).
+
 ## 🔍 Site Polish Check & Template Comments (2026-10-05, #137)
 
 - **`php tools/check_site_polish.php`** - source-only (no database, no web
