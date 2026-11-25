@@ -1,6 +1,6 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-11-24 (admin area: Global Admin access, task 7n Phase 1B, #31; database upgrades, Phase 1A, #113; earlier: PHP 8.6 readiness guard rails, #151)
+**📅 Last Updated:** 2026-11-25 (admin settings editor, task 7n Phase 1C, #31; earlier admin area: Global Admin access, task 7n Phase 1B, #31; database upgrades, Phase 1A, #113; earlier: PHP 8.6 readiness guard rails, #151)
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 **🌿 Branch cadence:** `work-in-progress → alpha → beta → release-candidate → main` (four-tier; scanning + Dependabot + security-fix propagation cover all four branches, #64)
@@ -9,7 +9,7 @@
 
 ## 🧭 Current position at a glance (2026-09-23; polish update 2026-10-05; admin update 2026-11-24)
 
-**2026-11-24 (task 7n, #31, #113):** the admin & commerce build has started. **Phase 1A** (database upgrades): numbered migrations, `install.sql` now safe to run twice, `migrate.php` command-line tool. **Phase 1B** (this update, committed locally, not yet reviewed or pushed): a private `/admin/` area for Global Admins (overview, confirm password, database upgrades), password re-confirmation before any change, a permanent change log, the `admin_access.php` command-line tool to make the first Global Admin, and Global Admins can no longer erase their own account. **Next: Phase 1C**, the settings screen where the owner types in the email, sign-in, bot-protection and PayPal keys. Whole suite 3739/3739 on PHP 8.5.12.
+**2026-11-24 (task 7n, #31, #113):** the admin & commerce build has started. **Phase 1A** (database upgrades): numbered migrations, `install.sql` now safe to run twice, `migrate.php` command-line tool. **Phase 1B** (this update, committed locally, not yet reviewed or pushed): a private `/admin/` area for Global Admins (overview, confirm password, database upgrades), password re-confirmation before any change, a permanent change log, the `admin_access.php` command-line tool to make the first Global Admin, and Global Admins can no longer erase their own account. **Phase 1C** (2026-11-25, committed locally, not yet reviewed or pushed): the settings screen where the owner types in the email, sign-in, bot-protection and PayPal keys (secrets never shown), with a Microsoft connection check and a test email. Whole suite 3739/3739 on PHP 8.5.12.
 
 **2026-10-05 (#137):** a "does it look AI-made?" sweep fixed the blocked Bootstrap stylesheet (wrong SRI hash), the clipped QR-type grid, the missing logo, share/canonical tags, invisible "Coming soon" badges, contrast failures, internal notes on developer pages and error/empty states; `tools/check_site_polish.php` now runs in CI. **Still needs the owner:** the nine `[TEMPLATE: ...]` gaps in Terms/Privacy, the live database's tagline/description/plan-blurb settings, and switching on the HTTPS redirect at go-live.
 
@@ -32,7 +32,7 @@
 ## 🕳️ Known gaps found in the 2026-09-23 audit
 
 - The email queue runner exists (#112) but has never run on the live server - the owner still needs to add the DreamHost cron job and do a test send.
-- There is no admin screen to enter encrypted settings yet (#31/#115). The admin area itself and its access control now exist (task 7n Phase 1B, 2026-11-24); the settings screen is Phase 1C.
+- The admin settings screen to enter encrypted settings now exists (task 7n Phase 1C, 2026-11-25, #31/#115; built, review owed). The owner still has to enter the real Microsoft details on the live site.
 - Predefined logos have no PNG copies (#65).
 - ~~`install.sql` can't safely run twice, and there is no upgrade script~~ - fixed by task 7n Phase 1A (2026-11-23, #113 item 5): numbered migrations, `migrate.php`, and `/admin/upgrades/` (Phase 1B).
 - Email/password sign-ups, logins and password resets are not recorded as their own events in the activity log — only a generic "API call" row with no user or outcome when they come through the API (#114; also #12/#14/#15).

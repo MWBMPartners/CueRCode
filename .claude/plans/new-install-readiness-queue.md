@@ -10,6 +10,7 @@ Status: gap report folded in 2026-11-25. Owner answers: libraries are committed 
 |---|---|---|---|---|
 | A1 | Phase 1B: first-admin sets a new password (decision 0010) | #31 | Opus (building) | Opus re-review of all 1B + fixes, then push `work-in-progress` (decision 0008) |
 | A2 | Phase 1C: settings editor (enter email secrets, test connection, test email, turn email on) | #31, #29 | Sonnet | Opus |
+|  | ↳ **LANDED 2026-11-25, UNREVIEWED** (local commits `bf339c4`, `b98314e`, `7c09680` + docs; not pushed). Opus review still owed. | | | |
 | A3 | #128 ask for a new verification link (a lost email must not lock someone out) | #128 | Sonnet | Opus |
 
 ## B. Install gaps (agent work; confirmed by the read-only audit of 2026-11-25)

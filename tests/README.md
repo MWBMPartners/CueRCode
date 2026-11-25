@@ -218,6 +218,32 @@ prints PASS/FAIL per scenario. Exit code 0 means every scenario passed. Last
 run 2026-11-23 (task 7n Phase 1A part 2 code review fixes, #113 item 5, #70):
 all scenarios passed on MySQL 8.0.46.
 
+## Optional real-database check (admin settings editor)
+
+`tests/test_admin_settings.php` (642 checks, no database) proves the
+settings editor's decisions. `tests/integration/admin_settings_real_mysql.php`
+(150 checks, scenarios A-K) proves the rest on a throwaway database: secrets
+stored as ciphertext with a fresh salt per save and audited as set / replaced /
+cleared; ordinary settings and the VAT wording; locked keys refused even by
+hand-made requests; one transaction per section (triggers force a failure);
+cache clearing after a change; the two test actions with stand-ins (no real
+Microsoft call exists); the trusted-forwarders row; no secret in any log table,
+the audit log, the PHP error log or a stack trace; and the REAL page rendered
+in a child PHP process with a forged signed-in session (GET, locked, wrong
+CSRF, other-site, no fresh password, hand-made locked-switch POST, error
+summary, a good save). No browser is used.
+
+```bash
+docker run -d --rm --name cuercode-it-settings -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+  -p 127.0.0.1:33116:3306 mysql:8.0.36      # also mysql:8.4 and mariadb:10.6
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33116 \
+CUERCODE_IT_DB_NAME=cuercode_it_p1c CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  php tests/integration/admin_settings_real_mysql.php
+docker stop cuercode-it-settings
+```
+
+Run 2026-11-25: 150/150 on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28.
+
 ## Optional real-database check (Global Admin access)
 
 `tests/test_admin_access.php` proves the admin access DECISIONS without a
@@ -284,6 +310,7 @@ tests/
 ├── integration/       # OPTIONAL checks that need a real (throwaway) database - NOT run by run.php
 │   ├── account_recovery_real_mysql.php
 │   ├── admin_access_real_mysql.php
+│   ├── admin_settings_real_mysql.php
 │   ├── email_queue_real_mysql.php
 │   ├── migrations_real_mysql.php
 │   └── resend_verification_real_mysql.php

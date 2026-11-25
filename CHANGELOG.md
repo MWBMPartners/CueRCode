@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Admin settings editor: enter the email secrets safely (2026-11-25, task 7n Phase 1C, #31, #29)
+
+- **`/admin/settings/`** (Global Admins only): eight sections, one form each - Email (Microsoft 365), Email records, Sign in with Microsoft or Google, Bot protection, PayPal, Prices/VAT/refunds, Free trials, Admin security. Built from one list of allowed settings, so a hand-made request cannot reach anything else.
+- **Secrets are never shown.** A secret box is always empty (empty = keep what is saved; a "Remove" tick clears it). The page only says "Set - last changed ..." or "Not set". Typed secrets are stored encrypted with a fresh salt on every save; error messages and logs never repeat them.
+- **Every save is one transaction with its change-log row** (`setting.update`, `setting.secret_set`, `setting.secret_replace`, `setting.secret_clear`); a failure keeps nothing. While database upgrades are waiting, nothing can be saved.
+- **Locked:** the three charging switches and `dynamic_qr_enabled` show "Off (locked)"; they, every cache row and every not-editable row cannot be changed even by a hand-made request.
+- **"Check Microsoft connection"** and **"Send me a test email"** (own address only, 5 per 10 minutes); both audited and neither ever shows a token or Microsoft's error text.
+- Changing a Graph detail clears the saved Microsoft token; changing a discovery address clears that provider's saved discovery and key data.
+- **VAT wording on `/pricing`** now follows the VAT setting ("Prices include VAT" / "Prices exclude VAT" / nothing).
+- "Trusted forwarding servers" (`trusted_proxy_ips`, decision 0014) can be set on the screen (Admin security section).
+- Secret values are now hidden from PHP stack traces (`#[\SensitiveParameter]` on `setConfig()`, `encryptValue()`, the sign-up, sign-in, change-password and erase-account password parameters and the new save function).
+- Tests: `tests/test_admin_settings.php` (642) and `tests/integration/admin_settings_real_mysql.php` (150 checks on MySQL 8.0.36, 8.4.13 and MariaDB 10.6.28, including the real page in a child process). Not tested: a real browser, and any real Microsoft call (stand-ins only).
+
 ### Security - Closing the "someone signed up first with my email" trick, and trusting visitor addresses correctly (2026-11-25, decisions 0013 and 0014, #31, #128)
 
 - **Verification links now need the account's password (decision 0013, review finding I2).** Someone could sign up first with another person's email address; when the real owner clicked a verification link, the account became active with the stranger's password. Now the `/verify-email/` page asks for the password chosen at sign-up. A missing or wrong password, a bad link and a locked account get one message that points to "Forgot password". Wrong passwords count toward the normal sign-in lock-out, and the one that reaches the limit stops the link. Accounts that sign in with Google or Microsoft only (no password) still verify with one click. `POST /api/v1/auth/verify-email` takes a `password` field (OpenAPI updated).

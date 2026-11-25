@@ -248,17 +248,14 @@ $app["Application"]["Version"]["Repo"]["Commit"]["URL"]          = null; // @bui
 2. **Grant the `Mail.Send` APPLICATION permission** (not delegated) and have a Global Admin **grant admin consent**.
 3. **Create/designate a shared mailbox** the app will send *as* (Send-As), e.g. `notifications@yourdomain.com`. The signed-in app has no user of its own - Graph's `sendMail` targets `/v1.0/users/{mailbox}/sendMail` where `{mailbox}` is this shared mailbox's address.
 4. **Configure DKIM and DMARC** on the sending domain (M365 admin center → Exchange → mail flow, or your DNS provider) so mail sent via Graph passes authentication checks at the recipient (Gmail/Outlook increasingly reject/spam-fold unauthenticated bulk mail).
-5. **Set the settings** (never commit real values - all seed EMPTY). There is no
-   admin screen for this yet (#31) - until it exists, run a one-off PHP script
-   on the server that `require_once`s `fn_config.php` and calls `setConfig()`
-   for each key below (it encrypts any key marked `isSensitive` automatically),
-   then delete the script:
-   - `graph_tenant_id` - the Entra ID tenant ID (Directory (tenant) ID on the app registration's Overview page).
-   - `graph_client_id` - the app registration's Application (client) ID.
-   - `graph_client_secret` - a client secret VALUE (not the secret ID) created under the app registration's "Certificates & secrets".
-   - `graph_sender_mailbox` - the shared mailbox address from step 3.
-   - `email_from_name` - the display name recipients see (e.g. "CueRCode Notifications").
-6. **Flip `email_enabled` to `1`** once the above is verified working (e.g. via a manual `sendEmailNow()` smoke test).
+5. **Enter the settings in the admin screen** (never commit real values - all seed EMPTY). Sign in as a Global Admin, open **`/admin/settings/`**, unlock editing with your password, and in the **Email (Microsoft 365)** section fill in (see "Entering secrets" below for how the boxes behave):
+   - **Microsoft 365 tenant ID** (`graph_tenant_id`) - the Entra ID tenant ID (Directory (tenant) ID on the app registration's Overview page), or your domain name.
+   - **App (client) ID** (`graph_client_id`) - the app registration's Application (client) ID.
+   - **App secret** (`graph_client_secret`) - a client secret VALUE (not the secret ID) created under the app registration's "Certificates & secrets".
+   - **Sending mailbox** (`graph_sender_mailbox`) - the shared mailbox address from step 3.
+   - **Sender name** (`email_from_name`) - the display name recipients see (e.g. "CueRCode Notifications").
+   Press "Save email settings", then press **"Check Microsoft connection"** - it must say Connected before you go on.
+6. **Turn on "Send emails"** (`email_enabled`) in the same section - tick the confirming box (emails already waiting start sending), save, then press **"Send me a test email"** to send one to your own address (needs email on; at most 5 in 10 minutes).
 7. **Set up the queue runner (required)** - the site only ever *queues* emails; nothing is sent until this job exists (#112). *The DreamHost menu names, the PHP path and the shortest cron interval below are **not checked against the live panel/server - confirm when setting up**.*
    - In the DreamHost panel: **Advanced → Cron Jobs → Add New Cron Job**. Choose the site's shell user, give it a title such as "CueRCode email queue", and pick **Custom → every minute** (if the shortest interval the panel offers is longer, emails simply wait up to that long).
    - Command (use the command-line `php`, never `./file` - the deploy does not keep execute permissions; adjust `php84` to the site's PHP version):
@@ -737,7 +734,7 @@ Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destinati
 2. **Add a Web platform redirect URI**: exactly `https://cuercode.net/auth/callback/microsoft` (must match byte-for-byte - Entra ID rejects a mismatched `redirect_uri` outright).
 3. **Add the `openid`, `email`, `profile` delegated Microsoft Graph permissions** (these are the OIDC standard scopes - no admin consent should be required for them).
 4. **Create a client secret** (App registration → Certificates & secrets → New client secret) - copy the VALUE (not the secret ID) immediately, it is shown once.
-5. **Set the settings** (never commit real values - all seed EMPTY): `sso_microsoft_client_id` (the app registration's Application (client) ID), `sso_microsoft_client_secret` (the secret VALUE from step 4). There is no admin screen for this yet (#31) - until it exists, set them from a one-off PHP script on the server that calls `setConfig()` (it encrypts settings marked sensitive automatically), then delete the script.
+5. **Set the settings** (never commit real values - all seed EMPTY): `sso_microsoft_client_id` (the app registration's Application (client) ID), `sso_microsoft_client_secret` (the secret VALUE from step 4). Enter them on `/admin/settings/` in the **Sign in with Microsoft or Google** section (the page also shows the exact callback address to register). No script is needed.
 6. **Flip `sso_microsoft_enabled` to `1`**, and the master **`sso_enabled` to `1`** (if not already on for another provider).
 
 **Owner setup to activate Google:**
@@ -745,7 +742,7 @@ Implements Stages **S0** (schema + pure core) and **S1** (owner-facing destinati
 1. **Create OAuth credentials** (Google Cloud Console → APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application).
 2. **Add an Authorized redirect URI**: exactly `https://cuercode.net/auth/callback/google`.
 3. **Configure the OAuth consent screen** with `openid`, `email`, `profile` scopes (Google's non-sensitive standard scopes - no verification review needed for these alone).
-4. **Set the settings**: `sso_google_client_id`, `sso_google_client_secret`. Same caveat as Microsoft above - no admin screen yet (#31), so use the one-off `setConfig()` script until it exists.
+4. **Set the settings**: `sso_google_client_id`, `sso_google_client_secret`. Enter them on `/admin/settings/` (**Sign in with Microsoft or Google** section), the same way as Microsoft.
 5. **Flip `sso_google_enabled` to `1`** (+ the master switch).
 
 **SIGNula - pending upstream (SIGNula issue #88).** `sso_signula_discovery_url` seeds EMPTY on purpose: SIGNula.id (as verified against its own repo - see PROJECT_ROADMAP.md Epic E2) is currently a credential-proxy REST API (opaque bearer tokens via `POST /api/v1/auth/login`) with **no `/authorize`, `/token`, `/userinfo`, discovery document, or JWKS** - it is not yet an OIDC identity provider. `ssoProviderIsUsable('signula')` fails closed on the empty discovery URL regardless of its own `sso_signula_enabled` flag, so no special-case code is needed to keep it inert - flipping the flag alone does nothing until an owner also fills in a real discovery URL, which cannot happen until SIGNula ships that surface upstream.
@@ -1159,6 +1156,30 @@ command-line decisions - read its file header first),
 only; every page works with JavaScript off). Tests: `tests/test_admin_access.php`
 (no database) and `tests/integration/admin_access_real_mysql.php` (real
 database; see `tests/README.md`).
+
+---
+
+## 🔑 Entering secrets: the settings editor (task 7n Phase 1C, 2026-11-25, #31, #29)
+
+`/admin/settings/` is how the owner enters the email, sign-in, bot-protection and PayPal details, the email clean-up periods, the VAT wording, the free-trial settings and the admin limits. Code: `_functions/fn_admin_settings.php` (the registry, validators, saving, the two test actions, the HTML builders) and `public_html/admin/settings/index.php`. Plan: `.claude/plans/7n-admin-commerce-plan.md` §6.6, §6.7, §7.2.
+
+**How a secret box behaves.** It is always drawn EMPTY and never receives the saved value (the page code only ever learns "has a value" and the last-changed time; `adminSettingsStateFromRow()` drops the stored text for a secret row on load). An empty box means "keep what is saved". Typing replaces it. Ticking "Remove this secret" clears it (typing and ticking together is refused). The text is trimmed; control characters and line breaks inside it are refused; at most 2,048 characters. An error message never repeats what was typed, and the page is never drawn again with a typed secret in it. The tenant ID must be a GUID or a domain name; the app ID must be a GUID. JavaScript only adds a "Show what I typed" button (hidden without JavaScript).
+
+**One save = one transaction.** Each section is one form. The changes of one section are saved together: every setting plus its audit row, or none. The audit action is `setting.update` for ordinary settings and `setting.secret_set` / `setting.secret_replace` / `setting.secret_clear` for secrets; a secret's audit row only says `{"secret":"set"}`, `replaced` or `cleared`. Unchanged boxes write nothing. After the commit the section's `afterSave` actions run: a change to any `graph_*` setting clears `graph_token_cache`; a change to a discovery address clears that provider's `sso_<provider>_discovery_cache` and `_jwks_cache` (and only that provider's).
+
+**Every POST**: CSRF token, then the Origin header, then a fresh password confirmation, then validation, then the transaction, then a redirect with a one-time message. While upgrades are pending or `tblAdminAuditLog` is missing the page shows "Database upgrade needed" and refuses to save.
+
+**What can never be changed here (even by a hand-made request):** `billing_price_points_enabled`, `billing_discounts_enabled`, `billing_payg_enabled`, `dynamic_qr_enabled` (shown "Off (locked)"), every key ending `_cache`, `graph_token_cache`, `app_version`, `app_phase`, `api_version`, `encryption_algorithm`, any row with `isEditable = 0`, and any key that is not in the registry (`adminSettingsRegistry()`). A secret whose row is not flagged sensitive is refused (it must never be stored as plain text).
+
+**Adding a setting to the screen:** add a seed row (a migration, `insert_if_missing`) AND an entry in `adminSettingsRegistry()` with the SAME group, type and sensitivity - `tests/test_admin_settings.php` compares the registry with `seed_data.sql` and migration 0002.
+
+**The two test buttons.** "Check Microsoft connection" clears `graph_token_cache`, calls `getGraphAccessToken()` and says Connected or Could not connect (never the token, never Microsoft's error text; it works while email is off; audit `setting.test_graph`). "Send me a test email" sends a fixed message to the signed-in admin's own address only, needs `email_enabled = 1`, at most 5 per 10 minutes per browser session (audit `setting.test_email`). Both take a stand-in function in the tests, so they are tested without Microsoft.
+
+**Deviation from the plan (decision for the reviewer).** `trusted_proxy_ips` (decision 0014) has no seeded row and no "Security" section in plan §7.2, so it is in the **Admin security** section as "Trusted forwarding servers"; the screen creates the row on first save (group `security`, string). Each entry is checked with `clientIpParseRangeList()` and the saved list is tidied to `a, b, c`.
+
+**VAT wording.** `pricingVatNote()` (`fn_pricing.php`) turns `billing_vat_mode` into "Prices include VAT" / "Prices exclude VAT" / nothing; `/pricing` shows it straight away.
+
+**Tests.** `tests/test_admin_settings.php` (642 checks, no database) and `tests/integration/admin_settings_real_mysql.php` (150 checks; see `tests/README.md`). Not covered: a real browser, and any real Microsoft call.
 
 ---
 

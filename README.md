@@ -120,7 +120,14 @@ This is how a fresh copy gets onto DreamHost. **Nothing is cloned on the server:
    `/admin/`. With no SSH at all, DEV_NOTES.md "First Global Admin" has a phpMyAdmin
    **last resort**, which cannot set a safe password, so follow its steps exactly.
 
-7. **⏱️ Set up the email queue job (once email is configured):** add the DreamHost cron job described under "⏱️ The email queue job (DreamHost cron)" below. Without it, sign-up and password-reset emails are queued but never sent.
+7. **🔑 Enter the email secrets, in this order** (sign in as the Global Admin, open `/admin/settings/`, press "Unlock editing" and type your password):
+   1. In the **Email (Microsoft 365)** section fill in the tenant ID, the app (client) ID, the app secret value, the sending mailbox and the sender name, then press **Save email settings**. (A secret box is always empty; leave it empty to keep what is saved. Nothing secret is ever shown again.)
+   2. Press **Check Microsoft connection**. It must say "Connected" (if not, re-check the three details; the page never shows Microsoft's error text).
+   3. Turn on **Send emails**, tick the confirming box and save.
+   4. Press **Send me a test email** and check it arrives in your own inbox.
+   5. Do step 8 (the cron job) so queued emails are really sent.
+
+8. **⏱️ Set up the email queue job (once email is configured):** add the DreamHost cron job described under "⏱️ The email queue job (DreamHost cron)" below. Without it, sign-up and password-reset emails are queued but never sent.
 
 ### 🧪 Development Environments
 
@@ -180,7 +187,7 @@ curl -X POST https://cuercode.net/api/v1/generate \
 Registration verification, password resets, and organisation invitations are sent via the **Microsoft Graph API** (client-credentials grant, M365 shared mailbox Send-As) - never PHP's `mail()`. The whole subsystem (`_functions/fn_email.php`) is **inert by default**: the `email_enabled` kill-switch seeds to `0` and every Graph credential seeds empty, so no email can be sent (and no network call is attempted) until an owner completes the M365 app registration and fills in the settings. See [DEV_NOTES.md](DEV_NOTES.md#email-subsystem-microsoft-graph---epic-e8-29) for the full setup runbook. Google Workspace (#30) is a future driver slot behind the same `email_provider` setting.
 
 > ⚠️ **Two things to know, even once M365 is configured and `email_enabled` is on:**
-> 1. There is no admin screen for entering the Microsoft credentials (#31) - they currently have to be set from a one-off script (see DEV_NOTES.md).
+> 1. The Microsoft credentials are entered on the admin settings screen (`/admin/settings/`, Email section) - see "Installation" step 7 below.
 > 2. Emails are only ever *queued* by the site. They are sent by the email queue runner (#112), which **must be set up as a DreamHost cron job** (below). Without that job, no verification or password-reset email is ever sent, so nobody can finish signing up.
 
 ### ⏱️ The email queue job (DreamHost cron)
@@ -215,7 +222,7 @@ The account dashboard's new "Your data" section gives every user two self-servic
 
 ## 🛡️ Admin area (task 7n, #31) - started
 
-A private control panel at `/admin/`, for **Global Admins** only. Today it has an overview (what is and is not set up - secrets are only ever shown as "Set" or "Not set"), a **Confirm password** page and a **Database upgrades** page. Anyone else gets the ordinary "page not found" page. Every change needs the password typed again within the last 15 minutes of activity (60 at most), every change is written to a permanent change log (`tblAdminAuditLog`, never holding secret values), and admin pages are never cached, framed or listed by search engines. There is no admin API. The first Global Admin is made on the server command line (`_includes/cli/admin_access.php`); a Global Admin cannot erase their own account. The settings screen for the email, sign-in, bot-protection and PayPal keys is next (phase 1C). Runbook: [DEV_NOTES.md](DEV_NOTES.md) "Admin area and the first Global Admin".
+A private control panel at `/admin/`, for **Global Admins** only. Today it has an overview (what is and is not set up - secrets are only ever shown as "Set" or "Not set"), a **Confirm password** page and a **Database upgrades** page. Anyone else gets the ordinary "page not found" page. Every change needs the password typed again within the last 15 minutes of activity (60 at most), every change is written to a permanent change log (`tblAdminAuditLog`, never holding secret values), and admin pages are never cached, framed or listed by search engines. There is no admin API. The first Global Admin is made on the server command line (`_includes/cli/admin_access.php`); a Global Admin cannot erase their own account. **Settings** (`/admin/settings/`) is where the Microsoft 365 email details, sign-in keys, bot-protection keys, PayPal keys, email record periods, VAT wording, free-trial settings and admin limits are entered. Secret boxes are always empty and never show a saved value; every change is saved together with its change-log row; the charging switches show "Off (locked)" and cannot be changed. Runbook: [DEV_NOTES.md](DEV_NOTES.md) "Admin area and the first Global Admin".
 
 ## 🔓 Single Sign-On (Epic E2)
 
