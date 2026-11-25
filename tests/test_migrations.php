@@ -970,12 +970,27 @@ preg_match_all("/^\\s*\\('[a-z_]+',\\s*'([^']+)'/m", $migSettingsBig, $migSettin
 $migSeededSettingKeys = $migSettingsKeys[1];
 assertTrue(!in_array('seed_data_loaded', $migSeededSettingKeys, true), 'round 3 (2): the settings count leaves out the completion marker');
 assertEquals(count($migSeededSettingKeys), count(array_unique($migSeededSettingKeys)), 'round 3 (2): seed_data.sql seeds no setting twice');
-assertEquals(count($migSeededSettingKeys), migrationSeedMinimumSettingsCount(), 'round 3 (2): migrationSeedMinimumSettingsCount() is exactly the number of settings seed_data.sql inserts (' . count($migSeededSettingKeys) . ')');
-foreach (migrationSeedRequiredSettingKeys() as $migRequiredKey) {
-    assertTrue(in_array($migRequiredKey, $migSeededSettingKeys, true), 'round 3 (2): required setting ' . $migRequiredKey . ' is really seeded by seed_data.sql');
-}
-assertTrue(count(migrationSeedRequiredSettingKeys()) >= 5 && count(migrationSeedRequiredSettingKeys()) <= 12, 'round 3 (2): the required-setting list stays short and explicit');
-assertEquals(count(migrationSeedRequiredSettingKeys()), count(array_unique(migrationSeedRequiredSettingKeys())), 'round 3 (2): no required setting is listed twice');
+// Codex round 4 finding 1: the runtime list is EVERY seeded setting (both
+// directions: nothing seeded is left off, nothing listed is unseeded).
+$migListSettings = migrationSeedRequiredSettingKeys();
+$migFileSettings = $migSeededSettingKeys;
+sort($migListSettings);
+sort($migFileSettings);
+assertEquals($migFileSettings, $migListSettings, 'round 4 (1): migrationSeedRequiredSettingKeys() is exactly the ' . count($migSeededSettingKeys) . ' settings seed_data.sql inserts (a key added to or removed from the file without the list fails here)');
+assertEquals(80, count(migrationSeedRequiredSettingKeys()), 'round 4 (1): 80 starting settings');
+assertEquals(count(migrationSeedRequiredSettingKeys()), count(array_unique(migrationSeedRequiredSettingKeys())), 'round 4 (1): no required setting is listed twice');
+assertTrue(!function_exists('migrationSeedMinimumSettingsCount'), 'round 4 (1): the settings row count (which an unrelated row could satisfy) is gone');
+// Stand-in: the names a database holds, with one starting setting missing and
+// one unrelated extra name added - the extra name must not cover the gap.
+$migStandIn = array_values(array_diff(migrationSeedRequiredSettingKeys(), ['copyright_year']));
+$migStandIn[] = 'some_unrelated_extra_setting';
+assertEquals(['copyright_year'], migrationSeedMissingSettingNames($migStandIn), 'round 4 (1): a missing starting setting is named even when an unrelated extra row is present');
+assertEquals([], migrationSeedMissingSettingNames(migrationSeedRequiredSettingKeys()), 'round 4 (1): every starting setting present: nothing missing');
+assertEquals(80, count(migrationSeedMissingSettingNames(['some_unrelated_extra_setting'])), 'round 4 (1): no starting settings at all: all 80 missing');
+$migShortfallStart  = (int) strpos($migRunnerSource, 'function migrationDbSeedSettingsShortfall(');
+$migShortfallEnd    = (int) strpos($migRunnerSource, 'function migrationDbTableExistsState(');
+$migShortfallSource = substr($migRunnerSource, $migShortfallStart, $migShortfallEnd - $migShortfallStart);
+assertTrue(!str_contains($migShortfallSource, 'COUNT(*)'), 'round 4 (1): the settings check does not count rows');
 
 // 📌 Decision 0018 (Codex round 3 finding 1): the completion marker is checked
 //    BEFORE "all three tables empty", in the source, so a present marker can

@@ -1092,13 +1092,23 @@ itCheck('M seed settings', migrationDbSeedDataState($itM)['state'] === 'complete
 $itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'site_name'");
 $itStateM = migrationDbSeedDataState($itM);
 itCheck('M seed settings', $itStateM['ok'] === true && $itStateM['state'] === 'partial' && $itStateM['missing'] === ['tblSettings' => 1], 'no marker, all 68 rows, one key setting (site_name) missing: partial: ' . json_encode($itStateM['missing']));
-itCheck('M seed settings', str_contains($itStateM['summary'], 'tblSettings is missing starting settings'), 'and the summary names the settings: ' . $itStateM['summary']);
-// A setting that is not on the short key list: the row count catches it.
+itCheck('M seed settings', str_contains($itStateM['summary'], 'tblSettings is missing 1 of its 80 starting settings (site_name)'), 'and the summary names the settings: ' . $itStateM['summary']);
+// Putting it back makes it complete again.
 $itM->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('general', 'site_name', 'CueRCode', 'string', 0, 1, 'x')");
 itCheck('M seed settings', migrationDbSeedDataState($itM)['state'] === 'complete', 'putting it back makes it complete again');
+// Codex round 4 finding 1: a missing starting setting that is NOT one of the
+// old nine key settings, with one unrelated extra settings row added so the
+// total row count is still 80. Before this fix that read "complete".
 $itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'copyright_year'");
+$itM->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('general', 'unrelated_extra_setting', 'x', 'string', 0, 1, 'x')");
+itCheck('M seed settings', itCountRows($itM, 'tblSettings') === 80, 'setup: the settings row count is still 80 (one missing, one unrelated extra)');
 $itStateM = migrationDbSeedDataState($itM);
-itCheck('M seed settings', $itStateM['ok'] === true && $itStateM['state'] === 'partial' && $itStateM['missing'] === ['tblSettings' => 1], 'a missing starting setting that is not on the key list is caught by the row count: ' . json_encode($itStateM['missing']));
+itCheck('M seed settings', $itStateM['ok'] === true && $itStateM['state'] === 'partial' && $itStateM['missing'] === ['tblSettings' => 1], 'no marker, 68 rows, copyright_year missing, one unrelated extra row: partial: ' . json_encode($itStateM['missing']));
+itCheck('M seed settings', str_contains($itStateM['summary'], 'copyright_year') && str_contains($itStateM['summary'], '1 of its 80'), 'and the summary names the missing setting: ' . $itStateM['summary']);
+// Many missing: only about five names are shown, with a count of the rest.
+$itM->query("DELETE FROM `tblSettings` WHERE `settingGroup` = 'general'");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed settings', $itStateM['state'] === 'partial' && str_contains($itStateM['summary'], ' more)') && substr_count($itStateM['summary'], ',') === 4, 'many missing: five names shown, then "and N more": ' . $itStateM['summary']);
 $itM->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('general', 'copyright_year', '2026', 'string', 0, 1, 'x')");
 // With the marker, a missing setting is the owner's business.
 $itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'site_name'");

@@ -112,7 +112,13 @@ Codex (read-only, no PHP or MySQL) raised six leads in the round-1 fixes. Each w
 | R3-1 | real (8 test cases failed on old code) | strict `vulns` / `next_page_token` shape | bcfbbc2 |
 | R3-2 | real (old test passed on pre-fix code: 201/201) | delegate probed first; image and centre pixel asserted; fallback separate; new test fails 2 on pre-fix copy | a446a3c |
 
-Still owed: a Codex re-check of the round-3 fixes; chunk 3 (docs/portal/spec).
+### F2 round 4 outcome (2026-11-25): Codex re-check of the round-3 fixes
+
+| ID | Verdict | Outcome | Commit |
+| --- | --- | --- | --- |
+| U1-1 | real (nine named settings plus a total row count of 80: an unrelated extra row offset a missing `copyright_year`) | every seeded setting name checked (80, `migrationSeedRequiredSettingKeys()`), row count removed, summary names up to five missing names plus a count; unit test compares the list with `seed_data.sql` both ways; real-database test: missing key plus unrelated extra row = partial | see git log |
+
+Still owed: a Codex re-check of the round-4 fix; chunk 3 (docs/portal/spec).
 
 ### F2 round 3 outcome (2026-11-25): Codex re-check of the round-2 fixes
 Codex (read-only, no PHP or MySQL) raised four leads. Each was reproduced or shown first (MySQL 8.0.36 and MariaDB 10.6.28 in Docker; PHP 8.5.12). All four were real. Decision 0018 (lead, owner may overrule) settled the marker question.

@@ -75,7 +75,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 446 |
+| `test_migrations.php` | 442 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -91,13 +91,13 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **6409** |
+| **Total** | **6405** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
 ### Real-database runs after Codex round 3 (2026-11-25)
 
-Passed on throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other: `migrations_real_mysql.php` 121 checks on each (M5 changed to decision 0018: marker present and the three tables emptied is "complete" and nothing is put back, then removing the marker allows a clean re-seed; new M seed settings: 68 rows with one starting setting missing is "partial"), `admin_access_real_mysql.php` 167 on each (B extended: a restricted database user that cannot read the change-log table reads "unknown" whether the table is missing or present, a full-rights user reads "no" then "yes"; the script creates and drops that user), `admin_settings_real_mysql.php` 232 on each. The other three scripts were not re-run after round 3 (nothing they cover changed).
+Passed on throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other: `migrations_real_mysql.php` 124 checks on each after round 4 (M seed settings now checks EVERY starting setting by name: one missing plus one unrelated extra row is "partial" and names it; many missing shows five names and a count) and 121 after round 3 (M5 changed to decision 0018: marker present and the three tables emptied is "complete" and nothing is put back, then removing the marker allows a clean re-seed; new M seed settings: 68 rows with one starting setting missing is "partial"), `admin_access_real_mysql.php` 167 on each (B extended: a restricted database user that cannot read the change-log table reads "unknown" whether the table is missing or present, a full-rights user reads "no" then "yes"; the script creates and drops that user), `admin_settings_real_mysql.php` 232 on each. The other three scripts were not re-run after round 3 (nothing they cover changed).
 
 ### Real-database runs after Codex round 2 (2026-11-25, re-check of the fixes)
 

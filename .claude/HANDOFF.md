@@ -6,13 +6,14 @@
 ## 0. ⚡ LATEST — 2026-11-25
 
 ### Where the work is
-- **Branch `work-in-progress`.** e990c50 pushed; round-2 and round-3 fixes local (`e990c50..HEAD`: round 2 aeaff51..a446a3c plus docs; round 3 28f8e4d, 6b205e5, ab1fa31 plus docs), waiting for the lead's check and push (decision 0008). No other branch touched; Dependabot PR #152 (alpha) waits for the owner.
+- **Branch `work-in-progress`.** e990c50 pushed; round-2 and round-3 fixes local (`e990c50..HEAD`: round 2 aeaff51..a446a3c plus docs; round 3 28f8e4d, 6b205e5, ab1fa31 plus docs; round 4 one fix plus docs), waiting for the lead's check and push (decision 0008). No other branch touched; Dependabot PR #152 (alpha) waits for the owner.
 - **Built, reviewed by Opus and pushed:** 7n Phase 1A-1C, #128, decisions 0013-0016, install readiness, predefined logo PNGs (#65), library watch (#139, runs only from `main`).
 - **Codex review F2 DONE (29 findings, chunks C1-C6):** 27 real and fixed with tests, C3-6 fixed in the named files with the rest in #157, C5-4 not a fault (measured). New issues: #157, #158.
 - **Codex round 2 DONE (re-check of the fixes, 6 leads):** all six real, reproduced first, fixed with tests (installer completeness marker + InnoDB check; seed/migration wording order; admin change-log stand-in now fail-closed before upgrade 0002 - SECURITY F-048; OSV shape; Imagick logo test). Tables: queue file "F2 outcome" and "F2 round 2 outcome".
 - **Codex round 3 DONE (4 leads, all real, fixed):** marker present = skip seeding (decision 0018); marker-free "complete" also needs the starting settings; admin change-log table check reads error 1146; OSV `withdrawn` must be a timestamp (SECURITY F-051, F-052). Table: queue file "F2 round 3 outcome".
-- **Tests:** `php tests/run.php` 6409/6409 (45 files, PHP 8.5.12; the PHP 8.4.27 + Imagick run was not repeated after round 3, it was 6355 after round 2); php86 scan 0; polish check 0 problems (9 legal-placeholder warnings). All six `tests/integration/*real_mysql.php` pass on MySQL 8.0.36 and MariaDB 10.6.28 (counts in tests/README.md).
-- **Not verified anywhere:** a real browser pass on any changed page (developer samples/authentication, admin re-confirm, reset password); DreamHost; real Microsoft mail; HTTPS/HSTS; a Codex re-check of the round-3 fixes.
+- **Codex round 4 DONE (1 lead, real, fixed):** the marker-free check now tests EVERY seeded setting by name (80), no row count, so an unrelated extra row cannot hide a missing one (SECURITY F-051 note). Table: queue file "F2 round 4 outcome".
+- **Tests:** `php tests/run.php` 6405/6405 (45 files, PHP 8.5.12; the PHP 8.4.27 + Imagick run was not repeated after rounds 3 and 4, it was 6355 after round 2); php86 scan 0; polish check 0 problems (9 legal-placeholder warnings). All six `tests/integration/*real_mysql.php` pass on MySQL 8.0.36 and MariaDB 10.6.28 (counts in tests/README.md).
+- **Not verified anywhere:** a real browser pass on any changed page (developer samples/authentication, admin re-confirm, reset password); DreamHost; real Microsoft mail; HTTPS/HSTS; a Codex re-check of the round-4 fix.
 
 ### In flight (watched)
 - Nothing running. (The throwaway Docker containers `cuercode-r2-*` were stopped at the end of the session; the local image `cuercode-r2-imagick` is a reusable PHP 8.4 + Imagick 7 test image.)

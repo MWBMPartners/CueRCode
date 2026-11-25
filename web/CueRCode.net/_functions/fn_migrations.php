@@ -1462,49 +1462,46 @@ function migrationSeedExpectedRows(): array
 }
 
 /**
- * 🔑 The starting SETTINGS a database seeded before the completion marker
- *    existed must hold, by name (independent review, Codex round 3 finding
- *    2, 2026-11-25).
+ * 🔑 EVERY starting SETTING seed_data.sql inserts, by name (independent review,
+ *    Codex round 3 finding 2 and round 4 finding 1, 2026-11-25).
  *
  * Used ONLY when there is no completion marker. The 68 starting rows in the
- * three tables (migrationSeedExpectedRows()) are not enough on their own: a
- * database holding all 68 but missing a starting setting was called
- * "complete", the installer skipped the seed and wrote its lock, and the
- * missing setting was never put back. The list is kept short and explicit
- * (a handful of settings from different groups, each of which seed_data.sql
- * writes); migrationSeedMinimumSettingsCount() is the second guard, on the
- * number of settings. tests/test_migrations.php reads seed_data.sql and
- * fails if a name here is not seeded or the count drifts.
+ * three tables (migrationSeedExpectedRows()) are not enough on their own, and
+ * neither is a count of settings rows: in round 4 Codex showed that an
+ * unrelated extra row (one an upgrade or the owner added) made up the count
+ * while a real starting setting such as copyright_year was missing, and the
+ * database was called complete. So each name is checked on its own and a
+ * missing one can never be covered by another row. The completion marker
+ * itself is not on this list (it is not a starting setting).
+ * tests/test_migrations.php reads seed_data.sql and fails if this list and
+ * the file differ in EITHER direction.
  *
  * @return array<int, string> settingKey values
  */
 function migrationSeedRequiredSettingKeys(): array
 {
     return [
-        'site_name',
-        'site_url',
-        'app_version',
-        'copyright_holder',
-        'bot_protection_provider',
-        'sso_enabled',
-        'dynamic_qr_enabled',
-        'dynamic_redirect_base_url',
-        'redirect_allow_http',
+        'site_name', 'site_url', 'site_tagline', 'site_description', 'site_email', 'site_timezone',
+        'app_version', 'app_phase', 'copyright_holder', 'copyright_year', 'default_qr_size',
+        'default_qr_ecc', 'default_qr_format', 'default_fg_color', 'default_bg_color',
+        'default_transparent_bg', 'default_pattern', 'default_marker_border', 'default_marker_center',
+        'default_frame_style', 'default_logo_size', 'max_qr_size', 'max_logo_upload_size', 'api_enabled',
+        'api_version', 'api_rate_limit_anonymous_per_min', 'api_rate_limit_anonymous_per_day',
+        'api_default_response_format', 'api_cors_allowed_origins', 'debug_mode', 'session_lifetime',
+        'csrf_token_lifetime', 'encryption_algorithm', 'password_min_length', 'max_login_attempts',
+        'lockout_duration', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key',
+        'recaptcha_secret_key', 'bot_protection_provider', 'primary_color', 'secondary_color', 'logo_path',
+        'favicon_path', 'email_enabled', 'email_provider', 'email_from_name', 'graph_sender_mailbox',
+        'graph_tenant_id', 'graph_client_id', 'graph_client_secret', 'graph_token_cache',
+        'email_queue_autoprocess', 'email_queue_retention_days', 'email_queue_failed_retention_days',
+        'billing_upgrade_url', 'billing_past_due_downgrade_plan_key', 'billing_price_points_enabled',
+        'billing_discounts_enabled', 'billing_payg_enabled', 'sso_enabled', 'sso_microsoft_enabled',
+        'sso_microsoft_client_id', 'sso_microsoft_client_secret', 'sso_microsoft_discovery_url',
+        'sso_microsoft_scopes', 'sso_google_enabled', 'sso_google_client_id', 'sso_google_client_secret',
+        'sso_google_discovery_url', 'sso_google_scopes', 'sso_signula_enabled', 'sso_signula_client_id',
+        'sso_signula_client_secret', 'sso_signula_discovery_url', 'sso_signula_scopes', 'dynamic_qr_enabled',
+        'dynamic_redirect_base_url', 'redirect_allow_http',
     ];
-}
-
-/**
- * 🔢 The fewest rows tblSettings may hold for a marker-free database to be
- *    called complete: the number of starting settings seed_data.sql inserts
- *    (not counting the completion marker). Settings added later by upgrades
- *    only push the real count higher. tests/test_migrations.php counts the
- *    settings in seed_data.sql and fails if this number is not the same.
- *
- * @return int Minimum number of tblSettings rows
- */
-function migrationSeedMinimumSettingsCount(): int
-{
-    return 80;
 }
 
 /**
@@ -1553,8 +1550,8 @@ function migrationDbSeedDataAlreadyPresent(\mysqli $db): array
  *                  last statement - so rows the owner has since changed or
  *                  deleted do not matter), OR, for a database with no marker,
  *                  by EVERY starting row in migrationSeedExpectedRows() being
- *                  there AND the starting settings (migrationSeedRequiredSettingKeys()
- *                  and migrationSeedMinimumSettingsCount()). A PRESENT marker
+ *                  there AND the starting settings (EVERY name in
+ *                  migrationSeedRequiredSettingKeys()). A PRESENT marker
  *                  always means complete, even when the owner has emptied the
  *                  three tables (decision 0018): seeding already happened;
  *   - "partial"  - anything else: some starting rows are there but not all of
@@ -1692,9 +1689,8 @@ function migrationDbSeedDataState(\mysqli $db): array
         }
     }
 
-    // 5️⃣ ...and the starting settings too (Codex round 3 finding 2): the key
-    //    settings by name, and a minimum number of settings rows. A missing
-    //    tblSettings counts as having none of them.
+    // 5️⃣ ...and EVERY starting setting too, by name (Codex round 3 finding 2
+    //    and round 4 finding 1). A missing tblSettings has none of them.
     $settingsCheck = migrationDbSeedSettingsShortfall($db);
 
     if ($settingsCheck['ok'] !== true) {
@@ -1721,21 +1717,41 @@ function migrationDbSeedDataState(\mysqli $db): array
 }
 
 /**
- * 🔑 How many of the starting settings is this marker-free database short of?
- *    (Codex round 3 finding 2.) Counts the key settings from
- *    migrationSeedRequiredSettingKeys() that are not there, and compares the
- *    number of tblSettings rows with migrationSeedMinimumSettingsCount();
- *    "short" is the larger of the two shortfalls. All values are bound; any
- *    failure of any question is ok = false, never "nothing missing".
+ * 🧮 Which starting settings are NOT in this list of names? Pure (no database),
+ *    so it can be tested on its own: names that are not starting settings are
+ *    ignored, and they can never stand in for a missing one.
+ *
+ * @param array<int, string> $presentNames settingKey values found in tblSettings
+ * @return array<int, string> Starting settings not found, in list order
+ */
+function migrationSeedMissingSettingNames(array $presentNames): array
+{
+    $missingNames = [];
+
+    foreach (migrationSeedRequiredSettingKeys() as $keyName) {
+        if (!in_array($keyName, $presentNames, true)) {
+            $missingNames[] = $keyName;
+        }
+    }
+
+    return $missingNames;
+}
+
+/**
+ * 🔑 Which of the starting settings is this marker-free database missing?
+ *    (Codex round 3 finding 2; reworked for round 4 finding 1.) Reads the
+ *    names of the starting settings that ARE in tblSettings and compares them,
+ *    one by one, with migrationSeedRequiredSettingKeys(). There is no row
+ *    count any more, so an unrelated extra row cannot hide a missing setting.
+ *    Any failure of any question is ok = false, never "nothing missing".
  *
  * @param \mysqli $db Connection with the site database selected
- * @return array{ok: bool, short: int, summary: string, error: string}
+ * @return array{ok: bool, short: int, missingNames: array<int, string>, summary: string, error: string}
  */
 function migrationDbSeedSettingsShortfall(\mysqli $db): array
 {
-    $failed = ['ok' => false, 'short' => 0, 'summary' => '', 'error' => ''];
+    $failed = ['ok' => false, 'short' => 0, 'missingNames' => [], 'summary' => '', 'error' => ''];
     $keys   = migrationSeedRequiredSettingKeys();
-    $minimum = migrationSeedMinimumSettingsCount();
 
     $settingsTable = migrationDbTableExistsState($db, 'tblSettings');
 
@@ -1744,50 +1760,51 @@ function migrationDbSeedSettingsShortfall(\mysqli $db): array
         return $failed;
     }
 
-    if ($settingsTable['exists'] !== true) {
-        return [
-            'ok'      => true,
-            'short'   => $minimum,
-            'summary' => 'tblSettings does not exist, so none of the ' . $minimum . ' starting settings are there',
-            'error'   => '',
-        ];
+    // A missing table has none of them.
+    $presentNames = [];
+
+    if ($settingsTable['exists'] === true) {
+        $placeholders = implode(', ', array_fill(0, count($keys), '?'));
+        $keyRows      = migrationDbFetchAll(
+            $db,
+            'SELECT `settingKey` AS `foundKey` FROM `tblSettings` WHERE `settingKey` IN (' . $placeholders . ')',
+            str_repeat('s', count($keys)),
+            $keys
+        );
+
+        if ($keyRows['ok'] !== true) {
+            $failed['error'] = 'Could not check the starting settings in tblSettings (' . $keyRows['error'] . ')';
+            return $failed;
+        }
+
+        foreach ($keyRows['rows'] as $keyRow) {
+            $presentNames[] = (string) $keyRow['foundKey'];
+        }
     }
 
-    $placeholders = implode(', ', array_fill(0, count($keys), '?'));
-    $keyRows      = migrationDbFetchAll(
-        $db,
-        'SELECT COUNT(*) AS `foundCount` FROM `tblSettings` WHERE `settingKey` IN (' . $placeholders . ')',
-        str_repeat('s', count($keys)),
-        $keys
-    );
+    // Every name on the list that was not found, in list order.
+    $missingNames = migrationSeedMissingSettingNames($presentNames);
 
-    if ($keyRows['ok'] !== true || $keyRows['rows'] === []) {
-        $failed['error'] = 'Could not check the starting settings in tblSettings (' . $keyRows['error'] . ')';
-        return $failed;
+    if ($missingNames === []) {
+        return ['ok' => true, 'short' => 0, 'missingNames' => [], 'summary' => '', 'error' => ''];
     }
 
-    $totalRows = migrationDbFetchAll($db, 'SELECT COUNT(*) AS `rowCount` FROM `tblSettings`');
+    // Show up to five names, then how many more there are.
+    $shown   = array_slice($missingNames, 0, 5);
+    $summary = 'tblSettings is missing ' . count($missingNames) . ' of its ' . count($keys) . ' starting settings (' . implode(', ', $shown);
 
-    if ($totalRows['ok'] !== true || $totalRows['rows'] === []) {
-        $failed['error'] = 'Could not count the rows in tblSettings (' . $totalRows['error'] . ')';
-        return $failed;
+    if (count($missingNames) > count($shown)) {
+        $summary .= ' and ' . (count($missingNames) - count($shown)) . ' more';
     }
 
-    $keysMissing  = count($keys) - (int) $keyRows['rows'][0]['foundCount'];
-    $rowCount     = (int) $totalRows['rows'][0]['rowCount'];
-    $countMissing = max(0, $minimum - $rowCount);
-    $short        = max($keysMissing, $countMissing);
-
-    if ($short <= 0) {
-        return ['ok' => true, 'short' => 0, 'summary' => '', 'error' => ''];
-    }
+    $summary .= ')';
 
     return [
-        'ok'      => true,
-        'short'   => $short,
-        'summary' => 'tblSettings is missing starting settings (' . $keysMissing . ' of ' . count($keys)
-            . ' key settings absent; ' . $rowCount . ' settings rows where at least ' . $minimum . ' are expected)',
-        'error'   => '',
+        'ok'           => true,
+        'short'        => count($missingNames),
+        'missingNames' => $missingNames,
+        'summary'      => $summary,
+        'error'        => '',
     ];
 }
 

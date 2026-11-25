@@ -17,6 +17,10 @@ Codex re-read the round-2 fixes (read-only, no PHP or MySQL) and raised four lea
 - **Library watch: `withdrawn` must be a real timestamp.** `{"id":"GHSA-example","withdrawn":true}` (or `"yes"`) used to hide an advisory. `withdrawn` must now be absent or an RFC 3339 timestamp; anything else is "could not check". Commit ab1fa31.
 - Suite: 6409 assertions in 45 files (PHP 8.5.12). Real-database scripts pass on MySQL 8.0.36 and MariaDB 10.6.28 (migrations 121, admin access 167, admin settings 232 checks).
 
+### Fixes - Codex re-check round 4 (2026-11-25, queue F2, #113)
+
+- **Installer: a missing starting setting can no longer be hidden by an unrelated extra one.** For a database with no completion marker, the check counted all settings rows against a minimum of 80, so one extra row (added by an upgrade or the owner) covered a missing setting such as `copyright_year` and the database was called complete. Every one of the 80 starting settings is now checked by name; the message names up to five missing ones and says how many more. A database with the marker, or an empty one, behaves as before. Suite: 6405 assertions; real-database script 124 checks on MySQL 8.0 and MariaDB 10.6.
+
 ### Security and fixes - Codex re-check of the review fixes, round 2 (2026-11-25, queue F2, #113)
 
 Codex re-read the round-1 fixes read-only and raised six leads. All six were reproduced on the real code first (MySQL 8.0.36 and MariaDB 10.6.28 in Docker; PHP 8.5.12, and PHP 8.4.27 with ImageMagick 7.1.2) and are fixed with tests.
