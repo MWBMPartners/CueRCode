@@ -6,7 +6,7 @@ YOUR ALLOWANCE IS SMALL. Work economically:
 - Do NOT print whole files or whole diffs. Read only the functions named below, with `grep -n "^function NAME" FILE` then `sed -n 'START,ENDp' FILE`.
 - **Write each finding down the moment you are sure of it** (severity, file:line, what's wrong, a concrete scenario, the fix), then carry on. If you run out of allowance, the findings you already wrote are still useful.
 
-SCOPE (chunk 1b of 3 — clean-up, expiry, masking): the email queue runner, branch `work-in-progress`.
+SCOPE (chunk 1a of 3 — duplicates, locking, recovery): the email queue runner, branch `work-in-progress`.
 A DreamHost cron job runs `web/CueRCode.net/_includes/cron/process_email_queue.php` every minute. It sends queued emails (sign-up verification, password reset) through Microsoft Graph. All logic is in `web/CueRCode.net/_functions/fn_email.php`.
 
 Design, in brief:
@@ -20,9 +20,9 @@ Design, in brief:
 - Expiry (#123): an email whose link has less than 2 minutes left is skipped. Its age is measured with the database clock.
 - Masking (#126): `web/CueRCode.net/_functions/fn_log_mask.php` masks addresses in every fallback that writes to PHP's error log.
 
-READ ONLY THESE FUNCTIONS in `web/CueRCode.net/_functions/fn_email.php` (find each with `grep -n "^function NAME"`): emailQueueChangeRows, skipClaimedEmailQueueRow, skipExpiredEmailQueueRows, clearGivenUpEmailQueueDetails, purgeFinishedEmailQueueRows, purgeGivenUpEmailQueueRows, runEmailQueueHousekeeping, emailQueueLinkMaxAgeSeconds, emailQueueLinkHasExpired, parseEmailQueueRetentionDays, settleEmailQueueSuccess. Then the whole of `web/CueRCode.net/_functions/fn_log_mask.php` (short), and `grep -n "error_log(" web/CueRCode.net/_functions/*.php` to check every fallback is masked.
+READ ONLY THESE FUNCTIONS in `web/CueRCode.net/_functions/fn_email.php` (find each with `grep -n "^function NAME"`): claimEmailQueueRow, loadClaimedEmailQueueRow, settleEmailQueueSuccess, settleEmailQueueRetry, settleEmailQueueGaveUp, releaseEmailQueueClaim, findStuckEmailQueueRows, recoverStuckEmailQueueRow, findDueEmailQueueIDs, acquireEmailQueueRunLock, releaseEmailQueueRunLock, emailQueueChangeOneRow, decideEmailQueueFailure. Then ONLY the lock/claim/send/settle loop inside runEmailQueueBatch (search for `acquireEmailQueueRunLock(` and `finally` inside it).
 
-LOOK FOR, most important first (items 2, 3, 4 and 6 are this half's focus):
+LOOK FOR, most important first (items 1, 4 and 5 are this half's focus):
 1. The same email sent twice, or one lost. Examples: a stale read; a final UPDATE that isn't guarded; the lock not released on some path; stuck-row recovery racing a live sender.
 2. **Data loss.** Could a purge or a `paramsJSON = NULL` ever touch a row that still needs sending (queued, sending, or failed with attempts left)?
 3. **Wrong sends.** Could an email go out with an empty link or an expired link?
@@ -34,3 +34,7 @@ LOOK FOR, most important first (items 2, 3, 4 and 6 are this half's focus):
 Ignore style and wording.
 
 OUTPUT: the numbered findings (only real defects), or "NO FINDINGS". Finish with one line listing the functions you actually read.
+
+
+---
+**Outcome (2026-11-25):** Used on 2026-09-25: Codex found this chunk clean (comment on #112). Historical.

@@ -1260,3 +1260,7 @@ Set once, and quote paths everywhere: `REPO="<path to your CueRCode checkout>"`.
 - **Owner actions (not decisions):** add the DreamHost cron job once M365 is set up; choose an "Email output" address for alerts.
 - **No up-front owner decision is needed.** The one judgement call is wiring the off-by-default fallback into `bootstrap.php`. It is reversible, costs one cached settings read per page, and is flagged for the owner's awareness.
 - Update `.claude/HANDOFF.md` §0 (task 7a) before the build starts, and again after each stage.
+
+
+---
+**Outcome (2026-11-25):** Shipped in commits 0b4b473, 16be988 and dec18c7 on work-in-progress (#112). Historical.

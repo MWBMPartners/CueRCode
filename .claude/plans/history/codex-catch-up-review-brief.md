@@ -19,3 +19,7 @@ Project rules to check: web addresses never end in `.php`; every PHP file has a 
 Ignore style, wording preferences, markdown lint, and the ~25 pre-existing shellcheck info/style notes in deploy/release/version-bump.yml (tracked in #118).
 
 OUTPUT: a numbered list of findings. For each: severity (high/medium/low), `file:line`, what is wrong, a concrete scenario where it goes wrong, and the fix. Only real defects. If you find nothing real, say "NO FINDINGS" plainly. Finish with one line listing which of the six areas you actually read.
+
+
+---
+**Outcome (2026-11-25):** Used for the 2026-09-25 catch-up review, split into chunks 1a, 1b, 2 and 3. Chunk 3 never completed and is still owed (see new-install-readiness-queue.md, F2). Historical.

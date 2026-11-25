@@ -1547,3 +1547,7 @@ Set these once, and quote them everywhere: `REPO="<path to the CueRCode checkout
   3. **[Auth][Bug, latent] Link expiry uses PHP's clock against UTC database times.** `fn_auth.php:523-527` and `:1275-1279` use `strtotime()` + `time()`; the database session is UTC (`db_connect.php:191-193`). If `site_timezone` is ever not UTC, links expire at the wrong time (in summer, Europe/London makes a 60-minute reset link dead on arrival). The fix is to compare in SQL (`expiresAt > NOW()`).
   4. A note for the invitations work (no new issue needed): when invitations are built, add their lifetime to `emailQueueLinkLifetimes()`.
 - **Progress table / handoff:** record that the planner verified the SQL behaviour on MariaDB 10.6 and MySQL 8.4 (containers removed, 0 leftover volumes), and that MySQL 5.7 and MariaDB 10.3 were not tried.
+
+
+---
+**Outcome (2026-11-25):** Shipped in commits 39ccb63 (build) and 019fdba (verification fixes) (#122, #123, #126). Historical.

@@ -56,3 +56,6 @@ Facts: local `work-in-progress` is 30 commits ahead of `origin/work-in-progress`
 
 ### Owner-only items collected (one list, deduplicated)
 Add secrets `SFTP_KNOWN_HOSTS` (org) and `SFTP_REMOTE_BASE` (repo); set `SFTP_ENABLED`; re-run the failed secret-scan check on Dependabot PR #152 (alpha); GitHub App for #121 (7o); `abuse@` mailbox (before dynamic QR is public); ask DreamHost about libbrotli (#150); after deploy open `/admin/` and read "Visitor address check" (behind Cloudflare?) and compare the Cloudflare ranges with cloudflare.com/ips; decide whether the privacy page names Cloudflare; enter the real Microsoft details on `/admin/settings/`; decide #136 (instruction audit report); the 9 legal placeholders (#38); approve deleting the old backup branch and leftover Dependabot branches; the `~/.claude/bin/watchdog.sh` `-L` fix (WebMS-Intra #564) was approved but cannot be verified from here.
+
+Sessions the owner named but that left no trace in the repository, git, the handoff or local Claude records (links starting `cshk_019ejJ4A` and `cshk_013pdKYC`): owner decided 2026-11-25 to treat them as covered by this audit.
+F5 done 2026-11-25: finished plans moved to `.claude/plans/history/` with an outcome line.

@@ -41,3 +41,7 @@ LOOK FOR:
 Ignore the roughly 25 existing shellcheck info/style notes, which are tracked in #118.
 
 OUTPUT: numbered findings (real defects only), or "NO FINDINGS". Finish with one line listing what you actually read.
+
+
+---
+**Outcome (2026-11-25):** Used on 2026-09-25: Codex found nothing actionable (comments on #124 and #127). Historical.
