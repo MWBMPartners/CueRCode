@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One tracking issue, "Library watch: updates / advisories"**, is created or refreshed with a plain-English report and how to upgrade by hand. Nothing is upgraded or closed automatically. A red run means a security advisory; a failed lookup is reported as "could not check" and never as "up to date".
 - **One list of pinned versions:** `web/CueRCode.net/_libraries/PINNED_VERSIONS.json` now also lists the front-end libraries and where to look upstream. Twemoji's version still comes from `tools/emoji_vendor_version.json`, so nothing is typed twice.
 - **First real dry run (read-only):** 9 of 10 libraries have a newer release (several are new major versions); no known security advisories affect any pinned version. These are not upgraded here.
-- Tests: new `tests/test_library_updates.php` (120 checks, no network). `actionlint` and `shellcheck` clean. Not verified: a real scheduled run on GitHub (it only runs from `main`).
+- Tests: new `tests/test_library_updates.php` (116 checks, no network). `actionlint` and `shellcheck` clean. Not verified: a real scheduled run on GitHub (it only runs from `main`).
 
 ### Fixed - Predefined centre-logos now work without Imagick (2026-11-25, queue B10, #65)
 
