@@ -20,3 +20,5 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0008](0008-push-work-in-progress-after-each-reviewed-phase.md) | 2026-11-24 | Owner: push `work-in-progress` (only) after each reviewed phase | Current |
 | [0009](0009-admin-sign-in-redirect-means-area-not-secret.md) | 2026-11-24 | Lead (owner has not approved; may overrule): signed-out visitors to `/admin/` are sent to sign-in, so the area's existence is not secret; the gate is the protection | Current (unapproved) |
 | [0010](0010-first-admin-activation-sets-a-new-password.md) | 2026-11-24 | Owner: activating a waiting account as first Global Admin sets a new password and signs out old sessions | Current |
+| [0011](0011-commit-third-party-php-libraries-into-repository.md) | 2026-11-25 | Owner: commit the QR/PDF/barcode libraries into the repository so the deploy ships them | Current |
+| [0012](0012-database-minimum-mysql-8-0-13-mariadb-10-6.md) | 2026-11-25 | Owner: minimum database is MySQL 8.0.13+ or MariaDB 10.6+, enforced by the installer | Current |
