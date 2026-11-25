@@ -393,3 +393,17 @@ assertTrue(is_string($authSource) && $authSource !== '', 'sanity check: fn_api_a
 assertContains('`permissions`', $authSource, 'F-054 regression guard: validateAPIKey() SELECTs the permissions column (scope decoding)');
 assertContains('`expiresAt`', $authSource, 'F-054 regression guard: validateAPIKey() SELECTs the expiresAt column (expiry enforcement)');
 assertContains('function apiKeyRequestHasScope(', $authSource, 'F-054 regression guard: apiKeyRequestHasScope() is defined in fn_api_auth.php');
+
+// ------------------------------------------------------------------------
+// ⚠️ #113 B9 (finding 9): a key with no scopes gets a plain warning; the default is NOT widened.
+// ------------------------------------------------------------------------
+$b9KeysSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_keys.php');
+assertContains("if (\$scopesValidation['value'] === []) {", $b9KeysSource, 'B9-9: the create message checks for an empty scope list');
+assertContains('this key has no scopes, so every call to a scoped endpoint is refused (403 INSUFFICIENT_SCOPE)', $b9KeysSource, 'B9-9: ...and warns in plain words');
+assertTrue(validateApiKeyScopesInput(null)['value'] === [], 'B9-9: omitting scopes still gives NO scopes (fail-closed default kept, not widened)');
+$b9SiteRoot = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'web' . DIRECTORY_SEPARATOR . 'CueRCode.net' . DIRECTORY_SEPARATOR . 'public_html' . DIRECTORY_SEPARATOR;
+$b9AccountPage = (string) file_get_contents($b9SiteRoot . 'account' . DIRECTORY_SEPARATOR . 'index.php');
+assertContains('Tick at least one. A key with no scopes ticked cannot do anything', $b9AccountPage, 'B9-9: the account page says a key needs a scope');
+$b9DevGuide = (string) file_get_contents($b9SiteRoot . 'developers' . DIRECTORY_SEPARATOR . 'authentication' . DIRECTORY_SEPARATOR . 'index.php');
+assertContains('A key needs at least one scope to do anything useful.', $b9DevGuide, 'B9-9: the developer guide says a key needs a scope');
+assertContains('revoke</strong> it first and then create a new one', $b9DevGuide, 'B9-9: the developer guide says what to do with a zero-scope key on a one-key plan');

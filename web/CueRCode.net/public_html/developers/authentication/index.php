@@ -231,6 +231,16 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             scope. Scope checks only apply to <code>X-API-Key</code> requests - a signed-in
                             session (Mode B) is never scope-limited.
                         </p>
+                        <div class="alert alert-warning" role="note">
+                            <strong>A key needs at least one scope to do anything useful.</strong> A key
+                            created with no scopes ticked is accepted, but every call to a scoped endpoint
+                            is refused with <code>403 INSUFFICIENT_SCOPE</code>. For a simple integration that
+                            makes QR codes, tick <code>generate</code> (add <code>download</code> to fetch the
+                            saved image). A key's scopes cannot be edited later, and <strong>rotating a key keeps
+                            its scopes</strong>. On the free plan you may hold only one active key, so if
+                            you made a key with no scopes, <strong>revoke</strong> it first and then create a new one
+                            with the scopes ticked.
+                        </div>
                         <p>
                             Leaving the scopes list empty when creating a key is allowed - that key still
                             authenticates normally (its own rate limits and "last used" timestamp still

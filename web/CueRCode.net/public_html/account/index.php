@@ -1086,7 +1086,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </label>
                                 </div>
                                 <?php } ?>
-                                <div class="form-text">A key with no scopes selected can authenticate but cannot access any scoped endpoint.</div>
+                                <div class="form-text">Tick at least one. A key with no scopes ticked cannot do anything: every call is refused (403 INSUFFICIENT_SCOPE). For a simple integration that makes QR codes, tick Generate (and Download to fetch the image). Scopes cannot be changed later; to change them, revoke the key and create a new one.</div>
                             </fieldset>
                         </div>
                         <div class="col-12">
