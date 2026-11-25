@@ -27,3 +27,4 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0015](0015-trusted-forwarding-list-refuses-very-wide-ranges.md) | 2026-11-25 | Owner: the trusted forwarding servers setting refuses ranges wider than /8 (IPv4) or /32 (IPv6) | Current |
 | [0016](0016-voluntary-password-change-signs-out-everywhere-only.md) | 2026-11-25 | Owner: a voluntary password change signs out everywhere and does nothing more (no key or link removal) | Current |
 | [0017](0017-codex-round-1-fix-choices-by-the-lead.md) | 2026-11-25 | Lead (owner may overrule): seven small design choices made while fixing the Codex round-1 findings | Current |
+| [0018](0018-seed-marker-present-means-skip-seeding.md) | 2026-11-25 | Lead (owner may overrule): a present seed marker means the installer skips seeding, even if the tables were emptied | Current |
