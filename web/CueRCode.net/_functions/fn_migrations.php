@@ -1381,6 +1381,87 @@ function migrationSeedProtectionTables(): array
 }
 
 /**
+ * 🧱 EVERY table seed_data.sql writes to (independent review, Codex round 2
+ *    finding R1-2, 2026-11-25). migrationDbRunSeedSql() checks that each one
+ *    is an ordinary InnoDB table before loading anything, because only InnoDB
+ *    can undo a half-finished load. tests/test_migrations.php checks that this
+ *    list names every "INSERT INTO" table in seed_data.sql.
+ *
+ * @return array<int, string> Plain table names (no back-quotes)
+ */
+function migrationSeedTables(): array
+{
+    return ['tblSettings', 'tblQRCodeTypes', 'tblPredefinedLogos', 'tblSubscriptionPlans'];
+}
+
+/**
+ * 🏁 The settings row seed_data.sql writes as its VERY LAST statement
+ *    (independent review, Codex round 2 finding R1-1, 2026-11-25).
+ *
+ * Because it is last, it can only exist once every earlier insert in the file
+ * has succeeded: the installer loads the file as one transaction, and the
+ * mysql command-line client stops at the first error. So "the marker is
+ * there" means "the whole of seed_data.sql loaded", whatever the owner has
+ * changed or deleted since. It lives in tblSettings, is not editable, and is
+ * not on the admin settings screen (that screen only touches the settings in
+ * its own list).
+ *
+ * @return string The settingKey of the marker row
+ */
+function migrationSeedMarkerKey(): string
+{
+    return 'seed_data_loaded';
+}
+
+/**
+ * 📋 The starting rows seed_data.sql puts in each protection table, by their
+ *    unique name (independent review, Codex round 2 finding R1-1,
+ *    2026-11-25).
+ *
+ * Used ONLY for a database that has no completion marker (one seeded before
+ * the marker existed, or one where someone has typed rows in by hand): it is
+ * then "complete" only if EVERY one of these rows is there. Before this, one
+ * row in each table was enough, so a database holding one QR code type, one
+ * logo and one plan was treated as fully loaded and the installer locked
+ * itself with the rest missing.
+ *
+ * seed_data.sql is a frozen starting point, so this list does not change;
+ * tests/test_migrations.php reads seed_data.sql and fails if the two ever
+ * disagree.
+ *
+ * @return array<string, array{column: string, keys: array<int, string>}> Table => its unique name column and the seeded names
+ */
+function migrationSeedExpectedRows(): array
+{
+    return [
+        'tblQRCodeTypes' => [
+            'column' => 'typeName',
+            'keys'   => [
+                'url', 'text', 'email', 'phone', 'sms', 'whatsapp', 'zoom', 'geo', 'vcard', 'calendar',
+                'paypal', 'bitcoin', 'mp3', 'video', 'pdf', 'image', 'appstore', 'facebook', 'youtube', 'wifi',
+                'linkedin', 'facebook_messenger', 'instagram', 'rating', 'deeplink', 'gs1_product',
+                'barcode_code128', 'barcode_code39', 'barcode_ean13', 'barcode_ean8', 'barcode_upca',
+                'barcode_upce', 'barcode_itf', 'barcode_codabar', 'barcode_datamatrix', 'barcode_pdf417',
+                'barcode_aztec', 'dynamic_url',
+            ],
+        ],
+        'tblPredefinedLogos' => [
+            'column' => 'logoName',
+            'keys'   => [
+                'facebook', 'instagram', 'twitter', 'youtube', 'linkedin', 'tiktok', 'pinterest', 'snapchat',
+                'whatsapp', 'telegram', 'skype', 'paypal', 'bitcoin', 'apple', 'android', 'appstore',
+                'playstore', 'globe', 'email', 'phone', 'location', 'calendar', 'wifi', 'document', 'camera',
+                'qrcode',
+            ],
+        ],
+        'tblSubscriptionPlans' => [
+            'column' => 'planKey',
+            'keys'   => ['anonymous', 'free', 'pro', 'business'],
+        ],
+    ];
+}
+
+/**
  * 🌱 Does this database already hold seed data? A thin yes/no wrapper around
  *    migrationDbSeedDataState() below, kept for older callers and tests.
  *
@@ -1414,50 +1495,66 @@ function migrationDbSeedDataAlreadyPresent(\mysqli $db): array
 
 /**
  * 🌱 How much of the starting data (seed_data.sql) is in this database?
- *    (independent review, Codex C1 findings 1 and 4, 2026-11-25)
+ *    (independent review, Codex C1 findings 1 and 4, and Codex round 2
+ *    finding R1-1, 2026-11-25)
  *
  * Looks at every table from migrationSeedProtectionTables() and answers:
  *   - "none"     - every one of them is empty or missing: seed_data.sql has
  *                  not run (or a failed run was rolled back), so it may run;
- *   - "complete" - every one of them has rows: seed_data.sql has run;
- *   - "partial"  - some have rows and some do not. seed_data.sql cannot be
- *                  run again safely (plain INSERTs), and the database must not
- *                  be called "installed" either, so the installer stops and
- *                  says which tables are empty.
+ *   - "complete" - seed_data.sql has run in full. Proven EITHER by its
+ *                  completion marker (migrationSeedMarkerKey(), the file's
+ *                  last statement - so rows the owner has since changed or
+ *                  deleted do not matter), OR, for a database with no marker,
+ *                  by EVERY starting row in migrationSeedExpectedRows() being
+ *                  there;
+ *   - "partial"  - anything else: some starting rows are there but not all of
+ *                  them, and there is no marker. seed_data.sql cannot be run
+ *                  again safely (plain INSERTs), and the database must not be
+ *                  called "installed" either, so the installer stops and says
+ *                  what is missing ("summary").
+ *
+ * ⚠️ Before Codex round 2, "complete" only meant "each table has at least one
+ *    row", so a database holding one QR code type, one logo and one plan was
+ *    called complete and the installer locked itself (reproduced on MySQL
+ *    8.0.36 and MariaDB 10.6.28).
  *
  * A table that does not exist yet counts as empty. It is found by asking
  * INFORMATION_SCHEMA first (a prepared statement), so the row count below is
- * only ever run on a table that exists - and ANY failure of either question
- * is returned as ok = false with the error, never as "no data".
+ * only ever run on a table that exists - and ANY failure of any question is
+ * returned as ok = false with the error, never as "no data" or "complete".
  *
  * @param \mysqli $db Connection with the site database selected
- * @return array{ok: bool, state: string, filled: array<int, string>, empty: array<int, string>, error: string}
+ * @return array{ok: bool, state: string, filled: array<int, string>, empty: array<int, string>, missing: array<string, int>, marker: bool, summary: string, error: string}
+ *         filled/empty: tables with / without rows; missing: table => how many
+ *         of its starting rows are not there (only worked out when there is
+ *         no marker); marker: whether the completion marker is there;
+ *         summary: plain English, safe to show, saying what is missing
  */
 function migrationDbSeedDataState(\mysqli $db): array
 {
     $filledTables = [];
     $emptyTables  = [];
+    $result       = [
+        'ok'      => false,
+        'state'   => '',
+        'filled'  => [],
+        'empty'   => [],
+        'missing' => [],
+        'marker'  => false,
+        'summary' => '',
+        'error'   => '',
+    ];
 
     foreach (migrationSeedProtectionTables() as $tableName) {
         // 1️⃣ Does the table exist? (prepared; the name is a bound value)
-        $existence = migrationDbFetchAll(
-            $db,
-            'SELECT COUNT(*) AS `tableCount` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?',
-            's',
-            [$tableName]
-        );
+        $exists = migrationDbTableExistsState($db, $tableName);
 
-        if ($existence['ok'] !== true || $existence['rows'] === []) {
-            return [
-                'ok'     => false,
-                'state'  => '',
-                'filled' => [],
-                'empty'  => [],
-                'error'  => 'Could not check whether ' . $tableName . ' exists (' . $existence['error'] . ')',
-            ];
+        if ($exists['ok'] !== true) {
+            $result['error'] = $exists['error'];
+            return $result;
         }
 
-        if ((int) $existence['rows'][0]['tableCount'] === 0) {
+        if ($exists['exists'] !== true) {
             // Missing table: nothing loaded into it yet.
             $emptyTables[] = $tableName;
             continue;
@@ -1470,13 +1567,8 @@ function migrationDbSeedDataState(\mysqli $db): array
         $counted = migrationDbFetchAll($db, 'SELECT COUNT(*) AS `rowCount` FROM `' . $tableName . '`');
 
         if ($counted['ok'] !== true || $counted['rows'] === []) {
-            return [
-                'ok'     => false,
-                'state'  => '',
-                'filled' => [],
-                'empty'  => [],
-                'error'  => 'Could not count the rows in ' . $tableName . ' (' . $counted['error'] . ')',
-            ];
+            $result['error'] = 'Could not count the rows in ' . $tableName . ' (' . $counted['error'] . ')';
+            return $result;
         }
 
         if ((int) $counted['rows'][0]['rowCount'] > 0) {
@@ -1486,15 +1578,203 @@ function migrationDbSeedDataState(\mysqli $db): array
         }
     }
 
+    $result['filled'] = $filledTables;
+    $result['empty']  = $emptyTables;
+
+    // 🈳 Nothing in any of them: seed_data.sql may run.
     if ($filledTables === []) {
-        $state = 'none';
-    } elseif ($emptyTables === []) {
-        $state = 'complete';
-    } else {
-        $state = 'partial';
+        $result['ok']    = true;
+        $result['state'] = 'none';
+        return $result;
     }
 
-    return ['ok' => true, 'state' => $state, 'filled' => $filledTables, 'empty' => $emptyTables, 'error' => ''];
+    // 3️⃣ The completion marker: the last thing seed_data.sql writes.
+    $marker = migrationDbSeedMarkerPresent($db);
+
+    if ($marker['ok'] !== true) {
+        $result['error'] = $marker['error'];
+        return $result;
+    }
+
+    if ($marker['present'] === true) {
+        $result['ok']     = true;
+        $result['state']  = 'complete';
+        $result['marker'] = true;
+        return $result;
+    }
+
+    // 4️⃣ No marker: every starting row must be there, by its unique name.
+    //    The names are bound values; the table and column names come only
+    //    from the fixed list in migrationSeedExpectedRows().
+    $missingCounts = [];
+    $summaryParts  = [];
+
+    foreach (migrationSeedExpectedRows() as $tableName => $expected) {
+        $expectedCount = count($expected['keys']);
+        $presentCount  = 0;
+
+        if (in_array($tableName, $filledTables, true)) {
+            $placeholders = implode(', ', array_fill(0, $expectedCount, '?'));
+            $found        = migrationDbFetchAll(
+                $db,
+                'SELECT COUNT(*) AS `foundCount` FROM `' . $tableName . '` WHERE `' . $expected['column'] . '` IN (' . $placeholders . ')',
+                str_repeat('s', $expectedCount),
+                $expected['keys']
+            );
+
+            if ($found['ok'] !== true || $found['rows'] === []) {
+                $result['error'] = 'Could not check the starting rows in ' . $tableName . ' (' . $found['error'] . ')';
+                return $result;
+            }
+
+            $presentCount = (int) $found['rows'][0]['foundCount'];
+        }
+
+        if ($presentCount < $expectedCount) {
+            $missingCounts[$tableName] = $expectedCount - $presentCount;
+            $summaryParts[]            = $tableName . ' has ' . $presentCount . ' of its ' . $expectedCount . ' starting rows';
+        }
+    }
+
+    $result['ok']      = true;
+    $result['missing'] = $missingCounts;
+
+    if ($missingCounts === []) {
+        $result['state'] = 'complete';
+    } else {
+        $result['state']   = 'partial';
+        $result['summary'] = implode('; ', $summaryParts);
+    }
+
+    return $result;
+}
+
+/**
+ * 🔎 Does a table exist in the selected database? Answers with ok = false
+ *    when the question itself fails, so a failure is never read as "no".
+ *
+ * @param \mysqli $db        Connection with the site database selected
+ * @param string  $tableName Plain table name (a bound value)
+ * @return array{ok: bool, exists: bool, error: string}
+ */
+function migrationDbTableExistsState(\mysqli $db, string $tableName): array
+{
+    $existence = migrationDbFetchAll(
+        $db,
+        'SELECT COUNT(*) AS `tableCount` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?',
+        's',
+        [$tableName]
+    );
+
+    if ($existence['ok'] !== true || $existence['rows'] === []) {
+        return ['ok' => false, 'exists' => false, 'error' => 'Could not check whether ' . $tableName . ' exists (' . $existence['error'] . ')'];
+    }
+
+    return ['ok' => true, 'exists' => ((int) $existence['rows'][0]['tableCount'] > 0), 'error' => ''];
+}
+
+/**
+ * 🏁 Is seed_data.sql's completion marker (migrationSeedMarkerKey()) in
+ *    tblSettings? A missing tblSettings simply means "no".
+ *
+ * @param \mysqli $db Connection with the site database selected
+ * @return array{ok: bool, present: bool, error: string}
+ */
+function migrationDbSeedMarkerPresent(\mysqli $db): array
+{
+    $settingsTable = migrationDbTableExistsState($db, 'tblSettings');
+
+    if ($settingsTable['ok'] !== true) {
+        return ['ok' => false, 'present' => false, 'error' => $settingsTable['error']];
+    }
+
+    if ($settingsTable['exists'] !== true) {
+        return ['ok' => true, 'present' => false, 'error' => ''];
+    }
+
+    $markerRows = migrationDbFetchAll(
+        $db,
+        'SELECT COUNT(*) AS `markerCount` FROM `tblSettings` WHERE `settingKey` = ?',
+        's',
+        [migrationSeedMarkerKey()]
+    );
+
+    if ($markerRows['ok'] !== true || $markerRows['rows'] === []) {
+        return ['ok' => false, 'present' => false, 'error' => 'Could not look for the starting-data marker (' . $markerRows['error'] . ')'];
+    }
+
+    return ['ok' => true, 'present' => ((int) $markerRows['rows'][0]['markerCount'] > 0), 'error' => ''];
+}
+
+/**
+ * 🧱 Is every table seed_data.sql writes to an ordinary InnoDB table?
+ *    (independent review, Codex round 2 finding R1-2, 2026-11-25)
+ *
+ * The all-or-nothing load in migrationDbRunSeedSql() is a database
+ * transaction, and only InnoDB tables take part in one. If, say,
+ * tblPredefinedLogos had been changed to MyISAM, its 26 rows stayed behind
+ * after a later failure and the "rollback" - while the installer said nothing
+ * was kept (reproduced on MySQL 8.0.36 and MariaDB 10.6.28). So the engine is
+ * checked first and the load is refused unless every table is InnoDB. A
+ * missing table, or a view, is refused too (the load would fail anyway).
+ *
+ * @param \mysqli $db Connection with the site database selected
+ * @return array{ok: bool, problems: array<int, string>, error: string}
+ *         ok = false with error: the check itself failed; problems: one plain
+ *         sentence per table that is not usable (safe to show)
+ */
+function migrationDbSeedTablesTransactional(\mysqli $db): array
+{
+    $tables       = migrationSeedTables();
+    $placeholders = implode(', ', array_fill(0, count($tables), '?'));
+    $found        = migrationDbFetchAll(
+        $db,
+        'SELECT `TABLE_NAME` AS `tableName`, `TABLE_TYPE` AS `tableType`, `ENGINE` AS `engineName` FROM `INFORMATION_SCHEMA`.`TABLES`'
+            . ' WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` IN (' . $placeholders . ')',
+        str_repeat('s', count($tables)),
+        $tables
+    );
+
+    if ($found['ok'] !== true) {
+        return ['ok' => false, 'problems' => [], 'error' => 'Could not check the storage type of the starting-data tables (' . $found['error'] . ')'];
+    }
+
+    $byName = [];
+    foreach ($found['rows'] as $row) {
+        $byName[(string) $row['tableName']] = $row;
+    }
+
+    $problems = [];
+
+    foreach ($tables as $tableName) {
+        if (!isset($byName[$tableName])) {
+            $problems[] = $tableName . ' does not exist.';
+            continue;
+        }
+
+        $row = $byName[$tableName];
+
+        if ((string) $row['tableType'] !== 'BASE TABLE') {
+            $problems[] = $tableName . ' is not an ordinary table.';
+            continue;
+        }
+
+        $engineName = '';
+        if ($row['engineName'] !== null) {
+            $engineName = (string) $row['engineName'];
+        }
+
+        if (strcasecmp($engineName, 'InnoDB') !== 0) {
+            $shownEngine = $engineName;
+            if ($shownEngine === '') {
+                $shownEngine = 'an unknown type';
+            }
+            $problems[] = $tableName . ' uses the ' . $shownEngine . ' storage type, which cannot undo a half-finished load. '
+                . 'Change it with: ALTER TABLE `' . $tableName . '` ENGINE=InnoDB;';
+        }
+    }
+
+    return ['ok' => true, 'problems' => $problems, 'error' => ''];
 }
 
 /**
@@ -1512,7 +1792,9 @@ function migrationDbSeedDataState(\mysqli $db): array
  * ⚠️ This only works because every starting-data table is InnoDB and
  *    seed_data.sql contains nothing that commits on its own (no CREATE,
  *    ALTER, DROP, TRUNCATE...). tests/test_migrations.php checks the file
- *    stays that way.
+ *    stays that way, and since Codex round 2 (finding R1-2) the storage type
+ *    of every table is checked here BEFORE anything is loaded: if any is not
+ *    InnoDB the load is refused and nothing is written.
  *
  * Both kinds of MySQLi failure are handled: a false return and the
  * mysqli_sql_exception PHP 8.1+ throws by default. On any failure the open
@@ -1521,10 +1803,33 @@ function migrationDbSeedDataState(\mysqli $db): array
  *
  * @param \mysqli $db      Connection with the site database selected
  * @param string  $seedSql Text of seed_data.sql
- * @return array{ok: bool, error: string} error holds full MySQL detail - log it, never show it to a visitor
+ * @return array{ok: bool, error: string, refusal: string}
+ *         error holds full MySQL detail - log it, never show it to a visitor;
+ *         refusal is plain English, safe to show, and is set only when the
+ *         load was refused before it started (nothing was written)
  */
 function migrationDbRunSeedSql(\mysqli $db, string $seedSql): array
 {
+    // 🧱 Codex round 2 finding R1-2: only load into tables that can undo it.
+    $engineCheck = migrationDbSeedTablesTransactional($db);
+
+    if ($engineCheck['ok'] !== true) {
+        return [
+            'ok'      => false,
+            'error'   => 'seed_data.sql was not run: ' . $engineCheck['error'],
+            'refusal' => 'The installer could not check the starting-data tables, so it did not load anything.',
+        ];
+    }
+
+    if ($engineCheck['problems'] !== []) {
+        return [
+            'ok'      => false,
+            'error'   => 'seed_data.sql was not run: ' . implode(' ', $engineCheck['problems']),
+            'refusal' => 'The starting data was not loaded, and nothing was written, because it can only be loaded '
+                . 'all-or-nothing into ordinary InnoDB tables: ' . implode(' ', $engineCheck['problems']),
+        ];
+    }
+
     // 🧱 Wrapped in one transaction. PHP_EOL before COMMIT matters: the file
     //    ends in "--" comment lines, and a comment runs to the end of its line.
     $wrappedSql = 'START TRANSACTION;' . PHP_EOL . $seedSql . PHP_EOL . 'COMMIT;' . PHP_EOL;
@@ -1576,10 +1881,10 @@ function migrationDbRunSeedSql(\mysqli $db, string $seedSql): array
             $error = $error . ' (and the rollback failed: ' . $rollbackError->getMessage() . ')';
         }
 
-        return ['ok' => false, 'error' => 'seed_data.sql failed and was rolled back: ' . $error];
+        return ['ok' => false, 'error' => 'seed_data.sql failed and was rolled back: ' . $error, 'refusal' => ''];
     }
 
-    return ['ok' => true, 'error' => ''];
+    return ['ok' => true, 'error' => '', 'refusal' => ''];
 }
 
 // ==============================================================================

@@ -73,6 +73,18 @@
  *      reads as "partial", not "already done"; a failed check is an error, not
  *      "no data"; and only one web installer can run per database at a time.
  *
+ * Added 2026-11-25 (independent review, Codex round 2 findings R1-1 to R1-3):
+ *
+ *   Scenario M. "Complete" means every starting row (or seed_data.sql's
+ *      completion marker), never "one row in each table"; with the marker,
+ *      rows the owner later changed do not matter; the load is refused,
+ *      writing nothing, when a table it writes to is not InnoDB, is missing,
+ *      or is a view (and a reproduction shows why: MyISAM keeps its rows
+ *      after a rollback).
+ *   Scenarios A and J (extended). The bot-protection description ends up
+ *      naming hCaptcha whichever runs first, the installer or the upgrade
+ *      tool.
+ *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
  *
@@ -496,6 +508,7 @@ $itDbK1 = $itBaseName . '_k1';
 $itDbK2 = $itBaseName . '_k2';
 $itDbL  = $itBaseName . '_l';
 $itDbL2 = $itBaseName . '_l2';
+$itDbM  = $itBaseName . '_m';
 
 // ==============================================================================
 // 🅰️ Scenario A: fresh database - install.sql + seed + migrations; install.sql
@@ -989,9 +1002,111 @@ migrationDbReleaseInstallerLock($itL2);
 $itLb->close();
 
 // ==============================================================================
+// 🅼 Scenario M (independent review, Codex round 2 findings R1-1 and R1-2,
+//    2026-11-25): "complete" means ALL the starting rows (or the completion
+//    marker), never "one row in each table"; the load is refused unless every
+//    table it writes to is InnoDB
+// ==============================================================================
+echo PHP_EOL . 'Scenario M: complete means every starting row (or the marker); non-InnoDB tables are refused' . PHP_EOL;
+
+/**
+ * 🔢 Count the rows of one table in a test database.
+ */
+function itCountRows(\mysqli $itDb, string $itTable): int
+{
+    return (int) $itDb->query('SELECT COUNT(*) FROM `' . $itTable . '`')->fetch_row()[0];
+}
+
+// M1. One row in each table (the case Codex named): PART-loaded, not complete.
+$itM = itFreshDb($itEnv, $itPort, $itDbM);
+itRunSqlFile($itM, $itInstallSql);
+$itM->query("INSERT INTO `tblQRCodeTypes` (`typeName`, `typeLabel`, `typeIcon`, `typeDescription`, `typeCategory`, `formFieldsJSON`, `sortOrder`) VALUES ('url', 'URL', 'fa-solid fa-link', 'x', 'general', '[]', 1)");
+$itM->query("INSERT INTO `tblPredefinedLogos` (`logoName`, `logoLabel`, `logoFileName`, `logoCategory`, `sortOrder`) VALUES ('facebook', 'Facebook', 'facebook.svg', 'social', 1)");
+$itM->query("INSERT INTO `tblSubscriptionPlans` (`planKey`, `planName`, `featuresJSON`, `limitsJSON`) VALUES ('free', 'Free', '{}', '{}')");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'partial', 'one QR type, one logo and one plan is PART-loaded, not complete (R1-1; before the fix this read "complete"): ' . $itStateM['state']);
+itCheck('M seed completeness', $itStateM['marker'] === false && $itStateM['missing'] === ['tblQRCodeTypes' => 37, 'tblPredefinedLogos' => 25, 'tblSubscriptionPlans' => 3], 'it counts what is missing per table: ' . json_encode($itStateM['missing']));
+itCheck('M seed completeness', str_contains($itStateM['summary'], 'tblPredefinedLogos has 1 of its 26 starting rows'), 'the plain-English summary says what is there: ' . $itStateM['summary']);
+
+// M2. A complete seed, then the marker removed (a database seeded before the
+//     marker existed): every starting row is there, so it is complete.
+$itM = itFreshDb($itEnv, $itPort, $itDbM);
+itRunSqlFile($itM, $itInstallSql);
+$itSeedRunM = migrationDbRunSeedSql($itM, $itSeedSql);
+itCheck('M seed completeness', $itSeedRunM['ok'] === true && $itSeedRunM['refusal'] === '', 'the real seed_data.sql loads: ' . $itSeedRunM['error']);
+itCheck('M seed completeness', (int) $itM->query("SELECT COUNT(*) FROM `tblSettings` WHERE `settingKey` = 'seed_data_loaded' AND `settingGroup` = 'system' AND `isEditable` = 0")->fetch_row()[0] === 1, 'the load wrote the completion marker (not editable)');
+itCheck('M seed completeness', itCountRows($itM, 'tblQRCodeTypes') === 38 && itCountRows($itM, 'tblPredefinedLogos') === 26 && itCountRows($itM, 'tblSubscriptionPlans') === 4, 'it loaded 38 types, 26 logos and 4 plans (the counts migrationSeedExpectedRows() lists)');
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'complete' && $itStateM['marker'] === true, 'with the marker: complete');
+$itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'seed_data_loaded'");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'complete' && $itStateM['marker'] === false && $itStateM['missing'] === [], 'without the marker but with every starting row: still complete (databases seeded before the marker existed)');
+
+// M3. ...and one starting row deleted with no marker: PART-loaded again.
+$itM->query("DELETE FROM `tblPredefinedLogos` WHERE `logoName` = 'qrcode'");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'partial' && $itStateM['missing'] === ['tblPredefinedLogos' => 1], 'no marker and one logo short: part-loaded, and it says which table: ' . $itStateM['summary']);
+
+// M4. With the marker, owner changes do not matter: a deleted logo and a
+//     renamed plan are the owner's business, and the database stays complete.
+$itM->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('system', 'seed_data_loaded', '1', 'boolean', 0, 0, 'x')");
+$itM->query("UPDATE `tblSubscriptionPlans` SET `planKey` = 'pro_2027' WHERE `planKey` = 'pro'");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'complete', 'with the marker, rows the owner later deleted or renamed do not make it "part-loaded"');
+
+// M5. Marker left behind but the three tables emptied: "none", and a reload works
+//     (the marker insert skips the existing marker instead of failing the load).
+$itM->query('SET FOREIGN_KEY_CHECKS = 0');
+foreach (migrationSeedProtectionTables() as $itTableM) {
+    $itM->query('DELETE FROM `' . $itTableM . '`');
+}
+$itM->query('SET FOREIGN_KEY_CHECKS = 1');
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'none', 'marker present but every starting table empty: "none", so it may load again');
+$itSeedRunM = migrationDbRunSeedSql($itM, $itSeedSql);
+itCheck('M seed completeness', $itSeedRunM['ok'] === true && migrationDbSeedDataState($itM)['state'] === 'complete', 'and loading again succeeds: ' . $itSeedRunM['error']);
+
+// M6. Not InnoDB (R1-2). First show WHY it matters: the same all-or-nothing
+//     wrapping, run by hand on a MyISAM table, keeps that table's rows after
+//     the rollback. Then show the real function refuses before writing anything.
+$itBrokenAfterLogos = str_replace(
+    'INSERT INTO `tblSubscriptionPlans`',
+    'INSERT INTO `tblItNoSuchTable` (`x`) VALUES (1);' . PHP_EOL . 'INSERT INTO `tblSubscriptionPlans`',
+    $itSeedSql
+);
+$itM = itFreshDb($itEnv, $itPort, $itDbM);
+itRunSqlFile($itM, $itInstallSql);
+$itM->query('ALTER TABLE `tblPredefinedLogos` ENGINE=MyISAM');
+itRunSqlFile($itM, 'START TRANSACTION;' . PHP_EOL . $itBrokenAfterLogos . PHP_EOL . 'COMMIT;');
+$itM->rollback();
+itCheck('M non-InnoDB refused', itCountRows($itM, 'tblQRCodeTypes') === 0 && itCountRows($itM, 'tblPredefinedLogos') === 26, 'reproduction: with a MyISAM logos table the rollback undoes the QR types but keeps all 26 logos (why the check is needed)');
+
+$itM = itFreshDb($itEnv, $itPort, $itDbM);
+itRunSqlFile($itM, $itInstallSql);
+$itM->query('ALTER TABLE `tblPredefinedLogos` ENGINE=MyISAM');
+$itSeedRunM = migrationDbRunSeedSql($itM, $itSeedSql);
+itCheck('M non-InnoDB refused', $itSeedRunM['ok'] === false && str_contains($itSeedRunM['refusal'], 'tblPredefinedLogos uses the MyISAM storage type') && str_contains($itSeedRunM['refusal'], 'ALTER TABLE `tblPredefinedLogos` ENGINE=InnoDB;'), 'a MyISAM table: the load is refused, and the plain-English reason says how to fix it: ' . $itSeedRunM['refusal']);
+itCheck('M non-InnoDB refused', itCountRows($itM, 'tblSettings') === 0 && itCountRows($itM, 'tblQRCodeTypes') === 0 && itCountRows($itM, 'tblPredefinedLogos') === 0 && itCountRows($itM, 'tblSubscriptionPlans') === 0, 'nothing at all was written, in any of the four tables');
+$itM->query('ALTER TABLE `tblPredefinedLogos` ENGINE=InnoDB');
+$itSeedRunM = migrationDbRunSeedSql($itM, $itSeedSql);
+itCheck('M non-InnoDB refused', $itSeedRunM['ok'] === true && migrationDbSeedDataState($itM)['state'] === 'complete', 'once the table is InnoDB again, the load works: ' . $itSeedRunM['error']);
+
+// M7. A view where a table should be, and a missing table: refused too.
+$itM = itFreshDb($itEnv, $itPort, $itDbM);
+itRunSqlFile($itM, $itInstallSql);
+$itM->query('SET FOREIGN_KEY_CHECKS = 0');
+$itM->query('DROP TABLE `tblSubscriptionPlans`');
+$itM->query('SET FOREIGN_KEY_CHECKS = 1');
+$itSeedRunM = migrationDbRunSeedSql($itM, $itSeedSql);
+itCheck('M non-InnoDB refused', $itSeedRunM['ok'] === false && str_contains($itSeedRunM['refusal'], 'tblSubscriptionPlans does not exist.') && itCountRows($itM, 'tblSettings') === 0, 'a missing table: refused, nothing written');
+$itM->query('CREATE VIEW `tblSubscriptionPlans` AS SELECT 1 AS `planKey`');
+$itSeedRunM = migrationDbRunSeedSql($itM, $itSeedSql);
+itCheck('M non-InnoDB refused', $itSeedRunM['ok'] === false && str_contains($itSeedRunM['refusal'], 'tblSubscriptionPlans is not an ordinary table.') && itCountRows($itM, 'tblSettings') === 0, 'a view: refused, nothing written');
+
+// ==============================================================================
 // 🧹 Clean up and report
 // ==============================================================================
-foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2] as $itDbToRemove) {
+foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2, $itDbM] as $itDbToRemove) {
     itDropDb($itEnv, $itPort, $itDbToRemove);
 }
 

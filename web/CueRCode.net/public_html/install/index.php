@@ -424,19 +424,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                 } elseif ($seedState['state'] === 'complete') {
                     $results[] = [
                         'status' => 'info',
-                        'message' => 'Seed data skipped: this database already holds starting data (tblQRCodeTypes, '
-                            . 'tblPredefinedLogos and tblSubscriptionPlans all have rows). Running seed_data.sql '
-                            . 'again would fail or duplicate rows, so it was not run. Any database changes since the '
-                            . 'first install are applied in the next step instead, by the upgrade tool.'
+                        'message' => 'Seed data skipped: this database already holds all of the starting data. Running '
+                            . 'seed_data.sql again would fail or duplicate rows, so it was not run. Any database changes '
+                            . 'since the first install are applied in the next step instead, by the upgrade tool.'
                     ];
                 } elseif ($seedState['state'] === 'partial') {
+                    // 🔎 Codex round 2 (finding R1-1): "partial" now also covers
+                    //    a table holding only SOME of its starting rows, and the
+                    //    summary says exactly what is there. The advice says what
+                    //    to do in both real situations, because emptying tables
+                    //    on a site that is already in use would lose its data.
                     $results[] = [
                         'status' => 'error',
-                        'message' => 'This database holds only PART of the starting data: ' . implode(', ', $seedState['filled'])
-                            . ' already has rows, but ' . implode(', ', $seedState['empty']) . ' is empty. seed_data.sql '
-                            . 'cannot safely be run a second time, so it was not run, and the installer will not mark '
-                            . 'itself as finished. Empty the tables that have rows (or start again with an empty '
-                            . 'database), then reload this page.'
+                        'message' => 'This database holds only PART of the starting data (' . $seedState['summary'] . '). '
+                            . 'seed_data.sql cannot safely be run a second time, so it was not run, and the installer will '
+                            . 'not mark itself as finished. If this is a NEW database, empty tblQRCodeTypes, '
+                            . 'tblPredefinedLogos and tblSubscriptionPlans (or start again with an empty database), then '
+                            . 'reload this page. If this site is ALREADY IN USE, do not empty anything: the installer has '
+                            . 'run here before, so put its lock file (.installed.lock in _auth_keys/) back instead.'
                     ];
                     $seedStepFailed = true;
                 } elseif (!file_exists($seedSQLPath)) {
@@ -466,6 +471,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                                 'status' => 'success',
                                 'message' => 'Seed data loaded successfully (seed_data.sql)'
                             ];
+                        } elseif ($seedRun['refusal'] !== '') {
+                            // 🧱 Codex round 2 (finding R1-2): refused BEFORE
+                            //    anything was loaded (for example a table that is
+                            //    not InnoDB, so the load could not be undone). The
+                            //    refusal is plain English and names no secrets.
+                            error_log('CueRCode Installer: ' . $seedRun['error']);
+                            $results[] = [
+                                'status' => 'error',
+                                'message' => $seedRun['refusal']
+                            ];
+                            $seedStepFailed = true;
                         } else {
                             error_log('CueRCode Installer: ' . $seedRun['error']);
                             $results[] = [
@@ -617,11 +633,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                                 ];
                                 $overallSuccess = false;
                             } elseif ($finalSeedState['state'] !== 'complete') {
+                                // 🔎 Codex round 2 (finding R1-1): say exactly what
+                                //    is missing, from the per-row check.
+                                if ($finalSeedState['summary'] !== '') {
+                                    $missingWhat = $finalSeedState['summary'];
+                                } else {
+                                    $missingWhat = 'none of it is loaded';
+                                }
                                 $results[] = [
                                     'status' => 'error',
-                                    'message' => 'Some starting data is missing (' . implode(', ', $finalSeedState['empty'])
-                                        . ' is empty), so the installer will NOT lock itself in. Fix the problem shown '
-                                        . 'above, then reload this page.'
+                                    'message' => 'Some starting data is missing (' . $missingWhat . '), so the installer will '
+                                        . 'NOT lock itself in. Fix the problem shown above, then reload this page.'
                                 ];
                                 $overallSuccess = false;
                             }

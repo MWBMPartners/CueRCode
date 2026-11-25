@@ -19,7 +19,8 @@
 --    INSERTs, so a second run stops at the first row that already exists.
 --    Run it once, on a new database only (the web installer does this, as
 --    ONE transaction, so a failure part-way leaves nothing behind). Only the
---    settings insert skips rows that already exist (see the note there).
+--    settings insert and the completion marker at the very end skip rows
+--    that already exist (see the notes there).
 -- ==============================================================================
 
 SET NAMES utf8mb4;
@@ -700,9 +701,27 @@ VALUES
  1, 3);
 
 -- ==============================================================================
+-- 🏁 Completion marker (independent review, Codex round 2 finding R1-1,
+--    2026-11-25) - ⚠️ MUST STAY THE VERY LAST STATEMENT IN THIS FILE
+-- ==============================================================================
+-- Written last, so it only exists once every insert above has succeeded (the
+-- installer loads this file as one transaction; the mysql command-line client
+-- stops at the first error). The installer reads it to tell "all the starting
+-- data loaded" from "only some of it is here" (migrationDbSeedDataState(),
+-- fn_migrations.php). Not editable and not on the admin settings screen; do
+-- not delete it. "Insert if missing", so a reload after the three starting
+-- tables were emptied still works.
+-- ==============================================================================
+INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES
+('system', 'seed_data_loaded', '1', 'boolean', 0, 0, 'Written as the very last step of seed_data.sql, so it only exists when all the starting data loaded. The installer reads it; do not delete it.')
+ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`;
+
+-- ==============================================================================
 -- ✅ Seed Data Complete
 -- ==============================================================================
 -- Inserted:
+--   - 1 completion marker setting (`system` group, seed_data_loaded - the
+--     very last statement, Codex round 2 finding R1-1)
 --   - 80 default settings across 9 groups (email group is Microsoft Graph -
 --     based settings, Epic E8/#29 (the email group gained the two #122
 --     clean-up settings); billing group, Epic E4/#25/#26/#53 plus the
@@ -723,7 +742,8 @@ VALUES
 --     Stage S0) - seeded `isActive=0` via its OWN separate INSERT statement
 --     (BUILT BUT DARK - invisible to GET /api/v1/types until Stage S2 ships
 --     and an owner flips it live, G-007 sign-off)
---   - 25 predefined logo entries
+--   - 26 predefined logo entries (the count here said 25 until Codex round 2,
+--     when migrationSeedExpectedRows() listed them one by one)
 --   - 4 subscription plan tiers (anonymous/free/pro/business, Epic E4/#53) -
 --     each gained the additive `barcode_generation` featuresJSON key (#69),
 --     seeded TRUE on every plan (barcodes are a core, always-on offering this

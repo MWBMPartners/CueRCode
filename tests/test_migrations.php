@@ -879,7 +879,74 @@ foreach (explode(';', $migSeedBlanked['text']) as $migSeedStatement) {
 assertTrue(count($migSeedStatementWords) >= 5, 'seed_data.sql: the statement check found the file\'s statements (' . count($migSeedStatementWords) . ')');
 assertEquals([], array_values(array_diff(array_unique($migSeedStatementWords), ['SET', 'INSERT'])), 'seed_data.sql holds only SET and INSERT statements, so loading it in one transaction really is all-or-nothing');
 assertMatches('/never by reading tblSettings itself\'\)\s*(--[^\n]*\n\s*)*ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`;/', $migSeedSqlText, 'seed_data.sql: the settings insert skips settings that already exist (migration 0002 adds some of the same ones), so the seed still loads after the upgrade tool has run');
-assertEquals(1, substr_count($migSeedSqlText, 'ON DUPLICATE KEY UPDATE'), 'seed_data.sql: ONLY the settings insert skips existing rows - the other three tables stay plain INSERTs, guarded by migrationDbSeedDataState()');
+assertEquals(2, substr_count($migSeedSqlText, 'ON DUPLICATE KEY UPDATE'), 'seed_data.sql: ONLY the settings insert and the completion marker skip existing rows - the other three tables stay plain INSERTs, guarded by migrationDbSeedDataState()');
+
+// 🏁 Codex round 2 finding R1-1 (2026-11-25): the completion marker is the
+//    LAST statement in seed_data.sql, so it can only exist when every insert
+//    before it succeeded.
+$migSeedStatements = [];
+foreach (explode(';', $migSeedBlanked['text']) as $migSeedStatement) {
+    if (trim($migSeedStatement) !== '') {
+        $migSeedStatements[] = trim($migSeedStatement);
+    }
+}
+$migSeedLastStatement = (string) end($migSeedStatements);
+assertTrue(str_starts_with($migSeedLastStatement, 'INSERT INTO `tblSettings`'), 'seed_data.sql (R1-1): the LAST statement is the tblSettings completion-marker insert');
+assertEquals('seed_data_loaded', migrationSeedMarkerKey(), 'R1-1: the completion marker setting is called seed_data_loaded');
+assertMatches("/\\('system', 'seed_data_loaded', '1', 'boolean', 0, 0, '[^']+'\\)\\s*ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`;\\s*(--[^\\n]*\\s*)*$/", $migSeedSqlText, 'seed_data.sql (R1-1): the marker row is not editable, skips an existing marker, and nothing but comments follows it');
+
+// 📋 R1-1: migrationSeedExpectedRows() lists EXACTLY the rows seed_data.sql
+//    inserts into each protection table (read from the file itself, so the two
+//    can never drift apart), and migrationSeedTables() (R1-2, the storage-type
+//    check) names every table the file writes to.
+$migSeedByTable = [];
+$migSeedNoComments = (string) preg_replace('/^\s*--.*$/m', '', $migSeedSqlText);
+$migSeedPieces = preg_split('/INSERT INTO `(\w+)`/', $migSeedNoComments, -1, PREG_SPLIT_DELIM_CAPTURE);
+if (!is_array($migSeedPieces)) {
+    $migSeedPieces = [];
+}
+for ($migPieceIndex = 1; $migPieceIndex < count($migSeedPieces); $migPieceIndex = $migPieceIndex + 2) {
+    $migPieceTable = $migSeedPieces[$migPieceIndex];
+    $migPieceKeys  = [];
+    preg_match_all("/^\\s*\\('([a-z0-9_]+)'\\s*,/m", $migSeedPieces[$migPieceIndex + 1], $migPieceKeys);
+    if (!isset($migSeedByTable[$migPieceTable])) {
+        $migSeedByTable[$migPieceTable] = [];
+    }
+    $migSeedByTable[$migPieceTable] = array_merge($migSeedByTable[$migPieceTable], $migPieceKeys[1]);
+}
+$migSeedTableNames = array_keys($migSeedByTable);
+sort($migSeedTableNames);
+$migSeedTablesListed = migrationSeedTables();
+sort($migSeedTablesListed);
+assertEquals($migSeedTableNames, $migSeedTablesListed, 'R1-2: migrationSeedTables() names exactly the tables seed_data.sql inserts into');
+foreach (migrationSeedProtectionTables() as $migProtectedTable) {
+    assertTrue(in_array($migProtectedTable, migrationSeedTables(), true), 'R1-2: protection table ' . $migProtectedTable . ' is also storage-type checked');
+}
+$migExpectedRows = migrationSeedExpectedRows();
+assertEquals(migrationSeedProtectionTables(), array_keys($migExpectedRows), 'R1-1: expected rows are listed for exactly the three protection tables, in the same order');
+foreach ($migExpectedRows as $migExpectedTable => $migExpectedSpec) {
+    $migFileKeys = array_values(array_unique($migSeedByTable[$migExpectedTable]));
+    assertEquals(count($migSeedByTable[$migExpectedTable]), count($migFileKeys), 'R1-1: seed_data.sql has no repeated name in ' . $migExpectedTable);
+    $migListKeys = $migExpectedSpec['keys'];
+    sort($migFileKeys);
+    sort($migListKeys);
+    assertEquals($migFileKeys, $migListKeys, 'R1-1: migrationSeedExpectedRows() lists exactly the ' . count($migFileKeys) . ' starting rows seed_data.sql puts in ' . $migExpectedTable);
+}
+assertEquals(38, count($migExpectedRows['tblQRCodeTypes']['keys']), 'R1-1: 38 QR code / barcode types (37 live + dynamic_url, built but dark)');
+assertEquals(26, count($migExpectedRows['tblPredefinedLogos']['keys']), 'R1-1: 26 predefined logos');
+assertEquals(4, count($migExpectedRows['tblSubscriptionPlans']['keys']), 'R1-1: 4 subscription plans');
+$migInstallSchema = migrationParseInstallSqlSchema((string) file_get_contents(migrationDefaultInstallSqlPath()));
+foreach ($migExpectedRows as $migExpectedTable => $migExpectedSpec) {
+    assertTrue(isset($migInstallSchema[$migExpectedTable]) && in_array($migExpectedSpec['column'], $migInstallSchema[$migExpectedTable], true), 'R1-1: ' . $migExpectedTable . '.' . $migExpectedSpec['column'] . ' is a real install.sql column');
+}
+
+// 🧱 R1-2: the storage-type check runs BEFORE the transaction is opened, and a
+//    refusal is reported in plain words the installer shows.
+$migRunSeedSource = substr($migRunnerSource, (int) strpos($migRunnerSource, 'function migrationDbRunSeedSql('));
+$migEngineCheckAt = strpos($migRunSeedSource, 'migrationDbSeedTablesTransactional($db)');
+$migMultiQueryAt  = strpos($migRunSeedSource, '->multi_query(');
+assertTrue(is_int($migEngineCheckAt) && is_int($migMultiQueryAt) && $migEngineCheckAt < $migMultiQueryAt, 'R1-2: migrationDbRunSeedSql() checks the storage type of every table before loading anything');
+assertContains("strcasecmp(\$engineName, 'InnoDB') !== 0", $migRunnerSource, 'R1-2: only InnoDB tables are accepted');
 assertTrue(strlen(CUERCODE_INSTALLER_LOCK_NAME) <= 23, 'installer lock prefix fits the 64-character MySQL lock-name limit (23 + 1 + 30 + 1 + 8 = 63)');
 assertTrue(CUERCODE_INSTALLER_LOCK_NAME !== CUERCODE_MIGRATION_LOCK_NAME, 'installer lock and upgrade lock have different names, so one connection can hold both');
 
@@ -963,3 +1030,16 @@ assertTrue(
     strpos($migInstallerSource, '$overallSuccess = true;') < strpos($migInstallerSource, 'file_put_contents($lockFile'),
     'installer (F1): the lock file is only ever considered after $overallSuccess is decided'
 );
+
+// 🔎 Codex round 2 (2026-11-25), installer side: a "partial" database is
+//    described from the per-row check (R1-1), with advice for BOTH a new
+//    database and a site already in use; a refused load (R1-2, a table that
+//    is not InnoDB) shows its plain-English reason; the final check before the
+//    lock file names what is missing.
+assertContains("\$seedState['summary']", $migInstallerSource, 'installer (R1-1): the part-loaded message says exactly which starting rows are there');
+assertContains('If this site is ALREADY IN USE, do not empty anything', $migInstallerSource, 'installer (R1-1): never advises emptying tables on a site that is already in use');
+assertContains('.installed.lock in _auth_keys/', $migInstallerSource, 'installer (R1-1): names the real lock file to put back');
+assertContains("\$seedRun['refusal'] !== ''", $migInstallerSource, 'installer (R1-2): a refused starting-data load is told apart from a failed one');
+assertContains("'message' => \$seedRun['refusal']", $migInstallerSource, 'installer (R1-2): the refusal reason is shown in plain words');
+assertContains("\$finalSeedState['summary']", $migInstallerSource, 'installer (R1-1): the final check before the lock file names what is missing');
+assertFalse(str_contains($migInstallerSource, "\$finalSeedState['empty']"), 'installer (R1-1): the final check no longer reports only empty tables (a table can be part-filled)');
