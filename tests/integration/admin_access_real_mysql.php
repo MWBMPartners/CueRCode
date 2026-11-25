@@ -619,6 +619,43 @@ echo PHP_EOL . 'C. Command-line grant (decision 0010: a pending account gets a n
 $aiOwnerBefore = aiOwnerSnapshot($aiServer, $aiOwnerID);
 aiCheck('C', $aiOwnerBefore['liveSessions'] === 2 && $aiOwnerBefore['activeKeys'] === 1 && $aiOwnerBefore['unusedResets'] === 1 && $aiOwnerBefore['oauthLinks'] === 1 && $aiOwnerBefore['passkeys'] === 1, 'set-up: the pending owner has 2 live sessions, 1 live API key, 1 unused reset link, 1 linked Google sign-in, 1 passkey');
 
+// 📭 #113 B9 (findings 4 and 6b): emails waiting for the pending owner. Two verification
+//    emails (one queued, one failed with attempts left) and one password-reset email are
+//    "waiting" and must be cancelled by the grant. The others must NOT be touched: one being
+//    sent right now, one already sent, one given up (no attempts left), another template, and
+//    the same template for another person.
+$aiQueueRows = [
+    [$aiOwnerEmail, 'verification', 'queued', 0, 5],
+    [$aiOwnerEmail, 'verification', 'failed', 2, 5],
+    [$aiOwnerEmail, 'password_reset', 'queued', 0, 5],
+    [$aiOwnerEmail, 'verification', 'sending', 1, 5],
+    [$aiOwnerEmail, 'verification', 'sent', 1, 5],
+    [$aiOwnerEmail, 'verification', 'failed', 5, 5],
+    [$aiOwnerEmail, 'welcome', 'queued', 0, 5],
+    [$aiAccounts['second'][0], 'verification', 'queued', 0, 5],
+];
+foreach ($aiQueueRows as $aiQueueIndex => $aiQueueRow) {
+    $aiQueueInsert = $aiServer->prepare('INSERT INTO `tblEmailQueue` (`toAddress`, `templateKey`, `subject`, `paramsJSON`, `status`, `attempts`, `maxAttempts`) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $aiQueueSubject = 'IT queue row ' . $aiQueueIndex;
+    $aiQueueParams = '{"verificationUrl":"https://it.invalid/x"}';
+    $aiQueueInsert->bind_param('sssssii', $aiQueueRow[0], $aiQueueRow[1], $aiQueueSubject, $aiQueueParams, $aiQueueRow[2], $aiQueueRow[3], $aiQueueRow[4]);
+    $aiQueueInsert->execute();
+    $aiQueueInsert->close();
+}
+/**
+ * 📭 The state of every test queue row, in insert order (status and whether its details are still stored).
+ */
+$aiQueueState = static function () use ($aiServer): array {
+    $aiOut = [];
+    $aiResult = $aiServer->query("SELECT `status`, (`paramsJSON` IS NULL) AS `cleared` FROM `tblEmailQueue` WHERE `subject` LIKE 'IT queue row %' ORDER BY `emailID`");
+    while (($aiQueueRowOut = $aiResult->fetch_assoc()) !== null) {
+        $aiOut[] = $aiQueueRowOut['status'] . ':' . $aiQueueRowOut['cleared'];
+    }
+    return $aiOut;
+};
+$aiQueueBefore = $aiQueueState();
+aiCheck('C', count($aiQueueBefore) === 8 && $aiQueueBefore[0] === 'queued:0', 'set-up: eight queue rows, details stored');
+
 // C1. No terminal: refused BEFORE anything is asked, even with a password piped in.
 $aiPipedPassword = 'Piped-New-' . bin2hex(random_bytes(6));
 $aiRun = aiCli($aiDbName, ['grant', $aiOwnerEmail, '--activate', '--yes'], $aiPipedPassword . "\n" . $aiPipedPassword . "\n");
@@ -646,6 +683,7 @@ foreach ($aiForcedFailures as $aiWhere => $aiTrigger) {
     $aiForced = adminCliGrant($aiOwnerEmail, true, 'cli:integration-test', $aiOwnerID, $aiForcedHash);
     $aiServer->query('DROP TRIGGER IF EXISTS `aiForcedFailure`');
     aiCheck('C', $aiForced['exitCode'] === 1 && str_contains($aiForced['message'], 'Nothing was changed'), 'C2 forced failure at ' . $aiWhere . ': exit 1, "Nothing was changed"');
+    aiCheck('C', $aiQueueState() === $aiQueueBefore, 'C2 forced failure at ' . $aiWhere . ': the waiting emails are exactly as before too (the cancel was rolled back)');
     aiCheck('C', aiOwnerSnapshot($aiServer, $aiOwnerID) === $aiOwnerBefore, 'C2 forced failure at ' . $aiWhere . ': password, role, status, sessions, keys, links and audit are ALL exactly as before');
 }
 $aiForced = adminCliGrant($aiOwnerEmail, true, 'cli:integration-test', $aiOwnerID, null);
@@ -688,6 +726,10 @@ if ($aiTty === null) {
     aiCheck('C', str_contains($aiTranscript, 'Removed: 2 sign-in session(s) ended, 1 API key(s) switched off, 1 unused password-reset link(s) cancelled, 1 linked Microsoft/Google sign-in(s) removed, 1 passkey(s) removed.'), 'C3 the operator is told exactly what was removed');
 }
 
+// 📭 #113 B9: the waiting verification/reset emails were cancelled; nothing else was touched.
+$aiQueueAfter = $aiQueueState();
+aiCheck('C', $aiQueueAfter === ['skipped:1', 'skipped:1', 'skipped:1', 'sending:0', 'sent:0', 'failed:0', 'queued:0', 'queued:0'], 'B9: queued and retry-waiting verification emails and the reset email are skipped with details cleared; sending, sent, given-up, other-template and other-person rows are untouched (got ' . implode(' ', $aiQueueAfter) . ')');
+aiCheck('C', aiCount($aiServer, "SELECT COUNT(*) FROM `tblEmailQueue` WHERE `subject` LIKE 'IT queue row %' AND `status` = 'skipped' AND `lastError` LIKE 'Cancelled:%'") === 3, 'B9: the three cancelled rows say why (lastError starts "Cancelled:")');
 $aiOwnerAfter = aiOwnerSnapshot($aiServer, $aiOwnerID);
 aiCheck('C', (int) $aiOwnerAfter['roleID'] === 1, 'the account is now roleID 1');
 aiCheck('C', $aiOwnerAfter['status'] === 'active', 'the account is now active');
@@ -708,6 +750,8 @@ $aiGrantChanges = json_decode((string) $aiGrantRow['changesJSON'], true);
 aiCheck('C', is_array($aiGrantChanges) && $aiGrantChanges['roleID']['new'] === 1 && $aiGrantChanges['status']['old'] === 'pending' && $aiGrantChanges['status']['new'] === 'active', 'the audit row records role and status before and after');
 aiCheck('C', is_array($aiGrantChanges) && isset($aiGrantChanges['password_reset']['new']) && $aiGrantChanges['password_reset']['new'] === true, 'the audit row says password_reset: true');
 aiCheck('C', is_array($aiGrantChanges) && isset($aiGrantChanges['access_removed']['new']) && $aiGrantChanges['access_removed']['new'] == ['sessions_ended' => 2, 'api_keys_turned_off' => 1, 'password_reset_links_cancelled' => 1, 'linked_sign_ins_removed' => 1, 'passkeys_removed' => 1], 'the audit row lists how many of each were removed (MySQL stores JSON keys in its own order, so order is not compared)');
+aiCheck('C', is_array($aiGrantChanges) && isset($aiGrantChanges['emails_cancelled']['new']) && $aiGrantChanges['emails_cancelled']['new'] == ['verification_emails_cancelled' => 2, 'password_reset_emails_cancelled' => 1], 'B9: the audit row records only the counts of cancelled emails (2 verification, 1 password-reset)');
+aiCheck('C', !str_contains((string) $aiGrantRow['changesJSON'], $aiOwnerEmail) && !str_contains((string) $aiGrantRow['changesJSON'], 'it.invalid'), 'B9: ...and no address or link');
 aiCheck('C', str_contains((string) $aiGrantRow['reason'], 'Decision 0010') && str_contains((string) $aiGrantRow['reason'], 'Registered at'), 'the audit reason names decision 0010 and the registration time shown');
 $aiAuditText = (string) $aiGrantRow['changesJSON'] . ' ' . (string) $aiGrantRow['reason'];
 aiCheck('C', !str_contains($aiAuditText, $aiNewOwnerPassword) && !str_contains($aiAuditText, $aiOldOwnerPassword) && !str_contains($aiAuditText, '$argon2') && !str_contains($aiAuditText, (string) $aiOwnerAfter['passwordHash']), 'the audit row holds no password and no password hash');

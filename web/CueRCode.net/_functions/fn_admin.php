@@ -1356,6 +1356,9 @@ function adminCliUsage(): array
         '                  earlier sign-in, API key and linked sign-in is removed.',
         '                  This needs a real terminal; there is no option to give',
         '                  the password any other way (decision 0010).',
+        '                  Any verification or password-reset email still waiting to be',
+        '                  sent to that account is cancelled (it would only point at an',
+        '                  account that is already verified).',
         '      --yes       do not ask you to type the email address again',
         '  php admin_access.php list',
         '      List the Global Admins (email addresses partly hidden).',
@@ -3585,6 +3588,52 @@ function adminCliAskNewPasswordHash(): array
 }
 
 /**
+ * 📭 Cancel the emails still waiting to be sent to an account that has just
+ *    been activated at the command line (#113 B9, findings 4 and 6b).
+ *
+ * Why: the person registered, so a "please verify your address" email (and
+ * possibly a "reset your password" one) was queued. `grant --activate` then
+ * activates the account itself, so those emails would arrive later, when
+ * email is switched on, pointing at an account that is already verified. This
+ * marks them 'skipped' (the queue's own word for "deliberately not sent") and
+ * clears their stored details, the same way the queue runner does for an
+ * expired link.
+ *
+ * Only WAITING rows are touched, matching skipExpiredEmailQueueRows(): status
+ * 'queued', or 'failed' with attempts left. A row being sent right now
+ * ('sending'), one already sent, one given up and rows of any other template
+ * are left alone. Matching is by the recipient address (the queue stores no
+ * account number) and the template name; the column's collation ignores
+ * capital letters, as the sign-up does.
+ *
+ * It runs INSIDE the caller's transaction and throws on a database error, so
+ * a failure rolls the whole grant back. The returned counts are the only
+ * thing that is audited (never an address, link or subject).
+ *
+ * @param string $email Normalised email address of the account
+ * @return array{verification: int, password_reset: int} Rows cancelled, by kind
+ */
+function adminCliCancelUnsentAccountEmails(string $email): array
+{
+    $cancelled = ['verification' => 0, 'password_reset' => 0];
+
+    foreach (['verification', 'password_reset'] as $templateKey) {
+        $stmt = dbQuery(
+            'UPDATE `tblEmailQueue` '
+            . "SET `status` = 'skipped', `lastError` = ?, `paramsJSON` = NULL, `updatedAt` = NOW() "
+            . 'WHERE `toAddress` = ? AND `templateKey` = ? '
+            . "AND `status` IN ('queued', 'failed') AND `attempts` < `maxAttempts`",
+            'sss',
+            ['Cancelled: the account was activated at the command line, so this email is no longer needed', $email, $templateKey]
+        );
+        $cancelled[$templateKey] = (int) $stmt->affected_rows;
+        $stmt->close();
+    }
+
+    return $cancelled;
+}
+
+/**
  * ✅ `grant`: make the account a Global Admin (and, with --activate, active
  *    with a checked email), and write the admin.grant audit row - in ONE
  *    transaction, so neither can happen without the other (plan §6.2).
@@ -3738,6 +3787,20 @@ function adminCliGrant(
         $changes = adminAuditChanges($before, $after, []);
         $reason  = null;
 
+        // 📭 #113 B9 (findings 4 and 6b): an activated account no longer needs its
+        //    waiting "verify" or "reset" emails. Same transaction; counts only.
+        $emailsCancelled = ['verification' => 0, 'password_reset' => 0];
+        if ($decision['activates']) {
+            $emailsCancelled = adminCliCancelUnsentAccountEmails((string) $row['email']);
+            $changes['emails_cancelled'] = [
+                'old' => null,
+                'new' => [
+                    'verification_emails_cancelled' => $emailsCancelled['verification'],
+                    'password_reset_emails_cancelled' => $emailsCancelled['password_reset'],
+                ],
+            ];
+        }
+
         if ($decision['resetsPassword']) {
             // 🚪 Every earlier way in, removed in THIS transaction. The list
             //    of "doors" lives in ONE place, fn_auth.php
@@ -3793,6 +3856,12 @@ function adminCliGrant(
             . ' Removed: ' . adminCliRemovedSummary($removed);
     } elseif ($decision['activates']) {
         $message = 'Done: the account is now an active Global Admin with a checked email address.';
+    }
+
+    // 📭 Say what happened to the waiting emails (counts only).
+    if ($decision['activates']) {
+        $message .= ' Waiting emails cancelled: ' . $emailsCancelled['verification'] . ' verification, '
+            . $emailsCancelled['password_reset'] . ' password-reset.';
     }
 
     return ['exitCode' => CUERCODE_ADMIN_CLI_EXIT_OK, 'message' => $message, 'warnings' => $decision['warnings']];

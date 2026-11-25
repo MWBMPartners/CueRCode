@@ -1023,3 +1023,19 @@ if (is_resource($aaProbeProcess)) {
 } else {
     assertTrue(false, '0010: the pipe probe process could not be started');
 }
+
+// 📭 #113 B9 (findings 4 and 6b): `grant --activate` cancels the account's waiting verification and reset emails.
+$aaFnAdminSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php');
+$aaCancelStart   = strpos($aaFnAdminSource, 'function adminCliCancelUnsentAccountEmails(');
+assertTrue($aaCancelStart !== false, 'B9: the email-cancelling function exists');
+$aaCancelBody = substr($aaFnAdminSource, (int) $aaCancelStart, 1800);
+assertTrue(str_contains($aaCancelBody, "SET `status` = 'skipped'") && str_contains($aaCancelBody, '`paramsJSON` = NULL'), 'B9: waiting emails are marked skipped and their stored details cleared');
+assertTrue(str_contains($aaCancelBody, "`status` IN ('queued', 'failed') AND `attempts` < `maxAttempts`"), 'B9: only WAITING rows (queued, or failed with attempts left) are touched - never sending, sent or given-up rows');
+assertTrue(str_contains($aaCancelBody, "['verification', 'password_reset']"), 'B9: only the verification and password-reset templates');
+assertTrue(str_contains($aaCancelBody, 'WHERE `toAddress` = ? AND `templateKey` = ?'), 'B9: matched by recipient address and template, with a prepared statement');
+$aaGrantStart = strpos($aaFnAdminSource, 'function adminCliGrant(');
+$aaGrantBody  = substr($aaFnAdminSource, (int) $aaGrantStart, (int) strpos($aaFnAdminSource, 'function adminCliRevoke(') - (int) $aaGrantStart);
+assertTrue(str_contains($aaGrantBody, "if (\$decision['activates']) {\n            \$emailsCancelled = adminCliCancelUnsentAccountEmails("), 'B9: the grant cancels them only when it activates the account');
+assertTrue(strpos($aaGrantBody, 'adminCliCancelUnsentAccountEmails(') < strpos($aaGrantBody, 'adminAuditWrite(') && strpos($aaGrantBody, 'adminCliCancelUnsentAccountEmails(') < strpos($aaGrantBody, '$db->commit()'), 'B9: ...inside the same transaction, before the audit row and the commit');
+assertTrue(str_contains($aaGrantBody, "'verification_emails_cancelled'") && str_contains($aaGrantBody, "'password_reset_emails_cancelled'"), 'B9: the audit row gets counts only');
+assertTrue(str_contains(implode("\n", adminCliUsage()), 'cancelled'), 'B9: --help says waiting emails are cancelled');
