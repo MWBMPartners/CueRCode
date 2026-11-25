@@ -105,8 +105,8 @@ This is how a fresh copy gets onto DreamHost. **Nothing is cloned on the server:
 
 4. **🗄️ Run the database installer.** The folder `public_html/install/` ships with an `.htaccess` that **denies all web access**, on purpose, so nobody can reach the installer by accident. To run it once:
    1. On the server, rename `install/.htaccess` to `install/.htaccess.off` (with your SFTP program or File Manager).
-   2. Open `https://your-domain/install/`. Check every line of the prerequisites list is green (PHP version, the eight extensions, the credentials file, `_uploads` and `_backups`), then press **Install Database**. It checks the database version, creates the tables, loads the starting data and applies the numbered database upgrades, then writes `install/.installed.lock` and disables itself.
-   3. **Close it again straight away:** rename `install/.htaccess.off` back to `install/.htaccess`. Better still, delete the whole `install/` folder from the server. Note the next deploy will upload the folder and its `.htaccess` again, so check that `.htaccess` is in place after each deploy.
+   2. Open `https://your-domain/install/`. Check every line of the prerequisites list is green (PHP version, the eight extensions, the credentials file, `_uploads` and `_backups`), then press **Install Database**. It checks the database version, creates the tables, loads the starting data and applies the numbered database upgrades, then writes a lock file at `_auth_keys/.installed.lock` (outside the `install/` folder) and disables itself. Sites installed earlier have the lock at `install/.installed.lock`, which still counts.
+   3. **Close it again straight away:** rename `install/.htaccess.off` back to `install/.htaccess`. **Do not delete the `install/` folder:** the next deploy would upload it again, and an old setup kept the lock inside that folder, so a deleted folder meant an unlocked installer. Keep the folder on the server with its deny-all `.htaccess` in place, and check that `.htaccess` is there after each deploy. The lock is now kept in `_auth_keys/`, which a deploy never overwrites; keep that file too.
 
    **Upgrading an existing site later:** run `php web/CueRCode.net/_includes/cli/migrate.php --apply` on the server, or use **Database upgrades** in the admin area (`/admin/upgrades/`). See DEV_NOTES.md "Changing the database from now on".
 
@@ -244,7 +244,7 @@ AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.cl
 php tests/run.php
 ```
 
-runs the full dependency-free characterization suite - 3941 assertions across 36 test files, no database or Composer required.
+runs the full dependency-free characterization suite - 4046 assertions across 37 test files, no database or Composer required.
 
 There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL or MariaDB container - see [tests/README.md](tests/README.md).
 

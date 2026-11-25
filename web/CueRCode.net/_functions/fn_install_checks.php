@@ -90,12 +90,28 @@ function installExtensionChecks(array $loadedExtensions): array
  *
  * @param string $serverInfo The text from mysqli::$server_info or SELECT VERSION().
  *
- * @return array{flavour: string, version: string} flavour is "mariadb", "mysql" or "unknown".
+ * @return array{flavour: string, version: string} flavour is "mariadb", "mysql", "unsupported" (Aurora) or "unknown".
  */
 function installParseDatabaseVersion(string $serverInfo): array
 {
-    $text      = trim($serverInfo);
+    $text = trim($serverInfo);
+
+    // ☁️ Amazon Aurora (and similar look-alikes) report a MySQL number but are
+    //    not what CueRCode was built and tested on, so they are refused with
+    //    their own message rather than passed as plain MySQL.
+    if (stripos($text, 'aurora') !== false) {
+        return ['flavour' => 'unsupported', 'version' => ''];
+    }
+
     $isMariaDb = stripos($text, 'mariadb') !== false;
+
+    // 🧹 Review fix: a MariaDB server read through some client libraries says
+    //    "5.5.5-10.6.12" (the compatibility prefix and the real number) WITHOUT
+    //    the word MariaDB. A real MySQL never starts with "5.5.5-" followed by
+    //    another version, so treat that shape as MariaDB 10.6.12.
+    if (preg_match('/^5\.5\.5-(\d+\.\d+(?:\.\d+)?)/', $text) === 1) {
+        $isMariaDb = true;
+    }
 
     if ($isMariaDb) {
         // 🧹 Drop the fake "5.5.5-" prefix some client libraries put in front.
@@ -127,12 +143,24 @@ function installCheckDatabaseVersion(string $serverInfo): array
     $parsed  = installParseDatabaseVersion($serverInfo);
     $version = $parsed['version'];
 
+    if ($parsed['flavour'] === 'unsupported') {
+        return [
+            'ok'      => false,
+            'flavour' => 'unsupported',
+            'version' => '',
+            'message' => 'This database ("' . $serverInfo . '") is Amazon Aurora, which CueRCode does not support.'
+                . ' CueRCode needs MySQL ' . INSTALL_MIN_MYSQL_VERSION . ' or newer, or MariaDB '
+                . INSTALL_MIN_MARIADB_VERSION . ' or newer (a standard DreamHost MySQL database is fine).'
+                . ' Nothing has been changed in the database.',
+        ];
+    }
+
     if ($parsed['flavour'] === 'unknown') {
         return [
             'ok'      => false,
             'flavour' => 'unknown',
             'version' => '',
-            'message' => 'Could not tell which database version this server runs ("' . $serverInfo
+            'message' => 'Could not tell which database version this server runs, so it is treated as unsupported ("' . $serverInfo
                 . '"). CueRCode needs MySQL ' . INSTALL_MIN_MYSQL_VERSION . ' or newer, or MariaDB '
                 . INSTALL_MIN_MARIADB_VERSION . ' or newer.',
         ];
@@ -196,4 +224,77 @@ function installCheckWritableFolder(string $path, string $name, string $purpose)
     }
 
     return ['ok' => true, 'message' => 'The folder "' . $name . '" exists and can be written to.'];
+}
+
+/**
+ * 🚦 Everything that must be in place BEFORE the installer touches anything,
+ *    as a list of plain-English problems (empty = good to go). PURE.
+ *
+ * The page shows the same checks as a list, but hiding the "Install" button
+ * is not a safeguard: anyone can send the form by hand. The POST handler
+ * therefore calls this too and refuses (review fix M7).
+ *
+ * @param string                                       $phpVersion       PHP_VERSION
+ * @param array<int, string>                           $loadedExtensions get_loaded_extensions()
+ * @param array<int, array{ok: bool, message: string}> $folderChecks     installCheckWritableFolder() results
+ *
+ * @return array<int, string> One message per problem
+ */
+function installPreflightProblems(string $phpVersion, array $loadedExtensions, array $folderChecks): array
+{
+    $problems = [];
+
+    if (version_compare($phpVersion, '8.4.0', '<')) {
+        $problems[] = 'PHP ' . $phpVersion . ' is too old. CueRCode needs PHP 8.4 or newer (8.4, 8.5 or 8.6).';
+    }
+
+    foreach (installExtensionChecks($loadedExtensions) as $extension) {
+        if (!$extension['ok']) {
+            $problems[] = $extension['message'];
+        }
+    }
+
+    foreach ($folderChecks as $folder) {
+        if (!$folder['ok']) {
+            $problems[] = $folder['message'];
+        }
+    }
+
+    return $problems;
+}
+
+/**
+ * 🔒 Where the "installation is complete" lock file lives. PURE.
+ *
+ * Review fix M8: the lock used to live ONLY inside install/, so deleting that
+ * folder (as the README once advised) removed the lock, and the next deploy
+ * brought the installer back unlocked. The main lock now lives in
+ * _auth_keys/ - a folder that is not on the web, is not part of the
+ * repository and is never overwritten by a deploy (the deploy only adds and
+ * updates files). The old place is still honoured so sites installed earlier
+ * stay locked.
+ *
+ * @param string $siteRoot   Site root, with a trailing slash
+ * @param string $installDir Installer folder, with a trailing slash
+ *
+ * @return array{primary: string, legacy: string}
+ */
+function installLockFilePaths(string $siteRoot, string $installDir): array
+{
+    return [
+        'primary' => $siteRoot . '_auth_keys' . DIRECTORY_SEPARATOR . '.installed.lock',
+        'legacy'  => $installDir . '.installed.lock',
+    ];
+}
+
+/**
+ * 🔎 Is the installer locked? True when a lock file exists in either place.
+ *
+ * @param array{primary: string, legacy: string} $paths From installLockFilePaths()
+ *
+ * @return bool
+ */
+function installIsLocked(array $paths): bool
+{
+    return file_exists($paths['primary']) || file_exists($paths['legacy']);
 }

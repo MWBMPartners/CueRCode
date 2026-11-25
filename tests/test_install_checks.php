@@ -55,6 +55,9 @@ $cases = [
     ['10.6.0-MariaDB',               true,  'mariadb', '10.6.0'],
     ['5.5.5-10.5.23-MariaDB',        false, 'mariadb', '10.5.23'],
     ['10.3.39-MariaDB-1:10.3.39',    false, 'mariadb', '10.3.39'],
+    // 🧹 Review fix: MariaDB prefix WITHOUT the word MariaDB is still MariaDB.
+    ['5.5.5-10.6.12',                true,  'mariadb', '10.6.12'],
+    ['5.5.5-10.5.23',                false, 'mariadb', '10.5.23'],
 ];
 foreach ($cases as [$info, $expectOk, $expectFlavour, $expectVersion]) {
     $check = installCheckDatabaseVersion($info);
@@ -96,3 +99,47 @@ if (is_writable($readOnly)) {
 chmod($readOnly, 0700);
 rmdir($readOnly);
 rmdir($base);
+
+// ☁️ Review fix: Amazon Aurora reports a MySQL-looking number but is unsupported, with its own message.
+$aurora = installCheckDatabaseVersion('8.0.mysql_aurora.3.04.0');
+assertEquals(false, $aurora['ok'], 'Aurora is refused');
+assertEquals('unsupported', $aurora['flavour'], 'Aurora flavour is unsupported');
+assertTrue(str_contains($aurora['message'], 'Aurora') && str_contains($aurora['message'], 'does not support'), 'Aurora message says plainly that it is not supported');
+assertTrue(str_contains(installCheckDatabaseVersion('banana')['message'], 'unsupported'), 'unknown strings are said to be treated as unsupported');
+
+// 🚦 M7: the server-side prerequisite re-check (the POST handler uses it, so a hand-made form post is refused too).
+$allExtensions = array_keys(installRequiredExtensions());
+$goodFolders   = [['ok' => true, 'message' => 'fine'], ['ok' => true, 'message' => 'fine']];
+assertEquals([], installPreflightProblems('8.4.0', $allExtensions, $goodFolders), 'M7: nothing missing -> no problems');
+$withoutGd = array_values(array_diff($allExtensions, ['gd']));
+$problems  = installPreflightProblems('8.5.1', $withoutGd, $goodFolders);
+assertEquals(1, count($problems), 'M7: one missing extension -> one problem');
+assertTrue(str_contains($problems[0], '"gd"'), 'M7: ...and it names the extension in the same plain words as the page');
+$problems = installPreflightProblems('8.5.1', $allExtensions, [['ok' => false, 'message' => 'The folder "_uploads" exists but the website is not allowed to write to it.'], $goodFolders[0]]);
+assertEquals(['The folder "_uploads" exists but the website is not allowed to write to it.'], $problems, 'M7: an unwritable folder is refused with the page\'s own message');
+assertEquals(1, count(installPreflightProblems('8.3.9', $allExtensions, $goodFolders)), 'M7: PHP older than 8.4 is refused');
+assertEquals(3, count(installPreflightProblems('8.4.0', array_values(array_diff($allExtensions, ['gd', 'zip'])), [['ok' => false, 'message' => 'x'], $goodFolders[0]])), 'M7: every problem is listed');
+$installerSource = (string) file_get_contents(dirname(__DIR__) . '/web/CueRCode.net/public_html/install/index.php');
+assertTrue(str_contains($installerSource, 'installPreflightProblems(PHP_VERSION, get_loaded_extensions(), $postFolderChecks)'), 'M7: the POST handler itself calls the prerequisite check');
+assertTrue(strpos($installerSource, 'installPreflightProblems(PHP_VERSION') < strpos($installerSource, 'new \\mysqli(DB_HOST'), 'M7: ...before the database is touched');
+
+// 🔒 M8: the lock lives outside install/, and the old place still counts.
+$lockBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_lock_' . bin2hex(random_bytes(4)) . DIRECTORY_SEPARATOR;
+mkdir($lockBase . '_auth_keys', 0700, true);
+mkdir($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install', 0700, true);
+$lockPaths = installLockFilePaths($lockBase, $lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install' . DIRECTORY_SEPARATOR);
+assertTrue(str_contains($lockPaths['primary'], '_auth_keys') && !str_contains($lockPaths['primary'], DIRECTORY_SEPARATOR . 'install' . DIRECTORY_SEPARATOR), 'M8: the main lock is in _auth_keys, not in install/');
+assertTrue(str_ends_with($lockPaths['legacy'], 'install' . DIRECTORY_SEPARATOR . '.installed.lock'), 'M8: the old lock place is still known');
+assertFalse(installIsLocked($lockPaths), 'M8: no lock file -> not locked');
+file_put_contents($lockPaths['legacy'], 'x');
+assertTrue(installIsLocked($lockPaths), 'M8: an old install/.installed.lock still locks');
+unlink($lockPaths['legacy']);
+file_put_contents($lockPaths['primary'], 'x');
+assertTrue(installIsLocked($lockPaths), 'M8: the _auth_keys lock locks');
+// 🗑️ The point of the fix: deleting install/ (as the README once advised) does not unlock.
+rmdir($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install');
+assertTrue(installIsLocked($lockPaths), 'M8: with install/ deleted, the lock still holds');
+unlink($lockPaths['primary']);
+rmdir($lockBase . '_auth_keys');
+rmdir($lockBase . 'public_html');
+rmdir($lockBase);

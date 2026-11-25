@@ -46,8 +46,15 @@ $siteRoot = dirname(dirname($installDir)) . $ds;
 /** @var string Path to the server-wide root (three levels up) */
 $serverRoot = dirname($siteRoot) . $ds;
 
-/** @var string Lock file path - prevents re-running the installer */
-$lockFile = $installDir . '.installed.lock';
+/**
+ * @var string Lock file path - prevents re-running the installer. Review fix
+ *             M8: it now lives in _auth_keys/ (outside install/ and outside
+ *             the repository), so removing install/ or deploying again cannot
+ *             lose it. The old place (install/.installed.lock) still counts.
+ */
+$lockPaths  = installLockFilePaths($siteRoot, $installDir);
+$lockFile   = $lockPaths['primary'];
+$legacyLockFile = $lockPaths['legacy'];
 
 /** @var string Path to SQL installation script */
 $installSQLPath = $siteRoot . '_includes' . $ds . 'sql' . $ds . 'install.sql';
@@ -62,7 +69,7 @@ require_once $siteRoot . '_functions' . $ds . 'fn_install_checks.php';
 // ==============================================================================
 // 🔒 Lock File Check - Prevent Re-Execution
 // ==============================================================================
-$isLocked = file_exists($lockFile);
+$isLocked = installIsLocked($lockPaths);
 
 // 🔒 If installation is already complete, refuse to load the page entirely.
 // This prevents information disclosure about the installer's existence.
@@ -168,16 +175,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
     $installRequested = true;
 
     // ----------------------------------------------------------------
+    // 🚦 Step 0 (review fix M7): re-check the prerequisites on the SERVER
+    // side. The page hides the Install button when something is missing, but
+    // a form can be sent by hand, so a missing PHP extension or an unwritable
+    // folder must refuse here too, with the same plain messages.
+    // ----------------------------------------------------------------
+    $postFolderChecks = [];
+    foreach (['_uploads' => 'user-uploaded logos and files', '_backups' => 'database and file backups'] as $postFolderName => $postFolderPurpose) {
+        $postFolderChecks[] = installCheckWritableFolder($siteRoot . $postFolderName, $postFolderName, $postFolderPurpose);
+    }
+    $preflightProblems = installPreflightProblems(PHP_VERSION, get_loaded_extensions(), $postFolderChecks);
+
+    foreach ($preflightProblems as $preflightProblem) {
+        $results[] = ['status' => 'error', 'message' => $preflightProblem];
+    }
+    if ($preflightProblems !== []) {
+        $results[] = [
+            'status' => 'error',
+            'message' => 'Installation was refused before anything was changed. Fix the problems above, then try again.'
+        ];
+    }
+
+    // ----------------------------------------------------------------
     // 📌 Step 1: Load database credentials
     // Site-specific credentials take priority over server-wide
     // ----------------------------------------------------------------
-    if (file_exists($siteCredsPath)) {
+    if ($preflightProblems === [] && file_exists($siteCredsPath)) {
         require_once $siteCredsPath;
         $results[] = ['status' => 'success', 'message' => 'Loaded site-specific credentials from _auth_keys/auth_creds.php'];
     }
 
     // Load server-wide credentials (constants won't be redefined if already set)
-    if (file_exists($serverCredsPath)) {
+    if ($preflightProblems === [] && file_exists($serverCredsPath)) {
         require_once $serverCredsPath;
         $results[] = ['status' => 'success', 'message' => 'Loaded server-wide credentials from _auth_keys/auth_creds.php'];
     }
@@ -194,7 +223,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
         }
     }
 
-    if (!empty($missingConstants)) {
+    if ($preflightProblems !== []) {
+        // 🚫 Already refused at Step 0 above; nothing more runs (this empty
+        //    branch is what stops the `else` below from running the install).
+    } elseif (!empty($missingConstants)) {
         $results[] = [
             'status' => 'error',
             'message' => 'Missing required database constants: ' . implode(', ', $missingConstants)
@@ -562,10 +594,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                         . 'PHP Version: ' . PHP_VERSION . PHP_EOL
                         . 'Server: ' . $serverName . PHP_EOL;
 
-                    if (file_put_contents($lockFile, $lockContent) !== false) {
+                    // 🔒 Review fix M8: write the lock OUTSIDE install/ first
+                    //    (_auth_keys/), so deleting or re-deploying install/
+                    //    cannot lose it. If that folder is not writable, fall
+                    //    back to the old place inside install/ and say so.
+                    if (@file_put_contents($lockFile, $lockContent) !== false) {
                         $results[] = [
                             'status' => 'success',
-                            'message' => 'Installation lock file created. Installer is now disabled.'
+                            'message' => 'Installation lock file created in _auth_keys/. Installer is now disabled.'
+                        ];
+                        $isLocked = true;
+                    } elseif (@file_put_contents($legacyLockFile, $lockContent) !== false) {
+                        $results[] = [
+                            'status' => 'warning',
+                            'message' => 'The lock file could only be written inside install/ (the _auth_keys folder is not writable). '
+                                . 'Keep the install folder and its .htaccess on the server: a later deploy that adds the folder again would not restore this lock.'
                         ];
                         $isLocked = true;
                     } else {
@@ -744,8 +787,9 @@ foreach ($prerequisites as $prereq) {
                         <h5 class="alert-heading">Installation Complete</h5>
                         <p class="mb-0">
                             The database has already been installed. For security, this installer
-                            is now locked. To re-run the installation, delete the lock file at:
+                            is now locked. To re-run the installation, delete the lock file at
                             <code><?php echo htmlspecialchars($lockFile, ENT_QUOTES, 'UTF-8'); ?></code>
+                            (or, on a site installed earlier, <code><?php echo htmlspecialchars($legacyLockFile, ENT_QUOTES, 'UTF-8'); ?></code>).
                         </p>
                     </div>
                     <div class="text-center mt-3">
