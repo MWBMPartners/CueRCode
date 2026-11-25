@@ -1350,6 +1350,14 @@ Codex (OpenAI) reviewed the new-install work read-only (29 findings). Each was r
 - **Full notation.** `tests/test_full_notation.php` (with `tests/lib/shorthand_scan.php`) fails if shorthand appears in a file that has none, or grows in one of the 21 older files still listed (#157).
 - **Not a fault:** PHP's own web client drops the Authorization header when a redirect goes to another host or port (measured), so the library watch's token cannot leak that way.
 
+**Round 2 (Codex re-check of the fixes, 2026-11-25):**
+
+- **"Complete" starting data.** `seed_data.sql` ends with a completion marker (`tblSettings.seed_data_loaded`, group `system`, not editable). It MUST stay the last statement. Without the marker, `migrationDbSeedDataState()` calls the data complete only when every row in `migrationSeedExpectedRows()` (38 code types, 26 logos, 4 plans) is there; a test reads `seed_data.sql` and fails if that list drifts. "One row per table" is never enough.
+- **Transactions need InnoDB.** `migrationDbRunSeedSql()` asks `INFORMATION_SCHEMA.TABLES` for the ENGINE of every table in `migrationSeedTables()` before loading, and refuses unless all are InnoDB base tables. Any future all-or-nothing load should do the same: a MyISAM table silently ignores the rollback (measured).
+- **Ordering between seed and migrations.** When a migration changes a row the seed also writes, make the seed write the NEW value, and leave the already-applied migration file alone (the runner warns when an applied file changes; `test_migrations.php` pins 0002's checksum). Then the result is the same whichever runs first.
+- **Checked writes where a record is the permission.** `logActivity()` never reports failure, which is right for ordinary events. Where a log row stands in for an admin change-log row, use `logActivityChecked()` (true only when one row was written), and ask `adminTableExistsState()` (yes / no / unknown) rather than `adminTableExists()`: "could not tell" must refuse, never fall back.
+- **Tests that accept "either outcome" prove nothing.** Where the machine can do the real thing (here: Imagick with a working SVG delegate, checked independently first), assert the real result; test the fallback separately with an input that forces it. Prove a new test fails on the pre-fix code (a scratch copy) before trusting it.
+
 ## 🔍 Site Polish Check & Template Comments (2026-10-05, #137)
 
 - **`php tools/check_site_polish.php`** - source-only (no database, no web

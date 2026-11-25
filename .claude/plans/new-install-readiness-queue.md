@@ -48,7 +48,7 @@ Facts: local `work-in-progress` is 30 commits ahead of `origin/work-in-progress`
 | # | Item | Home | Who |
 |---|---|---|---|
 | F1 | Push local `work-in-progress` after the Opus re-check (decision 0008) | now | lead |
-| F2 | Codex review owed for everything since 2026-09-25. **DONE 2026-11-25 for the new-install work (chunks C1-C6, 29 findings, commits d9d95e2..11776e8, see "F2 outcome" below).** Still owed: chunk 3 (docs/portal/spec/#117/#111) and a Codex re-check of the fixes | after push | Codex or Opus stand-in, recorded as stand-in |
+| F2 | Codex review owed for everything since 2026-09-25. **DONE 2026-11-25 for the new-install work (chunks C1-C6, 29 findings, commits d9d95e2..11776e8, see "F2 outcome" below).** Round 2 (Codex re-check of the fixes, 6 leads, all real and fixed, aeaff51..a446a3c, see "F2 round 2 outcome"). Still owed: chunk 3 (docs/portal/spec/#117/#111) and a Codex re-check of the round-2 fixes | after push | Codex or Opus stand-in, recorded as stand-in |
 | F3 | Close issues that are built and reviewed, with a commit link and the done label, only after a check: #112 #117 #122 #123 #124 #125 #126 #127 #153 (and #128, #113, #138 once verified) | B11 | lead |
 | F4 | Reconcile stale handoff rows: task 7 (superseded), 7a ("waiting to move"), 7i vs 7g (#126 done), Q6 (answered by decision 0007) | handoff rewrite | lead |
 | F5 | Plans need a terminal line and a move to a history folder: `112-email-queue-runner.md`, `122-123-126-email-privacy.md`, `codex-review-chunk-1a/1b/2`, `codex-catch-up-review-brief.md` (keep chunk 3 and the 7n plan live) | docs | lead |
@@ -99,3 +99,17 @@ Codex (read-only; could not run PHP 8.4 or MySQL) reported 29 findings in six ch
 | C6-2 | real | rotation advice honest; second-key route | 18a87c9 |
 | C6-3 | real | iframe advice removed | 18a87c9 |
 | C6-4 | real | both Swagger globals checked | 18a87c9 |
+
+### F2 round 2 outcome (2026-11-25): Codex re-check of the round-1 fixes
+Codex (read-only, no PHP or MySQL) raised six leads in the round-1 fixes. Each was reproduced on the real code by Claude Opus before any change (MySQL 8.0.36 and MariaDB 10.6.28 in Docker; PHP 8.5.12; PHP 8.4.27 + ImageMagick 7.1.2-15 in Docker). All six were real; all fixed with tests, each shown failing first.
+
+| ID | Verdict | Outcome | Commit |
+| --- | --- | --- | --- |
+| R1-1 | real (one row per table read "complete", both servers) | completion marker as the seed's last statement, else every one of 68 starting rows; plain message, no "empty tables" advice for a live site | aeaff51 |
+| R1-2 | real (MyISAM kept 26 logos after rollback, both servers) | InnoDB check of all four seed tables before loading; refused with nothing written | aeaff51 |
+| R1-3 | real (CLI-first kept the old wording, both servers) | seed writes 0002's wording; 0002 untouched (checksum pinned) | b9922c9 |
+| R2-1 | real, high per Codex (unlock and upgrade with no record: unit stand-ins + MySQL 8.0.36 trigger) | three-answer table check, `logActivityChecked()`; fail closed | 837c932 |
+| R3-1 | real (8 test cases failed on old code) | strict `vulns` / `next_page_token` shape | bcfbbc2 |
+| R3-2 | real (old test passed on pre-fix code: 201/201) | delegate probed first; image and centre pixel asserted; fallback separate; new test fails 2 on pre-fix copy | a446a3c |
+
+Still owed: a Codex re-check of these round-2 fixes; chunk 3 (docs/portal/spec).

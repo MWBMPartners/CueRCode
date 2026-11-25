@@ -40,9 +40,9 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-25, after the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-25, after the Codex re-check of the review fixes, round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
-Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
+Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. The same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
 | File | Assertions |
 | --- | --- |
@@ -50,7 +50,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 585 |
+| `test_admin_access.php` | 600 |
 | `test_admin_settings.php` | 1211 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
@@ -72,10 +72,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_full_notation.php` | 41 |
 | `test_install_checks.php` | 99 |
 | `test_installer_load_order.php` | 9 |
-| `test_library_updates.php` | 145 |
+| `test_library_updates.php` | 156 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 399 |
+| `test_migrations.php` | 431 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -91,9 +91,13 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **6302** |
+| **Total** | **6360** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+### Real-database runs after Codex round 2 (2026-11-25, re-check of the fixes)
+
+All six scripts passed again on throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other: `migrations_real_mysql.php` 111 on each (new Scenario M: "complete" needs every starting row or the completion marker; MyISAM, missing and view tables are refused with nothing written, plus a reproduction of the MyISAM rollback fault; A and J extended: the bot-protection description names hCaptcha in both orders), `admin_access_real_mysql.php` 163 on each (B extended: with the activity log refusing rows before upgrade 0002, nothing unlocks and no upgrade runs), `admin_settings_real_mysql.php` 232, `account_recovery_real_mysql.php` 192, `resend_verification_real_mysql.php` 32, and `email_queue_real_mysql.php` all 16 scenarios, on each. The scripts that build their own tables need the database created first and `--load-schema` (see each section below).
 
 ### Real-database runs after the Codex review (2026-11-25, queue F2)
 

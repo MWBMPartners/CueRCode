@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security and fixes - Codex re-check of the review fixes, round 2 (2026-11-25, queue F2, #113)
+
+Codex re-read the round-1 fixes read-only and raised six leads. All six were reproduced on the real code first (MySQL 8.0.36 and MariaDB 10.6.28 in Docker; PHP 8.5.12, and PHP 8.4.27 with ImageMagick 7.1.2) and are fixed with tests.
+
+- **Admin change log, before database upgrade 0002 (the most serious).** If the stand-in record in the activity log could not be written, or the "does the change-log table exist?" check failed, the admin password re-confirmation still unlocked editing and an admin upgrade still changed the database, with no record of either (reproduced on MySQL 8.0.36). Both now refuse. First installs, where the record can be written, work as before. Commit 837c932.
+- **Installer: "all the starting data is here" now means all of it.** One QR code type, one logo and one plan used to count as complete, so the installer skipped the starting data and locked itself. The starting data now ends with a completion marker; without it, all 38 code types, 26 logos and 4 plans must be there. The message for a part-loaded database says what is there and warns not to empty anything on a site already in use. Commit aeaff51.
+- **Installer: only into tables that can undo a failed load.** A starting-data table using the MyISAM storage type kept its rows after a failed load was rolled back, while the page said nothing was kept. The load now checks every table first and refuses, writing nothing, with a plain reason and the one-line fix. Commit aeaff51.
+- **Bot-protection setting description** now names hCaptcha whether the installer or the upgrade tool runs first (it kept the old wording if the upgrade tool ran first). Commit b9922c9.
+- **Library watch** no longer reports "no advisories" for an OSV answer of `"vulns": null` or an advisory with no id; both are "could not check". Commit bcfbbc2.
+- **Logo test** now proves an SVG logo really reaches a PNG QR code where Imagick can draw SVG, and was shown to fail on the code from before the ImageMagick 7 fix. Commit a446a3c.
+- Suite: 6360 assertions in 45 files (PHP 8.5.12); 6355 on PHP 8.4.27 with Imagick.
+
 ### Security and fixes - Independent cross-system review by Codex (2026-11-25, queue F2, #113)
 
 Codex (OpenAI) reviewed the new-install work read-only and reported 29 findings. Each was checked against the real code first (on throwaway MySQL 8.0 and MariaDB 10.6, PHP 8.4 and 8.5, and real Imagick 7 where it mattered); 27 were real and are fixed with tests, 1 is fixed in the files Codex named with the rest tracked in #157, and 1 was not a fault (measured).
