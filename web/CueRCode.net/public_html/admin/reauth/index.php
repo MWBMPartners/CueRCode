@@ -33,7 +33,7 @@
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       2026-11-24 (task 7n Phase 1B, #31)
- * @see         _functions/fn_admin.php - adminVerifyReauthPassword(), adminReauthStore(), adminSafeNextPath()
+ * @see         _functions/fn_admin.php - adminVerifyReauthPassword(), adminReauthRecordSuccess(), adminSafeNextPath()
  * @see         .claude/plans/7n-admin-commerce-plan.md §6.4
  */
 

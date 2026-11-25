@@ -1060,7 +1060,7 @@ assertTrue(str_contains(implode("\n", adminCliUsage()), 'cancelled'), 'B9: --hel
 // ==============================================================================
 $aaReauthPage = (string) file_get_contents(dirname(__DIR__) . '/web/CueRCode.net/public_html/admin/reauth/index.php');
 assertContains('if (adminReauthRecordSuccess($adminUser)) {', $aaReauthPage, 'C2-1: the re-confirm page unlocks only through adminReauthRecordSuccess()');
-assertFalse(str_contains($aaReauthPage, 'adminReauthStore('), 'C2-1: the page never unlocks directly');
+assertFalse((bool) preg_match('/^(?!\s*(\/\/|\*|#)).*adminReauthStore\(/m', $aaReauthPage), 'C2-1: no code line of the page unlocks directly');
 $aaRecordStart = strpos($aaAdminSource, 'function adminReauthRecordSuccess(');
 $aaRecordBody  = substr($aaAdminSource, $aaRecordStart, strpos($aaAdminSource, "\nfunction ", $aaRecordStart + 10) - $aaRecordStart);
 assertTrue(strpos($aaRecordBody, "'reauth.success'") < strpos($aaRecordBody, 'adminReauthStore($admin)') && str_contains($aaRecordBody, 'if (!$recorded) {'), 'C2-1: the change-log row is written first, and nothing is unlocked if it fails');
