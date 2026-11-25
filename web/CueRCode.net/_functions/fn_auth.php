@@ -846,9 +846,11 @@ function requestNewVerificationLinkWork(string $email, string $ipAddress): array
         ];
     }
 
-    // 🚦 The request log and client-IP helpers live in fn_api_auth.php, which
+    // 🚦 The request log (recordAPIRequest()) lives in fn_api_auth.php, which
     //    ordinary pages do not load; it only defines constants and functions,
-    //    so loading it here (once) is harmless.
+    //    so loading it here (once) is harmless. (The visitor's address comes
+    //    from getClientIP() in fn_client_ip.php, loaded on every page -
+    //    decision 0014.)
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_api_auth.php';
 
     $normalizedEmail = mb_strtolower(trim($email));

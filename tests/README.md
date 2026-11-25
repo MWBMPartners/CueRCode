@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-25, after the independent-review fixes I1/M1-M8; earlier decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-25, after decisions 0013 and 0014; earlier the independent-review fixes I1/M1-M8, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 
@@ -48,14 +48,16 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | --- | --- |
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
+| `test_account_recovery.php` | 67 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 549 |
+| `test_admin_access.php` | 552 |
 | `test_api_keys.php` | 108 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
 | `test_barcode.php` | 120 |
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
+| `test_client_ip.php` | 160 |
 | `test_core.php` | 143 |
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
@@ -83,7 +85,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 62 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **4046** |
+| **Total** | **4276** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -251,9 +253,12 @@ CUERCODE_IT_DB_NAME=cuercode_it_p1b CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS
 docker stop cuercode-it
 ```
 
-Exit code 0 means every scenario passed. Last run 2026-11-25 (decision
-0010): all 11 scenarios (134 checks) passed on MySQL 8.0.36, MySQL 8.4.11 and
-MariaDB 11.4.13, on macOS. The pretend-terminal step has a Linux form
+Exit code 0 means every scenario passed. Last run 2026-11-25 (after
+decisions 0013/0014 moved the "remove every way in" SQL into the shared
+`accountRemoveOtherWaysIn()`, and D2 now passes the account's password to the
+verification link): 143 checks passed on MySQL 8.0.36 and MariaDB 10.6.28,
+on macOS. Earlier 2026-11-25 (decision 0010): all 11 scenarios (134 checks)
+passed on MySQL 8.0.36, MySQL 8.4.11 and MariaDB 11.4.13. The pretend-terminal step has a Linux form
 (`script -q -e -c`) that has not been run yet; without a usable `script`
 tool, that step is reported as NOT RUN. (2026-11-24, Phase 1B: 79 checks on
 MySQL 8.0.36, 8.4.13 and MariaDB 11.4.13.) MariaDB 10.11 (named in the plan) was not available locally
@@ -277,9 +282,11 @@ tests/
 ├── lib/
 │   └── assert.php     # tiny assertion library + global results collector
 ├── integration/       # OPTIONAL checks that need a real (throwaway) database - NOT run by run.php
+│   ├── account_recovery_real_mysql.php
 │   ├── admin_access_real_mysql.php
 │   ├── email_queue_real_mysql.php
-│   └── migrations_real_mysql.php
+│   ├── migrations_real_mysql.php
+│   └── resend_verification_real_mysql.php
 └── test_*.php         # individual characterization test files (added per cycle)
 ```
 
@@ -399,3 +406,43 @@ CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
   php "$REPO/tests/integration/resend_verification_real_mysql.php" --load-schema; echo "exit=$?"
 docker stop p128-resend-mysql
 ```
+
+## Optional real-database check (decisions 0013 and 0014)
+
+`tests/test_account_recovery.php` and `tests/test_client_ip.php` prove the
+decisions and the visitor-address rules without a database.
+`tests/integration/account_recovery_real_mysql.php` proves the real SQL:
+
+- **0013** - a verification link needs the account's password (nothing
+  typed, wrong, right); wrong passwords count toward the lock-out and the one
+  that reaches the limit stops the link; an account with no password still
+  activates with the link alone; "Forgot password" now sends a link to a
+  waiting account and using it activates the account and, in ONE transaction,
+  ends sessions, switches off API keys, removes linked sign-ins and passkeys
+  and cancels other unused links, with a counts-only activity row; the same on
+  an active account; a database trigger forcing a failure part-way leaves
+  everything (including the link) unchanged; a failed activity-log write does
+  NOT block a reset (deliberate); a waiting Global Admin, a suspended account
+  and a used link are refused.
+- **0014** - with a real saved `trusted_proxy_ips` setting (a range),
+  `getClientIP()` reads X-Forwarded-For from the right only from that range,
+  trusts CF-Connecting-IP only from a Cloudflare range, and the activity log
+  records the same address.
+
+It deletes rows, so it refuses any database not named `cuercode_it_*`; it
+creates the database if it is missing. It never sends email.
+
+```sh
+docker run --rm -d --name p131-recovery-mysql \
+  -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 127.0.0.1:33131:3306 mysql:8.4
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33131 CUERCODE_IT_DB_NAME=cuercode_it_p131 \
+CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  php "$REPO/tests/integration/account_recovery_real_mysql.php" --load-schema; echo "exit=$?"
+docker stop p131-recovery-mysql
+```
+
+Last run 2026-11-25: all 58 checks passed on MySQL 8.0.36, MySQL 8.4.11 and
+MariaDB 10.6.28 (Docker, macOS). In the same session
+`admin_access_real_mysql.php` passed 143/143 on MySQL 8.0.36 and MariaDB
+10.6.28 (with the real command in a pretend terminal), and
+`resend_verification_real_mysql.php` passed on MySQL 8.0.36.
