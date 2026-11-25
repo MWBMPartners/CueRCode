@@ -205,6 +205,52 @@ if (isset($aiArguments[0]) && $aiArguments[0] === '--run-first-seen') {
 }
 
 // ==============================================================================
+// 👶 Self-invoked CHILD mode 3 (independent review, Codex C2 finding 1): record
+//    a password re-confirmation in a process whose PHP session started before
+//    anything was printed, and say whether editing was unlocked.
+// php <this file> --run-reauth-success --db=<name> --user=<userID>
+// Prints one line: REAUTH-RESULT:{"recorded":bool,"unlocked":bool,"session":bool}
+// ==============================================================================
+if (isset($aiArguments[0]) && $aiArguments[0] === '--run-reauth-success') {
+    $aiReDb = '';
+    $aiReUser = 0;
+    foreach ($aiArguments as $aiReArgument) {
+        if (str_starts_with($aiReArgument, '--db=')) {
+            $aiReDb = substr($aiReArgument, 5);
+        } elseif (str_starts_with($aiReArgument, '--user=')) {
+            $aiReUser = (int) substr($aiReArgument, 7);
+        }
+    }
+
+    if (preg_match('/^cuercode_it_[a-z0-9_]+$/', $aiReDb) !== 1 || $aiReUser < 1) {
+        fwrite(STDERR, 'Refusing: bad arguments.' . PHP_EOL);
+        exit(9);
+    }
+
+    // 🎫 A real PHP session, started before anything is printed (the site's
+    //    start-up does not open one on the command line). No cookie headers.
+    ini_set('session.use_cookies', '0');
+    ini_set('session.cache_limiter', '');
+    session_start();
+
+    aiDefineDatabase($aiReDb);
+    require_once $aiSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+    require_once $aiSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin.php';
+    restore_error_handler();
+    restore_exception_handler();
+
+    $aiReAdmin = ['userID' => $aiReUser, 'email' => 'it@admin.cuercode.invalid', 'displayName' => 'IT', 'sessionHash' => hash('sha256', 'it-session'), 'hasPassword' => true];
+    adminReauthClear();
+    $aiReRecorded = adminReauthRecordSuccess($aiReAdmin);
+    echo 'REAUTH-RESULT:' . json_encode([
+        'recorded' => $aiReRecorded,
+        'unlocked' => adminReauthStoredState() !== null,
+        'session'  => session_status() === PHP_SESSION_ACTIVE,
+    ]) . PHP_EOL;
+    exit(0);
+}
+
+// ==============================================================================
 // 🛡️ Step 1: safety - only ever a throwaway database named cuercode_it_*
 // ==============================================================================
 $aiBaseName = aiEnv('NAME');
@@ -981,6 +1027,61 @@ foreach ($aiScanForLeaks as $aiKey => $aiPlain) {
         aiCheck('K', $aiFound === 0, 'the ' . $aiKey . ' value is not in ' . $aiTable);
     }
 }
+
+// ==============================================================================
+// L. Independent review (Codex C2 findings 1 and 2, 2026-11-25): nothing is
+//    unlocked or upgraded unless its change-log row was written
+// ==============================================================================
+echo PHP_EOL . 'L. Change-log row first (Codex C2-1, C2-2)' . PHP_EOL;
+/**
+ * 🔓 Run adminReauthRecordSuccess() in a child process (it needs a PHP session,
+ *    which this script cannot start once it has printed anything).
+ *
+ * @return array{recorded?: bool, unlocked?: bool, session?: bool, crashed?: string}
+ */
+function aiReauthInChild(string $aiDb, int $aiUser): array
+{
+    $aiOut = [];
+    $aiCode = 0;
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' --run-reauth-success --db=' . escapeshellarg($aiDb) . ' --user=' . $aiUser . ' 2>&1', $aiOut, $aiCode);
+    foreach ($aiOut as $aiLine) {
+        if (str_starts_with($aiLine, 'REAUTH-RESULT:')) {
+            $aiDecoded = json_decode(substr($aiLine, strlen('REAUTH-RESULT:')), true);
+            if (is_array($aiDecoded)) {
+                return $aiDecoded;
+            }
+        }
+    }
+    return ['crashed' => substr(implode(' | ', $aiOut), 0, 400)];
+}
+
+// 🔓 C2-1: the change log refuses rows -> the password confirmation must NOT
+//    unlock editing.
+$aiServer->query('DROP TRIGGER IF EXISTS `aiForcedFailure`');
+$aiServer->query('CREATE TRIGGER `aiForcedFailure` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'');
+$aiReauthChild = aiReauthInChild($aiDbName, (int) $aiUserIDs['hand']);
+aiCheck('L', isset($aiReauthChild['session']) && $aiReauthChild['session'] === true, 'sanity: the child process has a PHP session (so "not unlocked" means something) ' . json_encode($aiReauthChild));
+aiCheck('L', isset($aiReauthChild['recorded']) && $aiReauthChild['recorded'] === false, 'C2-1: with the change log refusing rows, the confirmation reports failure');
+aiCheck('L', isset($aiReauthChild['unlocked']) && $aiReauthChild['unlocked'] === false, 'C2-1: ...and editing is NOT unlocked');
+
+// 🗄️ C2-2: an upgrade must not run before its "started" row is written.
+//    Migration 0003's ledger row is removed so the runner sees it as waiting
+//    (its steps all check first, so re-running it changes nothing else).
+$aiServer->query("DELETE FROM `tblSchemaMigrations` WHERE `migrationKey` = '0003_sessions_valid_from'");
+$aiUpgradeRefused = adminRunUpgrades($aiHandAdmin);
+aiCheck('L', $aiUpgradeRefused['ok'] === false, 'C2-2: with the change log refusing rows, the upgrade does not report success (' . $aiUpgradeRefused['status'] . ')');
+aiCheck('L', aiCount($aiServer, "SELECT COUNT(*) FROM `tblSchemaMigrations` WHERE `migrationKey` = '0003_sessions_valid_from'") === 0, 'C2-2: ...and NOTHING was upgraded (0003 is still waiting)');
+aiCheck('L', adminUpgradeAuditWarning($aiUpgradeRefused) === '', 'C2-2: ...and the page does not claim "the upgrade ran"');
+$aiServer->query('DROP TRIGGER IF EXISTS `aiForcedFailure`');
+
+$aiReauthChild = aiReauthInChild($aiDbName, (int) $aiUserIDs['hand']);
+aiCheck('L', isset($aiReauthChild['recorded'], $aiReauthChild['unlocked']) && $aiReauthChild['recorded'] === true && $aiReauthChild['unlocked'] === true, 'C2-1: once the change log works, the confirmation unlocks editing ' . json_encode($aiReauthChild));
+$aiMaxAuditBefore = aiCount($aiServer, 'SELECT COALESCE(MAX(`auditID`), 0) FROM `tblAdminAuditLog`');
+$aiUpgradeOk = adminRunUpgrades($aiHandAdmin);
+aiCheck('L', $aiUpgradeOk['ok'] === true && aiCount($aiServer, "SELECT COUNT(*) FROM `tblSchemaMigrations` WHERE `migrationKey` = '0003_sessions_valid_from'") === 1, 'C2-2: once the change log works, the upgrade runs');
+$aiStartedRow = aiRow($aiServer, "SELECT `auditID` FROM `tblAdminAuditLog` WHERE `action` = 'schema.migrate.started' AND `auditID` > ? ORDER BY `auditID` LIMIT 1", 'i', [$aiMaxAuditBefore]);
+$aiFinalRow   = aiRow($aiServer, "SELECT `auditID` FROM `tblAdminAuditLog` WHERE `action` = 'schema.migrate' AND `auditID` > ? ORDER BY `auditID` LIMIT 1", 'i', [$aiMaxAuditBefore]);
+aiCheck('L', $aiStartedRow !== null && $aiFinalRow !== null && (int) $aiStartedRow['auditID'] < (int) $aiFinalRow['auditID'], 'C2-2: a "schema.migrate.started" row is written BEFORE the upgrade, and the usual "schema.migrate" row after it');
 
 // ==============================================================================
 // 🏁 Clean up and report

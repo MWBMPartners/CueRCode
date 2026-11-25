@@ -240,6 +240,18 @@ assertFalse(adminOriginIsAllowed('ftp://cuercode.net', 'cuercode.net'), 'a non-w
 assertFalse(adminOriginIsAllowed('not a url', 'cuercode.net'), 'garbage → refused');
 assertFalse(adminOriginIsAllowed('https://cuercode.net', ''), 'Origin present but no Host header → refused');
 
+// 🔒 Independent review (Codex C2 finding 3, 2026-11-25): when the SERVER knows
+//    this request arrived over HTTPS, an http:// Origin is a different origin
+//    (a page served over plain http) and is refused. When the server cannot
+//    tell (behind a proxy that ends HTTPS), the scheme is still not compared.
+assertFalse(adminOriginIsAllowed('http://cuercode.net', 'cuercode.net', true), 'C2-3: an HTTPS request with an http:// Origin → refused');
+assertTrue(adminOriginIsAllowed('https://cuercode.net', 'cuercode.net', true), 'C2-3: an HTTPS request with its own https:// Origin → allowed');
+assertTrue(adminOriginIsAllowed(null, 'cuercode.net', true), 'C2-3: an HTTPS request with no Origin → allowed (the CSRF token still protects)');
+assertFalse(adminOriginIsAllowed('http://cuercode.net:443', 'cuercode.net', true), 'C2-3: http:// on port 443 → refused');
+assertTrue(adminOriginIsAllowed('http://cuercode.net', 'cuercode.net', false), 'C2-3: when the server cannot tell (behind a proxy), http:// is still allowed, as before');
+$aaAdminSource = (string) file_get_contents(dirname(__DIR__) . '/web/CueRCode.net/_functions/fn_admin.php');
+assertContains('adminOriginIsAllowed($origin, $host, $requestIsHttps)', $aaAdminSource, 'C2-3: the real admin form check passes whether the request is HTTPS');
+
 // ==============================================================================
 // ✅ Section 6: the audit trail (plan §6.7)
 // ==============================================================================
@@ -247,6 +259,7 @@ assertFalse(adminOriginIsAllowed('https://cuercode.net', ''), 'Origin present bu
 assertEquals(
     [
         'reauth.success', 'reauth.failed', 'reauth.lockout', 'admin.grant', 'admin.revoke', 'admin.first_seen', 'schema.migrate',
+        'schema.migrate.started',
         'setting.update', 'setting.secret_set', 'setting.secret_replace', 'setting.secret_clear', 'setting.test_graph', 'setting.test_email',
         'setting.test_graph.started', 'setting.test_email.started',
         'plan.create', 'plan.update', 'plan.update_reduction', 'plan.new_version', 'plan.retire', 'plan.restore', 'plan.delete',
@@ -255,7 +268,7 @@ assertEquals(
         'customer.lookup', 'deal.create', 'deal.start', 'deal.update', 'deal.end', 'payg.pack_create', 'payg.pack_update', 'payg.cap_update',
     ],
     adminAuditActionNames(),
-    'audit action names are exactly the plan §6.7 list, plus the two ".started" rows (final review N-2)'
+    'audit action names are exactly the plan §6.7 list, plus the two ".started" rows (final review N-2) and "schema.migrate.started" (Codex C2-2)'
 );
 
 $aaSecret = 'S3cr3t-Value-Do-Not-Log-7f2a';
@@ -1039,3 +1052,19 @@ assertTrue(str_contains($aaGrantBody, "if (\$decision['activates']) {\n         
 assertTrue(strpos($aaGrantBody, 'adminCliCancelUnsentAccountEmails(') < strpos($aaGrantBody, 'adminAuditWrite(') && strpos($aaGrantBody, 'adminCliCancelUnsentAccountEmails(') < strpos($aaGrantBody, '$db->commit()'), 'B9: ...inside the same transaction, before the audit row and the commit');
 assertTrue(str_contains($aaGrantBody, "'verification_emails_cancelled'") && str_contains($aaGrantBody, "'password_reset_emails_cancelled'"), 'B9: the audit row gets counts only');
 assertTrue(str_contains(implode("\n", adminCliUsage()), 'cancelled'), 'B9: --help says waiting emails are cancelled');
+
+// ==============================================================================
+// 🧾 Independent review (Codex C2 findings 1 and 2, 2026-11-25) - the order of
+//    work (the behaviour is proven on a real database, with the change log
+//    forced to refuse rows, in tests/integration/admin_access_real_mysql.php L).
+// ==============================================================================
+$aaReauthPage = (string) file_get_contents(dirname(__DIR__) . '/web/CueRCode.net/public_html/admin/reauth/index.php');
+assertContains('if (adminReauthRecordSuccess($adminUser)) {', $aaReauthPage, 'C2-1: the re-confirm page unlocks only through adminReauthRecordSuccess()');
+assertFalse(str_contains($aaReauthPage, 'adminReauthStore('), 'C2-1: the page never unlocks directly');
+$aaRecordStart = strpos($aaAdminSource, 'function adminReauthRecordSuccess(');
+$aaRecordBody  = substr($aaAdminSource, $aaRecordStart, strpos($aaAdminSource, "\nfunction ", $aaRecordStart + 10) - $aaRecordStart);
+assertTrue(strpos($aaRecordBody, "'reauth.success'") < strpos($aaRecordBody, 'adminReauthStore($admin)') && str_contains($aaRecordBody, 'if (!$recorded) {'), 'C2-1: the change-log row is written first, and nothing is unlocked if it fails');
+$aaRunStart = strpos($aaAdminSource, 'function adminRunUpgrades(');
+$aaRunBody  = substr($aaAdminSource, $aaRunStart, strpos($aaAdminSource, "\nfunction ", $aaRunStart + 10) - $aaRunStart);
+assertTrue(strpos($aaRunBody, "'schema.migrate.started'") < strpos($aaRunBody, 'migrationApplyPending('), 'C2-2: the "started" row is written before any upgrade runs');
+assertTrue(strpos($aaRunBody, 'if (!$startedWritten) {') < strpos($aaRunBody, 'migrationApplyPending('), 'C2-2: ...and nothing runs if it could not be written');

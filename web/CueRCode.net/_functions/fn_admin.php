@@ -485,14 +485,20 @@ function adminSafeNextPath(mixed $raw, string $default = '/admin/'): string
  *   do not send one; the CSRF token still protects them).
  * - The literal "null" origin (sandboxed frames, some redirects) is refused.
  * - Otherwise its host (and port, when not the default for its scheme) must
- *   equal this request's Host header. The scheme is not compared, because a
- *   site behind a proxy (Cloudflare) cannot always tell http from https.
+ *   equal this request's Host header.
+ * - The scheme: when the SERVER itself knows this request arrived over HTTPS
+ *   ($requestIsHttps), an http:// Origin is a different origin (a page
+ *   served over plain http) and is refused (independent review, Codex C2
+ *   finding 3, 2026-11-25). When the server cannot tell - a proxy such as
+ *   Cloudflare can end HTTPS and pass the request on over plain http - the
+ *   scheme is not compared, as before, so the admin area keeps working there.
  *
- * @param string|null $origin The Origin header, or null when absent
- * @param string      $host   The request's Host header (HTTP_HOST)
+ * @param string|null $origin         The Origin header, or null when absent
+ * @param string      $host           The request's Host header (HTTP_HOST)
+ * @param bool        $requestIsHttps True when the server received this request over HTTPS
  * @return bool
  */
-function adminOriginIsAllowed(?string $origin, string $host): bool
+function adminOriginIsAllowed(?string $origin, string $host, bool $requestIsHttps = false): bool
 {
     if ($origin === null || trim($origin) === '') {
         return true;
@@ -511,6 +517,11 @@ function adminOriginIsAllowed(?string $origin, string $host): bool
 
     $scheme = strtolower((string) $parts['scheme']);
     if ($scheme !== 'http' && $scheme !== 'https') {
+        return false;
+    }
+
+    // 🔒 Codex C2-3: an HTTPS request cannot come from an http:// page of ours.
+    if ($requestIsHttps && $scheme !== 'https') {
         return false;
     }
 
@@ -559,6 +570,8 @@ function adminAuditActionNames(): array
         'reauth.success', 'reauth.failed', 'reauth.lockout',
         'admin.grant', 'admin.revoke', 'admin.first_seen',
         'schema.migrate',
+        // 🧾 Independent review (Codex C2 finding 2): written BEFORE an upgrade runs.
+        'schema.migrate.started',
         'setting.update', 'setting.secret_set', 'setting.secret_replace', 'setting.secret_clear',
         'setting.test_graph', 'setting.test_email',
         // 🧾 Final review N-2: the row written BEFORE a test runs.
@@ -2261,6 +2274,38 @@ function adminReauthSetFailureCount(array $admin, int $count): void
 }
 
 /**
+ * ✅ Record a successful password re-confirmation, and only THEN unlock
+ *    editing (independent review, Codex C2 finding 1, 2026-11-25).
+ *
+ * The page used to unlock first and ignore whether the "reauth.success"
+ * change-log row was written, so editing could be unlocked with no record of
+ * the confirmation. Now the row comes first, and if it cannot be written
+ * nothing is unlocked (fail closed); the reason goes to the error log.
+ * (Wrong-password and lock-out rows are different: if one of those cannot be
+ * written the attempt is still counted and the lock-out still happens - the
+ * safe direction - and adminAuditWrite() has already logged the failure.)
+ *
+ * @param array<string, mixed> $admin From requireGlobalAdminPage()
+ * @return bool True when the confirmation was recorded and editing unlocked
+ */
+function adminReauthRecordSuccess(array $admin): bool
+{
+    $recorded = adminAuditOrFallback(adminAuditEntryForAdmin($admin, 'reauth.success', 'user', (string) $admin['userID'], 'success'));
+
+    if (!$recorded) {
+        if (function_exists('logError')) {
+            logError('error', 'Admin password confirmation NOT unlocked: its change-log row could not be written', 'userID ' . (int) $admin['userID']);
+        }
+        return false;
+    }
+
+    adminReauthStore($admin);
+    adminReauthSetFailureCount($admin, 0);
+
+    return true;
+}
+
+/**
  * 🔑 Check a re-typed password against the account (plan §6.4).
  *
  * A wrong password also counts toward the ordinary account lock-out
@@ -2417,7 +2462,14 @@ function adminCheckPost(array $admin, bool $needsFreshPassword): array
         $host = $_SERVER['HTTP_HOST'];
     }
 
-    if (!adminOriginIsAllowed($origin, $host)) {
+    // 🔒 Codex C2-3: did the SERVER receive this over HTTPS? (Only the web
+    //    server's own flag - never a header a visitor could write.)
+    $requestIsHttps = false;
+    if (isset($_SERVER['HTTPS']) && is_string($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== '' && strtolower($_SERVER['HTTPS']) !== 'off') {
+        $requestIsHttps = true;
+    }
+
+    if (!adminOriginIsAllowed($origin, $host, $requestIsHttps)) {
         return ['ok' => false, 'reason' => 'origin', 'message' => 'This form was sent from another website, so it was refused.'];
     }
 
@@ -2939,6 +2991,32 @@ function adminRunUpgrades(array $admin): array
 
     if (!adminLoadMigrationEngine() || !function_exists('getDB')) {
         $outcome['lines'][] = 'The database upgrade tool could not be loaded.';
+        return $outcome;
+    }
+
+    // 🧾 Independent review (Codex C2 finding 2, 2026-11-25): record that an
+    //    upgrade is STARTING before anything is changed. Upgrades change the
+    //    database structure, which MySQL cannot undo with a rollback, so the
+    //    change log must hold the attempt first: if this row cannot be
+    //    written, nothing is upgraded. The usual "schema.migrate" row after
+    //    the run says how it ended; a "started" row with no ending row after
+    //    it shows an upgrade that was interrupted. The outcome column cannot
+    //    say "started" (it only has success, refused and failed), so the
+    //    action name says it, as for the settings test buttons.
+    $startedWritten = adminAuditOrFallback(adminAuditEntryForAdmin(
+        $admin,
+        'schema.migrate.started',
+        'schema',
+        'migrations',
+        'failed',
+        [],
+        'Upgrade started; the next schema.migrate row says how it ended'
+    ));
+
+    if (!$startedWritten) {
+        $outcome['status'] = 'audit_failed';
+        $outcome['lines'][] = 'Nothing was upgraded: the admin change log could not record that an upgrade was starting. '
+            . 'Check the server error log, then try again.';
         return $outcome;
     }
 

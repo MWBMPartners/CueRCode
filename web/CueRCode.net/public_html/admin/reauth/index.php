@@ -104,17 +104,24 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
                 if (session_status() === PHP_SESSION_ACTIVE) {
                     session_regenerate_id(true);
                 }
-                adminReauthStore($adminUser);
-                adminReauthSetFailureCount($adminUser, 0);
-                adminAuditOrFallback(adminAuditEntryForAdmin($adminUser, 'reauth.success', 'user', (string) $adminUser['userID'], 'success'));
 
-                $reauthLimits = adminReauthConfiguredLimits();
-                adminFlashAdd(
-                    'success',
-                    'Editing is unlocked. It locks again after ' . $reauthLimits['idle'] . ' minutes without a change, and after '
-                    . $reauthLimits['max'] . ' minutes at most.'
-                );
-                adminRedirect($reauthNext);
+                // 🧾 Codex C2 finding 1: the change-log row first; editing is
+                //    unlocked only if it was written (fail closed).
+                if (adminReauthRecordSuccess($adminUser)) {
+                    $reauthLimits = adminReauthConfiguredLimits();
+                    adminFlashAdd(
+                        'success',
+                        'Editing is unlocked. It locks again after ' . $reauthLimits['idle'] . ' minutes without a change, and after '
+                        . $reauthLimits['max'] . ' minutes at most.'
+                    );
+                    adminRedirect($reauthNext);
+                }
+
+                $reauthMessages[] = [
+                    'type' => 'danger',
+                    'text' => 'Your password was right, but editing was NOT unlocked: the admin change log could not record it. '
+                        . 'Try again in a minute. If it keeps happening, check the server error log.',
+                ];
             } elseif ($reauthVerified['unavailable']) {
                 $reauthMessages[] = ['type' => 'danger', 'text' => 'Your password could not be checked just now. Please try again in a minute.'];
             } else {
