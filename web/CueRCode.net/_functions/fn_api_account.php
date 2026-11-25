@@ -716,7 +716,7 @@ function revokeUserSession(int $userID, string $sessionId): bool
  *
  * @see fn_password.php - verifyPassword(), validatePasswordPolicy(), hashPassword()
  */
-function changeUserPassword(int $userID, string $currentPassword, string $newPassword, ?string $keepSessionId): array
+function changeUserPassword(int $userID, #[\SensitiveParameter] string $currentPassword, #[\SensitiveParameter] string $newPassword, ?string $keepSessionId): array
 {
     if (!function_exists('dbQuery')) {
         return [
@@ -1590,7 +1590,7 @@ function buildErasedAccountEmail(int $userID): string
  * @see deleteUserAvatarFiles() - the avatar-file removal helper (this file, above)
  * @see https://www.php.net/manual/en/mysqli.begin-transaction.php
  */
-function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): array
+function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPassword, bool $confirm): array
 {
     if (!$confirm) {
         return [

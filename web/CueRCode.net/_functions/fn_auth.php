@@ -383,7 +383,7 @@ function issueEmailVerificationLink(int $userID, string $email, ?string $display
  * @see fn_password.php - hashPassword()
  * @see fn_email.php - queueEmail()
  */
-function registerUser(string $email, string $plainPassword, ?string $displayName = null): array
+function registerUser(string $email, #[\SensitiveParameter] string $plainPassword, ?string $displayName = null): array
 {
     $genericMessage = 'If this email address is available for registration, '
         . 'a verification link has been sent to it.';
@@ -1364,7 +1364,7 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
  * @see recordFailedLogin()
  * @see fn_password.php - verifyPassword(), cuercodeDummyPasswordHash()
  */
-function loginUser(string $email, string $plainPassword, string $ipAddress, string $userAgent): array
+function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, string $ipAddress, string $userAgent): array
 {
     $genericFailMessage = 'Invalid email or password, or the account is not yet verified.';
     $genericFailResult  = [

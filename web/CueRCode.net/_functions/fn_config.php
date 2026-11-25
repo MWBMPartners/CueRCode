@@ -226,7 +226,7 @@ function getConfig(string $key, mixed $default = null): mixed
  *       'description' => 'Third-party service API key'
  *   ]);
  */
-function setConfig(string $key, mixed $value, array $options = []): bool
+function setConfig(string $key, #[\SensitiveParameter] mixed $value, array $options = []): bool
 {
     // 📌 Extract options with defaults
     if (isset($options['group'])) {

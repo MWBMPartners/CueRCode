@@ -117,7 +117,7 @@ if (!defined('CUERCODE_TAG_LENGTH')) {
  *   // $usedSalt now holds the raw 16-byte salt that was generated, for
  *   // optional DBA-visible mirroring into a dedicated salt column.
  */
-function encryptValue(string $plaintext, ?string $key = null, ?string $salt = null, ?string &$usedSaltOut = null): string
+function encryptValue(#[\SensitiveParameter] string $plaintext, ?string $key = null, ?string $salt = null, ?string &$usedSaltOut = null): string
 {
     // 🔑 Use default keys if not provided
     if ($key !== null) {
