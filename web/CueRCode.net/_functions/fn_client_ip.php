@@ -34,11 +34,13 @@
  *      right-most untrusted entry was written by a forwarder we trust; the
  *      entries further left were written by the visitor and are ignored.
  *      A Cloudflare address in the chain is NOT skipped like that (review
- *      finding 4, 2026-11-25): Cloudflare wrote the entry just to its left
- *      (the address that connected to Cloudflare), so that entry is used and
- *      the walk STOPS. Anything further left was written by whoever talked to
- *      Cloudflare - possibly a visitor's own Cloudflare Worker, which can
- *      write any Cloudflare-looking address it likes - so it is never read.
+ *      finding 4, 2026-11-25): the walk STOPS there. The entry just to its
+ *      left is NOT used on its own (final review M-2): a Cloudflare Worker on
+ *      anybody's Cloudflare account can send a request straight to our
+ *      forwarder and write that entry itself. Instead the CF-Connecting-IP
+ *      header - which Cloudflare sets itself - is used when it holds one
+ *      valid address; without it, the Cloudflare address that connected to
+ *      our forwarder is used (the connecting-address rule, one hop out).
  *   4. Otherwise ignore every forwarded header completely.
  *
  * 📏 Decision 0015 (docs/decisions/0015-trusted-forwarding-list-refuses-very-wide-ranges.md):
@@ -64,11 +66,16 @@
  *
  * Residual risk, stated plainly: anybody can put their OWN Cloudflare
  * account in front of this server's address. Those requests do come from
- * Cloudflare, so CF-Connecting-IP is trusted - but Cloudflare writes that
- * header itself with the address it saw, so it is still the real sender's
- * address. Fully closing the side door needs Cloudflare "Authenticated
- * Origin Pulls" or a firewall that only accepts Cloudflare, which are hosting
- * settings, not code.
+ * Cloudflare, so CF-Connecting-IP is trusted. For a visitor passing through
+ * Cloudflare, Cloudflare writes that header itself with the address it saw,
+ * so it is the real sender's address. For a request MADE by a Cloudflare
+ * Worker, Cloudflare's documentation says the header holds the Worker's own
+ * (Cloudflare) address - so such requests share one Cloudflare address rather
+ * than choosing their own (this relies on Cloudflare's documented behaviour;
+ * it was not measured here). Only traffic through the site's OWN Cloudflare
+ * zone is guaranteed to carry the visitor's address. Fully closing the side
+ * door needs Cloudflare "Authenticated Origin Pulls" or a firewall that only
+ * accepts Cloudflare, which are hosting settings, not code.
  *
  * @package     CueRCode
  * @subpackage  Security
@@ -590,13 +597,15 @@ function resolveClientAddress(array $server, array $trustedProxyRanges, array $c
         $entries = array_reverse(explode(',', $forwardedRaw));
         $entries = array_slice($entries, 0, CUERCODE_CLIENT_IP_MAX_FORWARDED_HOPS);
 
-        $chosen          = null;
-        $lastTrusted     = null;
-        $stoppedEarly    = false;
-        $afterCloudflare = false;
+        $chosen        = null;
+        $lastTrusted   = null;
+        $stoppedEarly  = false;
+        $cloudflareHop = null;
+        $leftOfHop     = null;
+        $entryCount    = count($entries);
 
-        foreach ($entries as $entry) {
-            $hop = clientIpNormalise($entry, true);
+        for ($index = 0; $index < $entryCount; $index++) {
+            $hop = clientIpNormalise($entries[$index], true);
 
             if ($hop === null) {
                 // 🛑 Something that is not an address: stop rather than guess.
@@ -604,21 +613,15 @@ function resolveClientAddress(array $server, array $trustedProxyRanges, array $c
                 break;
             }
 
-            // ☁️ Review finding 4: the entry just LEFT of a Cloudflare hop was
-            //    written by Cloudflare itself (the address that connected to
-            //    it). Use it, whatever it is, and look no further left - a
-            //    visitor's own Cloudflare Worker can write Cloudflare-looking
-            //    addresses there, so skipping them would hand the choice back
-            //    to the visitor.
-            if ($afterCloudflare) {
-                $chosen = $hop;
-                break;
-            }
-
+            // ☁️ A Cloudflare address in the chain: the walk STOPS here
+            //    (review finding 4) and nothing to its left is used on its
+            //    own (final review M-2, below).
             if (clientIpInRanges($hop, $cloudflareRanges)) {
-                $lastTrusted     = $hop;
-                $afterCloudflare = true;
-                continue;
+                $cloudflareHop = $hop;
+                if ($index + 1 < $entryCount) {
+                    $leftOfHop = clientIpNormalise($entries[$index + 1], true);
+                }
+                break;
             }
 
             // 🏢 Only the forwarders the OWNER listed are skipped.
@@ -635,13 +638,48 @@ function resolveClientAddress(array $server, array $trustedProxyRanges, array $c
         $result['ignoredHeaders'] = array_values($presentHeaders);
         $result['source'] = 'X-Forwarded-For';
 
+        if ($cloudflareHop !== null) {
+            // ☁️ Final review M-2 (2026-11-25): the X-Forwarded-For entry to
+            //    the left of a Cloudflare hop is NOT trusted on its own. When
+            //    a Cloudflare Worker (on ANYBODY's Cloudflare account) sends a
+            //    request straight to our forwarder, the Worker writes that
+            //    entry itself and can put any address there. What Cloudflare
+            //    itself vouches for is the CF-Connecting-IP header, which
+            //    Cloudflare sets on everything that passes through it. So:
+            //      - a valid CF-Connecting-IP is the answer (whether or not
+            //        the entry to the left agrees - the note says which);
+            //      - with no valid CF-Connecting-IP, the Cloudflare address in
+            //        the chain is the answer: it is the address that connected
+            //        to our trusted forwarder (the "connecting address" rule,
+            //        one hop out), the same fallback as rule 2.
+            //    ('fromCloudflare' stays false: it describes the connecting
+            //    address, which here is the owner's forwarder.)
+            $cloudflareHeader = null;
+            if (isset($server['HTTP_CF_CONNECTING_IP'])) {
+                $cloudflareHeader = clientIpNormalise($server['HTTP_CF_CONNECTING_IP'], false);
+            }
+
+            if ($cloudflareHeader !== null) {
+                $result['address'] = $cloudflareHeader;
+                $result['source']  = 'CF-Connecting-IP';
+                unset($presentHeaders['HTTP_CF_CONNECTING_IP']);
+                $result['ignoredHeaders'] = array_values($presentHeaders);
+                if ($leftOfHop !== null && $leftOfHop === $cloudflareHeader) {
+                    $result['note'] = 'The connection comes from a trusted forwarder and the chain passes through Cloudflare, so Cloudflare\'s CF-Connecting-IP header is used (the X-Forwarded-For entry next to the Cloudflare address agrees with it).';
+                } else {
+                    $result['note'] = 'The connection comes from a trusted forwarder and the chain passes through Cloudflare, so Cloudflare\'s CF-Connecting-IP header is used. The X-Forwarded-For entry next to the Cloudflare address does not match it and is NOT used: whoever sent the request to Cloudflare may have written it.';
+                }
+                return $result;
+            }
+
+            $result['address'] = $cloudflareHop;
+            $result['note'] = 'The connection comes from a trusted forwarder and the chain passes through Cloudflare, but without one valid address in CF-Connecting-IP, so the Cloudflare address that connected to the forwarder is used. X-Forwarded-For entries further left are not used: whoever sent the request to Cloudflare may have written them.';
+            return $result;
+        }
+
         if ($chosen !== null) {
             $result['address'] = $chosen;
-            if ($afterCloudflare) {
-                $result['note'] = 'The connection comes from a trusted forwarder, and the chain passes through Cloudflare, so the X-Forwarded-For entry Cloudflare wrote (just left of the Cloudflare address) is used and nothing further left is read.';
-            } else {
-                $result['note'] = 'The connection comes from a trusted forwarder, so the right-most X-Forwarded-For entry that is not itself a trusted forwarder is used.';
-            }
+            $result['note'] = 'The connection comes from a trusted forwarder, so the right-most X-Forwarded-For entry that is not itself a trusted forwarder is used.';
             return $result;
         }
 

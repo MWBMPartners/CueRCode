@@ -193,25 +193,56 @@ assertEquals('X-Forwarded-For', $ciR['source'], '...from X-Forwarded-For');
 assertTrue($ciR['fromTrustedProxy'], '...and the connection counts as a trusted forwarder');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => 'garbage, 198.51.100.7'], $ciTrusted, $ciCf);
 assertEquals('198.51.100.7', $ciR['address'], 'junk the visitor wrote further left is never reached');
+// ☁️ A Cloudflare hop in the chain (review finding 4 + final review M-2):
+//    the walk STOPS at the Cloudflare address, and the entry to its left is
+//    never used on its own. CF-Connecting-IP (which Cloudflare sets itself)
+//    is the answer when it holds one valid address; without it, the
+//    Cloudflare address that connected to our forwarder is the answer.
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 162.158.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], $ciTrusted, $ciCf);
+assertEquals('198.51.100.7', $ciR['address'], 'M-2: a Cloudflare hop in the chain, CF-Connecting-IP agrees with the entry next to it: that address is used');
+assertEquals('CF-Connecting-IP', $ciR['source'], 'M-2: ...named as coming from CF-Connecting-IP');
+assertContains('agrees with it', $ciR['note'], 'M-2: ...and the note says the two agree');
+assertFalse($ciR['fromCloudflare'], 'M-2: ...the connecting address is still the owner\'s forwarder, not Cloudflare');
+assertEquals([], $ciR['ignoredHeaders'], 'M-2: ...and neither header is reported as ignored');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 162.158.0.1'], $ciTrusted, $ciCf);
-assertEquals('198.51.100.7', $ciR['address'], 'a Cloudflare hop in the chain: the entry Cloudflare wrote (just left of it) is used');
+assertEquals('162.158.0.1', $ciR['address'], 'M-2: a Cloudflare hop with NO CF-Connecting-IP: the entry next to it is NOT trusted alone - the Cloudflare address that reached our forwarder is used');
+assertEquals('X-Forwarded-For', $ciR['source'], 'M-2: ...(read from X-Forwarded-For)');
+assertContains('without one valid address in CF-Connecting-IP', $ciR['note'], 'M-2: ...and the note says why');
+foreach (['not-an-ip', '198.51.100.7, 198.51.100.8', '198.51.100.7:80', ''] as $ciBadCf) {
+    $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 162.158.0.1', 'HTTP_CF_CONNECTING_IP' => $ciBadCf], $ciTrusted, $ciCf);
+    assertEquals('162.158.0.1', $ciR['address'], 'M-2: a malformed CF-Connecting-IP "' . $ciBadCf . '" counts as missing: the Cloudflare address is used');
+}
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 198.51.100.7, 162.158.0.1, 10.0.0.9', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], $ciTrusted, $ciCf);
+assertEquals('198.51.100.7', $ciR['address'], 'F4: visitor junk, Cloudflare-written address, Cloudflare hop, our forwarder: Cloudflare\'s answer');
+assertContains('CF-Connecting-IP header is used', $ciR['note'], 'F4: ...and the note says Cloudflare\'s header was used');
 
-// ☁️ Review finding 4: after a Cloudflare hop, take the very next entry to its
-//    left and STOP - never keep skipping Cloudflare-looking addresses.
-$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 198.51.100.7, 162.158.0.1, 10.0.0.9'], $ciTrusted, $ciCf);
-assertEquals('198.51.100.7', $ciR['address'], 'F4: visitor junk, Cloudflare-written address, Cloudflare hop, our forwarder: the Cloudflare-written address');
-assertContains('nothing further left is read', $ciR['note'], 'F4: ...and the note says the walk stopped at Cloudflare');
+// 🤖 THE DIRECT-WORKER CASE (final review M-2): a Cloudflare Worker on
+//    somebody else's Cloudflare account sends a request straight to our
+//    forwarder. The Worker writes X-Forwarded-For itself ("6.6.6.6", its
+//    chosen address), our forwarder adds the Cloudflare address that
+//    connected to it. The old rule used "6.6.6.6". Now: Cloudflare's own
+//    CF-Connecting-IP (for a Worker, an address of Cloudflare's - here the
+//    one Cloudflare documents for Workers) or, without it, the Cloudflare hop.
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 104.16.5.5', 'HTTP_CF_CONNECTING_IP' => '2a06:98c0:3600::103'], $ciTrusted, $ciCf);
+assertEquals('2a06:98c0:3600::103', $ciR['address'], 'M-2 WORKER: direct Worker to our forwarder, with Cloudflare\'s header: Cloudflare\'s answer is used');
+assertFalse($ciR['address'] === '6.6.6.6', 'M-2 WORKER: ...NOT the address the Worker wrote');
+assertContains('does not match it and is NOT used', $ciR['note'], 'M-2 WORKER: ...and the note says the forwarded entry disagreed and was not used');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 104.16.5.5'], $ciTrusted, $ciCf);
+assertEquals('104.16.5.5', $ciR['address'], 'M-2 WORKER: direct Worker to our forwarder, no Cloudflare header: the Cloudflare address is used, NOT the Worker\'s choice');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 104.16.9.9, 162.158.0.1'], $ciTrusted, $ciCf);
-assertEquals('104.16.9.9', $ciR['address'], 'F4 WORKERS: a Cloudflare-looking address just left of the Cloudflare hop is USED (a Worker\'s own address), not skipped');
-assertFalse($ciR['address'] === '6.6.6.6', 'F4 WORKERS: ...so the attacker\'s chosen value further left is never reached');
-$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 172.64.0.9, 104.16.9.9, 162.158.0.1'], $ciTrusted, $ciCf);
-assertEquals('104.16.9.9', $ciR['address'], 'F4 WORKERS: a whole run of Cloudflare-looking addresses written by a Worker: only the first left of the real hop is used');
-$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 10.0.0.77, 162.158.0.1'], $ciTrusted, $ciCf);
-assertEquals('10.0.0.77', $ciR['address'], 'F4: even an address in the owner\'s own list, written by Cloudflare, is used (not skipped)');
+assertEquals('162.158.0.1', $ciR['address'], 'F4 WORKERS: Cloudflare-looking addresses written by a Worker are never used on their own');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 172.64.0.9, 104.16.9.9, 162.158.0.1', 'HTTP_CF_CONNECTING_IP' => '203.0.113.44'], $ciTrusted, $ciCf);
+assertEquals('203.0.113.44', $ciR['address'], 'F4 WORKERS: a whole run of Cloudflare-looking addresses: Cloudflare\'s header decides, not the run');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 10.0.0.77, 162.158.0.1', 'HTTP_CF_CONNECTING_IP' => '10.0.0.77'], $ciTrusted, $ciCf);
+assertEquals('10.0.0.77', $ciR['address'], 'F4: even an address in the owner\'s own list is used when Cloudflare\'s header says so (not skipped)');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '162.158.0.1'], $ciTrusted, $ciCf);
-assertEquals('162.158.0.1', $ciR['address'], 'F4: a Cloudflare hop with nothing to its left: Cloudflare\'s address is used');
+assertEquals('162.158.0.1', $ciR['address'], 'F4: a Cloudflare hop with nothing to its left and no header: Cloudflare\'s address is used');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '162.158.0.1', 'HTTP_CF_CONNECTING_IP' => '203.0.113.45'], $ciTrusted, $ciCf);
+assertEquals('203.0.113.45', $ciR['address'], 'M-2: a Cloudflare hop with nothing to its left but a valid header: the header is used');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => 'garbage, 162.158.0.1'], $ciTrusted, $ciCf);
 assertEquals('162.158.0.1', $ciR['address'], 'F4: a Cloudflare hop with junk to its left: Cloudflare\'s address is used, the junk is not');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '198.51.100.10', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 104.16.5.5', 'HTTP_CF_CONNECTING_IP' => '6.6.6.6'], $ciTrusted, $ciCf);
+assertEquals('198.51.100.10', $ciR['address'], 'M-2: the same headers from a connection that is NOT a trusted forwarder: all ignored (rule 4)');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 198.51.100.7, 10.0.0.8, 10.0.0.9'], $ciTrusted, $ciCf);
 assertEquals('198.51.100.7', $ciR['address'], 'F4: the owner\'s own forwarders are still skipped (two in a row)');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, not-an-ip'], $ciTrusted, $ciCf);
