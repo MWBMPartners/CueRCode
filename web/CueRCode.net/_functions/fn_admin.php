@@ -2315,21 +2315,41 @@ function adminVerifyReauthPassword(int $userID, #[\SensitiveParameter] string $p
 
     if (!$passwordOk) {
         if (function_exists('recordFailedLogin')) {
-            recordFailedLogin($userID, (int) $row['failedLoginCount'] + 1);
+            // 🔢 The database adds the one itself (review finding 7).
+            recordFailedLogin($userID);
         }
         return $result;
     }
 
     // ✅ Right password: reset the sign-in failure counter, as sign-in does.
+    // 🔒 Final review I-1 (2026-11-25): the password was checked outside any
+    //    lock (slow on purpose). Only clear the counter while the stored
+    //    password is still the one checked, and then ask once more: if a
+    //    reset or change landed in between, the old password confirms
+    //    nothing. (The reset also ends this session, so this is belt and
+    //    braces.)
     try {
         $resetStmt = dbQuery(
-            'UPDATE `tblUsers` SET `failedLoginCount` = 0, `lockedUntil` = NULL WHERE `userID` = ?',
-            'i',
-            [$userID]
+            'UPDATE `tblUsers` SET `failedLoginCount` = 0, `lockedUntil` = NULL WHERE `userID` = ? AND `passwordHash` = ?',
+            'is',
+            [$userID, $storedHash]
         );
         $resetStmt->close();
+
+        $sameStmt = dbQuery(
+            "SELECT (`passwordHash` <=> ?) AS `samePassword` FROM `tblUsers` WHERE `userID` = ? AND `status` = 'active' LIMIT 1",
+            'si',
+            [$storedHash, $userID]
+        );
+        $sameRow = $sameStmt->get_result()->fetch_assoc();
+        $sameStmt->close();
     } catch (\Throwable $e) {
-        // Non-fatal: the confirmation itself still succeeded.
+        $result['unavailable'] = true;
+        return $result;
+    }
+
+    if (!is_array($sameRow) || (int) $sameRow['samePassword'] !== 1) {
+        return $result;
     }
 
     $result['ok'] = true;

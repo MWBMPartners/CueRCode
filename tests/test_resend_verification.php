@@ -183,7 +183,7 @@ $rvRegister = substr($rvAuth, $rvRegStart, $rvRegEnd - $rvRegStart);
 
 assertContains('issueEmailVerificationLink(', $rvRegister, 'Guard: sign-up makes its link with the shared helper');
 assertFalse(str_contains($rvRegister, 'INSERT INTO `tblEmailVerifications`'), 'Guard: sign-up no longer has its own copy of the token insert');
-assertContains('issueEmailVerificationLink((int) $account[\'userID\'], $normalizedEmail, $displayName, true)', $rvSection, 'Guard: the resend uses the same helper and retires earlier links');
+assertContains('issueEmailVerificationLink($userID, $normalizedEmail, $displayName, true)', $rvSection, 'Guard: the resend uses the same helper and retires earlier links');
 assertContains("`usedAt` IS NULL AND `verificationID` < ?", $rvAuth, 'Guard: earlier unused links are retired, never the new one');
 assertContains("(string) \$account['status'] === 'pending'", $rvSection, 'Guard: only a pending account is eligible');
 assertContains("\$account['emailVerifiedAt'] === null", $rvSection, 'Guard: only an account with no verified time is eligible');
@@ -235,7 +235,19 @@ $rvStart = hrtime(true);
 requestNewVerificationLink('someone@example.com', '203.0.113.9');
 assertTrue((hrtime(true) - $rvStart) >= 240000 * 1000, 'M3: the real function (503 path here) takes at least about 250 ms');
 assertContains('requestNewVerificationLinkWork($email, $ipAddress)', $rvSection, 'M3: the public function wraps the work and pads the time');
-assertContains('resendLimitedRowWrittenRecently((int) $account[\'userID\'])', $rvSection, 'M3: the limited row is written at most once an hour per account');
+assertContains('resendLimitedRowWrittenRecently($userID)', $rvSection, 'M3: the limited row is written at most once an hour per account');
+// 🔒 Final review M-1: limits hold for requests sent at the same moment.
+$rvWork = substr($rvSection, (int) strpos($rvSection, 'function requestNewVerificationLinkWork('));
+assertContains('authRecordThenCountLinkRequest($ipAddress, CUERCODE_RESEND_VERIFICATION_ENDPOINT)', $rvWork, 'M-1: the address allowance records THIS request, then counts including it');
+assertTrue(
+    strpos($rvWork, 'begin_transaction()') < strpos($rvWork, "SELECT `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
+    && strpos($rvWork, 'FOR UPDATE') < strpos($rvWork, 'authLinkHistory(\'tblEmailVerifications\', $userID)')
+    && strpos($rvWork, 'authLinkHistory(\'tblEmailVerifications\', $userID)') < strpos($rvWork, 'issueEmailVerificationLink($userID')
+    && strpos($rvWork, 'issueEmailVerificationLink($userID') < strrpos($rvWork, '$db->commit()'),
+    'M-1: the account row is locked, then the history read, the decision and the new link - one transaction'
+);
+assertTrue(strpos($rvWork, 'if (!$isPending) {') < strpos($rvWork, 'begin_transaction()'), 'M-1: an address with no waiting account takes no lock at all (no gap lock on the address index)');
+assertFalse(str_contains($rvWork, '`email` = ? LIMIT 1 FOR UPDATE'), 'M-1: the address itself is never read with a lock');
 assertContains('return limitedRowWrittenRecently($userID, \'verification_link_resend_limited\');', $rvAuth, 'M3: the once-an-hour check looks at the limited rows (shared check, review finding 3)');
 assertContains("WHERE `activityType` = ? AND `entityType` = 'user' AND `entityID` = ?", $rvAuth, 'M3: ...by activity type, account and the last hour');
 

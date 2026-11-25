@@ -99,7 +99,10 @@ assertContains("if (\$issuedSession === '') {", $svLogin, 'loginUser() reports a
 assertContains('WHERE `userID` = ? AND `passwordHash` = ?', $svLogin, 'F1: the automatic re-hash never writes the OLD password back over a reset one');
 
 $svDoors = svBody($svAuth, 'accountRemoveOtherWaysIn');
-assertTrue(strpos($svDoors, 'authSessionsValidFromReady()') < strpos($svDoors, '$statements = ['), 'accountRemoveOtherWaysIn() (reset AND admin grant) moves the mark first');
+assertTrue(strpos($svDoors, 'authMoveSessionsValidFrom($userID);') !== false && strpos($svDoors, 'authMoveSessionsValidFrom($userID);') < strpos($svDoors, '$statements = ['), 'accountRemoveOtherWaysIn() (reset AND admin grant) moves the mark first');
+$svMove = svBody($svAuth, 'authMoveSessionsValidFrom');
+assertTrue(strpos($svMove, 'authSessionsValidFromReady()') !== false && strpos($svMove, 'authSessionsValidFromReady()') < strpos($svMove, 'UPDATE `tblUsers` SET `sessionsValidFrom`'), 'the shared mark mover does nothing before upgrade 0003');
+assertEquals(null, authMoveSessionsValidFrom(1), 'with no database (no upgrade 0003) the mark mover changes nothing and says null');
 
 $svReady = svBody($svAuth, 'authSessionsValidFromReady');
 assertContains('`information_schema`.`COLUMNS`', $svReady, 'readiness is asked of INFORMATION_SCHEMA (a missing column is "0", not an error)');
@@ -167,6 +170,69 @@ assertTrue(strpos($svCreate, 'begin_transaction()') < strpos($svCreate, 'authLoc
 $svLive = svBody($svAuth, 'authLockLiveSessionForUser');
 assertTrue(strpos($svLive, 'FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE') < strpos($svLive, 'FROM `tblUserSessions` WHERE `sessionID` = ? LIMIT 1 FOR UPDATE'), 'API key: the account row is locked BEFORE the session row (the same order as a reset)');
 assertFalse(authLockLiveSessionForUser(1), 'API key: with no signed-in session, the answer is "no"');
+assertContains('function authLockLiveSessionForUser(int $userID, ?string $sessionID = null): bool', $svAuth, 'I-1: the lock helper can check a named session (the one a password change keeps)');
+assertFalse(authLockLiveSessionForUser(1, str_repeat('a', 64)), 'I-1: ...and with no database the answer is still "no"');
+
+// ==============================================================================
+// 🔑 Final review I-1 (decision 0016): checked-then-written password gaps
+// ==============================================================================
+$svAccount = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_account.php');
+$svChange  = svBody($svAccount, 'changeUserPassword');
+$svChangeOrder = [
+    'verifyPassword($currentPassword, $checkedHash)',
+    'hashPassword($newPassword)',
+    'begin_transaction()',
+    'authLockLiveSessionForUser($userID, (string) $keepSessionId)',
+    "SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE",
+    'hash_equals($checkedHash, $storedNow)',
+    'UPDATE `tblUsers` SET `passwordHash` = ? WHERE `userID` = ? AND `passwordHash` = ?',
+    'authMoveSessionsValidFrom($userID)',
+    "`sessionID` != ?",
+    'UPDATE `tblUserSessions` SET `sessionsValidFromSeen` = ?',
+    '$db->commit()',
+    "logActivity('password_changed'",
+];
+$svLast = -1;
+$svInOrder = true;
+foreach ($svChangeOrder as $svStep) {
+    $svAt = strpos($svChange, $svStep);
+    if ($svAt === false || $svAt < $svLast) {
+        $svInOrder = false;
+        echo '      (out of order or missing: ' . $svStep . ')' . PHP_EOL;
+    }
+    $svLast = (int) $svAt;
+}
+assertTrue($svInOrder, 'I-1 change password: check the old password and hash the new one OUTSIDE the lock; then ONE transaction - lock account then session, re-read the password FOR UPDATE, require it unchanged, write only WHERE it is still the checked one, move the mark, end other sessions, give the kept session the new mark, commit; log after');
+assertContains("'PASSWORD_CHANGED_MEANWHILE'", $svChange, 'I-1 change password: a password changed meanwhile is refused with its own code');
+assertContains("'AUTH_REQUIRED'", $svChange, 'I-1 change password: an ended session is refused');
+foreach (['tblAPIKeys', 'tblUserOAuth', 'tblWebAuthnCredentials', 'accountRemoveOtherWaysIn'] as $svUntouched) {
+    assertFalse(str_contains($svChange, $svUntouched), 'decision 0016: a voluntary change does not touch ' . $svUntouched);
+}
+$svErase = svBody($svAccount, 'eraseUserAccount');
+assertTrue(
+    strpos($svErase, 'verifyPassword($currentPassword, $storedHash)') < strpos($svErase, 'begin_transaction()')
+    && strpos($svErase, 'begin_transaction()') < strpos($svErase, "SELECT `passwordHash`, `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
+    && strpos($svErase, 'FOR UPDATE') < strpos($svErase, 'hash_equals($storedHash, $storedNow)')
+    && strpos($svErase, 'hash_equals($storedHash, $storedNow)') < strpos($svErase, '`erasedAt` = NOW()'),
+    'I-1 erase: the account is locked and the checked password re-confirmed in the transaction, before anything is erased'
+);
+assertContains("AND `passwordHash` = ? ", $svErase, 'I-1 erase: the erase itself only happens while the password is still the one checked');
+assertContains("'PASSWORD_CHANGED_MEANWHILE'", $svErase, 'I-1 erase: and says so when it changed');
+$svSignOut = svBody($svAccount, 'accountSignOutEverywhere');
+assertTrue(
+    strpos($svSignOut, 'begin_transaction()') < strpos($svSignOut, 'FOR UPDATE')
+    && strpos($svSignOut, 'FOR UPDATE') < strpos($svSignOut, 'authMoveSessionsValidFrom($userID)')
+    && strpos($svSignOut, 'authMoveSessionsValidFrom($userID)') < strpos($svSignOut, '$db->commit()'),
+    'I-1 sign out everywhere: one transaction, account locked, the mark moved (so a sign-in under way is ended too)'
+);
+$svAccountPage = (string) file_get_contents($svSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'account' . DIRECTORY_SEPARATOR . 'index.php');
+assertContains('accountSignOutEverywhere($currentUserId)', $svAccountPage, 'I-1: the account page\'s "Sign out everywhere" uses it');
+$svVerify = svBody($svAuth, 'verifyEmailToken');
+assertTrue(strpos($svVerify, "SELECT `status`, `passwordHash` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE") < strpos($svVerify, 'if (!$passwordUnchanged) {') && strpos($svVerify, 'if (!$passwordUnchanged) {') < strpos($svVerify, 'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() \''), 'I-1 verification link: the password checked must still be the stored one, under the lock, before the link is used');
+$svReauth = svBody($svAdminSource, 'adminVerifyReauthPassword');
+assertContains('`lockedUntil` = NULL WHERE `userID` = ? AND `passwordHash` = ?', $svReauth, 'I-1 admin re-confirm: the counter is cleared only while the password is the one checked');
+assertContains('(`passwordHash` <=> ?) AS `samePassword`', $svReauth, 'I-1 admin re-confirm: ...and a password changed meanwhile confirms nothing');
+assertContains('recordFailedLogin($userID);', $svReauth, 'admin re-confirm: no precomputed count is passed (review finding 7)');
 
 // ==============================================================================
 // 🔢 Finding 7: wrong passwords at the same moment all count

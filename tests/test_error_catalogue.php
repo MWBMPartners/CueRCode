@@ -494,9 +494,12 @@ assertEquals(
 );
 
 assertEquals(
-    94,
+    95,
     count($xErrorCodes),
-    'ErrorResponse.x-error-codes has exactly 94 entries (GLOBAL_ADMIN_CANNOT_ERASE - '
+    'ErrorResponse.x-error-codes has exactly 95 entries (PASSWORD_CHANGED_MEANWHILE - '
+    . 'final review I-1, fn_api_account.php changeUserPassword()/eraseUserAccount(): the '
+    . 'password was changed or reset while the request was being handled - plus the 94 '
+    . 'earlier codes: GLOBAL_ADMIN_CANNOT_ERASE - '
     . 'task 7n Phase 1B, fn_api_account.php eraseUserAccount(): a Global Admin cannot '
     . 'erase their own account - plus the 93 earlier codes: the 91 pre-existing codes '
     . '(83 = 76 original + HANDLER_NOT_FOUND, UNKNOWN_HANDLER, FEATURE_NOT_AVAILABLE, '
@@ -555,6 +558,12 @@ assertTrue(
     isset($codesByFile['fn_api_account.php']['GLOBAL_ADMIN_CANNOT_ERASE']),
     'GLOBAL_ADMIN_CANNOT_ERASE is found in fn_api_account.php (a Global Admin cannot '
     . 'erase their own account - task 7n Phase 1B, plan §6.5)'
+);
+
+assertTrue(
+    isset($codesByFile['fn_api_account.php']['PASSWORD_CHANGED_MEANWHILE']),
+    'PASSWORD_CHANGED_MEANWHILE is found in fn_api_account.php (a password change or '
+    . 'erase whose checked password was replaced meanwhile changes nothing - final review I-1)'
 );
 
 assertTrue(

@@ -768,6 +768,125 @@ function countLinkRequestsFromIp(string $ipAddress, string $endpoint): int
     return 0;
 }
 
+/** @var int Seconds to wait for the per-address lock around "record, then count" (final review M-1). */
+if (!defined('CUERCODE_LINK_REQUEST_IP_LOCK_SECONDS')) {
+    define('CUERCODE_LINK_REQUEST_IP_LOCK_SECONDS', 3);
+}
+
+/**
+ * 🌍 Record THIS request to an emailed-link form, THEN count this visitor
+ *    address's requests in the last hour - the count includes this one.
+ *
+ * Final review M-1 (2026-11-25): the old order was "count, then record".
+ * Twenty requests sent at the same moment could all count before any of them
+ * had recorded, so every one saw a small number and all twenty got through.
+ *
+ * Now the two steps run one request at a time for each visitor address,
+ * inside a short database "named lock" (GET_LOCK - the same technique as the
+ * saved-codes limit in fn_api_qrcodes.php). The lock covers only these two
+ * quick statements, and is named after a hash of the database, the form and
+ * the address (never the address itself, and under the 64-character limit).
+ * So the request recorded in place N sees exactly N: the first ones up to the
+ * allowance get through, the rest are refused - however many arrive together.
+ *
+ * Every request takes this lock, known address or not, so an unknown address
+ * does not take a different path (the time it takes says nothing).
+ *
+ * If the lock cannot be had (a busy or faulty database), the request still
+ * records first and counts afterwards. That can only ever count MORE than the
+ * real number (requests arriving together may all see each other), so it errs
+ * on the safe side: it may refuse, it never lets extra requests through.
+ * (Measured without the lock: twenty at once from one address on MariaDB 10.6
+ * were ALL refused - safe, but the lock is what makes the answer exact.)
+ *
+ * @param string $ipAddress Client IP address
+ * @param string $endpoint  The name the form writes to the request log
+ * @return int Requests in the last hour INCLUDING this one (at least 1)
+ *
+ * @see https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_get-lock
+ */
+function authRecordThenCountLinkRequest(string $ipAddress, string $endpoint): int
+{
+    $databaseName = '';
+    if (defined('DB_NAME')) {
+        $databaseName = (string) DB_NAME;
+    }
+
+    // 🔐 "cuercode_lr:" + 40 hex characters = 52 characters (limit 64).
+    $lockName = 'cuercode_lr:' . substr(hash('sha256', $databaseName . '|' . $endpoint . '|' . mb_substr($ipAddress, 0, 45)), 0, 40);
+    $haveLock = false;
+
+    try {
+        $lockStmt = dbQuery('SELECT GET_LOCK(?, ?) AS `lockResult`', 'si', [$lockName, CUERCODE_LINK_REQUEST_IP_LOCK_SECONDS]);
+        $lockRow  = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+        // 📌 1 = acquired; 0 = waited too long; NULL = error.
+        $haveLock = (is_array($lockRow) && isset($lockRow['lockResult']) && (int) $lockRow['lockResult'] === 1);
+    } catch (\Throwable $e) {
+        $haveLock = false;
+    }
+
+    if (function_exists('recordAPIRequest')) {
+        recordAPIRequest(null, $ipAddress, $endpoint);
+    }
+
+    // 📌 If recording failed, the count may not include this request; it
+    //    is still at least 1 (this request), so the limit is never looser.
+    $count = max(1, countLinkRequestsFromIp($ipAddress, $endpoint));
+
+    if ($haveLock) {
+        try {
+            $releaseStmt = dbQuery('SELECT RELEASE_LOCK(?) AS `releaseResult`', 's', [$lockName]);
+            $releaseStmt->close();
+        } catch (\Throwable $e) {
+            // The lock belongs to this connection and ends with it anyway.
+        }
+    } elseif (function_exists('logError')) {
+        logError('warning', 'Emailed-link request: the per-address lock was not available; counted without it (errs on the safe side)', $endpoint);
+    }
+
+    return $count;
+}
+
+/**
+ * ⏱️ One account's emailed-link history: how many links in the last 24 hours,
+ *    and how many seconds since the newest one (null = never). Any database
+ *    error is thrown (the caller is inside a transaction and rolls back).
+ *
+ * @param string $table  'tblPasswordResets' or 'tblEmailVerifications' (nothing else is accepted)
+ * @param int    $userID The account
+ * @return array{linksInDay: int, secondsSince: int|null}
+ * @throws \InvalidArgumentException For any other table name
+ */
+function authLinkHistory(string $table, int $userID): array
+{
+    // 🛡️ The table name cannot be a placeholder, so only these two are allowed.
+    if ($table !== 'tblPasswordResets' && $table !== 'tblEmailVerifications') {
+        throw new \InvalidArgumentException('not an emailed-link table');
+    }
+
+    $stmt = dbQuery(
+        'SELECT COUNT(CASE WHEN `createdAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1 END) AS `dayCount`, '
+        . 'TIMESTAMPDIFF(SECOND, MAX(`createdAt`), NOW()) AS `secondsSince` '
+        . 'FROM `' . $table . '` WHERE `userID` = ?',
+        'i',
+        [$userID]
+    );
+    $history = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $result = ['linksInDay' => 0, 'secondsSince' => null];
+
+    if (is_array($history)) {
+        $result['linksInDay'] = (int) $history['dayCount'];
+        if ($history['secondsSince'] !== null) {
+            $result['secondsSince'] = (int) $history['secondsSince'];
+        }
+    }
+
+    return $result;
+}
+
 /**
  * 📨 Send a replacement verification link to a waiting account.
  *
@@ -791,11 +910,15 @@ function countLinkRequestsFromIp(string $ipAddress, string $endpoint): int
  * waiting; and a person or program hammering one account's address writes at
  * most ONE `verification_link_resend_limited` row per account per hour.
  *
- * Known, accepted limits: two requests at exactly the same instant could both
- * pass the per-account gap check (the per-IP cap still applies), and could
- * both write the hourly limited row; and the fixed minimum time only hides
- * differences smaller than itself (a slow database or mail queue could still
- * take longer than that for a waiting account).
+ * Requests at the same moment (final review M-1, 2026-11-25): the per-IP
+ * allowance records the request before counting (authRecordThenCountLinkRequest()),
+ * and the per-account checks run while holding the account row, so twenty
+ * requests sent together still give one link (measured on real MySQL 8.0,
+ * 8.4 and MariaDB 10.6 - see tests/integration/account_recovery_real_mysql.php).
+ *
+ * Known, accepted limit: the fixed minimum time only hides differences
+ * smaller than itself (a slow database or mail queue could still take longer
+ * than that for a waiting account).
  *
  * @param string $email     Address typed into the form (checked by the caller too)
  * @param string $ipAddress Client IP address
@@ -913,7 +1036,7 @@ function requestNewVerificationLinkWork(string $email, string $ipAddress): array
         'data'      => [],
     ];
 
-    if (!function_exists('dbQuery')) {
+    if (!function_exists('dbQuery') || !function_exists('getDB')) {
         return [
             'success'   => false,
             'httpCode'  => 503,
@@ -933,13 +1056,15 @@ function requestNewVerificationLinkWork(string $email, string $ipAddress): array
     $normalizedEmail = mb_strtolower(trim($email));
     $limits          = verificationResendSettings();
 
-    // 🌍 Per-IP allowance: count first, then record THIS request, so every
-    //    attempt (known address or not) uses up the same allowance.
-    $ipRequests = countVerificationResendRequestsFromIp($ipAddress) + 1;
+    // 🌍 Per-IP allowance (final review M-1): record THIS request first, then
+    //    count including it, so requests sent at the same moment cannot all
+    //    slip under the allowance. Every attempt, known address or not, uses
+    //    up the same allowance.
+    $ipRequests = authRecordThenCountLinkRequest($ipAddress, CUERCODE_RESEND_VERIFICATION_ENDPOINT);
 
-    recordAPIRequest(null, $ipAddress, CUERCODE_RESEND_VERIFICATION_ENDPOINT);
-
-    // 🔍 Is there a waiting account? (Only ever used internally.)
+    // 🔍 Is there a waiting account? (Only ever used internally.) A plain
+    //    read with no lock: an unknown address never takes a lock at all
+    //    (see the note on locks below).
     $account = null;
 
     try {
@@ -961,71 +1086,94 @@ function requestNewVerificationLinkWork(string $email, string $ipAddress): array
         && (string) $account['status'] === 'pending'
         && $account['emailVerifiedAt'] === null;
 
-    // ⏱️ Per-account history, read from the tokens already issued.
-    $secondsSince = null;
-    $linksInDay   = 0;
+    if (!$isPending) {
+        // 🚫 No waiting account: nothing is sent and no lock is taken. (The
+        //    250 ms minimum time in requestNewVerificationLink() hides the
+        //    few milliseconds the locked path below takes.)
+        return $genericResult;
+    }
 
-    if ($isPending) {
-        try {
-            $stmt = dbQuery(
-                'SELECT COUNT(CASE WHEN `createdAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1 END) AS `dayCount`, '
-                . 'TIMESTAMPDIFF(SECOND, MAX(`createdAt`), NOW()) AS `secondsSince` '
-                . 'FROM `tblEmailVerifications` WHERE `userID` = ?',
-                'i',
-                [(int) $account['userID']]
-            );
-            $history = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-        } catch (\Throwable $e) {
-            if (function_exists('logError')) {
-                logError('error', 'Resend-verification history lookup failed', $e->getMessage());
-            }
+    // 🔒 Final review M-1 (2026-11-25): the history read, the decision and the
+    //    new link happen in ONE transaction holding the account row
+    //    (SELECT ... FOR UPDATE - the same lock order as every other change to
+    //    an account: the account row first). Twenty requests for one account
+    //    sent together now queue on that row: the first sends a link, and each
+    //    later one sees it and is "too soon". The lock is on the account's
+    //    own row (its primary key), never on the email address: a locking
+    //    read of an address that has no account would lock a GAP in the
+    //    address index and could hold up sign-ups and other visitors, and
+    //    would also make unknown addresses take a different path. Unknown
+    //    addresses take no lock (above).
+    $userID  = (int) $account['userID'];
+    $db      = getDB();
+    $started = false;
+
+    try {
+        $db->begin_transaction();
+        $started = true;
+
+        $lockStmt = dbQuery('SELECT `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
+        $locked   = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+
+        // 🔁 Still waiting? (It may have been verified or reset meanwhile.)
+        if (!is_array($locked) || (string) $locked['status'] !== 'pending' || $locked['emailVerifiedAt'] !== null) {
+            $db->commit();
             return $genericResult;
         }
 
-        if (is_array($history)) {
-            $linksInDay = (int) $history['dayCount'];
+        $history = authLinkHistory('tblEmailVerifications', $userID);
 
-            if ($history['secondsSince'] !== null) {
-                $secondsSince = (int) $history['secondsSince'];
+        $decision = decideVerificationResend(
+            [
+                'ipRequestsInLastHour' => $ipRequests,
+                'accountIsPending'     => true,
+                'secondsSinceLastLink' => $history['secondsSince'],
+                'linksInLast24Hours'   => $history['linksInDay'],
+            ],
+            $limits
+        );
+
+        $issued = false;
+
+        if ($decision['send']) {
+            $displayName = null;
+
+            if ($account['displayName'] !== null && (string) $account['displayName'] !== '') {
+                $displayName = (string) $account['displayName'];
             }
+
+            // 📧 Saves the link, retires older ones and queues the email, all
+            //    on this connection, so inside this transaction.
+            $issued = issueEmailVerificationLink($userID, $normalizedEmail, $displayName, true);
+        } elseif ($decision['reason'] !== 'too_soon' && function_exists('logActivity') && !resendLimitedRowWrittenRecently($userID)) {
+            // 📝 A plain double-click inside the minimum gap is not worth a log row,
+            //    and (review fix M3) neither is every further request once the
+            //    limit is hit: at most one row per account per hour (decided
+            //    under the lock, so simultaneous requests cannot each write one).
+            logActivity(
+                'verification_link_resend_limited',
+                'A new verification link was refused by the rate limit (' . $decision['reason'] . ')',
+                'user',
+                $userID,
+                []
+            );
         }
+
+        $db->commit();
+    } catch (\Throwable $e) {
+        if ($started) {
+            authRollbackQuietly($db);
+        }
+        if (function_exists('logError')) {
+            logError('error', 'Resend-verification request failed', $e->getMessage());
+        }
+        return $genericResult;
     }
 
-    $decision = decideVerificationResend(
-        [
-            'ipRequestsInLastHour' => $ipRequests,
-            'accountIsPending'     => $isPending,
-            'secondsSinceLastLink' => $secondsSince,
-            'linksInLast24Hours'   => $linksInDay,
-        ],
-        $limits
-    );
-
-    if ($decision['send'] && $isPending) {
-        $displayName = null;
-
-        if ($account['displayName'] !== null && (string) $account['displayName'] !== '') {
-            $displayName = (string) $account['displayName'];
-        }
-
-        $issued = issueEmailVerificationLink((int) $account['userID'], $normalizedEmail, $displayName, true);
-
-        if ($issued && function_exists('logActivity')) {
-            // 🙈 The account NUMBER only - never the address, link or token.
-            logActivity('verification_link_resent', 'A new verification link was requested', 'user', (int) $account['userID'], []);
-        }
-    } elseif ($isPending && $decision['reason'] !== 'too_soon' && function_exists('logActivity') && !resendLimitedRowWrittenRecently((int) $account['userID'])) {
-        // 📝 A plain double-click inside the minimum gap is not worth a log row,
-        //    and (review fix M3) neither is every further request once the
-        //    limit is hit: at most one row per account per hour.
-        logActivity(
-            'verification_link_resend_limited',
-            'A new verification link was refused by the rate limit (' . $decision['reason'] . ')',
-            'user',
-            (int) $account['userID'],
-            []
-        );
+    if ($issued && function_exists('logActivity')) {
+        // 🙈 The account NUMBER only - never the address, link or token.
+        logActivity('verification_link_resent', 'A new verification link was requested', 'user', $userID, []);
     }
 
     return $genericResult;
@@ -1382,7 +1530,7 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
         // 🔐 The account FIRST, locked until the end of the transaction -
         //    the same order as a password reset (review finding 5), so the
         //    two can never wait for each other in a circle.
-        $statusStmt = dbQuery('SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
+        $statusStmt = dbQuery('SELECT `status`, `passwordHash` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
         $statusRow  = $statusStmt->get_result()->fetch_assoc();
         $statusStmt->close();
 
@@ -1393,6 +1541,27 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
 
         if ($accountStatus !== 'pending' && $accountStatus !== 'active') {
             // 🚫 Suspended, deleted or gone: nothing changes, the usual answer.
+            authRollbackQuietly($db);
+            return $invalidResult;
+        }
+
+        // 🔒 Final review I-1 (2026-11-25): the password was checked above,
+        //    outside the lock (the check is slow on purpose). The stored
+        //    password must still be EXACTLY the one checked (or still none);
+        //    if a reset or change landed in between, the old password must
+        //    not activate anything. Nothing changes and the link still works.
+        $passwordSeen = null;
+        if ($account['passwordHash'] !== null) {
+            $passwordSeen = (string) $account['passwordHash'];
+        }
+        $passwordNow = null;
+        if (is_array($statusRow) && $statusRow['passwordHash'] !== null) {
+            $passwordNow = (string) $statusRow['passwordHash'];
+        }
+        $passwordUnchanged = ($passwordSeen === null && $passwordNow === null)
+            || ($passwordSeen !== null && $passwordNow !== null && hash_equals($passwordSeen, $passwordNow));
+
+        if (!$passwordUnchanged) {
             authRollbackQuietly($db);
             return $invalidResult;
         }
@@ -2098,17 +2267,33 @@ function currentUser(): ?array
  * not ended and not expired; and its "sessions valid from" copy still equals
  * the account's mark (review finding 1).
  *
- * @param int $userID The account the caller is about to change
+ * 🔑 Final review I-1 (decision 0016): changeUserPassword() passes the
+ *    session it is told to keep as $sessionID. With no $sessionID the session
+ *    is this browser's own ($_SESSION), exactly as before.
+ *
+ * @param int         $userID    The account the caller is about to change
+ * @param string|null $sessionID The session to check (null = this browser's own)
  * @return bool True when the write may go ahead
  * @throws \Throwable On a database error
  */
-function authLockLiveSessionForUser(int $userID): bool
+function authLockLiveSessionForUser(int $userID, ?string $sessionID = null): bool
 {
-    if (session_status() !== PHP_SESSION_ACTIVE || !isset($_SESSION[CUERCODE_SESSION_TOKEN_KEY]) || !function_exists('dbQuery')) {
+    if (!function_exists('dbQuery')) {
         return false;
     }
 
-    $sessionID = (string) $_SESSION[CUERCODE_SESSION_TOKEN_KEY];
+    if ($sessionID === null) {
+        // 🎫 This browser's own session (the original behaviour).
+        if (session_status() !== PHP_SESSION_ACTIVE || !isset($_SESSION[CUERCODE_SESSION_TOKEN_KEY])) {
+            return false;
+        }
+        $sessionID = (string) $_SESSION[CUERCODE_SESSION_TOKEN_KEY];
+    }
+
+    if ($sessionID === '') {
+        return false;
+    }
+
     $markReady = authSessionsValidFromReady();
 
     // 🔐 1. The account row FIRST (the same order as a password reset).
@@ -2281,6 +2466,72 @@ function authRollbackQuietly(\mysqli $db): void
 }
 
 // ==============================================================================
+// 🕐 authMoveSessionsValidFrom() - end every sign-in, even one under way
+// ==============================================================================
+
+/**
+ * 🕐 Move the account's "sessions valid from" mark forward, inside the
+ *    CALLER's transaction, and say what the new mark is. Any database error
+ *    is thrown, so the caller rolls everything back.
+ *
+ * Every session carries a copy of the mark it was made under, and
+ * currentUser() refuses a session whose copy is no longer the account's mark.
+ * So moving the mark ends every session at once - including one being made by
+ * a sign-in that checked the old password a moment ago (review finding 1).
+ *
+ * The new mark is "now" in UTC to the millionth of a second, or one millionth
+ * of a second past the old mark when the clock has not moved on (or went
+ * back), so the mark only ever goes forward and two moves in one instant
+ * still differ.
+ *
+ * Used by: the password reset and the command-line admin grant (through
+ * accountRemoveOtherWaysIn()), the voluntary password change
+ * (changeUserPassword(), decision 0016) and "Sign out everywhere"
+ * (accountSignOutEverywhere()). The caller must already hold the account row
+ * (SELECT ... FOR UPDATE), so that the two steps here see the same row.
+ *
+ * Before database upgrade 0003 there is no mark: nothing is changed and the
+ * answer is null.
+ *
+ * @param int $userID The account
+ * @return string|null The new mark, or null before upgrade 0003
+ * @throws \RuntimeException When the mark could not be moved or read back
+ */
+function authMoveSessionsValidFrom(int $userID): ?string
+{
+    if (!authSessionsValidFromReady()) {
+        return null;
+    }
+
+    $markStmt = dbQuery(
+        'UPDATE `tblUsers` SET `sessionsValidFrom` = CASE '
+        . 'WHEN `sessionsValidFrom` IS NOT NULL AND `sessionsValidFrom` >= UTC_TIMESTAMP(6) '
+        . 'THEN DATE_ADD(`sessionsValidFrom`, INTERVAL 1 MICROSECOND) '
+        . 'ELSE UTC_TIMESTAMP(6) END '
+        . 'WHERE `userID` = ?',
+        'i',
+        [$userID]
+    );
+    $marked = $markStmt->affected_rows;
+    $markStmt->close();
+
+    if ($marked !== 1) {
+        throw new \RuntimeException('the sign-in mark could not be moved');
+    }
+
+    // 👀 Read the new value back (the same transaction sees its own write).
+    $readStmt = dbQuery('SELECT `sessionsValidFrom` FROM `tblUsers` WHERE `userID` = ? LIMIT 1', 'i', [$userID]);
+    $readRow  = $readStmt->get_result()->fetch_assoc();
+    $readStmt->close();
+
+    if (!is_array($readRow) || $readRow['sessionsValidFrom'] === null) {
+        throw new \RuntimeException('the sign-in mark could not be read back');
+    }
+
+    return (string) $readRow['sessionsValidFrom'];
+}
+
+// ==============================================================================
 // 🚪 accountRemoveOtherWaysIn() - ONE place that shuts every other door
 // ==============================================================================
 
@@ -2326,23 +2577,9 @@ function authRollbackQuietly(\mysqli $db): void
  */
 function accountRemoveOtherWaysIn(int $userID, bool $alsoCancelVerificationLinks): array
 {
-    if (authSessionsValidFromReady()) {
-        $markStmt = dbQuery(
-            'UPDATE `tblUsers` SET `sessionsValidFrom` = CASE '
-            . 'WHEN `sessionsValidFrom` IS NOT NULL AND `sessionsValidFrom` >= UTC_TIMESTAMP(6) '
-            . 'THEN DATE_ADD(`sessionsValidFrom`, INTERVAL 1 MICROSECOND) '
-            . 'ELSE UTC_TIMESTAMP(6) END '
-            . 'WHERE `userID` = ?',
-            'i',
-            [$userID]
-        );
-        $marked = $markStmt->affected_rows;
-        $markStmt->close();
-
-        if ($marked !== 1) {
-            throw new \RuntimeException('the sign-in mark could not be moved');
-        }
-    }
+    // 🕐 FIRST: move the "sessions valid from" mark (shared with the
+    //    voluntary password change and "Sign out everywhere").
+    authMoveSessionsValidFrom($userID);
 
     $statements = [
         'sessions_ended'                 => 'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
@@ -2481,7 +2718,7 @@ function requestPasswordResetWork(string $email, string $ipAddress): array
         'data'      => [],
     ];
 
-    if (!function_exists('dbQuery')) {
+    if (!function_exists('dbQuery') || !function_exists('getDB')) {
         return $genericResult;
     }
 
@@ -2492,11 +2729,13 @@ function requestPasswordResetWork(string $email, string $ipAddress): array
     $normalizedEmail = mb_strtolower(trim($email));
     $limits          = passwordResetRequestSettings();
 
-    // 🌍 Per-IP allowance: count first, then record THIS request, so every
-    //    attempt (known address or not) uses up the same allowance.
-    $ipRequests = countLinkRequestsFromIp($ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT) + 1;
-    recordAPIRequest(null, $ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT);
+    // 🌍 Per-IP allowance (final review M-1): record THIS request first, then
+    //    count including it, so requests sent at the same moment cannot all
+    //    slip under the allowance. Every attempt (known address or not) uses
+    //    up the same allowance.
+    $ipRequests = authRecordThenCountLinkRequest($ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT);
 
+    // 🔍 A plain read with no lock: an unknown address never takes a lock.
     try {
         $stmt = dbQuery(
             'SELECT `userID`, `displayName`, `status` FROM `tblUsers` WHERE `email` = ? LIMIT 1',
@@ -2522,69 +2761,80 @@ function requestPasswordResetWork(string $email, string $ipAddress): array
     if (is_array($row)) {
         $status = (string) $row['status'];
     }
-    $isEligible = ($status === 'active' || $status === 'pending');
 
-    // ⏱️ Per-account history, read from the reset links already issued.
-    $secondsSince = null;
-    $linksInDay   = 0;
-
-    if ($isEligible) {
-        try {
-            $historyStmt = dbQuery(
-                'SELECT COUNT(CASE WHEN `createdAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1 END) AS `dayCount`, '
-                . 'TIMESTAMPDIFF(SECOND, MAX(`createdAt`), NOW()) AS `secondsSince` '
-                . 'FROM `tblPasswordResets` WHERE `userID` = ?',
-                'i',
-                [(int) $row['userID']]
-            );
-            $history = $historyStmt->get_result()->fetch_assoc();
-            $historyStmt->close();
-        } catch (\Throwable $e) {
-            if (function_exists('logError')) {
-                logError('error', 'Password reset history lookup failed', $e->getMessage());
-            }
-            return $genericResult;
-        }
-
-        if (is_array($history)) {
-            $linksInDay = (int) $history['dayCount'];
-            if ($history['secondsSince'] !== null) {
-                $secondsSince = (int) $history['secondsSince'];
-            }
-        }
-    }
-
-    $decision = decidePasswordResetRequest(
-        [
-            'ipRequestsInLastHour' => $ipRequests,
-            'accountIsEligible'    => $isEligible,
-            'secondsSinceLastLink' => $secondsSince,
-            'linksInLast24Hours'   => $linksInDay,
-        ],
-        $limits
-    );
-
-    if ($isEligible && !$decision['send']) {
-        // 📝 A double-click inside the minimum gap is not worth a row, and
-        //    once a limit is hit, at most ONE row per account per hour.
-        if ($decision['reason'] !== 'too_soon' && function_exists('logActivity') && !limitedRowWrittenRecently((int) $row['userID'], 'password_reset_request_limited')) {
-            logActivity(
-                'password_reset_request_limited',
-                'A password reset link was refused by the rate limit (' . $decision['reason'] . ')',
-                'user',
-                (int) $row['userID'],
-                []
-            );
-        }
+    if ($status !== 'active' && $status !== 'pending') {
+        // 🚫 No account that can be reset: nothing is sent and no lock is
+        //    taken. The 250 ms minimum time in requestPasswordReset() hides
+        //    the few milliseconds the locked path below takes.
         return $genericResult;
     }
 
-    if ($isEligible) {
-        $userID    = (int) $row['userID'];
-        $rawToken  = generateRandomToken();
-        $tokenHash = hashToken($rawToken);
+    // 🔒 Final review M-1 (2026-11-25): twenty requests for one account sent at
+    //    the same moment used to read the same empty history and all send a
+    //    link (measured: 20 links on MySQL 8.0.36 against limits of one a
+    //    minute and five a day). Now the history read, the decision and the
+    //    new link happen in ONE transaction holding the account row
+    //    (SELECT ... FOR UPDATE on its own primary key - the same lock order
+    //    as every other change to an account, the account row first; the
+    //    reset that later USES the link locks the same row first too). So the
+    //    requests queue: the first sends a link and each later one sees it.
+    //    The lock is never taken on the email address: a locking read of an
+    //    address with no account would lock a GAP in the address index and
+    //    could hold up sign-ups and other visitors. Unknown addresses take no
+    //    lock at all (above).
+    $userID  = (int) $row['userID'];
+    $db      = getDB();
+    $started = false;
 
-        try {
+    try {
+        $db->begin_transaction();
+        $started = true;
+
+        $lockStmt = dbQuery('SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
+        $locked   = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+
+        // 🔁 Still one that can be reset? (It may have been suspended meanwhile.)
+        $lockedStatus = '';
+        if (is_array($locked)) {
+            $lockedStatus = (string) $locked['status'];
+        }
+
+        if ($lockedStatus !== 'active' && $lockedStatus !== 'pending') {
+            $db->commit();
+            return $genericResult;
+        }
+
+        $history = authLinkHistory('tblPasswordResets', $userID);
+
+        $decision = decidePasswordResetRequest(
+            [
+                'ipRequestsInLastHour' => $ipRequests,
+                'accountIsEligible'    => true,
+                'secondsSinceLastLink' => $history['secondsSince'],
+                'linksInLast24Hours'   => $history['linksInDay'],
+            ],
+            $limits
+        );
+
+        if (!$decision['send']) {
+            // 📝 A double-click inside the minimum gap is not worth a row, and
+            //    once a limit is hit, at most ONE row per account per hour
+            //    (decided under the lock, so simultaneous requests cannot each
+            //    write one).
+            if ($decision['reason'] !== 'too_soon' && function_exists('logActivity') && !limitedRowWrittenRecently((int) $row['userID'], 'password_reset_request_limited')) {
+                logActivity(
+                    'password_reset_request_limited',
+                    'A password reset link was refused by the rate limit (' . $decision['reason'] . ')',
+                    'user',
+                    $userID,
+                    []
+                );
+            }
+        } else {
+            $rawToken  = generateRandomToken();
+            $tokenHash = hashToken($rawToken);
+
             $insertStmt = dbQuery(
                 'INSERT INTO `tblPasswordResets` (`userID`, `tokenHash`, `expiresAt`, `requestIP`) '
                 . 'VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), ?)',
@@ -2593,6 +2843,9 @@ function requestPasswordResetWork(string $email, string $ipAddress): array
             );
             $insertStmt->close();
 
+            // 📧 Queued on this connection, so the email row is part of the
+            //    same transaction: never a link without its email or the
+            //    other way round.
             if (function_exists('queueEmail')) {
                 $resetUrl = buildAccountActionUrl('reset-password', $rawToken);
 
@@ -2608,11 +2861,17 @@ function requestPasswordResetWork(string $email, string $ipAddress): array
                     $row['displayName']
                 );
             }
-        } catch (\Throwable $e) {
-            if (function_exists('logError')) {
-                logError('error', 'Password reset token issue failed', $e->getMessage());
-            }
         }
+
+        $db->commit();
+    } catch (\Throwable $e) {
+        if ($started) {
+            authRollbackQuietly($db);
+        }
+        if (function_exists('logError')) {
+            logError('error', 'Password reset token issue failed', $e->getMessage());
+        }
+        return $genericResult;
     }
 
     return $genericResult;

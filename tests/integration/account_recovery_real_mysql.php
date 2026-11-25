@@ -156,6 +156,35 @@ if ($arChildMode !== '') {
         $arChildResult['errorCode'] = $arResetResult['errorCode'];
     } elseif ($arChildMode === 'wrongpw') {
         $arChildResult['count'] = recordFailedLogin((int) getenv('CUERCODE_IT_CHILD_USERID'));
+    } elseif ($arChildMode === 'changepw') {
+        // 🔑 Final review I-1: a password change from a given session.
+        require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_api_account.php';
+        $_SESSION[CUERCODE_SESSION_TOKEN_KEY] = (string) getenv('CUERCODE_IT_CHILD_SESSION');
+        $arChange = changeUserPassword((int) getenv('CUERCODE_IT_CHILD_USERID'), (string) getenv('CUERCODE_IT_CHILD_PASSWORD'), (string) getenv('CUERCODE_IT_CHILD_NEWPASSWORD'), (string) getenv('CUERCODE_IT_CHILD_SESSION'));
+        $arChildResult['success']   = $arChange['success'];
+        $arChildResult['errorCode'] = $arChange['errorCode'];
+    } elseif ($arChildMode === 'erase') {
+        require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_api_account.php';
+        $arErase = eraseUserAccount((int) getenv('CUERCODE_IT_CHILD_USERID'), (string) getenv('CUERCODE_IT_CHILD_PASSWORD'), true);
+        $arChildResult['success']   = $arErase['success'];
+        $arChildResult['errorCode'] = $arErase['errorCode'];
+    } elseif ($arChildMode === 'verify') {
+        $arVerifyResult = verifyEmailToken((string) getenv('CUERCODE_IT_CHILD_TOKEN'), (string) getenv('CUERCODE_IT_CHILD_PASSWORD'));
+        $arChildResult['success']   = $arVerifyResult['success'];
+        $arChildResult['errorCode'] = $arVerifyResult['errorCode'];
+    } elseif ($arChildMode === 'reauth') {
+        require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin.php';
+        $arChildResult['result'] = adminVerifyReauthPassword((int) getenv('CUERCODE_IT_CHILD_USERID'), (string) getenv('CUERCODE_IT_CHILD_PASSWORD'));
+    } elseif ($arChildMode === 'forgot' || $arChildMode === 'resend') {
+        // 🚦 Final review M-1: one of many simultaneous emailed-link requests.
+        $arT0 = microtime(true);
+        if ($arChildMode === 'forgot') {
+            $arLinkResult = requestPasswordReset((string) getenv('CUERCODE_IT_CHILD_EMAIL'), (string) getenv('CUERCODE_IT_CHILD_IP'));
+        } else {
+            $arLinkResult = requestNewVerificationLink((string) getenv('CUERCODE_IT_CHILD_EMAIL'), (string) getenv('CUERCODE_IT_CHILD_IP'));
+        }
+        $arChildResult['seconds'] = microtime(true) - $arT0;
+        $arChildResult['message'] = $arLinkResult['message'];
     }
     echo 'CHILD-RESULT:' . json_encode($arChildResult) . PHP_EOL;
     exit(0);
@@ -283,8 +312,8 @@ function arReset(): void
         arExec('DELETE FROM `' . $arTable . '`');
     }
     arExec("DELETE FROM `tblAPIKeys` WHERE `apiKeyName` LIKE 'ar-%'");
-    arExec("DELETE FROM `tblAPIRateLog` WHERE `apiKeyID` IS NULL AND `endpoint` = 'auth/request-password-reset'");
-    arExec("DELETE FROM `tblUsers` WHERE `email` LIKE 'ar-%@ar.cuercode.invalid'");
+    arExec("DELETE FROM `tblAPIRateLog` WHERE `apiKeyID` IS NULL AND `endpoint` IN ('auth/request-password-reset', 'page/resend-verification')");
+    arExec("DELETE FROM `tblUsers` WHERE `email` LIKE 'ar-%@ar.cuercode.invalid' OR `email` LIKE 'deleted-%@deleted.invalid'");
 }
 
 /** 👤 Make an account and return its number. $arPassword null = no password. */
@@ -887,6 +916,348 @@ $arVSLink = arVerifyLink($arVS);
 $arR = verifyEmailToken($arVSLink, $arStrangerPassword);
 arCheck($arR['success'] === false && $arR['errorCode'] === 'VERIFICATION_TOKEN_INVALID' && arSnapshot($arVS)['user']['status'] === 'suspended', 'a suspended account: the usual invalid answer, still suspended');
 arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arVS]) === 1, '...and nothing changed (the link is not used up)');
+
+// ==============================================================================
+// 🔒 Helpers for "hold the account row while another process is half-way"
+// ==============================================================================
+
+/**
+ * 🔢 How many OTHER connections to this database are running a statement
+ *    whose text matches $arLike right now (a process waiting for a lock
+ *    shows its statement here until the lock is granted).
+ *
+ * @param string $arLike A LIKE pattern for the statement text
+ * @return int
+ */
+function arWaitingStatements(string $arLike): int
+{
+    $arStmt = $GLOBALS['arConn']->prepare(
+        'SELECT COUNT(*) AS `c` FROM `information_schema`.`PROCESSLIST` '
+        . 'WHERE `ID` <> CONNECTION_ID() AND `DB` = DATABASE() AND `INFO` LIKE ?'
+    );
+    $arStmt->bind_param('s', $arLike);
+    $arStmt->execute();
+    $arCountRow = $arStmt->get_result()->fetch_assoc();
+    $arStmt->close();
+    return (int) $arCountRow['c'];
+}
+
+/**
+ * ⏳ Wait (up to $arSeconds) until at least $arHowMany other connections are
+ *    waiting on a statement matching $arLike.
+ *
+ * @return bool True when they are
+ */
+function arWaitUntilWaiting(string $arLike, int $arHowMany, float $arSeconds = 30.0): bool
+{
+    $arUntil = microtime(true) + $arSeconds;
+    while (microtime(true) < $arUntil) {
+        if (arWaitingStatements($arLike) >= $arHowMany) {
+            // A short extra pause, so "seen running" really means "waiting".
+            usleep(300000);
+            return arWaitingStatements($arLike) >= $arHowMany;
+        }
+        usleep(50000);
+    }
+    return false;
+}
+
+/** 🔐 This script's own separate connection takes the account row lock. */
+function arHoldAccount(int $arUserID): void
+{
+    $GLOBALS['arConn']->begin_transaction();
+    $GLOBALS['arConn']->query('SELECT `userID` FROM `tblUsers` WHERE `userID` = ' . $arUserID . ' FOR UPDATE')->free();
+}
+
+/** ✍️ On the lock-holding connection: replace the password (and optionally move the mark and end sessions, as a reset does). */
+function arChangeWhileHolding(int $arUserID, string $arNewHash, bool $arAsAReset): void
+{
+    $arStmt = $GLOBALS['arConn']->prepare('UPDATE `tblUsers` SET `passwordHash` = ? WHERE `userID` = ?');
+    $arStmt->bind_param('si', $arNewHash, $arUserID);
+    $arStmt->execute();
+    $arStmt->close();
+    if ($arAsAReset) {
+        $GLOBALS['arConn']->query(
+            'UPDATE `tblUsers` SET `sessionsValidFrom` = CASE WHEN `sessionsValidFrom` IS NOT NULL AND `sessionsValidFrom` >= UTC_TIMESTAMP(6) '
+            . 'THEN DATE_ADD(`sessionsValidFrom`, INTERVAL 1 MICROSECOND) ELSE UTC_TIMESTAMP(6) END WHERE `userID` = ' . $arUserID
+        );
+        $GLOBALS['arConn']->query('UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ' . $arUserID . ' AND `revokedAt` IS NULL');
+    }
+}
+
+/** 🎫 Sign an account in (in THIS process) and return the new session token, leaving "this browser" signed out. */
+function arSignIn(string $arName, string $arPassword): string
+{
+    $arLogin = loginUser('ar-' . $arName . '@ar.cuercode.invalid', $arPassword, '203.0.113.50', 'integration-check');
+    $arToken = '';
+    if ($arLogin['success'] === true && isset($_SESSION[CUERCODE_SESSION_TOKEN_KEY])) {
+        $arToken = (string) $_SESSION[CUERCODE_SESSION_TOKEN_KEY];
+    }
+    arUseSession(null);
+    return $arToken;
+}
+
+/** ✅ Is this session one currentUser() accepts right now? */
+function arSessionWorks(string $arToken): bool
+{
+    arUseSession($arToken);
+    $arWorks = (currentUser() !== null);
+    arUseSession(null);
+    return $arWorks;
+}
+
+require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_api_account.php';
+require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin.php';
+$arAttackerPassword = 'Attacker-' . bin2hex(random_bytes(6));
+$arWaitForUsersLock = '%FROM `tblUsers` WHERE `userID` = % FOR UPDATE%';
+
+// ==============================================================================
+// CP. Final review I-1 / decision 0016: a voluntary password change
+// ==============================================================================
+echo PHP_EOL . 'CP. Voluntary password change (final review I-1, decision 0016)' . PHP_EOL;
+
+// (1) What it does when nothing else is happening.
+$arCp = arUser('cp', 'active', $arStrangerPassword, true);
+$arCpKeep  = arSignIn('cp', $arStrangerPassword);
+$arCpOther = arSignIn('cp', $arStrangerPassword);
+arExec('INSERT INTO `tblAPIKeys` (`apiKeyHash`, `apiKeyPrefix`, `apiKeyName`, `userID`, `isActive`) VALUES (?, ?, ?, ?, 1)', 'sssi', [hash('sha256', random_bytes(16)), 'cuercode_ar', 'ar-cp', $arCp]);
+arExec("INSERT INTO `tblUserOAuth` (`userID`, `provider`, `providerSubjectID`) VALUES (?, 'google', 'ar-sub-cp')", 'i', [$arCp]);
+arCheck($arCpKeep !== '' && $arCpOther !== '' && arSessionWorks($arCpKeep) && arSessionWorks($arCpOther), 'set-up: two signed-in sessions, one API key, one linked Google sign-in');
+$arCpUnderWay = arOne('SELECT `sessionsValidFrom` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arCp]);
+$arR = changeUserPassword($arCp, $arStrangerPassword, $arOwnerPassword, $arCpKeep);
+arCheck($arR['success'] === true, 'the change succeeds');
+arCheck(arSessionWorks($arCpKeep) === true, 'the session that made the change STAYS signed in (it was given the new mark)');
+arCheck(arSessionWorks($arCpOther) === false, 'the other session is signed out');
+arCheck(issueUserSession($arCp, '203.0.113.50', 'integration-check', $arCpUnderWay['sessionsValidFrom']) === '', 'a sign-in that had checked the OLD password just before cannot make a session afterwards (the mark moved)');
+arUseSession(null);
+arCheck(arCount('SELECT COUNT(*) FROM `tblAPIKeys` WHERE `userID` = ? AND `isActive` = 1', 'i', [$arCp]) === 1, 'decision 0016: the API key is still on');
+arCheck(arCount('SELECT COUNT(*) FROM `tblUserOAuth` WHERE `userID` = ?', 'i', [$arCp]) === 1, 'decision 0016: the linked Google sign-in is still there');
+$arCpHash = (string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arCp])['passwordHash'];
+arCheck(verifyPassword($arOwnerPassword, $arCpHash) && !verifyPassword($arStrangerPassword, $arCpHash), 'the new password works and the old one does not');
+$arR = changeUserPassword($arCp, 'not-the-password', $arAttackerPassword, $arCpKeep);
+arCheck($arR['errorCode'] === 'INVALID_CURRENT_PASSWORD' && (string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arCp])['passwordHash'] === $arCpHash, 'a wrong current password: refused, nothing changed');
+$arR = changeUserPassword($arCp, $arOwnerPassword, $arAttackerPassword, $arCpOther);
+arCheck($arR['errorCode'] === 'AUTH_REQUIRED' && (string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arCp])['passwordHash'] === $arCpHash, 'from a session that was signed out: refused (AUTH_REQUIRED), nothing changed - even with the right password');
+
+// (2) THE REVIEWER'S RACE, with the real functions in two processes, in the
+//     bad order: the change reads and checks the OLD password, then a
+//     password reset finishes, then the change reaches its transaction.
+//     This script holds the account row, starts the reset (it waits for the
+//     row), then starts the change (it checks the old password and hashes
+//     the new one, then waits too), then lets go. The reset asked first.
+$arRc = arUser('rc', 'active', $arStrangerPassword, true);
+$arRcAttacker = arSignIn('rc', $arStrangerPassword);
+$arRcLink = arResetLink($arRc);
+arHoldAccount($arRc);
+$arRcReset = arSpawn('reset', $arItEnv + ['CUERCODE_IT_CHILD_TOKEN' => $arRcLink, 'CUERCODE_IT_CHILD_PASSWORD' => $arOwnerPassword]);
+$arRcWaiting1 = arWaitUntilWaiting($arWaitForUsersLock, 1);
+$arRcChange = arSpawn('changepw', $arItEnv + ['CUERCODE_IT_CHILD_USERID' => (string) $arRc, 'CUERCODE_IT_CHILD_SESSION' => $arRcAttacker, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword, 'CUERCODE_IT_CHILD_NEWPASSWORD' => $arAttackerPassword]);
+$arRcWaiting2 = arWaitUntilWaiting($arWaitForUsersLock, 2);
+$arConn->commit();
+$arRcResetOut  = arCollect($arRcReset);
+$arRcChangeOut = arCollect($arRcChange);
+arCheck($arRcWaiting1 && $arRcWaiting2, '(race) both processes were caught waiting for the account row: the change had ALREADY checked the old password');
+$arRcHash = (string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arRc])['passwordHash'];
+arCheck(isset($arRcResetOut['success']) && $arRcResetOut['success'] === true, '(race) the owner\'s reset succeeds (' . json_encode($arRcResetOut) . ')');
+arCheck(isset($arRcChangeOut['success']) && $arRcChangeOut['success'] === false && in_array($arRcChangeOut['errorCode'], ['AUTH_REQUIRED', 'PASSWORD_CHANGED_MEANWHILE'], true), '(race) the late password change is REFUSED (' . json_encode($arRcChangeOut) . ')');
+arCheck(verifyPassword($arOwnerPassword, $arRcHash) === true && verifyPassword($arAttackerPassword, $arRcHash) === false, '(race) the owner\'s new password stands; the other person\'s did NOT overwrite it (the reported fault)');
+arCheck(arSessionWorks($arRcAttacker) === false && arLiveSessions($arRc) === 0, '(race) the other person\'s session is ended');
+arCheck(loginUser('ar-rc@ar.cuercode.invalid', $arAttackerPassword, '203.0.113.50', 'integration-check')['success'] === false, '(race) and they cannot sign in with the password they tried to set');
+arUseSession(null);
+
+// (3) The same gap, forced: the password is replaced (as a reset does: new
+//     password, mark moved, sessions ended) while the change waits.
+$arF1 = arUser('cpf1', 'active', $arStrangerPassword, true);
+$arF1Session = arSignIn('cpf1', $arStrangerPassword);
+arHoldAccount($arF1);
+$arF1Child = arSpawn('changepw', $arItEnv + ['CUERCODE_IT_CHILD_USERID' => (string) $arF1, 'CUERCODE_IT_CHILD_SESSION' => $arF1Session, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword, 'CUERCODE_IT_CHILD_NEWPASSWORD' => $arAttackerPassword]);
+$arF1Waiting = arWaitUntilWaiting($arWaitForUsersLock, 1);
+$arOwnerHash = hashPassword($arOwnerPassword);
+arChangeWhileHolding($arF1, $arOwnerHash, true);
+$arConn->commit();
+$arF1Out = arCollect($arF1Child);
+arCheck($arF1Waiting && isset($arF1Out['errorCode']) && $arF1Out['errorCode'] === 'AUTH_REQUIRED', '(forced) a reset lands while the change waits: refused as "signed out" (' . json_encode($arF1Out) . ')');
+arCheck((string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arF1])['passwordHash'] === $arOwnerHash, '(forced) ...and the reset\'s password is untouched');
+
+// (4) Two tabs of the SAME session change the password at the same moment:
+//     both check the old password first; one wins, the other is told the
+//     password changed meanwhile (the session stays good, so this is the
+//     byte-for-byte check, not the session check, doing the work).
+$arT2 = arUser('cpt2', 'active', $arStrangerPassword, true);
+$arT2Session = arSignIn('cpt2', $arStrangerPassword);
+arHoldAccount($arT2);
+$arT2A = arSpawn('changepw', $arItEnv + ['CUERCODE_IT_CHILD_USERID' => (string) $arT2, 'CUERCODE_IT_CHILD_SESSION' => $arT2Session, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword, 'CUERCODE_IT_CHILD_NEWPASSWORD' => 'Tab-A-' . $arOwnerPassword]);
+$arT2B = arSpawn('changepw', $arItEnv + ['CUERCODE_IT_CHILD_USERID' => (string) $arT2, 'CUERCODE_IT_CHILD_SESSION' => $arT2Session, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword, 'CUERCODE_IT_CHILD_NEWPASSWORD' => 'Tab-B-' . $arOwnerPassword]);
+$arT2Waiting = arWaitUntilWaiting($arWaitForUsersLock, 2);
+$arConn->commit();
+$arT2Outs = [arCollect($arT2A), arCollect($arT2B)];
+$arT2Codes = [];
+foreach ($arT2Outs as $arOut) {
+    $arT2Codes[] = isset($arOut['success']) && $arOut['success'] === true ? 'ok' : (string) ($arOut['errorCode'] ?? 'crashed');
+}
+sort($arT2Codes);
+arCheck($arT2Waiting && $arT2Codes === ['PASSWORD_CHANGED_MEANWHILE', 'ok'], '(two tabs) one change wins, the other is refused as "changed meanwhile" (' . implode(', ', $arT2Codes) . ')');
+$arT2Hash = (string) arOne('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arT2])['passwordHash'];
+arCheck(verifyPassword('Tab-A-' . $arOwnerPassword, $arT2Hash) !== verifyPassword('Tab-B-' . $arOwnerPassword, $arT2Hash), '(two tabs) exactly one of the two new passwords is in place');
+arCheck(arSessionWorks($arT2Session) === true, '(two tabs) and the session that made the change is still signed in');
+
+// ==============================================================================
+// ER. Final review I-1: erase, verification link and admin re-confirm
+// ==============================================================================
+echo PHP_EOL . 'ER. Other "check the password, then act" places (final review I-1)' . PHP_EOL;
+$arEr = arUser('er', 'active', $arStrangerPassword, true);
+arHoldAccount($arEr);
+$arErChild = arSpawn('erase', $arItEnv + ['CUERCODE_IT_CHILD_USERID' => (string) $arEr, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword]);
+$arErWaiting = arWaitUntilWaiting($arWaitForUsersLock, 1);
+arChangeWhileHolding($arEr, $arOwnerHash, true);
+$arConn->commit();
+$arErOut = arCollect($arErChild);
+arCheck($arErWaiting && isset($arErOut['errorCode']) && $arErOut['errorCode'] === 'PASSWORD_CHANGED_MEANWHILE', 'erase: the password is reset while the erase waits - refused (' . json_encode($arErOut) . ')');
+$arErRow = arOne('SELECT `status`, `email` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arEr]);
+arCheck($arErRow['status'] === 'active' && $arErRow['email'] === 'ar-er@ar.cuercode.invalid', 'erase: ...and the account is NOT erased');
+$arR = eraseUserAccount($arEr, $arOwnerPassword, true);
+arCheck($arR['success'] === true && arOne('SELECT `status` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arEr])['status'] === 'deleted', 'erase: with the current password and nothing happening meanwhile, it still works');
+
+$arVe = arUser('ve', 'pending', $arStrangerPassword, false);
+$arVeLink = arVerifyLink($arVe);
+arHoldAccount($arVe);
+$arVeChild = arSpawn('verify', $arItEnv + ['CUERCODE_IT_CHILD_TOKEN' => $arVeLink, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword]);
+$arVeWaiting = arWaitUntilWaiting($arWaitForUsersLock, 1);
+arChangeWhileHolding($arVe, $arOwnerHash, false);
+$arConn->commit();
+$arVeOut = arCollect($arVeChild);
+arCheck($arVeWaiting && isset($arVeOut['success']) && $arVeOut['success'] === false && $arVeOut['errorCode'] === 'VERIFICATION_TOKEN_INVALID', 'verification link: the password changes while the link waits - the OLD password activates nothing (' . json_encode($arVeOut) . ')');
+arCheck(arSnapshot($arVe)['user']['status'] === 'pending' && arSnapshot($arVe)['unusedVerifs'] === 1, 'verification link: ...the account is still waiting and the link still works');
+
+$arRa = arUser('ra', 'active', $arStrangerPassword, true);
+arExec('UPDATE `tblUsers` SET `failedLoginCount` = 2 WHERE `userID` = ?', 'i', [$arRa]);
+arHoldAccount($arRa);
+$arRaChild = arSpawn('reauth', $arItEnv + ['CUERCODE_IT_CHILD_USERID' => (string) $arRa, 'CUERCODE_IT_CHILD_PASSWORD' => $arStrangerPassword]);
+$arRaWaiting = arWaitUntilWaiting('%UPDATE `tblUsers` SET `failedLoginCount` = 0%', 1);
+arChangeWhileHolding($arRa, $arOwnerHash, false);
+$arConn->commit();
+$arRaOut = arCollect($arRaChild);
+arCheck($arRaWaiting && isset($arRaOut['result']['ok']) && $arRaOut['result']['ok'] === false, 'admin re-confirm: the password changes while it waits - the OLD password confirms nothing (' . json_encode($arRaOut) . ')');
+arCheck((int) arSnapshot($arRa)['user']['failedLoginCount'] === 2, 'admin re-confirm: ...and the failure counter was not cleared');
+arCheck(adminVerifyReauthPassword($arRa, $arOwnerPassword)['ok'] === true, 'admin re-confirm: the current password still confirms normally');
+
+// ==============================================================================
+// SO. Final review I-1: "Sign out everywhere" also stops a sign-in under way
+// ==============================================================================
+echo PHP_EOL . 'SO. Sign out everywhere (final review I-1)' . PHP_EOL;
+$arSo = arUser('so', 'active', $arStrangerPassword, true);
+$arSoA = arSignIn('so', $arStrangerPassword);
+$arSoB = arSignIn('so', $arStrangerPassword);
+$arSoUnderWay = arOne('SELECT `sessionsValidFrom` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arSo]);
+arCheck(accountSignOutEverywhere($arSo) === true, 'sign out everywhere: done');
+arCheck(arSessionWorks($arSoA) === false && arSessionWorks($arSoB) === false, '...both sessions are signed out');
+arCheck(issueUserSession($arSo, '203.0.113.50', 'integration-check', $arSoUnderWay['sessionsValidFrom']) === '', '...and a sign-in that had already checked the password cannot make its session afterwards');
+arUseSession(null);
+arCheck(arSignIn('so', $arStrangerPassword) !== '', '...while a fresh sign-in afterwards works');
+
+// ==============================================================================
+// M1. Final review M-1: many simultaneous emailed-link requests
+// ==============================================================================
+echo PHP_EOL . 'M1. Twenty simultaneous requests (final review M-1)' . PHP_EOL;
+
+/**
+ * 🚀 Start $arHowMany children of one mode at the same moment and collect them.
+ *
+ * @param string   $arMode   'forgot' or 'resend'
+ * @param callable $arVarsOf Called with the child number (1..N), returns its extra environment
+ * @return array<int, array> The children's results
+ */
+function arManyAtOnce(string $arMode, int $arHowMany, callable $arVarsOf): array
+{
+    $arStartAt = (string) (microtime(true) + 3.0);
+    $arKids = [];
+    for ($arNumber = 1; $arNumber <= $arHowMany; $arNumber++) {
+        $arKids[] = arSpawn($arMode, $GLOBALS['arItEnv'] + $arVarsOf($arNumber) + ['CUERCODE_IT_CHILD_START' => $arStartAt]);
+    }
+    $arOuts = [];
+    foreach ($arKids as $arKid) {
+        $arOuts[] = arCollect($arKid);
+    }
+    return $arOuts;
+}
+
+/** ⏱️ The shortest answer time among the children (seconds), and whether every one answered. */
+function arShortest(array $arOuts): array
+{
+    $arMin = 99.0;
+    $arAll = true;
+    foreach ($arOuts as $arOut) {
+        if (!isset($arOut['seconds'])) {
+            $arAll = false;
+            continue;
+        }
+        $arMin = min($arMin, (float) $arOut['seconds']);
+    }
+    return ['min' => $arMin, 'all' => $arAll];
+}
+
+arExec("DELETE FROM `tblAPIRateLog` WHERE `apiKeyID` IS NULL AND `endpoint` IN ('auth/request-password-reset', 'page/resend-verification')");
+$arM1 = arUser('m1', 'active', $arStrangerPassword, true);
+$arOuts = arManyAtOnce('forgot', 20, static function (int $arN): array {
+    return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-m1@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.150'];
+});
+$arShort = arShortest($arOuts);
+arCheck($arShort['all'], 'Forgot password: all 20 answered');
+arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arM1]) === 1, 'Forgot password, 20 at once for one account from one address: ONE link (was 20)');
+arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = 'ar-m1@ar.cuercode.invalid'") === 1, '...and one email queued');
+arCheck($arShort['min'] >= 0.25, '...and every answer still took at least 250 ms (shortest ' . round($arShort['min'] * 1000) . ' ms)');
+
+$arM2 = arUser('m2', 'active', $arStrangerPassword, true);
+arManyAtOnce('forgot', 20, static function (int $arN): array {
+    return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-m2@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.' . (160 + $arN)];
+});
+arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arM2]) === 1, 'Forgot password, 20 at once for one account from 20 addresses: ONE link');
+
+$arM3 = arUser('m3', 'active', $arStrangerPassword, true);
+for ($arOld = 1; $arOld <= 5; $arOld++) {
+    arExec('INSERT INTO `tblPasswordResets` (`userID`, `tokenHash`, `expiresAt`, `createdAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR), DATE_SUB(NOW(), INTERVAL ? MINUTE))', 'isi', [$arM3, hash('sha256', random_bytes(16)), 10 + $arOld]);
+}
+arManyAtOnce('forgot', 20, static function (int $arN): array {
+    return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-m3@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.' . (190 + $arN)];
+});
+arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arM3]) === 5, 'Forgot password, an account already at the daily cap of 5, 20 at once: no sixth link');
+arCheck(arCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'password_reset_request_limited' AND `entityID` = ?", 'i', [$arM3]) === 1, '...and exactly ONE "refused by the limit" row, not twenty');
+
+arExec("DELETE FROM `tblAPIRateLog` WHERE `apiKeyID` IS NULL AND `endpoint` = 'auth/request-password-reset'");
+$arIpUsers = [];
+for ($arN = 1; $arN <= 20; $arN++) {
+    $arIpUsers[] = arUser('ip' . $arN, 'active', null, true);
+}
+arManyAtOnce('forgot', 20, static function (int $arN): array {
+    return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-ip' . $arN . '@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.250'];
+});
+$arIpLinks = arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` IN (' . implode(',', array_map('intval', $arIpUsers)) . ')');
+arCheck(arCount("SELECT COUNT(*) FROM `tblAPIRateLog` WHERE `requestIP` = '198.51.100.250' AND `endpoint` = 'auth/request-password-reset'") === 20, 'Forgot password, 20 at once from ONE address for 20 accounts: all 20 recorded');
+arCheck($arIpLinks === 10, '...and exactly the hourly allowance of 10 links went out, no more and no fewer (' . $arIpLinks . ')');
+
+$arM4 = arUser('m4', 'pending', $arStrangerPassword, false);
+$arOuts = arManyAtOnce('resend', 20, static function (int $arN): array {
+    return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-m4@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.151'];
+});
+$arShort = arShortest($arOuts);
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$arM4]) === 1, 'Send me a new link, 20 at once for one waiting account: ONE link');
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arM4]) === 1, '...and it still works');
+arCheck($arShort['all'] && $arShort['min'] >= 0.25, '...and every answer took at least 250 ms (shortest ' . round($arShort['min'] * 1000) . ' ms)');
+
+$arM5 = arUser('m5', 'pending', $arStrangerPassword, false);
+for ($arOld = 1; $arOld <= 5; $arOld++) {
+    arExec('INSERT INTO `tblEmailVerifications` (`userID`, `tokenHash`, `expiresAt`, `createdAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR), DATE_SUB(NOW(), INTERVAL ? MINUTE))', 'isi', [$arM5, hash('sha256', random_bytes(16)), 10 + $arOld]);
+}
+arManyAtOnce('resend', 20, static function (int $arN): array {
+    return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-m5@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.' . (100 + $arN)];
+});
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$arM5]) === 5, 'Send me a new link, an account at the daily cap, 20 at once: no sixth link');
+arCheck(arCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'verification_link_resend_limited' AND `entityID` = ?", 'i', [$arM5]) === 1, '...and exactly ONE "refused by the limit" row');
+
+$arUnknownOuts = arManyAtOnce('forgot', 5, static function (int $arN): array {
+    return ['CUERCODE_IT_CHILD_EMAIL' => 'ar-nobody-' . $arN . '@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.' . (50 + $arN)];
+});
+arCheck(arShortest($arUnknownOuts)['min'] >= 0.25, 'unknown addresses (no account, no lock taken) still take at least 250 ms');
 
 // 🧹 Tidy up.
 arUseSession(null);

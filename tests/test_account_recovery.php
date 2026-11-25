@@ -92,8 +92,8 @@ assertTrue(
 );
 // 🔐 Review finding 5: the account row is locked BEFORE the link is claimed (same order as a reset).
 assertTrue(
-    strpos($arVerify, 'begin_transaction()') < strpos($arVerify, "SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
-    && strpos($arVerify, "SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE") < strpos($arVerify, 'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() \''),
+    strpos($arVerify, 'begin_transaction()') < strpos($arVerify, "SELECT `status`, `passwordHash` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
+    && strpos($arVerify, "SELECT `status`, `passwordHash` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE") < strpos($arVerify, 'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() \''),
     'F5: verify locks the account row first, then claims the link'
 );
 // 📣 Review nit: only a real activation says "verified, you can now log in".
@@ -105,7 +105,7 @@ assertContains("`status` = 'active', `failedLoginCount` = 0, `lockedUntil` = NUL
 assertFalse(str_contains($arVerify, 'logActivity(\'verification_link_stopped\', $password'), 'the password never goes into a log call');
 
 $arRequest = arFunctionBody($arAuth, 'requestPasswordResetWork');
-assertContains("\$isEligible = (\$status === 'active' || \$status === 'pending');", $arRequest, 'Forgot password also sends a link to a waiting (pending) account');
+assertContains("if (\$status !== 'active' && \$status !== 'pending') {", $arRequest, 'Forgot password also sends a link to a waiting (pending) account');
 
 // ==============================================================================
 // ⏱️ Review finding 3: limits and even timing for "Forgot password"
@@ -146,7 +146,26 @@ $arFpWrapper = arFunctionBody($arAuth, 'requestPasswordReset');
 assertContains('$startedAtNanos = hrtime(true);', $arFpWrapper, 'F3: the request notes when it began');
 assertContains('padResponseToMinimumDuration($startedAtNanos, CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS);', $arFpWrapper, 'F3: ...and waits out the fixed minimum time');
 assertEquals(250000, CUERCODE_PASSWORD_RESET_MIN_RESPONSE_MICROSECONDS, 'F3: the minimum is 250 ms (as for "send me a new link")');
-assertTrue(strpos($arRequest, 'countLinkRequestsFromIp($ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT)') < strpos($arRequest, 'recordAPIRequest(null, $ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT)'), 'F3: the address allowance is counted, then THIS request recorded (every address uses it up alike)');
+assertContains('authRecordThenCountLinkRequest($ipAddress, CUERCODE_PASSWORD_RESET_REQUEST_ENDPOINT)', $arRequest, 'M-1: the address allowance records THIS request first, then counts including it (every address uses it up alike, and simultaneous requests cannot all slip under it)');
+$arRecordCount = arFunctionBody($arAuth, 'authRecordThenCountLinkRequest');
+assertTrue(strpos($arRecordCount, 'recordAPIRequest(null, $ipAddress, $endpoint)') < strpos($arRecordCount, 'countLinkRequestsFromIp($ipAddress, $endpoint)'), 'M-1: ...record, THEN count');
+assertTrue(
+    strpos($arRecordCount, "SELECT GET_LOCK(?, ?)") < strpos($arRecordCount, 'recordAPIRequest(null, $ipAddress, $endpoint)')
+    && strpos($arRecordCount, 'countLinkRequestsFromIp($ipAddress, $endpoint)') < strpos($arRecordCount, "SELECT RELEASE_LOCK(?)"),
+    'M-1: ...one request at a time per address (a named lock around the two steps), so the count is exact'
+);
+assertContains('hash(\'sha256\', $databaseName . \'|\' . $endpoint . \'|\'', $arRecordCount, 'M-1: the lock name is a hash (never the address itself), per database and per form');
+assertTrue(
+    strpos($arRequest, 'begin_transaction()') < strpos($arRequest, "SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE")
+    && strpos($arRequest, 'FOR UPDATE') < strpos($arRequest, 'authLinkHistory(\'tblPasswordResets\', $userID)')
+    && strpos($arRequest, 'authLinkHistory(\'tblPasswordResets\', $userID)') < strpos($arRequest, 'INSERT INTO `tblPasswordResets`')
+    && strpos($arRequest, 'INSERT INTO `tblPasswordResets`') < strrpos($arRequest, '$db->commit()'),
+    'M-1: Forgot password locks the account row, then reads the history, decides and writes the link - one transaction'
+);
+assertTrue(strpos($arRequest, "if (\$status !== 'active' && \$status !== 'pending') {") < strpos($arRequest, 'begin_transaction()'), 'M-1: an unknown address takes no lock at all (no gap lock on the address index)');
+assertFalse(str_contains($arRequest, '`email` = ? LIMIT 1 FOR UPDATE'), 'M-1: the address itself is never read with a lock');
+$arHistory = arFunctionBody($arAuth, 'authLinkHistory');
+assertContains("if (\$table !== 'tblPasswordResets' && \$table !== 'tblEmailVerifications') {", $arHistory, 'M-1: the shared history reader accepts only the two link tables');
 assertTrue(strpos($arRequest, 'recordAPIRequest(') < strpos($arRequest, 'FROM `tblUsers` WHERE `email` = ?'), 'F3: ...before the account is even looked up');
 assertContains("limitedRowWrittenRecently((int) \$row['userID'], 'password_reset_request_limited')", $arRequest, 'F3: at most one "refused by the limit" row per account per hour');
 assertContains("\$decision['reason'] !== 'too_soon'", $arRequest, 'F3: a double-click inside the gap writes no row at all');
@@ -200,10 +219,16 @@ foreach (['tblUserSessions', 'tblAPIKeys', 'tblPasswordResets', 'tblUserOAuth', 
 assertContains('if ($alsoCancelVerificationLinks) {', $arDoors, 'verification links are cancelled only when asked (the reset asks; the admin grant does not)');
 assertContains('throw new \RuntimeException', $arDoors, 'any failure is thrown so the caller rolls everything back');
 // 🕐 Review finding 1: the shared function moves the "sessions valid from" mark first.
-assertTrue(strpos($arDoors, '`sessionsValidFrom` = CASE') !== false && strpos($arDoors, '`sessionsValidFrom` = CASE') < strpos($arDoors, '`tblUserSessions`'), 'F1: accountRemoveOtherWaysIn() moves the mark forward before ending sessions');
-assertContains('UTC_TIMESTAMP(6)', $arDoors, 'F1: the mark is UTC, to the millionth of a second');
-assertContains('DATE_ADD(`sessionsValidFrom`, INTERVAL 1 MICROSECOND)', $arDoors, 'F1: the new mark is always later than the old one (two resets in one instant still differ)');
-assertContains("throw new \RuntimeException('the sign-in mark could not be moved')", $arDoors, 'F1: a mark that did not move rolls everything back');
+//    Since the final review (I-1) the mark move is the shared helper
+//    authMoveSessionsValidFrom(), also used by the voluntary password change
+//    and "Sign out everywhere".
+assertTrue(strpos($arDoors, 'authMoveSessionsValidFrom($userID);') !== false && strpos($arDoors, 'authMoveSessionsValidFrom($userID);') < strpos($arDoors, '`tblUserSessions`'), 'F1: accountRemoveOtherWaysIn() moves the mark forward before ending sessions');
+$arMove = arFunctionBody($arAuth, 'authMoveSessionsValidFrom');
+assertContains('`sessionsValidFrom` = CASE', $arMove, 'F1: the shared helper moves the mark');
+assertContains('UTC_TIMESTAMP(6)', $arMove, 'F1: the mark is UTC, to the millionth of a second');
+assertContains('DATE_ADD(`sessionsValidFrom`, INTERVAL 1 MICROSECOND)', $arMove, 'F1: the new mark is always later than the old one (two resets in one instant still differ)');
+assertContains("throw new \RuntimeException('the sign-in mark could not be moved')", $arMove, 'F1: a mark that did not move rolls everything back');
+assertContains("throw new \RuntimeException('the sign-in mark could not be read back')", $arMove, 'I-1: the new mark is read back (so a kept session can be given it), and a failure rolls back');
 assertFalse(str_contains($arAuth, 'CUERCODE_ROLE_GLOBAL_ADMIN'), 'fn_auth.php still never names the role number');
 
 // ==============================================================================

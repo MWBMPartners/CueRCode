@@ -275,14 +275,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ------------------------------------------------------------------
     if (isset($_POST['sign_out_everywhere_submit'])) {
         if (accountPagePostCsrfValid()) {
-            $allSessions = listUserSessions($currentUserId, $currentSessionToken);
-            foreach ($allSessions as $sessionRow) {
-                revokeUserSession($currentUserId, $sessionRow['id']);
-            }
+            // 🕐 Final review I-1: one locked transaction that also moves the
+            //    "sessions valid from" mark, so a sign-in still being checked
+            //    elsewhere cannot survive (accountSignOutEverywhere()).
+            $signedOutEverywhere = accountSignOutEverywhere($currentUserId);
             if (function_exists('logoutCurrentUser')) {
                 logoutCurrentUser();
             }
-            if (function_exists('logActivity')) {
+            if ($signedOutEverywhere && function_exists('logActivity')) {
                 logActivity('sign_out_everywhere', 'User signed out of every session', 'user', $currentUserId, []);
             }
         }

@@ -698,36 +698,144 @@ function revokeUserSession(int $userID, string $sessionId): bool
 }
 
 /**
+ * 🚪 "Sign out everywhere": end EVERY sign-in for the caller's own account,
+ *    including this one and any sign-in still being checked somewhere else.
+ *
+ * Final review I-1 (2026-11-25): the account page used to list the sessions
+ * and end them one by one. A sign-in that had already checked the password
+ * but not yet written its session row was not on that list, so it survived.
+ * Now ONE transaction locks the account row (the same lock order as
+ * everywhere else), moves the "sessions valid from" mark
+ * (authMoveSessionsValidFrom()) - which also stops that late session - and
+ * ends every session row. Nothing else changes (no password, API key or
+ * linked sign-in), as for a voluntary password change (decision 0016).
+ *
+ * @param int $userID The caller's own tblUsers.userID.
+ * @return bool True when it was done; false on a database error (nothing changed).
+ */
+function accountSignOutEverywhere(int $userID): bool
+{
+    if (!function_exists('dbQuery') || !function_exists('getDB') || !function_exists('authMoveSessionsValidFrom')) {
+        return false;
+    }
+
+    $db      = getDB();
+    $started = false;
+
+    try {
+        $db->begin_transaction();
+        $started = true;
+
+        // 🔐 The account row first.
+        $lockStmt = dbQuery('SELECT `userID` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
+        $lockRow  = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+
+        if (!is_array($lockRow)) {
+            throw new \RuntimeException('account not found');
+        }
+
+        // 🕐 Every session (and every sign-in under way) stops counting.
+        authMoveSessionsValidFrom($userID);
+
+        // 🎫 And every session row is marked ended (the sessions list).
+        $revokeStmt = dbQuery(
+            'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
+            'i',
+            [$userID]
+        );
+        $revokeStmt->close();
+
+        $db->commit();
+    } catch (\Throwable $e) {
+        if ($started) {
+            try {
+                $db->rollback();
+            } catch (\Throwable $rollbackError) {
+                // The original problem is the one logged below.
+            }
+        }
+        if (function_exists('logError')) {
+            logError('error', 'Sign out everywhere failed', 'userID: ' . $userID . ' | ' . $e->getMessage());
+        }
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * 🔑 Change the caller's own password after verifying their CURRENT password.
  *
- * On success, every OTHER active session for the account is revoked (a
- * possibly-compromised session must not survive a deliberate password
- * change) - the CURRENT session (if its ID is supplied) is deliberately
- * preserved so the user is not immediately logged out of the device they
- * just used to change their password.
+ * On success every OTHER sign-in for the account ends - including a sign-in
+ * that is still being checked somewhere else - and the CURRENT session (if its
+ * ID is supplied) stays signed in, so the person is not thrown out of the
+ * device they just used. API keys and linked Google/Microsoft sign-ins are
+ * deliberately left alone (decision 0016,
+ * docs/decisions/0016-voluntary-password-change-signs-out-everywhere-only.md;
+ * a "Forgot password" reset does the fuller clean-up of decision 0013).
+ *
+ * 🔒 Final review I-1 (2026-11-25): the old version read the password, checked
+ *    it, and later wrote the new one with no condition on the stored value. A
+ *    change already under way (say by someone holding an old session and the
+ *    old password) could then overwrite a password reset that finished in
+ *    between - the reset's new password was lost and the other person's
+ *    password won. Now, in this order:
+ *      1. read the stored password (no lock) and check the typed current
+ *         password against it - slow on purpose, so done OUTSIDE any lock;
+ *      2. check the new password's strength and hash it - also slow, also
+ *         outside the lock;
+ *      3. ONE transaction, in the same lock order as everywhere else (the
+ *         account row, then the session row): lock the account and the kept
+ *         session and check the session is still good
+ *         (authLockLiveSessionForUser()); read the stored password again
+ *         FOR UPDATE and require it to be byte-for-byte the one checked in
+ *         step 1 ("optimistic" check: if it changed meanwhile, refuse and
+ *         change nothing); write the new password only WHERE the stored value
+ *         is still the one checked; move the "sessions valid from" mark
+ *         (authMoveSessionsValidFrom()); end every other session; and give
+ *         the kept session the new mark so it stays signed in.
+ *    The lock is held only for those few quick statements, never through the
+ *    slow password work. A reset locks the same account row first, so the two
+ *    happen strictly one after the other: if the reset is first, this either
+ *    finds the session ended or the password changed, and refuses.
  *
  * @param int         $userID             The caller's own tblUsers.userID.
  * @param string      $currentPassword    The candidate CURRENT plaintext password.
  * @param string      $newPassword        The candidate NEW plaintext password.
- * @param string|null $keepSessionId      The CURRENT session's own token - preserved,
- *                                          not revoked. Null revokes ALL sessions.
+ * @param string|null $keepSessionId      The CURRENT session's own token - kept
+ *                                          signed in, and required to still be good.
+ *                                          Null ends ALL sessions.
  *
  * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
  *
  * @see fn_password.php - verifyPassword(), validatePasswordPolicy(), hashPassword()
+ * @see fn_auth.php     - authLockLiveSessionForUser(), authMoveSessionsValidFrom()
  */
 function changeUserPassword(int $userID, #[\SensitiveParameter] string $currentPassword, #[\SensitiveParameter] string $newPassword, ?string $keepSessionId): array
 {
-    if (!function_exists('dbQuery')) {
-        return [
-            'success'   => false,
-            'httpCode'  => 503,
-            'errorCode' => 'SERVICE_UNAVAILABLE',
-            'message'   => 'Password change is temporarily unavailable. Please try again later.',
-            'data'      => [],
-        ];
+    $unavailableResult = [
+        'success'   => false,
+        'httpCode'  => 503,
+        'errorCode' => 'SERVICE_UNAVAILABLE',
+        'message'   => 'Password change is temporarily unavailable. Please try again later.',
+        'data'      => [],
+    ];
+
+    if (!function_exists('dbQuery') || !function_exists('getDB')) {
+        return $unavailableResult;
     }
 
+    // 🧱 The lock and mark helpers live in fn_auth.php (loaded with every
+    //    session-backed page and the API). Without them this change cannot be
+    //    made safely, so it is refused rather than done the old, unsafe way.
+    if (!function_exists('authLockLiveSessionForUser') || !function_exists('authMoveSessionsValidFrom') || !function_exists('authSessionsValidFromReady')) {
+        return $unavailableResult;
+    }
+
+    // ------------------------------------------------------------------
+    // 🔍 Step 1: read the stored password (no lock) and check the typed one.
+    // ------------------------------------------------------------------
     try {
         $stmt = dbQuery(
             'SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
@@ -761,9 +869,14 @@ function changeUserPassword(int $userID, #[\SensitiveParameter] string $currentP
         ];
     }
 
-    $storedHash = (string) $row['passwordHash'];
+    // 📌 An account with no password (Google/Microsoft only) has NULL here;
+    //    verifyPassword() never matches an empty stored value.
+    $checkedHash = '';
+    if ($row['passwordHash'] !== null) {
+        $checkedHash = (string) $row['passwordHash'];
+    }
 
-    if (!verifyPassword($currentPassword, $storedHash)) {
+    if ($checkedHash === '' || !verifyPassword($currentPassword, $checkedHash)) {
         return [
             'success'   => false,
             'httpCode'  => 401,
@@ -773,6 +886,9 @@ function changeUserPassword(int $userID, #[\SensitiveParameter] string $currentP
         ];
     }
 
+    // ------------------------------------------------------------------
+    // 💪 Step 2: the new password's strength, and its hash (slow, unlocked).
+    // ------------------------------------------------------------------
     $minLength = CUERCODE_ACCOUNT_PASSWORD_MIN_LENGTH_FALLBACK;
     if (function_exists('getConfig')) {
         $minLength = (int) getConfig('password_min_length', $minLength);
@@ -805,14 +921,135 @@ function changeUserPassword(int $userID, #[\SensitiveParameter] string $currentP
         ];
     }
 
+    // ------------------------------------------------------------------
+    // 🔒 Step 3: ONE short transaction - lock, re-check, write, sign out others.
+    // ------------------------------------------------------------------
+    $keepSession = ($keepSessionId !== null && $keepSessionId !== '');
+    $refusal     = null;
+    $db          = getDB();
+    $started     = false;
+
     try {
+        $db->begin_transaction();
+        $started = true;
+
+        // 🔐 3a. The account row FIRST, then (when one is kept) the session
+        //     row - the same order as a reset, so the two never deadlock.
+        if ($keepSession) {
+            $stillGood = authLockLiveSessionForUser($userID, (string) $keepSessionId);
+        } else {
+            $lockStmt  = dbQuery('SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
+            $lockRow   = $lockStmt->get_result()->fetch_assoc();
+            $lockStmt->close();
+            $stillGood = (is_array($lockRow) && (string) $lockRow['status'] === 'active');
+        }
+
+        if (!$stillGood) {
+            $refusal = 'session_ended';
+            throw new \RuntimeException('cuercode_change_password_refused');
+        }
+
+        // 🔁 3b. The stored password again, under the lock. It must be
+        //     exactly the one checked in step 1.
+        $hashStmt = dbQuery('SELECT `passwordHash` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
+        $hashRow  = $hashStmt->get_result()->fetch_assoc();
+        $hashStmt->close();
+
+        $storedNow = '';
+        if (is_array($hashRow) && $hashRow['passwordHash'] !== null) {
+            $storedNow = (string) $hashRow['passwordHash'];
+        }
+
+        if (!hash_equals($checkedHash, $storedNow)) {
+            $refusal = 'changed_meanwhile';
+            throw new \RuntimeException('cuercode_change_password_refused');
+        }
+
+        // ✍️ 3c. Write the new password ONLY while the stored value is still
+        //     the one checked (a fresh hash always differs from the old one,
+        //     because each hash has its own random salt, so one row changes).
         $updateStmt = dbQuery(
-            'UPDATE `tblUsers` SET `passwordHash` = ? WHERE `userID` = ?',
-            'si',
-            [$newHash, $userID]
+            'UPDATE `tblUsers` SET `passwordHash` = ? WHERE `userID` = ? AND `passwordHash` = ?',
+            'sis',
+            [$newHash, $userID, $checkedHash]
         );
+        $written = $updateStmt->affected_rows;
         $updateStmt->close();
+
+        if ($written !== 1) {
+            $refusal = 'changed_meanwhile';
+            throw new \RuntimeException('cuercode_change_password_refused');
+        }
+
+        // 🕐 3d. Move the sign-in mark: every other session - and any sign-in
+        //     still being checked with the old password - stops working.
+        $newMark = authMoveSessionsValidFrom($userID);
+
+        // 🚪 3e. End every other session row (tidy, and the sessions list).
+        if ($keepSession) {
+            $revokeStmt = dbQuery(
+                'UPDATE `tblUserSessions` SET `revokedAt` = NOW() '
+                . 'WHERE `userID` = ? AND `revokedAt` IS NULL AND `sessionID` != ?',
+                'is',
+                [$userID, (string) $keepSessionId]
+            );
+        } else {
+            $revokeStmt = dbQuery(
+                'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
+                'i',
+                [$userID]
+            );
+        }
+        $revokeStmt->close();
+
+        // 🎫 3f. The kept session takes the NEW mark, so it stays signed in.
+        if ($keepSession && $newMark !== null) {
+            $keepStmt = dbQuery(
+                'UPDATE `tblUserSessions` SET `sessionsValidFromSeen` = ? WHERE `sessionID` = ? AND `userID` = ? AND `revokedAt` IS NULL',
+                'ssi',
+                [$newMark, (string) $keepSessionId, $userID]
+            );
+            $kept = $keepStmt->affected_rows;
+            $keepStmt->close();
+
+            if ($kept !== 1) {
+                // The session was locked and good a moment ago, so this
+                // should never happen; refuse rather than sign the person out
+                // of the device they are using.
+                throw new \RuntimeException('the kept session could not be given the new sign-in mark');
+            }
+        }
+
+        $db->commit();
     } catch (\Throwable $e) {
+        if ($started) {
+            try {
+                $db->rollback();
+            } catch (\Throwable $rollbackError) {
+                // The original problem is the one reported below.
+            }
+        }
+
+        if ($refusal === 'session_ended') {
+            return [
+                'success'   => false,
+                'httpCode'  => 401,
+                'errorCode' => 'AUTH_REQUIRED',
+                'message'   => 'Your sign-in has ended (for example because the password was reset). Please sign in again; your password was not changed.',
+                'data'      => [],
+            ];
+        }
+
+        if ($refusal === 'changed_meanwhile') {
+            return [
+                'success'   => false,
+                'httpCode'  => 409,
+                'errorCode' => 'PASSWORD_CHANGED_MEANWHILE',
+                'message'   => 'Your password was changed somewhere else while this was being saved, so nothing was changed. Please try again with your current password.',
+                'data'      => [],
+            ];
+        }
+
         if (function_exists('logError')) {
             logError('error', 'Password update failed during change-password', 'userID: ' . $userID . ' | ' . $e->getMessage());
         }
@@ -825,30 +1062,7 @@ function changeUserPassword(int $userID, #[\SensitiveParameter] string $currentP
         ];
     }
 
-    // 🔐 Revoke every OTHER active session - the current one (if supplied) is
-    // preserved so the caller stays logged in on the device they used.
-    try {
-        if ($keepSessionId !== null && $keepSessionId !== '') {
-            $revokeStmt = dbQuery(
-                'UPDATE `tblUserSessions` SET `revokedAt` = NOW() '
-                . 'WHERE `userID` = ? AND `revokedAt` IS NULL AND `sessionID` != ?',
-                'is',
-                [$userID, $keepSessionId]
-            );
-        } else {
-            $revokeStmt = dbQuery(
-                'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
-                'i',
-                [$userID]
-            );
-        }
-        $revokeStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('warning', 'Other-session revoke failed after password change', 'userID: ' . $userID . ' | ' . $e->getMessage());
-        }
-    }
-
+    // 📝 After the commit: the log can never undo or block the change.
     if (function_exists('logActivity')) {
         logActivity('password_changed', 'User changed their own password', 'user', $userID, []);
     }
@@ -1564,7 +1778,12 @@ function buildErasedAccountEmail(int $userID): string
  *     before calling this; a missing/false value here still fails closed.
  *   - The CALLER'S current password is re-verified via `verifyPassword()`
  *     (timing-safe, same primitive `changeUserPassword()` uses) - a wrong
- *     password returns 401 INVALID_PASSWORD and NOTHING is mutated.
+ *     password returns 401 INVALID_PASSWORD and NOTHING is mutated. The
+ *     check runs outside any lock (it is slow on purpose); inside the
+ *     transaction the account row is locked and the stored password must
+ *     still be byte-for-byte the one checked, and the erase itself is
+ *     conditional on it - so a reset or change that lands in between means
+ *     409 PASSWORD_CHANGED_MEANWHILE and nothing is erased (final review I-1).
  *   - `$userID` is always resolved server-side from the caller's own session
  *     identity by `handleAccountErase()` - there is no "target user"
  *     parameter anywhere in this function or its caller that could ever
@@ -1727,13 +1946,46 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
     $transactionStarted  = false;
     $conflictDuringErase = false;
     $adminRefusedDuringErase = false;
+    $passwordChangedDuringErase = false;
 
     try {
         $db->begin_transaction();
         $transactionStarted = true;
 
+        // 🔒 Final review I-1 (2026-11-25): the password was checked above,
+        //    outside any lock (the check is slow on purpose). Lock the account
+        //    row now and require the stored password to be EXACTLY the one
+        //    that was checked. If a password reset or change landed in
+        //    between, the person who typed the OLD password must not be able
+        //    to erase the account: nothing is changed and they are told so.
+        //    The account row is the first thing locked, the same order as a
+        //    reset, so the two never wait for each other in a circle.
+        $lockStmt = dbQuery(
+            'SELECT `passwordHash`, `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE',
+            'i',
+            [$userID]
+        );
+        $lockedRow = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+
+        if (!is_array($lockedRow) || (string) $lockedRow['status'] === 'deleted') {
+            $conflictDuringErase = true;
+            throw new \RuntimeException('cuercode_erase_conflict');
+        }
+
+        $storedNow = '';
+        if ($lockedRow['passwordHash'] !== null) {
+            $storedNow = (string) $lockedRow['passwordHash'];
+        }
+
+        if (!hash_equals($storedHash, $storedNow)) {
+            $passwordChangedDuringErase = true;
+            throw new \RuntimeException('cuercode_erase_conflict');
+        }
+
         // 👤 Anonymize tblUsers PII in place (re-checks status != 'deleted'
-        // in the SAME statement - a concurrent double-erase affects 0 rows).
+        // and the checked password in the SAME statement - a concurrent
+        // double-erase, or a password changed meanwhile, affects 0 rows).
         $anonymizeStmt = dbQuery(
             "UPDATE `tblUsers` SET "
             . "`email` = ?, "
@@ -1746,12 +1998,12 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
             . "`erasedAt` = NOW(), "
             . "`failedLoginCount` = 0, "
             . "`lockedUntil` = NULL "
-            . "WHERE `userID` = ? AND `status` != 'deleted' "
+            . "WHERE `userID` = ? AND `status` != 'deleted' AND `passwordHash` = ? "
             // 🛡️ Check and erase in ONE statement: if the account was made a
             // Global Admin after the check above, no row is changed.
             . 'AND ' . adminSqlNotGlobalAdminCondition(),
-            'si',
-            [$anonymizedEmail, $userID]
+            'sis',
+            [$anonymizedEmail, $userID, $storedHash]
         );
         $anonymized = ($anonymizeStmt->affected_rows === 1);
         $anonymizeStmt->close();
@@ -1823,6 +2075,16 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
                 'httpCode'  => 409,
                 'errorCode' => 'GLOBAL_ADMIN_CANNOT_ERASE',
                 'message'   => 'This account is a Global Admin, so it cannot be deleted here. Its admin access must be removed first, by another Global Admin or on the server command line.',
+                'data'      => [],
+            ];
+        }
+
+        if ($passwordChangedDuringErase) {
+            return [
+                'success'   => false,
+                'httpCode'  => 409,
+                'errorCode' => 'PASSWORD_CHANGED_MEANWHILE',
+                'message'   => 'Your password was changed while this was being handled, so your account was NOT erased. Please sign in again and try once more.',
                 'data'      => [],
             ];
         }

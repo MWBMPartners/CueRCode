@@ -2942,7 +2942,7 @@
                     "Account"
                 ],
                 "summary": "Change your own password",
-                "description": "Own-account only. Re-verifies current_password server-side before accepting new_password (never trusts an existing session alone for this action), then revokes every other active session for the account (the current session, i.e. the one making this request, is preserved so the caller is not immediately logged out). **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
+                "description": "Own-account only. Re-verifies current_password server-side before accepting new_password (never trusts an existing session alone for this action), then ends every other sign-in for the account, including one still being checked elsewhere (the current session, i.e. the one making this request, is preserved so the caller is not immediately logged out). API keys and linked Google/Microsoft sign-ins are not changed. The password is saved only if the stored password is still the one that was checked: if it was changed or reset meanwhile, nothing is changed (`409 PASSWORD_CHANGED_MEANWHILE`), and if this session was ended meanwhile the answer is `401 AUTH_REQUIRED`. **Session-only.** Account management is reserved for an interactive (CSRF/session) caller - an X-API-Key-authenticated request gets `403 ACCOUNT_MANAGEMENT_FORBIDDEN` regardless of that key's scopes (API keys are for programmatic QR operations only, never account control).",
                 "operationId": "changeAccountPassword",
                 "security": [
                     {
@@ -2985,7 +2985,7 @@
                         "$ref": "#/components/responses/BadRequest"
                     },
                     "401": {
-                        "description": "Not authenticated, or the supplied current_password is incorrect (INVALID_CURRENT_PASSWORD)",
+                        "description": "Not authenticated or the session was ended meanwhile, for example by a password reset (AUTH_REQUIRED), or the supplied current_password is incorrect (INVALID_CURRENT_PASSWORD) - nothing is changed",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3022,6 +3022,28 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The password was changed or reset somewhere else while this request was being handled, so nothing was changed (PASSWORD_CHANGED_MEANWHILE). Try again with the current password.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "examples": {
+                                    "password_changed_meanwhile": {
+                                        "summary": "The password changed while this was being saved",
+                                        "value": {
+                                            "success": false,
+                                            "message": "Your password was changed somewhere else while this was being saved, so nothing was changed. Please try again with your current password.",
+                                            "data": {},
+                                            "error_code": "PASSWORD_CHANGED_MEANWHILE",
+                                            "timestamp": "2026-02-27T12:00:00+00:00"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3228,7 +3250,7 @@
                         }
                     },
                     "409": {
-                        "description": "Nothing was changed. Either the account is a Global Admin (`GLOBAL_ADMIN_CANNOT_ERASE` - its admin access must be removed first, by another Global Admin or on the server command line, and the last Global Admin can never be removed; checked before the password), or the account has already been erased (`ALREADY_ERASED` - a defensive, non-mutating fail-safe that should not normally be reachable, since an already-erased account cannot authenticate at all)",
+                        "description": "Nothing was changed. Either the account is a Global Admin (`GLOBAL_ADMIN_CANNOT_ERASE` - its admin access must be removed first, by another Global Admin or on the server command line, and the last Global Admin can never be removed; checked before the password), or the account has already been erased (`ALREADY_ERASED` - a defensive, non-mutating fail-safe that should not normally be reachable, since an already-erased account cannot authenticate at all), or the password was changed or reset while the request was being handled (`PASSWORD_CHANGED_MEANWHILE` - the old password erases nothing)",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -5214,7 +5236,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, GLOBAL_ADMIN_CANNOT_ERASE, ERASE_FAILED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are reserved for pay-as-you-go credit consumption, which is not available yet, so no endpoint returns them today), INVALID_DESTINATION, REDIRECT_SUSPENDED (the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates the destination and rejects an abuse-suspended redirect). The full, exact, machine-readable set is the x-error-codes array on this schema.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, GLOBAL_ADMIN_CANNOT_ERASE, ERASE_FAILED, PASSWORD_CHANGED_MEANWHILE, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are reserved for pay-as-you-go credit consumption, which is not available yet, so no endpoint returns them today), INVALID_DESTINATION, REDIRECT_SUSPENDED (the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates the destination and rejects an abuse-suspended redirect). The full, exact, machine-readable set is the x-error-codes array on this schema.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -5297,6 +5319,7 @@
                     "MISSING_FIELD",
                     "NOT_FOUND",
                     "NO_FIELDS",
+                    "PASSWORD_CHANGED_MEANWHILE",
                     "PAYLOAD_TOO_LARGE",
                     "RATE_LIMIT_EXCEEDED",
                     "REDIRECT_SUSPENDED",
