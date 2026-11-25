@@ -55,6 +55,7 @@ if (isset($adminActive) && is_string($adminActive)) {
 // ==============================================================================
 $adminNavLinks = [
     'overview' => ['Overview',          '/admin/',          'fa-solid fa-gauge'],
+    'settings' => ['Settings',          '/admin/settings/', 'fa-solid fa-gear'],
     'upgrades' => ['Database upgrades', '/admin/upgrades/', 'fa-solid fa-database'],
     'reauth'   => ['Confirm password',  '/admin/reauth/',   'fa-solid fa-key'],
 ];

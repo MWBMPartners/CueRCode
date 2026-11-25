@@ -475,6 +475,38 @@ function pricingHumanizeKey(string $key): string
 }
 
 // ==============================================================================
+// 🧾 pricingVatNote() - the VAT wording next to the prices (task 7n Phase 1C)
+// ==============================================================================
+
+/**
+ * 🧾 The short VAT sentence for the pricing page, from the billing_vat_mode
+ *    setting (an admin chooses it on /admin/settings/). PURE.
+ *
+ *   inclusive → "Prices include VAT"
+ *   exclusive → "Prices exclude VAT"
+ *   none      → "" (not VAT-registered: no VAT wording at all)
+ *   anything else (including empty) → "Prices include VAT", the seeded default
+ *
+ * @param string $mode The setting value
+ * @return string The sentence, or '' when no wording should be shown
+ *
+ * @see .claude/plans/7n-admin-commerce-plan.md §7.2, §8.3
+ */
+function pricingVatNote(string $mode): string
+{
+    if ($mode === 'exclusive') {
+        return 'Prices exclude VAT';
+    }
+
+    if ($mode === 'none') {
+        return '';
+    }
+
+    // 'inclusive' and any unknown value: the seeded default.
+    return 'Prices include VAT';
+}
+
+// ==============================================================================
 // 💷 pricingFormatPrice() - Format a plan price for display
 // ==============================================================================
 

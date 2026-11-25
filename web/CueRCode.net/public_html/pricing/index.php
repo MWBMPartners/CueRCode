@@ -91,6 +91,20 @@ if (function_exists('getConfig')) {
     $siteName = 'CueRCode';
 }
 
+// 🧾 The VAT wording next to the prices (an admin picks it on /admin/settings/).
+//    Fail-safe: when the setting cannot be read the seeded default is used.
+$pricingVatMode = 'inclusive';
+if (function_exists('getConfig')) {
+    $pricingVatConfigured = getConfig('billing_vat_mode', 'inclusive');
+    if (is_string($pricingVatConfigured)) {
+        $pricingVatMode = $pricingVatConfigured;
+    }
+}
+$pricingVatNote = '';
+if (function_exists('pricingVatNote')) {
+    $pricingVatNote = pricingVatNote($pricingVatMode);
+}
+
 $pageTitle       = 'Pricing';
 $pageDescription = 'Compare ' . $siteName . '\'s QR code generation plans - '
     . 'what is included free, and what Pro and Business will add.';
@@ -156,6 +170,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         Prices shown are introductory pricing and may change - we will always
                         honour your price for any subscription already in progress.
                     </p>
+                    <?php if ($pricingVatNote !== '') { ?>
+                    <p class="text-body-secondary small mt-2 mb-0" id="pricing-vat-note">
+                        <?php echo htmlspecialchars($pricingVatNote, ENT_QUOTES, 'UTF-8'); ?>
+                    </p>
+                    <?php } ?>
                 </div>
             </div>
 

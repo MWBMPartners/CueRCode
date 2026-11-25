@@ -278,7 +278,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                             <?php } ?>
                             <p class="small text-body-secondary mt-3 mb-0">
-                                The email details are entered on the settings screen, which is the next part of the admin area to be built.
+                                The email details are entered on the <a href="/admin/settings/#section-email">settings screen</a>.
                             </p>
                         </div>
                     </div>
@@ -366,8 +366,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <?php } ?>
                             <?php } ?>
                             <p class="small text-body-secondary mt-3 mb-0">
-                                Other forwarding servers are trusted only when listed in the trusted_proxy_ips
-                                setting (addresses or ranges, separated by commas). The command
+                                Other forwarding servers are trusted only when listed in the "Trusted forwarding servers"
+                                box on the <a href="/admin/settings/#section-admin-security">settings screen</a> (addresses or ranges, separated by commas). The command
                                 <code>php _includes/cli/visitor_address.php</code> shows the same rules for a pretend request.
                             </p>
                         </div>
