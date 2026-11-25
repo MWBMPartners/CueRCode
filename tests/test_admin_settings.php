@@ -159,6 +159,25 @@ foreach (['http://example.com/x', 'ftp://example.com/x', 'example.com/x', 'https
     assertFalse($asValidate('sso_microsoft_discovery_url', $asBad)['ok'], 'a discovery address refuses ' . var_export($asBad, true));
 }
 
+// 🏠 The website's own address (site_url, #113 B9): the discovery rules plus "nothing after the name".
+assertEquals('https://alpha.example.com', $asValidate('site_url', 'https://alpha.example.com')['value'], 'site_url: a plain address is kept as it is');
+assertEquals('https://alpha.example.com', $asValidate('site_url', 'https://alpha.example.com/')['value'], 'site_url: one trailing slash is removed');
+assertEquals('https://alpha.example.com', $asValidate('site_url', '  HTTPS://Alpha.Example.COM:443/ ')['value'], 'site_url: spaces trimmed, lower-cased, :443 and trailing slash removed');
+foreach ([
+    'http://alpha.example.com', 'alpha.example.com', 'https://', 'https://alpha.example.com/path', 'https://alpha.example.com/path/',
+    'https://alpha.example.com//', 'https://alpha.example.com?x=1', 'https://alpha.example.com/?x=1', 'https://alpha.example.com#top',
+    'https://alpha.example.com:8443', 'https://user:pass@alpha.example.com', 'https://127.0.0.1', 'https://[::1]', 'https://localhost',
+    'https://intranet', 'https://printer.local', 'https://box.internal', 'https://10.0.0.1.nip.io', 'https://exa mple.com',
+    'https://alpha.example.com\\evil', 'javascript:alert(1)', '',
+] as $asBad) {
+    assertFalse($asValidate('site_url', $asBad)['ok'], 'site_url refuses ' . var_export($asBad, true));
+}
+assertTrue(isset($asRegistry['site_url']) && $asRegistry['site_url']['section'] === 'website', 'site_url is on the settings screen (website address section)');
+assertFalse($asRegistry['site_url']['allowEmpty'], 'site_url cannot be saved empty');
+assertTrue(adminSettingsFieldIsRequired($asRegistry['site_url']), 'site_url box is marked required');
+$asSiteHtml = adminSettingsRenderField($asRegistry['site_url'], ['state' => ['exists' => true, 'hasValue' => true, 'value' => 'https://cuercode.net', 'updatedAt' => null], 'error' => '', 'timezone' => 'Europe/London', 'planChoices' => []]);
+assertTrue(str_contains($asSiteHtml, 'type="url"'), 'site_url box is a web-address input');
+
 // 🧾 Scopes.
 assertEquals('openid email profile', $asValidate('sso_google_scopes', 'openid  email profile')['value'], 'scopes: extra spaces are tidied');
 assertEquals('openid email', $asValidate('sso_google_scopes', 'openid email email')['value'], 'scopes: duplicates are removed');
@@ -304,7 +323,7 @@ assertEquals(
     $asOptionalKeys,
     'only trusted_proxy_ips and the six emailed-link limits may lack a seeded row'
 );
-assertEquals(8, count(adminSettingsSections()), 'there are eight sections (plan §7.2)');
+assertEquals(9, count(adminSettingsSections()), 'there are nine sections (plan §7.2, plus the website address section, #113 B9)');
 
 // 🔐 Every seeded secret is on the screen, or deliberately not (runtime caches, SIGNula, inert).
 $asKnownLeftOut = ['graph_token_cache', 'sso_signula_client_id', 'sso_signula_client_secret'];
@@ -850,7 +869,7 @@ if (function_exists('curl_init')) {
 // ❗ M6: required boxes say so; the unsaved-changes warning is on.
 foreach ($asRegistry as $asKey => $asField) {
     $asBox = adminSettingsRenderField($asField, ['state' => ['exists' => true, 'hasValue' => false, 'value' => '', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);
-    $asKindIsRequired = in_array($asField['kind'], ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'scopes'], true);
+    $asKindIsRequired = in_array($asField['kind'], ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'site_url', 'scopes'], true);
     if ($asKindIsRequired) {
         assertTrue(adminSettingsFieldIsRequired($asField), $asKey . ' is required');
         assertContains('(required)', $asBox, $asKey . ' says "(required)" in its label');

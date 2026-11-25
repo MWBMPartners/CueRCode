@@ -598,6 +598,26 @@ $asResult = adminSaveSetting(['key' => 'email_queue_retention_days'], '45', $asA
 asCheck('C', $asResult['outcome'] === 'saved' && asConfig('email_queue_retention_days') === 45, 'a retention period of 45 days is saved (getConfig() reads 45)');
 $asAudit = asAuditRows($asServer, 'setting.update', 'email_queue_retention_days');
 asCheck('C', count($asAudit) === 1 && json_decode((string) $asAudit[0]['changesJSON'], true) == ['email_queue_retention_days' => ['old' => '30', 'new' => '45']], 'audited as setting.update with old 30 and new 45 (got ' . (count($asAudit) > 0 ? (string) $asAudit[0]['changesJSON'] : 'no row') . ')');
+
+// 🏠 #113 B9: the website address (site_url) is on the screen, is stored in its one plain form, is audited, and the emailed links follow it.
+asCheck('C', asConfig('site_url') === 'https://cuercode.net', 'before any change, site_url holds the seeded production address');
+asCheck('C', str_starts_with(buildAccountActionUrl('verify-email', 'tok'), 'https://cuercode.net/verify-email?token='), 'before any change, an emailed link points at the seeded address');
+$asSiteStates = (array) adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection('website')));
+$asSitePost = adminSettingsProcessSection('website', ['f' => ['site_url' => ' HTTPS://Alpha.Example.Net/ ']], $asSiteStates, []);
+asCheck('C', $asSitePost['errors'] === [] && count($asSitePost['changes']) === 1, 'the website address box is accepted through the section form');
+$asSiteSaved = adminSettingsSaveSection($asAdmin, 'website', asFingerprint('website'), $asSitePost['changes']);
+asCheck('C', $asSiteSaved['ok'] === true, 'the website address section saves');
+asCheck('C', (string) asSetting($asServer, 'site_url')['settingValue'] === 'https://alpha.example.net', 'it is stored lower-case with no trailing slash');
+asConfig('site_url');
+asCheck('C', str_starts_with(buildAccountActionUrl('verify-email', 'tok'), 'https://alpha.example.net/verify-email?token='), 'an emailed link now points at the new address');
+asCheck('C', ssoRedirectUri('microsoft') === 'https://alpha.example.net/auth/callback/microsoft', 'the Microsoft callback address follows it too');
+$asSiteAudit = asAuditRows($asServer, 'setting.update', 'site_url');
+asCheck('C', count($asSiteAudit) === 1 && json_decode((string) $asSiteAudit[0]['changesJSON'], true) == ['site_url' => ['old' => 'https://cuercode.net', 'new' => 'https://alpha.example.net']], 'the change is audited with old and new');
+$asSiteBad = adminSaveSetting(['key' => 'site_url'], 'https://alpha.example.net/path', $asAdmin);
+asCheck('C', $asSiteBad['ok'] === false && asConfig('site_url') === 'https://alpha.example.net', 'an address with a path is refused and the stored one is unchanged');
+$asSiteBad = adminSaveSetting(['key' => 'site_url'], 'https://192.168.0.1', $asAdmin);
+asCheck('C', $asSiteBad['ok'] === false, 'an IP number is refused');
+adminSaveSetting(['key' => 'site_url'], 'https://cuercode.net', $asAdmin);
 $asResult = adminSaveSetting(['key' => 'email_queue_retention_days'], '45', $asAdmin);
 asCheck('C', $asResult['outcome'] === 'unchanged' && count(asAuditRows($asServer, 'setting.update', 'email_queue_retention_days')) === 1, 'saving the same value again writes no new audit row');
 foreach (['0', '3651', 'abc', ''] as $asBad) {
@@ -1071,7 +1091,7 @@ if (getenv('CUERCODE_IT_DUMP_PAGE') !== false) {
 }
 asCheck('J', $asPage['exit'] === 0 && str_contains($asPage['html'], '<h1'), 'GET (unlocked): the page renders (exit ' . $asPage['exit'] . ', ' . strlen($asPage['html']) . ' bytes)' . ($asPage['err'] !== '' ? ' stderr: ' . substr($asPage['err'], 0, 300) : ''));
 asCheck('J', substr_count($asPage['html'], '<h1') === 1, 'exactly one h1');
-asCheck('J', substr_count($asPage['html'], '<section id=') === 0 && substr_count($asPage['html'], 'id="section-') === 8, 'eight sections');
+asCheck('J', substr_count($asPage['html'], '<section id=') === 0 && substr_count($asPage['html'], 'id="section-') === 9, 'nine sections');
 asCheck('J', !str_contains($asPage['html'], $asSecrets['page']), 'the page does not contain the stored secret text');
 asCheck('J', !str_contains($asPage['html'], $asStoredCipher) && !str_contains($asPage['html'], substr($asStoredCipher, 0, 24)), 'the page does not contain the stored ciphertext');
 asCheck('J', str_contains($asPage['html'], 'Set - last changed'), 'the page says the secret is Set, and when it was last changed');
@@ -1081,7 +1101,7 @@ asCheck('J', str_contains($asPage['html'], 'Editing unlocked until') && !str_con
 foreach (array_keys(adminSettingsSections()) as $asSectionId) {
     asCheck('J', str_contains($asPage['html'], '<input type="hidden" name="fp" value="' . asFingerprint($asSectionId) . '">'), 'the ' . $asSectionId . ' form carries the current fingerprint');
 }
-asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 8, 'all eight forms have the unsaved-changes warning');
+asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 9, 'all nine forms have the unsaved-changes warning');
 asCheck('J', str_contains($asPage['html'], 'Save PayPal settings') && str_contains($asPage['html'], 'Save prices, VAT and refunds') && str_contains($asPage['html'], 'Save email settings') && !str_contains($asPage['html'], 'Save email (microsoft'), 'each section has its own button words');
 asCheck('J', str_contains($asPage['html'], '(required)') && str_contains($asPage['html'], 'data-admin-confirm-check="Remove this stored secret?"'), 'required boxes say so and the Remove tick asks for confirmation');
 asCheck('J', str_contains($asPage['html'], 'name="f[password_reset_request_daily_cap]"') && str_contains($asPage['html'], 'name="f[verification_resend_min_gap_seconds]"'), 'the emailed-link limits are on the page');

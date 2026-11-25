@@ -210,13 +210,19 @@ function adminSettingsChargingSwitches(): array
 // ==============================================================================
 
 /**
- * 📑 The eight sections, in page order.
+ * 📑 The nine sections, in page order.
  *
  * @return array<string, array{saveLabel: string, title: string, icon: string, intro: string}> saveLabel = the words on the section's own Save button
  */
 function adminSettingsSections(): array
 {
     return [
+        'website' => [
+            'saveLabel' => 'Save website address',
+            'title' => 'Website address',
+            'icon'  => 'fa-solid fa-globe',
+            'intro' => 'The address this copy of the site lives at. Links in emails (verify your email, reset your password) and the sign-in callback addresses below are built from it, so set it BEFORE you turn email on. A test site (alpha or beta) must use its own address, or its emails will point people at the live site.',
+        ],
         'email' => [
             'saveLabel' => 'Save email settings',
             'title' => 'Email (Microsoft 365)',
@@ -317,6 +323,15 @@ function adminSettingsField(array $field): array
 function adminSettingsRegistry(): array
 {
     $fields = [];
+
+    // ------------------------------------------------------ 0. Website address
+    $fields[] = adminSettingsField([
+        'key' => 'site_url', 'section' => 'website', 'kind' => 'site_url', 'group' => 'general', 'type' => 'url',
+        'label' => 'Website address used in emailed links',
+        'help' => 'Start with https:// and give only the website name, for example https://alpha.example.com. No page path, no trailing slash, no port, no IP number and no localhost. Emailed links and the Microsoft and Google callback addresses are built from this.',
+        'allowEmpty' => false, 'maxLength' => 253,
+        'description' => 'The base URL of the website',
+    ]);
 
     // ---------------------------------------------------------------- 1. Email
     $fields[] = adminSettingsField([
@@ -879,6 +894,50 @@ function adminSettingsRefusedHostSuffixes(): array
 }
 
 /**
+ * 🏠 Check the website's own address (the "site_url" setting). PURE.
+ *
+ *    It is the discovery-address check (https only, a proper public website
+ *    name, no IP number, no localhost or internal names, no user name or
+ *    password, no odd port) PLUS: nothing after the website name. A path, a
+ *    query, a "#" part or a doubled slash is refused, because the code adds
+ *    its own path ("/verify-email?token=..."). One trailing slash is accepted
+ *    and removed, ":443" is removed, and the scheme and name are written in
+ *    lower case, so the saved value is always the one plain form
+ *    "https://name.example".
+ *
+ * @param string $text The trimmed address
+ * @return array{ok: bool, value: string, error: string}
+ */
+function adminSettingsValidateSiteAddress(string $text): array
+{
+    // 1. The shared rules first (https, public-looking name, no IP, no port but 443 ...).
+    $shared = adminSettingsValidateHttpsAddress($text);
+    if ($shared['ok'] !== true) {
+        return $shared;
+    }
+
+    // 2. Split the name from whatever follows it. The shared check proved the
+    //    text starts with "https://" and a non-empty name.
+    if (preg_match('~^https://([^/?#]*)(.*)$~is', $text, $parts) !== 1) {
+        return ['ok' => false, 'value' => '', 'error' => 'That does not look like a web address.'];
+    }
+    $authority = strtolower($parts[1]);
+    $rest      = $parts[2];
+
+    // 3. Only a single "/" may follow (a trailing slash, which is removed).
+    if ($rest !== '' && $rest !== '/') {
+        return ['ok' => false, 'value' => '', 'error' => 'Give only the website name, for example https://alpha.example.com. Leave out any page path, "?" part or "#" part.'];
+    }
+
+    // 4. ":443" is the normal HTTPS port: drop it so the value is written one way.
+    if (str_ends_with($authority, ':443')) {
+        $authority = substr($authority, 0, -4);
+    }
+
+    return ['ok' => true, 'value' => 'https://' . $authority, 'error' => ''];
+}
+
+/**
  * ✅ Validate and tidy ONE non-secret value for its registry entry (and, for
  *    secrets, the value mode: '' means "clear"). PURE.
  *
@@ -1004,6 +1063,10 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
 
     if ($kind === 'https_url') {
         return adminSettingsValidateHttpsAddress($text);
+    }
+
+    if ($kind === 'site_url') {
+        return adminSettingsValidateSiteAddress($text);
     }
 
     if ($kind === 'scopes') {
@@ -2303,7 +2366,7 @@ function adminSettingsFieldIsRequired(array $field, ?array $state = null): bool
         return false;
     }
 
-    if (in_array($kind, ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'scopes'], true)) {
+    if (in_array($kind, ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'site_url', 'scopes'], true)) {
         return true;
     }
 
@@ -2534,7 +2597,7 @@ function adminSettingsRenderField(array $field, array $view): string
     if ($kind === 'email') {
         $inputType = 'email';
         $extra = ' autocomplete="off" spellcheck="false"';
-    } elseif ($kind === 'https_url') {
+    } elseif ($kind === 'https_url' || $kind === 'site_url') {
         $inputType = 'url';
         $extra = ' autocomplete="off" spellcheck="false"';
     } elseif ($kind === 'int') {
