@@ -17,7 +17,13 @@
  *   - the "Sign in with Microsoft / Google" providers: ready or not;
  *   - the three charging switches, which stay Off (locked) until checkout is
  *     built;
- *   - how many working Global Admins there are.
+ *   - how many working Global Admins there are;
+ *   - the "Visitor address check" (decision 0014): the address this request
+ *     came from, which header (if any) was used, the address the site will
+ *     use for per-visitor limits, and whether the connection is inside a
+ *     Cloudflare range - so the owner can see on the LIVE host whether the
+ *     site is behind Cloudflare and reads visitor addresses correctly. The
+ *     admin's own address is shown to the admin only.
  *
  * 🚪 requireGlobalAdminPage() is the first application call (a test checks
  *    this for every admin page): not signed in → sign-in page; signed in but
@@ -29,6 +35,7 @@
  * @version     1.0.0
  * @since       2026-11-24 (task 7n Phase 1B, #31)
  * @see         _functions/fn_admin.php - requireGlobalAdminPage() and the helpers used here
+ * @see         _functions/fn_client_ip.php - clientAddressCheck() (decision 0014)
  * @see         .claude/plans/7n-admin-commerce-plan.md §7.1 (/admin/ row)
  */
 
@@ -122,6 +129,17 @@ foreach ($adminChargingSwitches as $adminSwitchKey => $adminSwitchLabel) {
 // 👥 Global Admins
 // ==============================================================================
 $adminCount = adminCountGlobalAdmins();
+
+// ==============================================================================
+// 🌍 Visitor address check (decision 0014) - read-only
+// ==============================================================================
+// fn_client_ip.php is loaded on every page by bootstrap.php. Forget the
+// remembered setting first, so the check shows what is saved right now.
+$adminAddressCheck = null;
+if (function_exists('clientAddressCheck')) {
+    clientIpTrustedProxySetting(true);
+    $adminAddressCheck = clientAddressCheck($_SERVER, clientIpTrustedProxySetting(), clientIpCloudflareData());
+}
 
 // ==============================================================================
 // 📄 Page variables
@@ -314,6 +332,43 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </dl>
                             <p class="small text-body-secondary mt-3 mb-0">
                                 Charging switches on when checkout is built, after dynamic QR codes. Nobody can be charged until then.
+                            </p>
+                        </div>
+                    </div>
+
+                    <?php /* 🌍 Visitor address check (decision 0014) */ ?>
+                    <div class="card shadow-sm mb-4" id="admin-visitor-address">
+                        <div class="card-header bg-transparent">
+                            <h2 class="h5 mb-0"><i class="fa-solid fa-location-dot me-2" aria-hidden="true"></i>Visitor address check</h2>
+                        </div>
+                        <div class="card-body">
+                            <p class="small text-body-secondary">
+                                Limits such as sign-in lock-outs and "send me a new link" count each visitor by their
+                                internet address. This shows how the site worked out YOUR address for this page.
+                                The "address the site will use" should be your own internet address (any
+                                "what is my IP" website shows it). If this site is behind Cloudflare, "inside a
+                                Cloudflare range" should say Yes.
+                            </p>
+                            <?php if ($adminAddressCheck === null) { ?>
+                                <p class="mb-0"><?php echo adminStatusHtml('warning', 'The check is not available.'); ?></p>
+                            <?php } else { ?>
+                                <dl class="row mb-0">
+                                    <?php foreach ($adminAddressCheck['rows'] as $adminAddressRow) { ?>
+                                    <dt class="col-sm-5"><?php echo adminEscape($adminAddressRow['label']); ?></dt>
+                                    <dd class="col-sm-7 text-break"><?php echo adminEscape($adminAddressRow['value']); ?></dd>
+                                    <?php } ?>
+                                </dl>
+                                <?php foreach ($adminAddressCheck['warnings'] as $adminAddressWarning) { ?>
+                                <div class="alert alert-warning mt-3 mb-0" role="status">
+                                    <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                                    <?php echo adminEscape($adminAddressWarning); ?>
+                                </div>
+                                <?php } ?>
+                            <?php } ?>
+                            <p class="small text-body-secondary mt-3 mb-0">
+                                Other forwarding servers are trusted only when listed in the trusted_proxy_ips
+                                setting (addresses or ranges, separated by commas). The command
+                                <code>php _includes/cli/visitor_address.php</code> shows the same rules for a pretend request.
                             </p>
                         </div>
                     </div>

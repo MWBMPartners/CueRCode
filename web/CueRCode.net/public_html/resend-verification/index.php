@@ -67,14 +67,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_submit'])) {
     } elseif ($postedEmail === '' || mb_strlen($postedEmail) > 254 || !function_exists('validateEmail') || !validateEmail($postedEmail)) {
         $formError = 'Please enter a valid email address.';
     } elseif (function_exists('requestNewVerificationLink')) {
-        // 🌍 getClientIP() lives in fn_api_auth.php (not loaded on ordinary pages).
-        require_once CUERCODE_FUNCTIONS_DIR . 'fn_api_auth.php';
-
-        if (function_exists('getClientIP')) {
-            $clientIp = getClientIP();
-        } else {
-            $clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-        }
+        // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
+        //    every page by bootstrap.php, so this per-address limit counts the
+        //    real visitor, not a forwarder and not a faked header.
+        $clientIp = getClientIP();
 
         $resendResult = requestNewVerificationLink($postedEmail, $clientIp);
 

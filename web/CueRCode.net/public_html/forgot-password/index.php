@@ -12,6 +12,10 @@
  * anti-enumeration contract exactly; this page adds NO additional detail on
  * top of it.
  *
+ * 🔐 Decision 0013: a WAITING (pending) account gets a reset link too - the
+ * way out for someone whose address a stranger signed up with first. Using
+ * the link activates the account (see reset-password/index.php).
+ *
  * @package     CueRCode
  * @subpackage  Pages / Account
  * @copyright   2025–2026 MWBM Partners Ltd
@@ -56,11 +60,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['forgot_submit'])) {
     } elseif ($postedEmail === '' || !function_exists('validateEmail') || !validateEmail($postedEmail)) {
         $formError = 'Please enter a valid email address.';
     } elseif (function_exists('requestPasswordReset')) {
-        if (function_exists('getClientIP')) {
-            $clientIp = getClientIP();
-        } else {
-            $clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-        }
+        // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
+        //    every page by bootstrap.php.
+        $clientIp = getClientIP();
 
         // 📌 The identical generic response either way - see file header.
         requestPasswordReset($postedEmail, $clientIp);
@@ -113,7 +115,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                             <p class="text-body-secondary text-center mb-4">
                                 Enter your account's email address and we'll send you a link to reset
-                                your password.
+                                your password. This also works for an account that is still waiting for
+                                its email address to be confirmed: setting a new password activates it.
                             </p>
 
                             <?php if ($formError !== null) { ?>

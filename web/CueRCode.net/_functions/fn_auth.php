@@ -953,26 +953,161 @@ function requestNewVerificationLinkWork(string $email, string $ipAddress): array
 }
 
 // ==============================================================================
+// 🔑 emailVerificationPasswordOutcome() - may this link activate? (decision 0013)
+// ==============================================================================
+
+/**
+ * 🔑 Decide what a verification-link click does, given the password check.
+ *    PURE (decision 0013, docs/decisions/0013-signup-first-trick-verification-needs-password-reset-removes-all.md).
+ *
+ * WHY: a stranger can sign up first with someone else's email address. If the
+ * real owner of that address then clicked a verification link and the account
+ * became active, it would be active with the STRANGER's password. So a link
+ * only activates an account that has a password when the person clicking it
+ * also types that password. Someone who did not choose it is pointed to
+ * "Forgot password", which proves the address and sets a new password.
+ *
+ * Wrong passwords count toward the account's normal sign-in lock-out; when
+ * the count reaches the lock-out limit the link itself stops working too.
+ *
+ * @param bool $accountHasPassword    The account has a password (false = Microsoft/Google only)
+ * @param bool $passwordGiven         A password was typed
+ * @param bool $accountLocked         The account is locked out right now
+ * @param bool $passwordCorrect       The typed password is the account's
+ * @param int  $failedCountAfterWrong The failed-attempt count if this try is wrong
+ * @param int  $maxAttempts           The lock-out limit (0 or less = no limit)
+ * @return string 'activate', 'password_needed', 'locked', 'wrong_password' or 'wrong_password_link_stopped'
+ */
+function emailVerificationPasswordOutcome(
+    bool $accountHasPassword,
+    bool $passwordGiven,
+    bool $accountLocked,
+    bool $passwordCorrect,
+    int $failedCountAfterWrong,
+    int $maxAttempts
+): string {
+    // 👤 Microsoft/Google-only account: nothing to type - the old one-click way.
+    if (!$accountHasPassword) {
+        return 'activate';
+    }
+
+    // ⌨️ Nothing typed yet: ask, and do not count it as a wrong try.
+    if (!$passwordGiven) {
+        return 'password_needed';
+    }
+
+    // 🔒 Locked out: refused even with the right password (as at sign-in).
+    if ($accountLocked) {
+        return 'locked';
+    }
+
+    if ($passwordCorrect) {
+        return 'activate';
+    }
+
+    if ($maxAttempts > 0 && $failedCountAfterWrong >= $maxAttempts) {
+        return 'wrong_password_link_stopped';
+    }
+
+    return 'wrong_password';
+}
+
+// ==============================================================================
+// 🔎 emailVerificationTokenNeedsPassword() - should the page show a password box?
+// ==============================================================================
+
+/**
+ * 🔎 Does this verification link need the account's password? READ-ONLY - a
+ *    mail scanner opening the page changes nothing (decision 0013).
+ *
+ * The answer is "yes" in every case except one: the link is valid, unused,
+ * in date, and its account has no password (Microsoft/Google only). So the
+ * page shows the password box unless it is sure it is not needed.
+ *
+ * @param string $rawToken The raw token from the link
+ * @return bool
+ */
+function emailVerificationTokenNeedsPassword(string $rawToken): bool
+{
+    if ($rawToken === '' || !function_exists('dbQuery')) {
+        return true;
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT `v`.`tokenHash`, `v`.`expiresAt`, `v`.`usedAt`, `u`.`passwordHash` '
+            . 'FROM `tblEmailVerifications` AS `v` '
+            . 'INNER JOIN `tblUsers` AS `u` ON `u`.`userID` = `v`.`userID` '
+            . 'WHERE `v`.`tokenHash` = ? LIMIT 1',
+            's',
+            [hashToken($rawToken)]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        return true;
+    }
+
+    if ($row === null || $row['usedAt'] !== null) {
+        return true;
+    }
+
+    $expiresAt = strtotime((string) $row['expiresAt']);
+    if ($expiresAt === false || $expiresAt < time()) {
+        return true;
+    }
+
+    return ($row['passwordHash'] !== null && (string) $row['passwordHash'] !== '');
+}
+
+// ==============================================================================
 // ✅ verifyEmailToken() - Consume a single-use email verification token
 // ==============================================================================
 
 /**
  * ✅ Verify a raw email-verification token and activate the owning account.
  *
- * @param string $rawToken The raw token from the emailed verification link
+ * 🔑 Decision 0013: when the account has a password, the person clicking the
+ *    link must type it ($password). A wrong or missing password, an invalid
+ *    link and a locked account all get the SAME message, pointing to "Forgot
+ *    password"; the link is used up only when the account is activated, or
+ *    when wrong passwords reach the lock-out limit. Accounts with no password
+ *    (Microsoft/Google only) are activated by the link alone, as before.
+ *
+ * @param string      $rawToken The raw token from the emailed verification link
+ * @param string|null $password The account's password, as typed (null = not given)
  *
  * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
  *
  * @see registerUser()
+ * @see emailVerificationPasswordOutcome()
  */
-function verifyEmailToken(string $rawToken): array
+function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $password = null): array
 {
-    $invalidMessage = 'This verification link is invalid or has expired.';
+    // 📣 ONE message for a bad link, a wrong password and a locked account.
+    $invalidMessage = 'This verification link is invalid or has expired, or the password is not right. '
+        . 'Type the password you chose when you signed up. If you did not choose it, or have forgotten it, '
+        . 'use "Forgot password": it sends a link to this email address that sets a new password and activates the account.';
     $invalidResult  = [
         'success'   => false,
         'httpCode'  => 400,
         'errorCode' => 'VERIFICATION_TOKEN_INVALID',
         'message'   => $invalidMessage,
+        'data'      => [],
+    ];
+    $passwordNeededResult = [
+        'success'   => false,
+        'httpCode'  => 400,
+        'errorCode' => 'VERIFICATION_TOKEN_INVALID',
+        'message'   => 'Please type the password you chose when you signed up. If you did not choose it, or have forgotten it, use "Forgot password" instead.',
+        'data'      => [],
+    ];
+    $linkStoppedResult = [
+        'success'   => false,
+        'httpCode'  => 400,
+        'errorCode' => 'VERIFICATION_TOKEN_INVALID',
+        'message'   => 'The password was not right too many times, so this link has stopped working. '
+            . 'Use "Forgot password" to set a new password; that also activates the account.',
         'data'      => [],
     ];
     $alreadyUsedResult = [
@@ -1046,10 +1181,109 @@ function verifyEmailToken(string $rawToken): array
         return $invalidResult;
     }
 
-    // 🔒 Atomically claim the token (usedAt IS NULL guard) BEFORE activating
-    // the account, closing the race window between two simultaneous requests
-    // for the same token.
+    // 👤 Decision 0013: the account's password and lock-out state.
     try {
+        $accountStmt = dbQuery(
+            'SELECT `passwordHash`, `failedLoginCount`, `lockedUntil` FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
+            'i',
+            [$userID]
+        );
+        $account = $accountStmt->get_result()->fetch_assoc();
+        $accountStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Verification account lookup failed', $e->getMessage());
+        }
+        return $invalidResult;
+    }
+
+    if ($account === null) {
+        return $invalidResult;
+    }
+
+    $accountHasPassword = ($account['passwordHash'] !== null && (string) $account['passwordHash'] !== '');
+    $passwordGiven      = ($password !== null && $password !== '');
+    $failedCount        = (int) $account['failedLoginCount'];
+
+    $accountLocked = false;
+    if ($account['lockedUntil'] !== null) {
+        $lockedUntilTimestamp = strtotime((string) $account['lockedUntil']);
+        $accountLocked = ($lockedUntilTimestamp !== false && $lockedUntilTimestamp > time());
+    }
+
+    // 🔐 Only check the password when it can matter (Argon2id is slow on purpose).
+    //    A password longer than any the site accepts is simply wrong.
+    $passwordCorrect = false;
+    if ($accountHasPassword && $passwordGiven && !$accountLocked) {
+        if (mb_strlen((string) $password) <= 1024 && function_exists('verifyPassword')) {
+            $passwordCorrect = verifyPassword((string) $password, (string) $account['passwordHash']);
+        }
+    }
+
+    $maxAttempts = CUERCODE_DEFAULT_MAX_LOGIN_ATTEMPTS;
+    if (function_exists('getConfig')) {
+        $maxAttempts = (int) getConfig('max_login_attempts', $maxAttempts);
+    }
+
+    $outcome = emailVerificationPasswordOutcome(
+        $accountHasPassword,
+        $passwordGiven,
+        $accountLocked,
+        $passwordCorrect,
+        $failedCount + 1,
+        $maxAttempts
+    );
+
+    if ($outcome === 'password_needed') {
+        return $passwordNeededResult;
+    }
+
+    if ($outcome === 'locked') {
+        return $invalidResult;
+    }
+
+    if ($outcome === 'wrong_password' || $outcome === 'wrong_password_link_stopped') {
+        // 🔢 A wrong password counts toward the normal sign-in lock-out.
+        recordFailedLogin($userID, $failedCount + 1);
+
+        if ($outcome === 'wrong_password') {
+            return $invalidResult;
+        }
+
+        // 🛑 Too many wrong passwords: this link stops working as well.
+        try {
+            $stopStmt = dbQuery(
+                'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() WHERE `verificationID` = ? AND `usedAt` IS NULL',
+                'i',
+                [(int) $row['verificationID']]
+            );
+            $stopStmt->close();
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('warning', 'Verification link could not be stopped after too many wrong passwords', $e->getMessage());
+            }
+        }
+
+        if (function_exists('logActivity')) {
+            // 🙈 The account NUMBER only - never the address, link or password.
+            logActivity('verification_link_stopped', 'A verification link stopped working after too many wrong passwords', 'user', $userID, []);
+        }
+
+        return $linkStoppedResult;
+    }
+
+    // ✅ 'activate': claim the token and activate the account in ONE
+    //    transaction, so a failure part-way leaves the link usable.
+    $db = getDB();
+    $transactionStarted = false;
+
+    try {
+        $db->begin_transaction();
+        $transactionStarted = true;
+
+        // 🔒 Atomically claim the token (usedAt IS NULL guard) BEFORE
+        // activating the account, closing the race window between two
+        // simultaneous requests for the same token.
         $claimStmt = dbQuery(
             'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() '
             . 'WHERE `verificationID` = ? AND `usedAt` IS NULL',
@@ -1058,38 +1292,38 @@ function verifyEmailToken(string $rawToken): array
         );
         $claimed = ($claimStmt->affected_rows === 1);
         $claimStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('error', 'Verification token claim failed', $e->getMessage());
+
+        if (!$claimed) {
+            // 📌 Lost a race to another concurrent verification attempt for
+            // the same token.
+            authRollbackQuietly($db);
+            return $alreadyUsedResult;
         }
-        return $invalidResult;
-    }
 
-    if (!$claimed) {
-        // 📌 Lost a race to another concurrent verification attempt for the
-        // same token.
-        return $alreadyUsedResult;
-    }
-
-    try {
+        // 🧹 A successful password also clears the lock-out counter.
         $activateStmt = dbQuery(
-            "UPDATE `tblUsers` SET `emailVerifiedAt` = NOW(), `status` = 'active' "
+            "UPDATE `tblUsers` SET `emailVerifiedAt` = NOW(), `status` = 'active', `failedLoginCount` = 0, `lockedUntil` = NULL "
             . "WHERE `userID` = ? AND `status` = 'pending' AND " . adminSqlNotGlobalAdminCondition(),
             'i',
             [$userID]
         );
         $activateStmt->close();
+
+        $db->commit();
     } catch (\Throwable $e) {
+        if ($transactionStarted) {
+            authRollbackQuietly($db);
+        }
         if (function_exists('logError')) {
             logError('error', 'Account activation failed after verification', $e->getMessage());
         }
-        // The token was consumed but activation failed - surfaced to the
+        // Nothing was changed (the link still works) - surfaced to the
         // caller as a generic failure rather than a false success.
         return [
             'success'   => false,
             'httpCode'  => 500,
             'errorCode' => 'ACTIVATION_FAILED',
-            'message'   => 'Your email was verified but activation could not complete. Please contact support.',
+            'message'   => 'Your email address could not be verified just now. Please try again in a few minutes.',
             'data'      => [],
         ];
     }
@@ -1631,6 +1865,89 @@ function requireAuth(): array
 }
 
 // ==============================================================================
+// ↩️ authRollbackQuietly() - undo a transaction without throwing
+// ==============================================================================
+
+/**
+ * ↩️ Roll a transaction back, ignoring any error from the rollback itself
+ *    (the original error is the one worth reporting).
+ *
+ * @param \mysqli $db The connection
+ * @return void
+ */
+function authRollbackQuietly(\mysqli $db): void
+{
+    try {
+        $db->rollback();
+    } catch (\Throwable $e) {
+        // Nothing more can be done; the caller reports the original error.
+    }
+}
+
+// ==============================================================================
+// 🚪 accountRemoveOtherWaysIn() - ONE place that shuts every other door
+// ==============================================================================
+
+/**
+ * 🚪 Remove every OTHER way into an account, inside the caller's transaction.
+ *    Any database error is thrown, so the caller rolls EVERYTHING back.
+ *
+ * Shared by the password reset (decision 0013) and the command-line
+ * `admin_access.php grant --activate` (decision 0010, adminCliGrant() in
+ * fn_admin.php), so the list of doors is written down once.
+ *
+ *   - tblUserSessions: signed-in sessions -> ended (revokedAt set);
+ *   - tblAPIKeys: the account's API keys -> switched off (isActive = 0, the
+ *     same as the "revoke" button);
+ *   - tblPasswordResets: unused reset links -> cancelled (usedAt set; the
+ *     link being used right now was already used up by the caller);
+ *   - tblUserOAuth: linked Microsoft/Google sign-ins -> removed (a link has
+ *     no "off" switch; the owner can link their own again afterwards);
+ *   - tblWebAuthnCredentials: passkeys -> removed (not in use yet, but
+ *     removed so nothing is left behind when they are);
+ *   - tblEmailVerifications (only when $alsoCancelVerificationLinks): unused
+ *     email-check links -> cancelled. The command-line grant leaves them:
+ *     they only work on a 'pending' account, and it activates the account in
+ *     the same transaction (decision 0010 recorded exactly five counts).
+ * There are no "remember me" tokens on this site.
+ *
+ * @param int  $userID                      The account
+ * @param bool $alsoCancelVerificationLinks Also cancel unused email-check links
+ * @return array<string, int> How many of each were removed (no secrets)
+ * @throws \RuntimeException On any database error
+ */
+function accountRemoveOtherWaysIn(int $userID, bool $alsoCancelVerificationLinks): array
+{
+    $statements = [
+        'sessions_ended'                 => 'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
+        'api_keys_turned_off'            => 'UPDATE `tblAPIKeys` SET `isActive` = 0 WHERE `userID` = ? AND `isActive` = 1',
+        'password_reset_links_cancelled' => 'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `userID` = ? AND `usedAt` IS NULL',
+        'linked_sign_ins_removed'        => 'DELETE FROM `tblUserOAuth` WHERE `userID` = ?',
+        'passkeys_removed'               => 'DELETE FROM `tblWebAuthnCredentials` WHERE `userID` = ?',
+    ];
+
+    if ($alsoCancelVerificationLinks) {
+        $statements['verification_links_cancelled'] = 'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() WHERE `userID` = ? AND `usedAt` IS NULL';
+    }
+
+    $removed = [];
+
+    foreach ($statements as $key => $sql) {
+        $stmt  = dbQuery($sql, 'i', [$userID]);
+        $count = $stmt->affected_rows;
+        $stmt->close();
+
+        if (!is_int($count) || $count < 0) {
+            throw new \RuntimeException('earlier access could not be removed');
+        }
+
+        $removed[$key] = $count;
+    }
+
+    return $removed;
+}
+
+// ==============================================================================
 // 🔑 requestPasswordReset() - Always-identical-response reset request
 // ==============================================================================
 
@@ -1686,9 +2003,14 @@ function requestPasswordReset(string $email, string $ipAddress): array
         return $genericResult;
     }
 
-    // 📌 Only an ACTIVE account gets an actual reset email queued - this
-    // distinction is internal only and never observable in the response.
-    if ((string) $row['status'] === 'active') {
+    // 📌 Only an ACTIVE or a waiting (PENDING) account gets an actual reset
+    // email queued - this distinction is internal only and never observable
+    // in the response. 🔐 Decision 0013: a pending account is included,
+    // because the reset link proves the person owns the email address; using
+    // it sets a new password AND activates the account. This is the way out
+    // for someone whose address a stranger signed up with first.
+    $status = (string) $row['status'];
+    if ($status === 'active' || $status === 'pending') {
         $userID    = (int) $row['userID'];
         $rawToken  = generateRandomToken();
         $tokenHash = hashToken($rawToken);
@@ -1738,15 +2060,34 @@ function requestPasswordReset(string $email, string $ipAddress): array
  * possibly-compromised session must not survive a reset intended to lock an
  * attacker out) and the failed-login/lockout counters are cleared.
  *
+ * 🔐 Decision 0013 (the "someone signed up first with my email" trick): a
+ *    successful reset - on an active OR a waiting account - does ALL of this
+ *    in ONE database transaction, so either all of it happens or none of it:
+ *      1. uses up this reset link;
+ *      2. stores the new password and clears the sign-in lock-out;
+ *      3. on a waiting ('pending') account, also activates it and marks the
+ *         email address as checked (the reset link proves the person owns
+ *         the address) - never for an account holding the Global Admin role
+ *         (review fix I1: an emailed link never activates an admin);
+ *      4. ends every signed-in session, switches off every API key, removes
+ *         linked Microsoft/Google sign-ins and passkeys, and cancels every
+ *         other unused reset and verification link
+ *         (accountRemoveOtherWaysIn());
+ *      5. writes an activity row with COUNTS only (never the password, the
+ *         link or the address).
+ *    The slow password hashing happens BEFORE the transaction starts, so the
+ *    account row is locked only for a moment.
+ *
  * @param string $rawToken    The raw token from the emailed reset link
  * @param string $newPassword The candidate new plaintext password
  *
  * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
  *
  * @see requestPasswordReset()
+ * @see accountRemoveOtherWaysIn()
  * @see fn_password.php - validatePasswordPolicy(), hashPassword()
  */
-function resetPasswordWithToken(string $rawToken, string $newPassword): array
+function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string $newPassword): array
 {
     $invalidMessage = 'This password reset link is invalid or has expired.';
     $invalidResult  = [
@@ -1829,28 +2170,10 @@ function resetPasswordWithToken(string $rawToken, string $newPassword): array
         ];
     }
 
-    // 🔒 Atomically claim the token BEFORE applying the password change.
-    try {
-        $claimStmt = dbQuery(
-            'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL',
-            'i',
-            [(int) $row['resetID']]
-        );
-        $claimed = ($claimStmt->affected_rows === 1);
-        $claimStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('error', 'Password reset token claim failed', $e->getMessage());
-        }
-        return $invalidResult;
-    }
-
-    if (!$claimed) {
-        return $alreadyUsedResult;
-    }
-
     $userID = (int) $row['userID'];
 
+    // 🔑 Hash BEFORE the transaction: Argon2id is slow on purpose, and the
+    //    account row should be locked only for a moment.
     try {
         $newHash = hashPassword($newPassword);
     } catch (\Throwable $e) {
@@ -1866,47 +2189,140 @@ function resetPasswordWithToken(string $rawToken, string $newPassword): array
         ];
     }
 
-    try {
-        $updateStmt = dbQuery(
-            'UPDATE `tblUsers` SET `passwordHash` = ?, `failedLoginCount` = 0, `lockedUntil` = NULL '
-            . 'WHERE `userID` = ?',
-            'si',
-            [$newHash, $userID]
-        );
-        $updateStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('error', 'Password update failed during reset', $e->getMessage());
-        }
-        return [
-            'success'   => false,
-            'httpCode'  => 500,
-            'errorCode' => 'RESET_FAILED',
-            'message'   => 'Password reset could not be completed. Please try again later.',
-            'data'      => [],
-        ];
-    }
+    // 🛑 Review fix I1 applies here too: an emailed link never activates an
+    //    account holding the Global Admin role. fn_admin.php is loaded only
+    //    when needed and keeps the role number to itself.
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin.php';
 
-    // 🔐 Revoke ALL existing sessions for this account - a compromised
-    // session must not survive a reset meant to lock an attacker out.
+    $failedResult = [
+        'success'   => false,
+        'httpCode'  => 500,
+        'errorCode' => 'RESET_FAILED',
+        'message'   => 'Password reset could not be completed. Please try again later.',
+        'data'      => [],
+    ];
+
+    $db = getDB();
+    $transactionStarted = false;
+    $activated = false;
+    $removed   = [];
+
     try {
-        $revokeStmt = dbQuery(
-            'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
+        $db->begin_transaction();
+        $transactionStarted = true;
+
+        // 🔒 1. Atomically claim the token BEFORE applying the password change.
+        $claimStmt = dbQuery(
+            'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL',
+            'i',
+            [(int) $row['resetID']]
+        );
+        $claimed = ($claimStmt->affected_rows === 1);
+        $claimStmt->close();
+
+        if (!$claimed) {
+            authRollbackQuietly($db);
+            return $alreadyUsedResult;
+        }
+
+        // 🔐 The account, locked until the end of the transaction. (The role
+        //    is asked of fn_admin.php below, so this file never handles the
+        //    role column in a statement that changes anything.)
+        $accountStmt = dbQuery(
+            'SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE',
             'i',
             [$userID]
         );
-        $revokeStmt->close();
-    } catch (\Throwable $e) {
-        if (function_exists('logError')) {
-            logError('warning', 'Session revoke-on-reset failed', $e->getMessage());
+        $account = $accountStmt->get_result()->fetch_assoc();
+        $accountStmt->close();
+
+        $status = '';
+        if (is_array($account)) {
+            $status = (string) $account['status'];
         }
+
+        // 🚫 Only an active or a waiting account can be reset (a suspended or
+        //    deleted one cannot, even with a link issued before that). The
+        //    link is NOT used up - nothing at all changes.
+        if ($status !== 'active' && $status !== 'pending') {
+            authRollbackQuietly($db);
+            return $invalidResult;
+        }
+
+        if ($status === 'pending' && adminUserHoldsGlobalAdminRole($userID)) {
+            authRollbackQuietly($db);
+            if (function_exists('logError')) {
+                logError('warning', 'Password reset link refused for a waiting Global Admin account', 'userID ' . $userID);
+            }
+            return $invalidResult;
+        }
+
+        // 🔑 2 + 3. New password, lock-out cleared - and a waiting account
+        //    becomes active with a checked email address.
+        if ($status === 'pending') {
+            $updateStmt = dbQuery(
+                "UPDATE `tblUsers` SET `passwordHash` = ?, `failedLoginCount` = 0, `lockedUntil` = NULL, "
+                . "`status` = 'active', `emailVerifiedAt` = COALESCE(`emailVerifiedAt`, NOW()) "
+                . "WHERE `userID` = ? AND `status` = 'pending' AND " . adminSqlNotGlobalAdminCondition(),
+                'si',
+                [$newHash, $userID]
+            );
+            $activated = true;
+        } else {
+            $updateStmt = dbQuery(
+                "UPDATE `tblUsers` SET `passwordHash` = ?, `failedLoginCount` = 0, `lockedUntil` = NULL "
+                . "WHERE `userID` = ? AND `status` = 'active'",
+                'si',
+                [$newHash, $userID]
+            );
+        }
+        $changedRows = $updateStmt->affected_rows;
+        $updateStmt->close();
+
+        if ($changedRows !== 1) {
+            throw new \RuntimeException('the account changed while it was being updated');
+        }
+
+        // 🚪 4. Every other way in, in THIS transaction.
+        $removed = accountRemoveOtherWaysIn($userID, true);
+
+        // 🧾 5. What happened - counts only.
+        if (function_exists('logActivity')) {
+            logActivity(
+                'password_reset_completed',
+                'Password reset with an emailed link; every other way into the account was removed',
+                'user',
+                $userID,
+                ['account_activated' => $activated, 'removed' => $removed]
+            );
+        }
+
+        $db->commit();
+    } catch (\Throwable $e) {
+        if ($transactionStarted) {
+            authRollbackQuietly($db);
+        }
+        if (function_exists('logError')) {
+            logError('error', 'Password reset failed; nothing was changed', $e->getMessage());
+        }
+        return $failedResult;
     }
+
+    // 📣 Say plainly what changed, so nobody is surprised that an API key
+    //    stopped working or a Google/Microsoft button no longer signs them in.
+    $message = 'Your password has been reset.';
+    if ($activated) {
+        $message = 'Your password has been set and your account is now active.';
+    }
+    $message .= ' For your safety you have been signed out everywhere, any API keys on the account have been switched off,'
+        . ' and any linked Google or Microsoft sign-in has been removed. Sign in with your new password,'
+        . ' then make new API keys and link Google or Microsoft again on your account page if you need them.';
 
     return [
         'success'   => true,
         'httpCode'  => 200,
         'errorCode' => null,
-        'message'   => 'Your password has been reset. You can now log in with your new password.',
+        'message'   => $message,
         'data'      => [],
     ];
 }

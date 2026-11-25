@@ -149,7 +149,7 @@ function logActivity(
 
     // 🌍 Client IP address - use getClientIP() if available (trusted proxy aware),
     // otherwise fall back to REMOTE_ADDR only (prevents IP spoofing via headers).
-    // @see fn_api_auth.php - getClientIP()
+    // @see fn_client_ip.php - getClientIP() (decision 0014; loaded on every page)
     // @see https://www.php.net/manual/en/reserved.variables.server.php
     if (function_exists('getClientIP')) {
         $requestIP = getClientIP();

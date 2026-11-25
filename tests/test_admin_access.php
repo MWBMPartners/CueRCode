@@ -854,13 +854,21 @@ assertContains('#[\SensitiveParameter] ?string $first', $aaAdminSourceForCli, '0
 $aaPasswordSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_password.php');
 assertContains('function hashPassword(#[\SensitiveParameter] string $plainPassword)', $aaPasswordSource, 'hashPassword() hides the password from stack traces');
 assertContains('function validatePasswordPolicy(#[\SensitiveParameter] string $plainPassword', $aaPasswordSource, 'validatePasswordPolicy() hides the password from stack traces');
+// 🚪 Decision 0013 moved the list of "doors" into ONE shared function,
+//    accountRemoveOtherWaysIn() in fn_auth.php, used by this grant AND by the
+//    password reset - so these pins now read that function's body, and check
+//    that fn_admin.php no longer carries its own copy of the SQL.
+$aaAuthSourceForDoors = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_auth.php');
+$aaDoorsBody = substr($aaAuthSourceForDoors, (int) strpos($aaAuthSourceForDoors, 'function accountRemoveOtherWaysIn('), 3000);
 foreach (['tblUserSessions', 'tblAPIKeys', 'tblPasswordResets', 'tblUserOAuth', 'tblWebAuthnCredentials'] as $aaAccessTable) {
-    assertContains('`' . $aaAccessTable . '`', substr($aaAdminSourceForCli, (int) strpos($aaAdminSourceForCli, 'function adminCliRemoveEarlierAccess('), 3000), '0010: earlier access in ' . $aaAccessTable . ' is removed');
+    assertContains('`' . $aaAccessTable . '`', $aaDoorsBody, '0010: earlier access in ' . $aaAccessTable . ' is removed (shared accountRemoveOtherWaysIn())');
 }
+assertFalse(str_contains($aaAdminSourceForCli, 'function adminCliRemoveEarlierAccess('), '0013: fn_admin.php no longer has its own copy of the "remove every way in" SQL');
+assertFalse(str_contains($aaAdminSourceForCli, 'DELETE FROM `tblUserOAuth`'), '0013: the linked sign-in removal SQL is written once, in fn_auth.php');
 $aaGrantBody = substr($aaAdminSourceForCli, (int) strpos($aaAdminSourceForCli, 'function adminCliGrant('), 12000);
 assertTrue(
-    strpos($aaGrantBody, 'begin_transaction()') < strpos($aaGrantBody, 'adminCliRemoveEarlierAccess($userID)')
-    && strpos($aaGrantBody, 'adminCliRemoveEarlierAccess($userID)') < strpos($aaGrantBody, 'adminAuditWrite(')
+    strpos($aaGrantBody, 'begin_transaction()') < strpos($aaGrantBody, 'accountRemoveOtherWaysIn($userID, false)')
+    && strpos($aaGrantBody, 'accountRemoveOtherWaysIn($userID, false)') < strpos($aaGrantBody, 'adminAuditWrite(')
     && strpos($aaGrantBody, 'adminAuditWrite(') < strpos($aaGrantBody, '$db->commit()'),
     '0010: password, earlier access and the audit row all change inside ONE transaction'
 );

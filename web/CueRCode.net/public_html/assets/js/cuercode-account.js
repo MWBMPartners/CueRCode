@@ -288,15 +288,30 @@
         $form.on('submit', function (event) {
             event.preventDefault();
 
-            var token = $('#verify-token').val();
-            var $btn  = $('#verify-submit-btn');
+            var token     = $('#verify-token').val();
+            var $password = $('#verify-password');
+            var $btn      = $('#verify-submit-btn');
+            var payload   = { token: token };
+
+            /* 🔑 Decision 0013: the page shows a password box unless the
+               account has no password (Microsoft/Google only). An empty box
+               is caught here so the server is not asked for nothing. */
+            if ($password.length > 0) {
+                if ($password.val() === '') {
+                    showAjaxAlert('verify-ajax-alert', 'Please type the password you chose when you signed up.', 'danger');
+                    $password.trigger('focus');
+                    return;
+                }
+                payload.password = $password.val();
+            }
+
             setButtonBusy($btn, true, 'Verifying...');
 
             CueRCode.ajax({
                 url: CUERCODE_API_BASE + '/auth/verify-email',
                 method: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({ token: token }),
+                data: JSON.stringify(payload),
                 success: function (response) {
                     $form.hide();
                     showAjaxAlert('verify-ajax-alert', response.message, 'success');
@@ -309,7 +324,9 @@
                     if (status === 'abort') {
                         return;
                     }
-                    showAjaxAlert('verify-ajax-alert', extractErrorMessage(xhr, 'This verification link is invalid or has expired.'), 'danger');
+                    /* 🧹 Never leave a rejected password sitting in the box. */
+                    $password.val('');
+                    showAjaxAlert('verify-ajax-alert', extractErrorMessage(xhr, 'This verification link is invalid or has expired, or the password is not right.'), 'danger');
                 },
                 complete: function () {
                     setButtonBusy($btn, false, '');

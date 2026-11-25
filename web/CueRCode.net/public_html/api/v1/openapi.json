@@ -1656,7 +1656,7 @@
                     "Accounts"
                 ],
                 "summary": "Verify an email address",
-                "description": "Consume a single-use, expiring email-verification token (from the link emailed by POST /auth/register) and activate the owning account. Requires a valid CSRF token (website) or API key.",
+                "description": "Consume a single-use, expiring email-verification token (from the link emailed by POST /auth/register) and activate the owning account. Requires a valid CSRF token (website) or API key.\n\n**The account's password is required** (decision 0013): when the account has a password - every account made with POST /auth/register - the body must also carry `password`, the password chosen at sign-up. This stops someone who signed up first with another person's email address from having that account activated with their own password when the real owner clicks the link. A missing or wrong password, an invalid or expired token and a locked account all return `400 VERIFICATION_TOKEN_INVALID` with a message pointing to \"Forgot password\" (POST /auth/request-password-reset), which also works for an account still waiting for verification and activates it. Wrong passwords count toward the account's normal sign-in lock-out; when that limit is reached the token itself stops working. The token is used up only when the account is activated. An account with no password (Microsoft/Google sign-in only) is activated by the token alone; `password` is then ignored.",
                 "operationId": "authVerifyEmail",
                 "security": [
                     {
@@ -1710,7 +1710,7 @@
                         }
                     },
                     "400": {
-                        "description": "The token is invalid, not found, or has expired",
+                        "description": "The token is invalid, not found, or has expired; or the account's password is missing or not right; or the account is locked out",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -1718,10 +1718,10 @@
                                 },
                                 "examples": {
                                     "default": {
-                                        "summary": "Invalid/expired token",
+                                        "summary": "Invalid/expired token or wrong password",
                                         "value": {
                                             "success": false,
-                                            "message": "This verification link is invalid or has expired.",
+                                            "message": "This verification link is invalid or has expired, or the password is not right. Type the password you chose when you signed up. If you did not choose it, or have forgotten it, use \"Forgot password\": it sends a link to this email address that sets a new password and activates the account.",
                                             "data": {},
                                             "error_code": "VERIFICATION_TOKEN_INVALID",
                                             "timestamp": "2026-02-27T12:00:00+00:00"
@@ -1761,7 +1761,7 @@
                     "Accounts"
                 ],
                 "summary": "Request a password reset email",
-                "description": "Queue a password-reset email if (and only if) the address belongs to an active account. Anti-enumeration: always returns the identical 200 response regardless of whether the email is registered, so the response never reveals whether an address has an account. Requires a valid CSRF token (website) or API key.",
+                "description": "Queue a password-reset email if (and only if) the address belongs to an active account, or to one still waiting for email verification (decision 0013: using that link activates it). Anti-enumeration: always returns the identical 200 response regardless of whether the email is registered, so the response never reveals whether an address has an account. Requires a valid CSRF token (website) or API key.",
                 "operationId": "authRequestPasswordReset",
                 "security": [
                     {
@@ -1841,7 +1841,7 @@
                     "Accounts"
                 ],
                 "summary": "Reset a password using an emailed token",
-                "description": "Consume a single-use, expiring password-reset token (from the link emailed by POST /auth/request-password-reset) and set a new password. All existing sessions for the account are revoked on success. Requires a valid CSRF token (website) or API key.",
+                "description": "Consume a single-use, expiring password-reset token (from the link emailed by POST /auth/request-password-reset) and set a new password. Requires a valid CSRF token (website) or API key.\n\n**What a successful reset also does** (decision 0013), all in one database transaction: if the account was still waiting for email verification, it is activated (the reset link proves the email address); every signed-in session is ended; every API key on the account is switched off; linked Microsoft/Google sign-ins and passkeys are removed; and every other unused reset or verification link is cancelled. The success message says so in plain words. A suspended or deleted account cannot be reset (400 RESET_TOKEN_INVALID, nothing changed).",
                 "operationId": "authResetPassword",
                 "security": [
                     {
@@ -1863,7 +1863,7 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "Password reset - all existing sessions for the account have been revoked",
+                        "description": "Password reset - the account is signed out everywhere, its API keys are switched off, linked Microsoft/Google sign-ins and passkeys are removed, and a waiting account is activated",
                         "headers": {
                             "X-RateLimit-Limit": {
                                 "$ref": "#/components/headers/X-RateLimit-Limit"
@@ -1885,7 +1885,7 @@
                                         "summary": "Reset successful",
                                         "value": {
                                             "success": true,
-                                            "message": "Your password has been reset. You can now log in with your new password.",
+                                            "message": "Your password has been reset. For your safety you have been signed out everywhere, any API keys on the account have been switched off, and any linked Google or Microsoft sign-in has been removed. Sign in with your new password, then make new API keys and link Google or Microsoft again on your account page if you need them.",
                                             "data": {},
                                             "timestamp": "2026-02-27T12:00:00+00:00"
                                         }
@@ -5380,6 +5380,13 @@
                         "maxLength": 128,
                         "description": "The raw token from the emailed verification link",
                         "example": "9f2b1e...64-hex-chars"
+                    },
+                    "password": {
+                        "type": "string",
+                        "format": "password",
+                        "maxLength": 256,
+                        "description": "The password chosen at sign-up. Required whenever the account has a password (decision 0013); ignored for an account with no password (Microsoft/Google sign-in only). Missing or wrong: 400 VERIFICATION_TOKEN_INVALID.",
+                        "example": "the password chosen at sign-up"
                     }
                 }
             },

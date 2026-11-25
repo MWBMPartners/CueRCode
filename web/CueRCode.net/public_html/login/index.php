@@ -137,11 +137,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
     } elseif ($postedEmail === '' || $password === '') {
         $loginError = 'Email and password are both required.';
     } elseif (function_exists('loginUser')) {
-        if (function_exists('getClientIP')) {
-            $clientIp = getClientIP();
-        } else {
-            $clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-        }
+        // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
+        //    every page by bootstrap.php.
+        $clientIp = getClientIP();
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 
         $result = loginUser($postedEmail, $password, $clientIp, $userAgent);

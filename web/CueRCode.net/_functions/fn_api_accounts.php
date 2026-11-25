@@ -38,7 +38,7 @@
  * @see         fn_auth.php      - the auth engine these handlers call into
  * @see         fn_password.php  - validatePasswordPolicy()
  * @see         fn_validation.php - validateEmail()
- * @see         fn_api_auth.php  - validateAPIKey(), getClientIP()
+ * @see         fn_api_auth.php  - validateAPIKey(); fn_client_ip.php - getClientIP()
  * @see         fn_csrf.php      - validateCSRFToken()
  * @see         https://www.php.net/manual/en/function.json-decode.php
  */
@@ -294,6 +294,11 @@ function handleAuthLogout(): void
 /**
  * ✅ Handle POST /api/v1/auth/verify-email
  *
+ * 🔑 Decision 0013: the body also carries "password" - the password chosen at
+ *    sign-up. It is required whenever the account has a password (every
+ *    account made on the sign-up form); a missing or wrong one gets 400
+ *    VERIFICATION_TOKEN_INVALID with a message pointing to "Forgot password".
+ *
  * @param array $requestBody The parsed JSON request body
  *
  * @return void (terminates via jsonResponse()/errorResponse())
@@ -304,7 +309,8 @@ function handleAuthVerifyEmail(array $requestBody): void
 {
     requireCsrfOrApiKey();
 
-    $token = requestString($requestBody, 'token');
+    $token    = requestString($requestBody, 'token');
+    $password = requestString($requestBody, 'password');
 
     if ($token === null || $token === '') {
         errorResponse('Field "token" is required.', 400, 'INVALID_REQUEST');
@@ -314,7 +320,11 @@ function handleAuthVerifyEmail(array $requestBody): void
         errorResponse('This verification link is invalid or has expired.', 400, 'VERIFICATION_TOKEN_INVALID');
     }
 
-    $result = verifyEmailToken($token);
+    if ($password !== null && mb_strlen($password) > CUERCODE_ACCOUNTS_MAX_PASSWORD_LEN) {
+        errorResponse('Field "password" is too long. Maximum ' . CUERCODE_ACCOUNTS_MAX_PASSWORD_LEN . ' characters.', 400, 'INVALID_REQUEST');
+    }
+
+    $result = verifyEmailToken($token, $password);
 
     if (!$result['success']) {
         errorResponse($result['message'], $result['httpCode'], (string) $result['errorCode']);

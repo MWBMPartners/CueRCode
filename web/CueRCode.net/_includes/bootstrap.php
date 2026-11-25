@@ -198,6 +198,13 @@ $functionFiles = [
     // 🔀 #151: cuercodeClampInt() and other version helpers. No dependencies, so it
     //    loads early; the files that use it also require_once it themselves.
     'fn_compat.php',
+    // 🌍 Decision 0014: getClientIP() - the visitor's address, trusting
+    //    Cloudflare's header only from Cloudflare's own ranges and other
+    //    forwarders only when listed in trusted_proxy_ips. Loaded on EVERY page
+    //    (it used to live only in the API's fn_api_auth.php, so sign-in,
+    //    forgot password and the logs silently used REMOTE_ADDR). No
+    //    dependencies at load time; it reads the setting only when called.
+    'fn_client_ip.php',
     'fn_encryption.php',     // 🔐 Encryption utilities (no dependencies)
     'fn_config.php',         // ⚙️ Configuration manager (depends on encryption)
     'fn_error_handler.php',  // 🚨 Error/exception handling (depends on config for debug mode)

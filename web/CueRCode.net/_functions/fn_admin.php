@@ -1689,7 +1689,7 @@ function adminCliNewPasswordCheck(
 /**
  * 🧾 "What was removed" in plain words, for the operator. PURE.
  *
- * @param array<string, int> $removed From adminCliRemoveEarlierAccess()
+ * @param array<string, int> $removed From accountRemoveOtherWaysIn() (fn_auth.php)
  * @return string
  */
 function adminCliRemovedSummary(array $removed): string
@@ -3558,58 +3558,6 @@ function adminCliAskNewPasswordHash(): array
 }
 
 /**
- * 🚪 Remove every EARLIER way into an account (decision 0010). Runs inside
- *    the caller's transaction; any database error is thrown so the caller
- *    rolls EVERYTHING back.
- *
- * What exists in this database that could let an earlier registrant stay in:
- *   - tblUserSessions: signed-in sessions -> ended (revokedAt set);
- *   - tblAPIKeys: the account's API keys -> switched off (isActive = 0, the
- *     same as the "revoke" button);
- *   - tblPasswordResets: unused reset links -> cancelled (usedAt set);
- *   - tblUserOAuth: linked Microsoft/Google sign-ins -> removed (a link has
- *     no "off" switch; the owner can link their own again afterwards);
- *   - tblWebAuthnCredentials: passkeys -> removed (not in use yet, but
- *     removed so nothing is left behind when they are).
- * There are no "remember me" tokens on this site. Unused email-check links
- * (tblEmailVerifications) are left: they only work on a 'pending' account,
- * and the account stops being pending in the same transaction.
- *
- * A pending account cannot sign in, so normally every count is 0; this is
- * the belt-and-braces step for anything that got there some other way.
- *
- * @param int $userID The account
- * @return array<string, int> How many of each were removed (no secrets)
- * @throws \RuntimeException On any database error
- */
-function adminCliRemoveEarlierAccess(int $userID): array
-{
-    $statements = [
-        'sessions_ended'                 => 'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
-        'api_keys_turned_off'            => 'UPDATE `tblAPIKeys` SET `isActive` = 0 WHERE `userID` = ? AND `isActive` = 1',
-        'password_reset_links_cancelled' => 'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `userID` = ? AND `usedAt` IS NULL',
-        'linked_sign_ins_removed'        => 'DELETE FROM `tblUserOAuth` WHERE `userID` = ?',
-        'passkeys_removed'               => 'DELETE FROM `tblWebAuthnCredentials` WHERE `userID` = ?',
-    ];
-
-    $removed = [];
-
-    foreach ($statements as $key => $sql) {
-        $stmt = dbQuery($sql, 'i', [$userID]);
-        $count = $stmt->affected_rows;
-        $stmt->close();
-
-        if (!is_int($count) || $count < 0) {
-            throw new \RuntimeException('earlier access could not be removed');
-        }
-
-        $removed[$key] = $count;
-    }
-
-    return $removed;
-}
-
-/**
  * ✅ `grant`: make the account a Global Admin (and, with --activate, active
  *    with a checked email), and write the admin.grant audit row - in ONE
  *    transaction, so neither can happen without the other (plan §6.2).
@@ -3623,7 +3571,7 @@ function adminCliRemoveEarlierAccess(int $userID): array
  *    account, or one with no checked email, with --activate), the SAME
  *    transaction also stores the new password hash, clears any sign-in
  *    lock-out and removes every earlier way into the account
- *    (adminCliRemoveEarlierAccess()). The audit row records
+ *    (accountRemoveOtherWaysIn() in fn_auth.php). The audit row records
  *    password_reset: true and HOW MANY of each thing were removed - never
  *    the password or its hash. Without a new hash such an account is
  *    refused; a hash for an account that no longer needs one is refused too
@@ -3764,8 +3712,14 @@ function adminCliGrant(
         $reason  = null;
 
         if ($decision['resetsPassword']) {
-            // 🚪 Every earlier way in, removed in THIS transaction.
-            $removed = adminCliRemoveEarlierAccess($userID);
+            // 🚪 Every earlier way in, removed in THIS transaction. The list
+            //    of "doors" lives in ONE place, fn_auth.php
+            //    accountRemoveOtherWaysIn(), shared with the password reset
+            //    (decision 0013). Unused email-check links are left (false):
+            //    they only work on a pending account, and this transaction
+            //    activates it - decision 0010 records exactly five counts.
+            require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_auth.php';
+            $removed = accountRemoveOtherWaysIn($userID, false);
 
             // 🧾 What happened - counts only, never the password or its hash.
             $changes['password_reset'] = ['old' => false, 'new' => true];

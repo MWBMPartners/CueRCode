@@ -58,6 +58,12 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🌍 Decision 0014: getClientIP() (used below for rate limiting) lives in
+//    fn_client_ip.php. bootstrap.php loads it too; require_once does nothing
+//    the second time. Loaded here so this file still works on its own (the
+//    tests load single files).
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
+
 // ==============================================================================
 // 📌 API Authentication Constants
 // ==============================================================================
@@ -829,75 +835,11 @@ function cleanupRateLog(): void
 }
 
 // ==============================================================================
-// 🌍 getClientIP() - Get the client IP address
+// 🌍 getClientIP() - moved to fn_client_ip.php (decision 0014)
 // ==============================================================================
-
-/**
- * 🌍 Get the client IP address from the current request
- *
- * Checks multiple sources for the client IP in priority order:
- *   1. X-Forwarded-For header (first IP if comma-separated)
- *   2. X-Real-IP header
- *   3. REMOTE_ADDR server variable
- *
- * The first IP in X-Forwarded-For is used because it represents the
- * original client; subsequent IPs are intermediate proxies.
- *
- * @return string The client IP address, or 'unknown' if not available
- *
- * @see https://www.php.net/manual/en/reserved.variables.server.php
- * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For
- *
- * @example
- *   $clientIP = getClientIP();
- *   // Returns: '192.168.1.1' or '2001:db8::1' or 'unknown'
- */
-function getClientIP(): string
-{
-    // 📌 Get the direct connection IP (cannot be spoofed)
-    // @see https://www.php.net/manual/en/reserved.variables.server.php
-    if (isset($_SERVER['REMOTE_ADDR'])) {
-        $remoteAddr = $_SERVER['REMOTE_ADDR'];
-    } else {
-        $remoteAddr = 'unknown';
-    }
-
-    // 📌 Only trust proxy headers if REMOTE_ADDR is from a configured trusted proxy.
-    // Without a trusted proxy list, proxy headers (X-Forwarded-For, X-Real-IP) can be
-    // spoofed by any client to bypass rate limiting.
-    // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For
-    $trustedProxies = [];
-    if (function_exists('getConfig')) {
-        $configProxies = getConfig('trusted_proxy_ips', '');
-        if ($configProxies !== '' && $configProxies !== null) {
-            $trustedProxies = array_map('trim', explode(',', $configProxies));
-        }
-    }
-
-    if (in_array($remoteAddr, $trustedProxies, true)) {
-        // 📌 Request is from a trusted proxy - safe to use forwarded headers
-        if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
-        } elseif (isset($_SERVER['HTTP_X_REAL_IP'])) {
-            $ip = $_SERVER['HTTP_X_REAL_IP'];
-        } else {
-            $ip = $remoteAddr;
-        }
-
-        // 📌 X-Forwarded-For may contain multiple IPs: "client, proxy1, proxy2"
-        // Take the first (original client) IP.
-        if (strpos($ip, ',') !== false) {
-            $ip = trim(explode(',', $ip)[0]);
-        }
-
-        // 📌 Validate the IP format before using
-        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
-            $ip = $remoteAddr;
-        }
-
-        return $ip;
-    }
-
-    // 📌 Not from a trusted proxy - use REMOTE_ADDR directly
-    return $remoteAddr;
-}
+// getClientIP() now lives in fn_client_ip.php, which bootstrap.php loads on
+// EVERY page and which is required at the top of this file, so the API and
+// the ordinary pages (sign-in, forgot password, sign-up, new link) all work
+// out the visitor's address the same way. The old version here trusted the
+// FIRST X-Forwarded-For entry, which a visitor writes themselves.
+// @see fn_client_ip.php - getClientIP(), resolveClientAddress()

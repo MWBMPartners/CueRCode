@@ -901,7 +901,7 @@ if (isset($matchedRoute['requiredFeature']) && $matchedRoute['requiredFeature'] 
 // ==============================================================================
 // Check and enforce rate limits if the route requires it. The health
 // endpoint is exempt from rate limiting.
-// @see fn_api_auth.php - checkRateLimit(), recordAPIRequest(), getClientIP()
+// @see fn_api_auth.php - checkRateLimit(), recordAPIRequest(); fn_client_ip.php - getClientIP()
 // ==============================================================================
 
 if ($matchedRoute['rateLimit'] === true) {

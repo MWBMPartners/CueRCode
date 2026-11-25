@@ -771,16 +771,18 @@ $aiRawLink = bin2hex(random_bytes(16));
 aiInsertRows($aiServer, 'INSERT INTO `tblEmailVerifications` (`userID`, `tokenHash`, `expiresAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR))', 'is', [
     [$aiPendingID, hashToken($aiRawLink)],
 ]);
-$aiVerify = verifyEmailToken($aiRawLink);
-aiCheck('D2', $aiVerify['success'] === false, 'verifyEmailToken() refuses an account that already holds the Global Admin role');
+// 🔑 Decision 0013: the link now also needs the account's password - given
+//    here (the RIGHT one), so the refusal below is the admin rule alone.
+$aiVerify = verifyEmailToken($aiRawLink, $aiPendingPlain);
+aiCheck('D2', $aiVerify['success'] === false, 'verifyEmailToken() refuses an account that already holds the Global Admin role (even with the right password)');
 $aiPendingRow = aiRow($aiServer, 'SELECT `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiPendingID]);
 aiCheck('D2', $aiPendingRow['status'] === 'pending' && $aiPendingRow['emailVerifiedAt'] === null, '...the account stays pending with no checked email');
 aiCheck('D2', aiCount($aiServer, 'SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$aiPendingID]) === 1, '...and the link was not used up');
 
 // 👤 Without the role, the same link still works (the ordinary path is unharmed).
 $aiServer->query('UPDATE `tblUsers` SET `roleID` = NULL WHERE `userID` = ' . (int) $aiPendingID);
-$aiVerify = verifyEmailToken($aiRawLink);
-aiCheck('D2', $aiVerify['success'] === true, 'the same link activates an ordinary pending account');
+$aiVerify = verifyEmailToken($aiRawLink, $aiPendingPlain);
+aiCheck('D2', $aiVerify['success'] === true, 'the same link (with the account\'s password, decision 0013) activates an ordinary pending account');
 aiCheck('D2', aiRow($aiServer, 'SELECT `status` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiPendingID])['status'] === 'active', '...which is now active');
 
 // 🧹 Remove the temporary account so later counts are unchanged.

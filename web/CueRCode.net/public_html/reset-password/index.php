@@ -18,12 +18,20 @@
  * mail-scanner's passive GET-prefetch of the link (with no submitted body)
  * can never trigger resetPasswordWithToken() at all.
  *
+ * 🔐 Decision 0013: a successful reset also activates a waiting account and,
+ * for every account, signs it out everywhere, switches off its API keys,
+ * removes linked Google/Microsoft sign-ins and passkeys, and cancels other
+ * unused links - all in one transaction. The form says so BEFORE the button
+ * is pressed, and the success message (from resetPasswordWithToken(), shown
+ * on this page with or without JavaScript) says it again in plain words.
+ *
  * @package     CueRCode
  * @subpackage  Pages / Account
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2 (Epic E3 stage 2b, #52/#14)
- * @see         _functions/fn_auth.php - resetPasswordWithToken()
+ * @see         _functions/fn_auth.php - resetPasswordWithToken(), accountRemoveOtherWaysIn()
+ * @see         docs/decisions/0013-signup-first-trick-verification-needs-password-reset-removes-all.md
  * @see         public_html/assets/js/cuercode-account.js
  */
 
@@ -164,6 +172,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <input type="password" class="form-control" id="reset-new-password-confirm" name="new_password_confirm"
                                            autocomplete="new-password" required minlength="8" maxlength="256">
                                 </div>
+
+                                <p class="small text-body-secondary mb-3" id="reset-what-happens">
+                                    For your safety, setting a new password signs you out everywhere, switches off
+                                    any API keys on the account and removes any linked Google or Microsoft sign-in.
+                                    You can make new keys and link them again afterwards. If the account was still
+                                    waiting for its email address to be confirmed, this also activates it.
+                                </p>
 
                                 <div class="d-grid">
                                     <button type="submit" class="btn btn-primary btn-lg" id="reset-submit-btn">
