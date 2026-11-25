@@ -1682,23 +1682,34 @@ function adminSettingsClearCache(string $key): bool
  *   graph_token_cache     → forget the saved Microsoft access token;
  *   sso_discovery:<name>  → forget that provider's discovery and key caches.
  *
+ * 🔒 Independent review (Codex C4 finding 1, 2026-11-25): this now runs
+ *    INSIDE the save's transaction, before the commit, and says whether it
+ *    worked. Before, it ran after the commit and a failure was ignored, so a
+ *    new Microsoft secret could be "saved" while the old access token stayed
+ *    in use. A save whose cache cannot be cleared is now refused, with
+ *    nothing changed.
+ *
  * @param string $name The entry's afterSave text
- * @return void
+ * @return bool True when every cache it names was cleared (or had nothing in it)
  */
-function adminSettingsRunAfterSave(string $name): void
+function adminSettingsRunAfterSave(string $name): bool
 {
     if ($name === 'graph_token_cache') {
-        adminSettingsClearCache('graph_token_cache');
-        return;
+        return adminSettingsClearCache('graph_token_cache');
     }
 
     if (str_starts_with($name, 'sso_discovery:')) {
         $provider = substr($name, strlen('sso_discovery:'));
-        if (preg_match('/^[a-z0-9]{1,30}$/', $provider) === 1) {
-            adminSettingsClearCache('sso_' . $provider . '_discovery_cache');
-            adminSettingsClearCache('sso_' . $provider . '_jwks_cache');
+        if (preg_match('/^[a-z0-9]{1,30}$/', $provider) !== 1) {
+            return false;
         }
+        $discoveryCleared = adminSettingsClearCache('sso_' . $provider . '_discovery_cache');
+        $keysCleared      = adminSettingsClearCache('sso_' . $provider . '_jwks_cache');
+        return $discoveryCleared && $keysCleared;
     }
+
+    // An unknown action name is a registry mistake: refuse rather than guess.
+    return false;
 }
 
 /**
@@ -1877,10 +1888,17 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
 
     $failed = false;
 
+    // 🔁 10 (moved before the commit, Codex C4 finding 1): when this call owns
+    //    the transaction, its cache clearing is part of it; otherwise the
+    //    caller (adminSettingsSaveSection()) runs it inside its own.
+    $afterSave = (string) $field['afterSave'];
+
     try {
         if (!setConfig($key, $value, $options)) {
             $failed = true;
         } elseif (!adminAuditWrite($entry)) {
+            $failed = true;
+        } elseif ($ownTransaction && $afterSave !== '' && !adminSettingsRunAfterSave($afterSave)) {
             $failed = true;
         }
 
@@ -1914,10 +1932,8 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
         return ['ok' => false, 'outcome' => 'failed', 'message' => 'Not saved. Nothing was changed. Please try again.', 'afterSave' => '', 'auditAction' => $auditAction];
     }
 
-    // 🔁 10. After the save (when this call owns the transaction).
-    $afterSave = (string) $field['afterSave'];
-    if ($ownTransaction && $afterSave !== '') {
-        adminSettingsRunAfterSave($afterSave);
+    // 🔁 Already done inside the transaction when this call owned it.
+    if ($ownTransaction) {
         $afterSave = '';
     }
 
@@ -1926,8 +1942,8 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
 
 /**
  * 💾 Save every change of one section in ONE transaction: all of them (with
- *    their audit rows) or none. The "afterSave" actions run once, after the
- *    commit.
+ *    their audit rows) or none. The "afterSave" cache clearing runs once per
+ *    action, inside the same transaction, before the commit (Codex C4-1).
  *
  * 🧾 Lost-update protection (plan §7.5): the section's rows are locked first
  *    and their fingerprint is recomputed from the database. If it is not the
@@ -2002,6 +2018,20 @@ function adminSettingsSaveSection(array $admin, string $sectionId, string $poste
         }
     }
 
+    // 🔁 Codex C4 finding 1: the caches are cleared INSIDE the transaction;
+    //    if one cannot be, nothing in the section is saved.
+    foreach ($afterSaves as $afterSave) {
+        if (!adminSettingsRunAfterSave($afterSave)) {
+            adminRollbackQuietly(getDB());
+            foreach ($changes as $undone) {
+                if (function_exists('clearConfigCache')) {
+                    clearConfigCache((string) $undone['key']);
+                }
+            }
+            return ['ok' => false, 'saved' => 0, 'stale' => false, 'message' => 'Not saved. Nothing was changed. Please try again.'];
+        }
+    }
+
     try {
         getDB()->commit();
     } catch (\Throwable $e) {
@@ -2010,10 +2040,6 @@ function adminSettingsSaveSection(array $admin, string $sectionId, string $poste
             logError('error', 'Admin settings could not finish a save', get_class($e));
         }
         return ['ok' => false, 'saved' => 0, 'stale' => false, 'message' => 'Not saved. Nothing was changed. Please try again.'];
-    }
-
-    foreach ($afterSaves as $afterSave) {
-        adminSettingsRunAfterSave($afterSave);
     }
 
     return ['ok' => true, 'saved' => $saved, 'stale' => false, 'message' => ''];

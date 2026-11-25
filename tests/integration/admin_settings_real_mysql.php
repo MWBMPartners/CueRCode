@@ -734,6 +734,27 @@ adminSaveSetting(['key' => 'email_queue_autoprocess'], '1', $asAdmin);
 asCheck('F', asSetting($asServer, 'graph_token_cache')['settingValue'] !== '', 'a change that is not a Graph detail leaves the token cache alone');
 adminSaveSetting(['key' => 'email_queue_autoprocess'], '0', $asAdmin);
 
+// 🔒 Independent review (Codex C4 finding 1, 2026-11-25): clearing the cache
+//    happens INSIDE the save, and a save whose cache could not be cleared is
+//    refused with nothing changed (before, it reported success and the old
+//    Microsoft token stayed in use). Both ways in: one setting, and a section.
+setConfig('graph_token_cache', '{"access_token":"cached-token-value","expires_at":9999999999}', $asCacheOptions);
+$asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
+$asServer->query("CREATE TRIGGER `asForcedFailure` BEFORE UPDATE ON `tblSettings` FOR EACH ROW BEGIN IF NEW.`settingKey` = 'graph_token_cache' AND NEW.`settingValue` = '' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced failure for the integration test'; END IF; END");
+$asClientIdBefore = asSetting($asServer, 'graph_client_id')['settingValue'];
+$asAuditBeforeC4  = asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`');
+$asResult = adminSaveSetting(['key' => 'graph_client_id'], '11111111-2222-3333-4444-555555555555', $asAdmin);
+asCheck('F', $asResult['ok'] === false, 'C4-1: a Graph detail whose token cache cannot be cleared is NOT saved (' . $asResult['outcome'] . ')');
+asCheck('F', asSetting($asServer, 'graph_client_id')['settingValue'] === $asClientIdBefore && asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`') === $asAuditBeforeC4, 'C4-1: ...the setting and the audit log are exactly as before');
+asCheck('F', asSetting($asServer, 'graph_token_cache')['settingValue'] !== '', 'C4-1: ...and the old token is still there, so nothing claims it was replaced');
+$asProcessedC4 = adminSettingsProcessSection('email', ['f' => ['graph_sender_mailbox' => 'c4-sender@example.com']], adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection('email')), false));
+$asSenderBefore = asSetting($asServer, 'graph_sender_mailbox')['settingValue'];
+$asSavedC4 = adminSettingsSaveSection($asAdmin, 'email', asFingerprint('email'), $asProcessedC4['changes']);
+asCheck('F', $asSavedC4['ok'] === false && asSetting($asServer, 'graph_sender_mailbox')['settingValue'] === $asSenderBefore, 'C4-1: a SECTION save whose cache cannot be cleared is refused too, with nothing changed');
+$asServer->query('DROP TRIGGER IF EXISTS `asForcedFailure`');
+$asResult = adminSaveSetting(['key' => 'graph_client_id'], $asSecrets['clientid'], $asAdmin);
+asCheck('F', asSetting($asServer, 'graph_token_cache')['settingValue'] === '', 'C4-1: without the fault the save clears the cache as before');
+
 $asDiscoveryOptions = ['group' => 'sso', 'type' => 'json', 'isSensitive' => false, 'isEditable' => false, 'description' => 'it'];
 foreach (['microsoft', 'google'] as $asProvider) {
     setConfig('sso_' . $asProvider . '_discovery_cache', '{"fetched_at":1,"data":{"issuer":"x"}}', $asDiscoveryOptions);

@@ -205,6 +205,28 @@ assertTrue(
     'encryptValue uses a random IV (same plaintext -> different ciphertext)'
 );
 
+// 🔐 Independent review (Codex C4 finding 2, 2026-11-25): an encrypted EMPTY
+//    string must decrypt back to an empty string. decryptValue() used to
+//    demand at least one byte of ciphertext, so it threw "too short".
+$emptyCiphertext = encryptValue('');
+assertEquals('', decryptValue($emptyCiphertext), 'C4-2: encryptValue(\'\') round-trips back to an empty string');
+// ...while a blob missing part of its salt, IV or tag is still refused.
+assertThrows(
+    static function () use ($emptyCiphertext): void {
+        decryptValue(base64_encode(substr((string) base64_decode($emptyCiphertext, true), 0, -1)));
+    },
+    'C4-2: a blob one byte short of salt + IV + tag is still refused'
+);
+// ...and tampering with an empty value's tag is caught.
+$emptyPacked = (string) base64_decode($emptyCiphertext, true);
+$emptyPacked[strlen($emptyPacked) - 1] = chr(ord($emptyPacked[strlen($emptyPacked) - 1]) ^ 1);
+assertThrows(
+    static function () use ($emptyPacked): void {
+        decryptValue(base64_encode($emptyPacked));
+    },
+    'C4-2: a changed tag on an empty value is refused (the value is still authenticated)'
+);
+
 // ==============================================================================
 // 🧂 F-006/G-010 — per-record salt (fn_encryption.php redesign, Epic E3 stage 1)
 // ==============================================================================

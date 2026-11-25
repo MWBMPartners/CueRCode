@@ -284,8 +284,12 @@ function decryptValue(string $encrypted, ?string $key = null, ?string $salt = nu
     $saltLength = ord($packed[0]);
     $ivLength   = openssl_cipher_iv_length(CUERCODE_CIPHER_ALGO);
 
-    // Validate minimum total length: length-byte + salt + IV + Tag + at least 1 byte of ciphertext
-    $minimumLength = 1 + $saltLength + $ivLength + CUERCODE_TAG_LENGTH + 1;
+    // Validate minimum total length: length-byte + salt + IV + Tag. The
+    // ciphertext itself may be EMPTY: encryptValue('') is allowed and gives
+    // zero bytes of ciphertext (still authenticated by the tag). Independent
+    // review, Codex C4 finding 2 (2026-11-25): this used to demand one more
+    // byte, so an encrypted empty string could never be decrypted.
+    $minimumLength = 1 + $saltLength + $ivLength + CUERCODE_TAG_LENGTH;
 
     if (strlen($packed) < $minimumLength) {
         throw new \RuntimeException('Encrypted data is too short (corrupted or invalid)');
