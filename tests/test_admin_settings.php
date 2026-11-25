@@ -747,6 +747,55 @@ $asOddSave = adminSettingsProcessSection('prices', ['f' => ['billing_vat_mode' =
 assertEquals([], $asOddSave['changes'] + $asOddSave['errors'], 'saving the untouched form with an odd saved value changes nothing and raises no error');
 assertContains('Choose one of the options listed.', adminSettingsProcessSection('prices', ['f' => ['billing_vat_mode' => 'other']], ['billing_vat_mode' => $asState(['value' => 'half<b>'])])['errors']['billing_vat_mode'], 'but choosing an unlisted value by hand is still refused');
 
+// ==============================================================================
+// 🔧 Final review M-3 / M-4 (2026-11-25)
+// ==============================================================================
+// M-3: a limit with no saved row is using the code's default: the box is not
+//      "(required)", it shows the default, and an empty box saves nothing.
+$asGap = $asRegistry['password_reset_request_min_gap_seconds'];
+assertEquals(60, $asGap['default'], 'M-3: the registry carries the default the code uses (60)');
+$asNoRow = ['exists' => false, 'hasValue' => false, 'value' => null, 'updatedAt' => null];
+$asGapBox = adminSettingsRenderField($asGap, ['state' => $asNoRow, 'error' => '']);
+assertFalse(str_contains($asGapBox, '(required)'), 'M-3: no saved row: the label does not say "(required)"');
+assertFalse(str_contains($asGapBox, 'aria-required="true"'), 'M-3: ...and screen readers are not told it is required');
+assertContains('placeholder="60 (the default)"', $asGapBox, 'M-3: ...the box shows the default (faintly, as a placeholder)');
+assertContains('Nothing is saved yet, so the default (60) is in use.', $asGapBox, 'M-3: ...and the help says the default is in use');
+assertFalse(adminSettingsFieldIsRequired($asGap, $asNoRow), 'M-3: adminSettingsFieldIsRequired() says no for a missing optional row');
+assertTrue(adminSettingsFieldIsRequired($asGap, $asState(['value' => '60'])), 'M-3: ...and yes once the row exists');
+assertTrue(adminSettingsFieldIsRequired($asGap), 'M-3: ...and yes when the state is not known');
+$asGapSaved = adminSettingsRenderField($asGap, ['state' => $asState(['value' => '120']), 'error' => '']);
+assertContains('(required)', $asGapSaved, 'M-3: with a saved row the box is required as before');
+assertFalse(str_contains($asGapSaved, 'placeholder='), 'M-3: ...and shows no default placeholder');
+$asEmptySave = adminSettingsProcessSection('admin-security', ['f' => ['password_reset_request_min_gap_seconds' => '', 'verification_resend_daily_cap' => '  ']], []);
+assertEquals([], $asEmptySave['errors'], 'M-3: saving the section with the empty default boxes untouched raises no error');
+assertEquals([], $asEmptySave['changes'], 'M-3: ...and saves nothing (the default stays the code\'s)');
+$asTyped = adminSettingsProcessSection('admin-security', ['f' => ['password_reset_request_min_gap_seconds' => '90']], []);
+assertEquals([['key' => 'password_reset_request_min_gap_seconds', 'action' => 'update', 'value' => '90']], $asTyped['changes'], 'M-3: typing a number still creates the row');
+$asClearSaved = adminSettingsProcessSection('admin-security', ['f' => ['password_reset_request_min_gap_seconds' => '']], ['password_reset_request_min_gap_seconds' => $asState(['value' => '120'])]);
+assertEquals('This cannot be empty.', $asClearSaved['errors']['password_reset_request_min_gap_seconds'] ?? '', 'M-3: emptying a box that HAS a saved row is still refused');
+$asNotOptional = adminSettingsProcessSection('email-records', ['f' => ['email_queue_retention_days' => '']], []);
+assertEquals('This cannot be empty.', $asNotOptional['errors']['email_queue_retention_days'] ?? '', 'M-3: an ordinary (seeded) number left empty is still refused');
+
+// M-4: a stored number that is not written the allowed way.
+foreach (['-5', '30.0', '1e3', ' 2e1 ', '+7'] as $asOdd) {
+    $asOddBox = adminSettingsRenderField($asRegistry['email_queue_retention_days'], ['state' => $asState(['value' => $asOdd]), 'error' => '']);
+    assertContains('value="' . htmlspecialchars(trim($asOdd), ENT_QUOTES) . '"', $asOddBox, 'M-4: a stored ' . var_export($asOdd, true) . ' is shown as stored');
+    $asOddResult = adminSettingsProcessSection('email-records', ['f' => ['email_queue_retention_days' => trim($asOdd), 'email_queue_failed_retention_days' => '91']], ['email_queue_retention_days' => $asState(['value' => $asOdd]), 'email_queue_failed_retention_days' => $asState(['value' => '90'])]);
+    assertEquals([], $asOddResult['errors'], 'M-4: saving with a stored ' . var_export($asOdd, true) . ' left untouched raises no error');
+    assertEquals([['key' => 'email_queue_failed_retention_days', 'action' => 'update', 'value' => '91']], $asOddResult['changes'], 'M-4: ...so the OTHER change in the section is saved, and the odd value is left alone');
+}
+$asOddEdited = adminSettingsProcessSection('email-records', ['f' => ['email_queue_retention_days' => '-6']], ['email_queue_retention_days' => $asState(['value' => '-5'])]);
+assertEquals('Type a whole number from 1 to 3650.', $asOddEdited['errors']['email_queue_retention_days'] ?? '', 'M-4: changing it to another bad value: the plain range message, for that box only');
+foreach (['-5', '30.0', '1e3', '+5'] as $asNotNumber) {
+    assertEquals('Type a whole number from 1 to 3650.', $asValidate('email_queue_retention_days', $asNotNumber)['error'], 'M-4: ' . var_export($asNotNumber, true) . ' gets the range message (no mention of a leading zero)');
+}
+assertEquals('Type a whole number from 1 to 3650, with no zero at the start.', $asValidate('email_queue_retention_days', '030')['error'], 'M-4: "030" gets the range message AND the leading-zero reason');
+$asZeroAgain = adminSettingsProcessSection('email-records', ['f' => ['email_queue_retention_days' => '030']], ['email_queue_retention_days' => $asState(['value' => '30'])]);
+assertTrue(isset($asZeroAgain['errors']['email_queue_retention_days']), 'M-4: "030" typed over a stored 30 is still refused (not waved through as "the same")');
+$asDecimalOdd = adminSettingsValidateValue($asRegistry['billing_vat_rate_percent'], '1e1');
+assertContains('with up to two decimal places', $asDecimalOdd['error'], 'M-4: a decimal box names its range and the two decimal places');
+assertFalse(str_contains($asDecimalOdd['error'], 'no zero at the start'), 'M-4: ...without a leading-zero reason that does not apply');
+
 // ❗ M6: required boxes say so; the unsaved-changes warning is on.
 foreach ($asRegistry as $asKey => $asField) {
     $asBox = adminSettingsRenderField($asField, ['state' => ['exists' => true, 'hasValue' => false, 'value' => '', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);

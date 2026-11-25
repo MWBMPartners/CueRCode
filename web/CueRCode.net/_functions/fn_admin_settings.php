@@ -278,6 +278,10 @@ function adminSettingsField(array $field): array
         'afterSave'    => '',
         'confirmText'  => '',
         'rowOptional'  => false,
+        // 📌 Final review M-3: for a 'rowOptional' setting, the value the
+        //    code uses while no row is saved (shown to the admin, never saved
+        //    unless they type it). Null = none to show.
+        'default'      => null,
     ];
 
     return array_merge($defaults, $field);
@@ -571,7 +575,7 @@ function adminSettingsRegistry(): array
                 'kind' => 'int', 'group' => 'security', 'type' => 'integer',
                 'label' => $linkWords['label'],
                 'help' => $linkWords['what'] . ' Whole numbers, ' . $linkBound['min'] . ' to ' . $linkBound['max'] . '. The default is ' . $linkBound['default'] . '. A bigger gap or a smaller number is stricter.',
-                'min' => $linkBound['min'], 'max' => $linkBound['max'], 'rowOptional' => true,
+                'min' => $linkBound['min'], 'max' => $linkBound['max'], 'rowOptional' => true, 'default' => $linkBound['default'],
                 'description' => $linkFormName . ': ' . $linkWords['text'],
             ]);
         }
@@ -885,8 +889,16 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
         // 🔢 Digits only: no sign, no decimal point, no "1e3" - and no leading
         //    zero ("01" and "000030" are refused the same way, so a number is
         //    only ever written one way).
+        // 📣 Final review M-4: the message names the allowed range (and only
+        //    mentions a leading zero when there is one), because a value like
+        //    "-5", "30.0" or "1e3" may have been stored by hand rather than
+        //    typed by the admin now.
         if (!adminSettingsNumberTextIsCanonical('int', $text)) {
-            return ['ok' => false, 'value' => '', 'error' => 'Type a whole number with no zero at the start, for example 30.'];
+            $intRange = 'Type a whole number from ' . (int) $field['min'] . ' to ' . (int) $field['max'];
+            if (preg_match('/^0[0-9]+$/', $text) === 1) {
+                return ['ok' => false, 'value' => '', 'error' => $intRange . ', with no zero at the start.'];
+            }
+            return ['ok' => false, 'value' => '', 'error' => $intRange . '.'];
         }
         $number = (int) $text;
         if ($number < (int) $field['min'] || $number > (int) $field['max']) {
@@ -904,7 +916,11 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
 
     if ($kind === 'decimal') {
         if (!adminSettingsNumberTextIsCanonical('decimal', $text)) {
-            return ['ok' => false, 'value' => '', 'error' => 'Type a number with up to two decimal places and no zero at the start, for example 20 or 17.5.'];
+            $decimalRange = 'Type a number from ' . (int) $field['min'] . ' to ' . (int) $field['max'] . ' with up to two decimal places';
+            if (preg_match('/^0[0-9]/', $text) === 1) {
+                return ['ok' => false, 'value' => '', 'error' => $decimalRange . ' and no zero at the start, for example 20 or 17.5.'];
+            }
+            return ['ok' => false, 'value' => '', 'error' => $decimalRange . ', for example 20 or 17.5.'];
         }
         $number = (float) $text;
         if ($number < (float) $field['min'] || $number > (float) $field['max']) {
@@ -1180,6 +1196,25 @@ function adminSettingsProcessSection(string $sectionId, #[\SensitiveParameter] a
         //    allowed way (so "030" is refused like "000030", never waved
         //    through because it happens to equal the stored 30).
         $postedTrimmed = trim($posted[$key]);
+
+        // ➖ Final review M-4: exactly what is stored, sent back untouched -
+        //    skip it, even when the stored text is not written the allowed
+        //    way (a value such as "-5", "30.0" or "1e3" put in the database
+        //    by hand). The form draws the stored value as it is, so saving
+        //    the section untouched must never fail because of it. (A row
+        //    must exist for this: an empty box for a missing row is handled
+        //    just below.)
+        if ($state['exists'] === true && $postedTrimmed === $currentCanonical) {
+            continue;
+        }
+
+        // 📌 Final review M-3: a setting that is allowed to have no row (the
+        //    code then uses its own default) and has none: an empty box means
+        //    "keep using the default" - nothing to save, nothing to refuse.
+        if ($field['rowOptional'] === true && $state['exists'] !== true && $postedTrimmed === '') {
+            continue;
+        }
+
         $writtenProperly = true;
         if ($field['kind'] === 'int' || $field['kind'] === 'decimal') {
             $writtenProperly = adminSettingsNumberTextIsCanonical((string) $field['kind'], $postedTrimmed);
@@ -2149,12 +2184,21 @@ function adminSettingsSendTestEmail(array $admin, ?callable $sender = null, ?int
  *    False for switches (always on or off), secrets (empty means "keep what
  *    is saved") and the free-text boxes that may be left empty.
  *
- * @param array<string, mixed> $field A registry entry
+ * 📌 Final review M-3: also false for a 'rowOptional' setting that has no
+ *    row yet (pass its $state): an empty box then means "keep using the
+ *    default", which the save accepts.
+ *
+ * @param array<string, mixed>      $field A registry entry
+ * @param array<string, mixed>|null $state From adminSettingsStateFromRow() (null = not known)
  * @return bool
  */
-function adminSettingsFieldIsRequired(array $field): bool
+function adminSettingsFieldIsRequired(array $field, ?array $state = null): bool
 {
     $kind = (string) $field['kind'];
+
+    if ($field['rowOptional'] === true && is_array($state) && (!isset($state['exists']) || $state['exists'] !== true)) {
+        return false;
+    }
 
     if (in_array($kind, ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'scopes'], true)) {
         return true;
@@ -2211,10 +2255,18 @@ function adminSettingsRenderField(array $field, array $view): string
         $errorHtml = '<div class="invalid-feedback d-block" id="' . adminEscape($errorId) . '"><i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>' . adminEscape($error) . '</div>';
     }
 
-    $helpHtml = '<div class="form-text" id="' . adminEscape($helpId) . '">' . adminEscape($field['help']) . '</div>';
+    // 📌 Final review M-3: a 'rowOptional' setting with no row is using the
+    //    code's default. Say so (and which number it is), and do not call the
+    //    box "required": leaving it empty keeps the default.
+    $usingDefault = ($field['rowOptional'] === true && $state['exists'] !== true);
+    $helpText = (string) $field['help'];
+    if ($usingDefault && $field['default'] !== null) {
+        $helpText .= ' Nothing is saved yet, so the default (' . (string) $field['default'] . ') is in use. Leave the box empty to keep it.';
+    }
+    $helpHtml = '<div class="form-text" id="' . adminEscape($helpId) . '">' . adminEscape($helpText) . '</div>';
     // ❗ A box that cannot be left empty says so in its label (and to screen
     //    readers via aria-required), not only by refusing the save.
-    $required = adminSettingsFieldIsRequired($field);
+    $required = adminSettingsFieldIsRequired($field, $state);
     $requiredWords = '';
     $requiredAttribute = '';
     if ($required) {
@@ -2231,7 +2283,10 @@ function adminSettingsRenderField(array $field, array $view): string
     } elseif (is_string($state['value'])) {
         $shown = $state['value'];
         // A number is drawn the one allowed way ("30", not an older "030"), so
-        // saving the form untouched never trips the leading-zero rule.
+        // saving the form untouched never trips the leading-zero rule. A
+        // stored value that cannot be written that way ("-5", "30.0", "1e3")
+        // is shown exactly as stored (trimmed), and the save skips it while
+        // it is untouched (final review M-4).
         if ($kind === 'int' || $kind === 'decimal') {
             $shown = adminSettingsCanonicalCurrent($field, $shown);
         }
@@ -2399,10 +2454,16 @@ function adminSettingsRenderField(array $field, array $view): string
             . '</div>';
     }
 
+    // 📌 Final review M-3: the default shows faintly inside the empty box.
+    $placeholder = '';
+    if ($usingDefault && $field['default'] !== null) {
+        $placeholder = ' placeholder="' . adminEscape((string) $field['default'] . ' (the default)') . '"';
+    }
+
     return '<div class="mb-4">'
         . $labelHtml
         . '<input type="' . $inputType . '" class="form-control' . $invalidClass . '" id="' . adminEscape($id) . '" name="' . adminEscape($name) . '" value="' . adminEscape($shown) . '"'
-        . ' maxlength="' . (int) $field['maxLength'] . '"' . $extra . $invalidAttributes . $requiredAttribute . ' aria-describedby="' . adminEscape($describedBy) . '">'
+        . ' maxlength="' . (int) $field['maxLength'] . '"' . $extra . $placeholder . $invalidAttributes . $requiredAttribute . ' aria-describedby="' . adminEscape($describedBy) . '">'
         . $helpHtml
         . $errorHtml
         . '</div>';
