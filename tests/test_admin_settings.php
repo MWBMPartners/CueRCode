@@ -177,10 +177,18 @@ assertFalse($asValidate('billing_trial_plan_key', 'pro', [])['ok'], 'trial plan:
 // 🌍 Trusted forwarding servers.
 assertEquals('10.0.0.0/8, 2001:db8::/32, 192.0.2.1', $asValidate('trusted_proxy_ips', "10.0.0.0/8,  2001:db8::/32\n192.0.2.1")['value'], 'forwarders: commas, spaces and new lines become ", "');
 assertTrue($asValidate('trusted_proxy_ips', '')['ok'], 'forwarders: empty means none');
-foreach (['10.0.0.0/33', '999.1.1.1', 'example.com', '10.0.0.0/8, nonsense', '2001:db8::/129'] as $asBad) {
+foreach (['10.0.0.0/33', '999.1.1.1', 'example.com', '10.0.0.0/8, nonsense', '2001:db8::/129', '0.0.0.0/0', '10.0.0.0/7', '::/0', '2001:db8::/31', '10.0.0.0/024'] as $asBad) {
     $asResult = $asValidate('trusted_proxy_ips', $asBad);
     assertFalse($asResult['ok'], 'forwarders refuse ' . var_export($asBad, true));
 }
+// 📏 Decision 0015: a very wide range is refused with a plain reason.
+$asWide = $asValidate('trusted_proxy_ips', '10.0.0.0/8, 0.0.0.0/0');
+assertContains('"0.0.0.0/0" is too wide', $asWide['error'], '0015: the editor says which entry is too wide');
+assertContains('widest range accepted is /8', $asWide['error'], '0015: ...and names the /8 limit');
+assertContains('widest range accepted is /32', $asValidate('trusted_proxy_ips', '2001:db8::/31')['error'], '0015: the IPv6 limit is /32');
+assertContains('without the zero', $asValidate('trusted_proxy_ips', '10.0.0.0/024')['error'], '0015: "/024" is refused with a "drop the zero" message');
+assertTrue($asValidate('trusted_proxy_ips', '10.0.0.0/8, 2001:db8::/32')['ok'], '0015: exactly /8 and /32 are accepted');
+assertContains('more entries have problems', $asValidate('trusted_proxy_ips', 'a b c d e')['error'], '0015: more than three bad entries: the first three are explained and the rest counted');
 
 // 🤫 Secrets: format and length.
 $asGuid = '0f8fad5b-d9cb-469f-a165-70867728950e';

@@ -29,11 +29,25 @@
  *      `trusted_proxy_ips` setting (exact addresses or ranges such as
  *      10.0.0.0/8 or 2001:db8::/32, separated by commas), read
  *      X-Forwarded-For from the RIGHT: skip entries that are themselves
- *      trusted forwarders (or Cloudflare), and use the first one that is not.
+ *      forwarders the OWNER listed, and use the first one that is not.
  *      Each forwarder adds the address it saw to the right-hand end, so the
  *      right-most untrusted entry was written by a forwarder we trust; the
  *      entries further left were written by the visitor and are ignored.
+ *      A Cloudflare address in the chain is NOT skipped like that (review
+ *      finding 4, 2026-11-25): Cloudflare wrote the entry just to its left
+ *      (the address that connected to Cloudflare), so that entry is used and
+ *      the walk STOPS. Anything further left was written by whoever talked to
+ *      Cloudflare - possibly a visitor's own Cloudflare Worker, which can
+ *      write any Cloudflare-looking address it likes - so it is never read.
  *   4. Otherwise ignore every forwarded header completely.
+ *
+ * 📏 Decision 0015 (docs/decisions/0015-trusted-forwarding-list-refuses-very-wide-ranges.md):
+ *    the owner's `trusted_proxy_ips` list refuses ranges wider than /8 (IPv4)
+ *    or /32 (IPv6), with a plain-English reason, because trusting "every
+ *    address on the internet" would let any visitor choose their own address.
+ *    The Cloudflare list has its own, looser limit (Cloudflare's widest real
+ *    ranges are /12 and /29), so a broken or tampered file cannot trust the
+ *    whole internet either.
  *   X-Real-IP is no longer read: it cannot be told apart from one a visitor
  *   sent, and X-Forwarded-For covers every forwarder this site expects.
  *
@@ -102,6 +116,39 @@ if (!defined('CUERCODE_CLIENT_IP_MAX_FORWARDED_HOPS')) {
  */
 if (!defined('CUERCODE_CLIENT_IP_MAX_HEADER_LENGTH')) {
     define('CUERCODE_CLIENT_IP_MAX_HEADER_LENGTH', 2048);
+}
+
+/**
+ * @var int Decision 0015: the widest IPv4 range the owner's trusted_proxy_ips
+ * list accepts. /8 is about 16.7 million addresses; anything wider is refused.
+ */
+if (!defined('CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV4')) {
+    define('CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV4', 8);
+}
+
+/**
+ * @var int Decision 0015: the widest IPv6 range the owner's trusted_proxy_ips
+ * list accepts (/32 is the size a whole internet provider is usually given).
+ */
+if (!defined('CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV6')) {
+    define('CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV6', 32);
+}
+
+/**
+ * @var int The widest IPv4 range accepted from Cloudflare's published list
+ * (Cloudflare's widest on 2026-11-25 is /12). Stops a broken or tampered list
+ * from trusting the whole internet.
+ */
+if (!defined('CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV4')) {
+    define('CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV4', 8);
+}
+
+/**
+ * @var int The widest IPv6 range accepted from Cloudflare's published list
+ * (Cloudflare's widest on 2026-11-25 is /29, so /24 leaves room for growth).
+ */
+if (!defined('CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV6')) {
+    define('CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV6', 24);
 }
 
 // ==============================================================================
@@ -179,8 +226,13 @@ function clientIpNormalise(mixed $value, bool $allowPort): ?string
  *    ("192.0.2.7", which means /32 or /128). PURE.
  *
  * The part after "/" must be a whole number from 0 to 32 (IPv4) or 0 to 128
- * (IPv6). Bits after the prefix are cleared, so "192.0.2.7/24" means the same
- * as "192.0.2.0/24".
+ * (IPv6), written without leading zeros ("/024" is refused - decision 0015
+ * review: the standard way of writing it is "/24", and an odd spelling in a
+ * security setting is more likely a mistake than a meaning). Bits after the
+ * prefix are cleared, so "192.0.2.7/24" means the same as "192.0.2.0/24".
+ *
+ * This only checks that the text IS a range. Whether a range is too WIDE to
+ * be trusted is a separate question, answered by clientIpRangeTooWideMessage().
  *
  * @param mixed $entry The text
  * @return array{network: string, prefix: int, text: string}|null
@@ -221,7 +273,8 @@ function clientIpParseRange(mixed $entry): ?array
     $prefix    = $maxPrefix;
 
     if ($prefixText !== null) {
-        if (preg_match('/^[0-9]{1,3}$/', $prefixText) !== 1) {
+        // 🔢 "0", or 1-3 digits not starting with 0 ("/024" and "/00" are refused).
+        if (preg_match('/^(?:0|[1-9][0-9]{0,2})$/', $prefixText) !== 1) {
             return null;
         }
         $prefix = (int) $prefixText;
@@ -263,17 +316,83 @@ function clientIpParseRange(mixed $entry): ?array
 // ==============================================================================
 
 /**
+ * 📏 Is this range too wide to trust? Returns a plain-English reason, or null
+ *    when it is fine. PURE (decision 0015).
+ *
+ * "Wider" means a SMALLER number after the slash: /8 covers about 16.7
+ * million IPv4 addresses, /0 covers every one of them.
+ *
+ * @param array $range         From clientIpParseRange()
+ * @param int   $minPrefixV4   The smallest IPv4 number after the slash allowed
+ * @param int   $minPrefixV6   The smallest IPv6 number after the slash allowed
+ * @param bool  $forOwnerList  true = add the advice for the owner's trusted_proxy_ips
+ *                             list; false = only the facts (the Cloudflare checks)
+ * @return string|null The reason it is refused, or null
+ */
+function clientIpRangeTooWideMessage(array $range, int $minPrefixV4, int $minPrefixV6, bool $forOwnerList = true): ?string
+{
+    if (!isset($range['network'], $range['prefix'], $range['text'])) {
+        return 'This is not a valid address or range.';
+    }
+
+    $isIpv4    = (strlen((string) $range['network']) === 4);
+    $minPrefix = $minPrefixV6;
+    $family    = 'newer-style (IPv6)';
+    if ($isIpv4) {
+        $minPrefix = $minPrefixV4;
+        $family    = 'older-style (IPv4)';
+    }
+
+    if ((int) $range['prefix'] >= $minPrefix) {
+        return null;
+    }
+
+    $message = '"' . (string) $range['text'] . '" is too wide: for ' . $family . ' addresses the widest range accepted is /'
+        . $minPrefix . ' (a smaller number after the slash means more addresses).';
+
+    if ($forOwnerList) {
+        $message .= ' A forwarding server is never that big, and trusting such a range would let almost anyone choose'
+            . ' the address the site records for them, so the sign-in and request limits would stop working.'
+            . ' Enter the forwarding server\'s own address, or its narrower range.';
+    }
+
+    return $message;
+}
+
+/**
+ * 🗒️ Why an entry is not a range at all, in plain English. PURE.
+ *
+ * @param string $entry The text that clientIpParseRange() refused
+ * @return string
+ */
+function clientIpBadEntryMessage(string $entry): string
+{
+    // 🔢 The one mistake worth naming on its own: "/024" instead of "/24".
+    if (preg_match('/\/0[0-9]+$/', $entry) === 1) {
+        return '"' . $entry . '" has a zero at the start of the number after the slash. Write it without the zero (for example /24, not /024).';
+    }
+
+    return '"' . $entry . '" is not a valid address or range (for example 192.0.2.10, 10.0.0.0/8 or 2001:db8::/32).';
+}
+
+/**
  * 📋 Read a list of ranges separated by commas, spaces or new lines. PURE.
  *
  * Bad entries are never trusted; they are returned separately so the admin
- * check can show them.
+ * check can show them, each with a plain-English reason in 'problems'.
+ * Decision 0015: ranges wider than the limits below are bad entries too.
  *
- * @param mixed $setting The setting value ('' or null = none)
- * @return array{ranges: array<int, array>, invalid: array<int, string>}
+ * @param mixed $setting     The setting value ('' or null = none)
+ * @param int   $minPrefixV4 Widest IPv4 range accepted (default: decision 0015's /8)
+ * @param int   $minPrefixV6 Widest IPv6 range accepted (default: decision 0015's /32)
+ * @return array{ranges: array<int, array>, invalid: array<int, string>, problems: array<int, string>}
  */
-function clientIpParseRangeList(mixed $setting): array
-{
-    $result = ['ranges' => [], 'invalid' => []];
+function clientIpParseRangeList(
+    mixed $setting,
+    int $minPrefixV4 = CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV4,
+    int $minPrefixV6 = CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV6
+): array {
+    $result = ['ranges' => [], 'invalid' => [], 'problems' => []];
 
     if (!is_string($setting)) {
         return $result;
@@ -291,10 +410,19 @@ function clientIpParseRangeList(mixed $setting): array
 
         $range = clientIpParseRange($entry);
         if ($range === null) {
-            $result['invalid'][] = $entry;
-        } else {
-            $result['ranges'][] = $range;
+            $result['invalid'][]  = $entry;
+            $result['problems'][] = clientIpBadEntryMessage($entry);
+            continue;
         }
+
+        $tooWide = clientIpRangeTooWideMessage($range, $minPrefixV4, $minPrefixV6);
+        if ($tooWide !== null) {
+            $result['invalid'][]  = $entry;
+            $result['problems'][] = $tooWide;
+            continue;
+        }
+
+        $result['ranges'][] = $range;
     }
 
     return $result;
@@ -462,9 +590,10 @@ function resolveClientAddress(array $server, array $trustedProxyRanges, array $c
         $entries = array_reverse(explode(',', $forwardedRaw));
         $entries = array_slice($entries, 0, CUERCODE_CLIENT_IP_MAX_FORWARDED_HOPS);
 
-        $chosen       = null;
-        $lastTrusted  = null;
-        $stoppedEarly = false;
+        $chosen          = null;
+        $lastTrusted     = null;
+        $stoppedEarly    = false;
+        $afterCloudflare = false;
 
         foreach ($entries as $entry) {
             $hop = clientIpNormalise($entry, true);
@@ -475,7 +604,25 @@ function resolveClientAddress(array $server, array $trustedProxyRanges, array $c
                 break;
             }
 
-            if (clientIpInRanges($hop, $trustedProxyRanges) || clientIpInRanges($hop, $cloudflareRanges)) {
+            // ☁️ Review finding 4: the entry just LEFT of a Cloudflare hop was
+            //    written by Cloudflare itself (the address that connected to
+            //    it). Use it, whatever it is, and look no further left - a
+            //    visitor's own Cloudflare Worker can write Cloudflare-looking
+            //    addresses there, so skipping them would hand the choice back
+            //    to the visitor.
+            if ($afterCloudflare) {
+                $chosen = $hop;
+                break;
+            }
+
+            if (clientIpInRanges($hop, $cloudflareRanges)) {
+                $lastTrusted     = $hop;
+                $afterCloudflare = true;
+                continue;
+            }
+
+            // 🏢 Only the forwarders the OWNER listed are skipped.
+            if (clientIpInRanges($hop, $trustedProxyRanges)) {
                 $lastTrusted = $hop;
                 continue;
             }
@@ -490,7 +637,11 @@ function resolveClientAddress(array $server, array $trustedProxyRanges, array $c
 
         if ($chosen !== null) {
             $result['address'] = $chosen;
-            $result['note'] = 'The connection comes from a trusted forwarder, so the right-most X-Forwarded-For entry that is not itself a trusted forwarder is used.';
+            if ($afterCloudflare) {
+                $result['note'] = 'The connection comes from a trusted forwarder, and the chain passes through Cloudflare, so the X-Forwarded-For entry Cloudflare wrote (just left of the Cloudflare address) is used and nothing further left is read.';
+            } else {
+                $result['note'] = 'The connection comes from a trusted forwarder, so the right-most X-Forwarded-For entry that is not itself a trusted forwarder is used.';
+            }
             return $result;
         }
 
@@ -573,6 +724,12 @@ function clientIpCloudflareData(?string $file = null): array
             }
             foreach ($data[$family] as $entry) {
                 $range = clientIpParseRange($entry);
+                // 📏 A range wider than Cloudflare could ever publish (for
+                //    example "0.0.0.0/0" from a broken or tampered file) is
+                //    never trusted - see CUERCODE_CLOUDFLARE_MIN_PREFIX_*.
+                if ($range !== null && clientIpRangeTooWideMessage($range, CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV4, CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV6, false) !== null) {
+                    $range = null;
+                }
                 if ($range === null) {
                     $result['invalid'][] = (string) $entry;
                 } else {
@@ -591,6 +748,59 @@ function clientIpCloudflareData(?string $file = null): array
 }
 
 // ==============================================================================
+// 🔎 clientIpCheckCloudflareList() - check a freshly fetched Cloudflare list
+// ==============================================================================
+
+/**
+ * 🔎 Check one list fetched from Cloudflare (by tools/refresh_cloudflare_ranges.php)
+ *    before it may replace the committed file. PURE.
+ *
+ * Every entry must be a valid range of the expected family (4 or 6), and no
+ * wider than CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV4 / _IPV6 (review nit: a "/0"
+ * or similar from a broken answer must never become "trust everybody"). An
+ * empty list is refused too. One bad entry refuses the WHOLE list.
+ *
+ * @param array<int, mixed> $entries The texts as fetched
+ * @param int               $family  4 or 6
+ * @return array{texts: array<int, string>|null, problem: string}
+ *         texts = the standard written forms (null when refused);
+ *         problem = a plain-English reason ('' when accepted)
+ */
+function clientIpCheckCloudflareList(array $entries, int $family): array
+{
+    $texts = [];
+
+    foreach ($entries as $entry) {
+        $range = clientIpParseRange($entry);
+        if ($range === null) {
+            $shown = '';
+            if (is_scalar($entry)) {
+                $shown = (string) $entry;
+            }
+            return ['texts' => null, 'problem' => clientIpBadEntryMessage(mb_substr($shown, 0, 80))];
+        }
+
+        $bytes = strlen((string) $range['network']);
+        if (($family === 4 && $bytes !== 4) || ($family === 6 && $bytes !== 16)) {
+            return ['texts' => null, 'problem' => '"' . (string) $range['text'] . '" is in the wrong list (expected IPv' . $family . ' ranges only).'];
+        }
+
+        $tooWide = clientIpRangeTooWideMessage($range, CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV4, CUERCODE_CLOUDFLARE_MIN_PREFIX_IPV6, false);
+        if ($tooWide !== null) {
+            return ['texts' => null, 'problem' => $tooWide];
+        }
+
+        $texts[] = (string) $range['text'];
+    }
+
+    if ($texts === []) {
+        return ['texts' => null, 'problem' => 'The IPv' . $family . ' list is empty.'];
+    }
+
+    return ['texts' => $texts, 'problem' => ''];
+}
+
+// ==============================================================================
 // ⚙️ clientIpTrustedProxySetting() - the owner's trusted_proxy_ips setting
 // ==============================================================================
 
@@ -603,14 +813,14 @@ function clientIpCloudflareData(?string $file = null): array
  *    answer) instead of looping.
  *
  * @param bool $forget Drop the remembered value (tests and the CLI check)
- * @return array{raw: string, ranges: array<int, array>, invalid: array<int, string>}
+ * @return array{raw: string, ranges: array<int, array>, invalid: array<int, string>, problems: array<int, string>}
  */
 function clientIpTrustedProxySetting(bool $forget = false): array
 {
     static $cached = null;
     static $busy   = false;
 
-    $empty = ['raw' => '', 'ranges' => [], 'invalid' => []];
+    $empty = ['raw' => '', 'ranges' => [], 'invalid' => [], 'problems' => []];
 
     if ($forget) {
         $cached = null;
@@ -642,9 +852,10 @@ function clientIpTrustedProxySetting(bool $forget = false): array
     $parsed = clientIpParseRangeList($raw);
 
     $cached = [
-        'raw'     => $raw,
-        'ranges'  => $parsed['ranges'],
-        'invalid' => $parsed['invalid'],
+        'raw'      => $raw,
+        'ranges'   => $parsed['ranges'],
+        'invalid'  => $parsed['invalid'],
+        'problems' => $parsed['problems'],
     ];
 
     return $cached;
@@ -778,7 +989,12 @@ function clientAddressCheck(array $server, array $trustedSetting, array $cloudfl
 
     $warnings = [];
 
-    if (isset($trustedSetting['invalid']) && is_array($trustedSetting['invalid']) && $trustedSetting['invalid'] !== []) {
+    if (isset($trustedSetting['problems']) && is_array($trustedSetting['problems']) && $trustedSetting['problems'] !== []) {
+        // 📏 Decision 0015: each refused entry with its own plain reason.
+        foreach ($trustedSetting['problems'] as $problem) {
+            $warnings[] = 'Ignored trusted_proxy_ips entry: ' . (string) $problem;
+        }
+    } elseif (isset($trustedSetting['invalid']) && is_array($trustedSetting['invalid']) && $trustedSetting['invalid'] !== []) {
         $warnings[] = 'These trusted_proxy_ips entries are not valid addresses or ranges and are ignored: ' . implode(', ', $trustedSetting['invalid']) . '.';
     }
 

@@ -94,6 +94,8 @@ function refreshFetch(string $url): ?string
 
 /**
  * 📐 Turn a list of range texts into their standard written forms, or fail.
+ *    The checking itself is clientIpCheckCloudflareList() in fn_client_ip.php
+ *    (unit tested); this only prints its reason.
  *
  * @param array<int, mixed> $entries The texts
  * @param int               $family  4 or 6
@@ -101,22 +103,12 @@ function refreshFetch(string $url): ?string
  */
 function refreshCheckList(array $entries, int $family): ?array
 {
-    $checked = [];
-    foreach ($entries as $entry) {
-        $range = clientIpParseRange($entry);
-        if ($range === null) {
-            return null;
-        }
-        $bytes = strlen($range['network']);
-        if (($family === 4 && $bytes !== 4) || ($family === 6 && $bytes !== 16)) {
-            return null;
-        }
-        $checked[] = $range['text'];
-    }
-    if ($checked === []) {
+    $checked = clientIpCheckCloudflareList($entries, $family);
+    if ($checked['problem'] !== '') {
+        fwrite(STDERR, 'Refused from Cloudflare\'s data: ' . preg_replace('/[^\x20-\x7E]/', '?', $checked['problem']) . PHP_EOL);
         return null;
     }
-    return $checked;
+    return $checked['texts'];
 }
 
 // ==============================================================================

@@ -114,7 +114,12 @@ if ($visitorHelp) {
 // ==============================================================================
 if ($visitorOptions['trusted'] !== null) {
     $visitorParsed  = clientIpParseRangeList($visitorOptions['trusted']);
-    $visitorTrusted = ['raw' => $visitorOptions['trusted'], 'ranges' => $visitorParsed['ranges'], 'invalid' => $visitorParsed['invalid']];
+    $visitorTrusted = [
+        'raw'      => $visitorOptions['trusted'],
+        'ranges'   => $visitorParsed['ranges'],
+        'invalid'  => $visitorParsed['invalid'],
+        'problems' => $visitorParsed['problems'],
+    ];
     $visitorSettingSource = 'given with --trusted';
 } else {
     // 🗄️ The normal site start-up code, for the saved setting.
@@ -143,7 +148,17 @@ if ($visitorOptions['remote'] === null) {
 
     $visitorLines[] = 'Trusted forwarders (' . $visitorSettingSource . '): ' . $visitorTrustedText;
     if ($visitorTrusted['invalid'] !== []) {
-        $visitorLines[] = 'Ignored (not valid addresses or ranges): ' . implode(', ', $visitorTrusted['invalid']);
+        // 📏 Decision 0015: one line per refused entry, saying why.
+        $visitorProblems = [];
+        if (isset($visitorTrusted['problems']) && is_array($visitorTrusted['problems'])) {
+            $visitorProblems = $visitorTrusted['problems'];
+        }
+        if ($visitorProblems === []) {
+            $visitorLines[] = 'Ignored (not valid addresses or ranges): ' . implode(', ', $visitorTrusted['invalid']);
+        }
+        foreach ($visitorProblems as $visitorProblem) {
+            $visitorLines[] = 'Ignored: ' . preg_replace('/[^\x20-\x7E]/', '?', (string) $visitorProblem);
+        }
     }
     if ($visitorCloudflare['ok']) {
         $visitorLines[] = 'Cloudflare list: ' . count($visitorCloudflare['ranges']) . ' ranges, fetched on ' . $visitorCloudflare['fetchedOn'];

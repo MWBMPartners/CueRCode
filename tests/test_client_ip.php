@@ -66,15 +66,42 @@ assertEquals('2001:db8::/32', clientIpParseRange('2001:DB8::/32')['text'], 'IPv6
 assertEquals('2001:db8::1/128', clientIpParseRange('2001:db8::1')['text'], 'an exact IPv6 address is a /128');
 assertEquals('0.0.0.0/0', clientIpParseRange('0.0.0.0/0')['text'], '/0 is allowed (everything)');
 assertEquals('173.245.48.0/20', clientIpParseRange('173.245.50.9/20')['text'], 'a range that does not end on a whole byte is cleared correctly');
-foreach (['10.0.0.0/33', '2001:db8::/129', '10.0.0.0/-1', '10.0.0.0/', '10.0.0.0/8/9', 'abc/8', '10.0.0.0/ 8', '10.0.0.0/8a', '', 'garbage', '10.0.0.0/0008'] as $ciBadRange) {
+foreach (['10.0.0.0/33', '2001:db8::/129', '10.0.0.0/-1', '10.0.0.0/', '10.0.0.0/8/9', 'abc/8', '10.0.0.0/ 8', '10.0.0.0/8a', '', 'garbage', '10.0.0.0/0008', '10.0.0.0/024', '10.0.0.0/08', '10.0.0.0/00', '2001:db8::/032'] as $ciBadRange) {
     assertEquals(null, clientIpParseRange($ciBadRange), 'refused range: "' . $ciBadRange . '"');
 }
 
 $ciList = clientIpParseRangeList("10.0.0.0/8, 192.0.2.1\n2001:db8::/32 bogus,,  ");
 assertEquals(3, count($ciList['ranges']), 'a list split by commas, spaces and new lines gives 3 ranges');
 assertEquals(['bogus'], $ciList['invalid'], '...and the bad entry is reported, never trusted');
-assertEquals(['ranges' => [], 'invalid' => []], clientIpParseRangeList(''), 'an empty setting trusts nothing');
-assertEquals(['ranges' => [], 'invalid' => []], clientIpParseRangeList(null), 'a missing setting trusts nothing');
+assertEquals(1, count($ciList['problems']), '...with one plain-English reason');
+assertContains('"bogus" is not a valid address or range', $ciList['problems'][0], '...naming the entry');
+assertEquals(['ranges' => [], 'invalid' => [], 'problems' => []], clientIpParseRangeList(''), 'an empty setting trusts nothing');
+assertEquals(['ranges' => [], 'invalid' => [], 'problems' => []], clientIpParseRangeList(null), 'a missing setting trusts nothing');
+
+// 📏 Decision 0015: the owner's list refuses ranges wider than /8 (IPv4) or /32 (IPv6).
+assertEquals(8, CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV4, '0015: the IPv4 limit is /8');
+assertEquals(32, CUERCODE_TRUSTED_PROXY_MIN_PREFIX_IPV6, '0015: the IPv6 limit is /32');
+foreach (['0.0.0.0/0', '10.0.0.0/7', '128.0.0.0/1', '::/0', '2001:db8::/31', '2000::/3'] as $ciWide) {
+    $ciWideList = clientIpParseRangeList($ciWide);
+    assertEquals([], $ciWideList['ranges'], '0015: "' . $ciWide . '" is never trusted');
+    assertEquals([$ciWide], $ciWideList['invalid'], '0015: "' . $ciWide . '" is reported as refused');
+    assertContains('too wide', $ciWideList['problems'][0], '0015: "' . $ciWide . '" says it is too wide');
+}
+$ciWideV4 = clientIpParseRangeList('0.0.0.0/0')['problems'][0];
+assertContains('widest range accepted is /8', $ciWideV4, '0015: the IPv4 message names the /8 limit');
+assertContains('choose the address the site records', $ciWideV4, '0015: ...and says why in plain words');
+assertContains('widest range accepted is /32', clientIpParseRangeList('::/0')['problems'][0], '0015: the IPv6 message names the /32 limit');
+$ciEdge = clientIpParseRangeList('10.0.0.0/8, 2001:db8::/32, 192.0.2.7, 2001:db8::1');
+assertEquals(4, count($ciEdge['ranges']), '0015: exactly /8 and /32 (and single addresses) are accepted');
+assertEquals([], $ciEdge['problems'], '0015: ...with no problems');
+$ciPadded = clientIpParseRangeList('10.0.0.0/024');
+assertEquals(['10.0.0.0/024'], $ciPadded['invalid'], '0015: "/024" is refused in the owner\'s list');
+assertContains('without the zero', $ciPadded['problems'][0], '0015: ...with a message saying to drop the leading zero');
+$ciMixed = clientIpParseRangeList('10.0.0.0/8, 0.0.0.0/0, 192.0.2.10');
+assertEquals(2, count($ciMixed['ranges']), '0015: a too-wide entry does not spoil the good ones (they are still read)');
+assertTrue(clientIpParseRange('0.0.0.0/0') !== null, '0015: the low-level reader still understands /0 (the WIDTH rule is separate)');
+assertEquals(null, clientIpRangeTooWideMessage(clientIpParseRange('10.0.0.0/8'), 8, 32), '0015: clientIpRangeTooWideMessage(): /8 is fine');
+assertFalse(str_contains((string) clientIpRangeTooWideMessage(clientIpParseRange('0.0.0.0/0'), 8, 24, false), 'forwarding server'), '0015: the Cloudflare form of the message gives only the facts');
 
 $ciTen = [clientIpParseRange('10.0.0.0/8')];
 assertTrue(clientIpInRanges('10.255.255.255', $ciTen), '10.255.255.255 is inside 10.0.0.0/8');
@@ -167,7 +194,26 @@ assertTrue($ciR['fromTrustedProxy'], '...and the connection counts as a trusted 
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => 'garbage, 198.51.100.7'], $ciTrusted, $ciCf);
 assertEquals('198.51.100.7', $ciR['address'], 'junk the visitor wrote further left is never reached');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 162.158.0.1'], $ciTrusted, $ciCf);
-assertEquals('198.51.100.7', $ciR['address'], 'a Cloudflare hop in the chain is skipped like a trusted forwarder');
+assertEquals('198.51.100.7', $ciR['address'], 'a Cloudflare hop in the chain: the entry Cloudflare wrote (just left of it) is used');
+
+// ☁️ Review finding 4: after a Cloudflare hop, take the very next entry to its
+//    left and STOP - never keep skipping Cloudflare-looking addresses.
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 198.51.100.7, 162.158.0.1, 10.0.0.9'], $ciTrusted, $ciCf);
+assertEquals('198.51.100.7', $ciR['address'], 'F4: visitor junk, Cloudflare-written address, Cloudflare hop, our forwarder: the Cloudflare-written address');
+assertContains('nothing further left is read', $ciR['note'], 'F4: ...and the note says the walk stopped at Cloudflare');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 104.16.9.9, 162.158.0.1'], $ciTrusted, $ciCf);
+assertEquals('104.16.9.9', $ciR['address'], 'F4 WORKERS: a Cloudflare-looking address just left of the Cloudflare hop is USED (a Worker\'s own address), not skipped');
+assertFalse($ciR['address'] === '6.6.6.6', 'F4 WORKERS: ...so the attacker\'s chosen value further left is never reached');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 172.64.0.9, 104.16.9.9, 162.158.0.1'], $ciTrusted, $ciCf);
+assertEquals('104.16.9.9', $ciR['address'], 'F4 WORKERS: a whole run of Cloudflare-looking addresses written by a Worker: only the first left of the real hop is used');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 10.0.0.77, 162.158.0.1'], $ciTrusted, $ciCf);
+assertEquals('10.0.0.77', $ciR['address'], 'F4: even an address in the owner\'s own list, written by Cloudflare, is used (not skipped)');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '162.158.0.1'], $ciTrusted, $ciCf);
+assertEquals('162.158.0.1', $ciR['address'], 'F4: a Cloudflare hop with nothing to its left: Cloudflare\'s address is used');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => 'garbage, 162.158.0.1'], $ciTrusted, $ciCf);
+assertEquals('162.158.0.1', $ciR['address'], 'F4: a Cloudflare hop with junk to its left: Cloudflare\'s address is used, the junk is not');
+$ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 198.51.100.7, 10.0.0.8, 10.0.0.9'], $ciTrusted, $ciCf);
+assertEquals('198.51.100.7', $ciR['address'], 'F4: the owner\'s own forwarders are still skipped (two in a row)');
 $ciR = resolveClientAddress(['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, not-an-ip'], $ciTrusted, $ciCf);
 assertEquals('10.0.0.2', $ciR['address'], 'MALFORMED right-most entry: the forwarder\'s own address is used');
 assertEquals('connection', $ciR['source'], '...from the connection');
@@ -226,7 +272,7 @@ foreach ($ciSaved as $ciKey => $ciValue) {
         $_SERVER[$ciKey] = $ciValue[0];
     }
 }
-assertEquals(['raw' => '', 'ranges' => [], 'invalid' => []], clientIpTrustedProxySetting(), 'without the settings reader, no forwarder is trusted');
+assertEquals(['raw' => '', 'ranges' => [], 'invalid' => [], 'problems' => []], clientIpTrustedProxySetting(), 'without the settings reader, no forwarder is trusted');
 
 // ==============================================================================
 // 🩺 The "Visitor address check"
@@ -248,6 +294,34 @@ assertEquals([], $ciCheck['warnings'], 'check: a correct Cloudflare request give
 assertEquals('203.0.113.9', $ciCheck['resolved']['address'], 'check: the Cloudflare visitor address');
 $ciCheck = clientAddressCheck(['REMOTE_ADDR' => '162.158.0.5'], ['ranges' => [], 'invalid' => []], ['ok' => false, 'ranges' => [], 'invalid' => []]);
 assertContains('Missing', $ciCheck['rows'][7]['value'], 'check: a missing Cloudflare list is shown as missing');
+$ciWideSetting = clientIpParseRangeList('0.0.0.0/0, 10.0.0.0/8');
+$ciCheck = clientAddressCheck(['REMOTE_ADDR' => '198.51.100.10'], $ciWideSetting, $ciCloudflare);
+assertEquals(1, count($ciCheck['warnings']), '0015 check: one warning for the refused wide entry');
+assertContains('too wide', $ciCheck['warnings'][0], '0015 check: ...saying it is too wide');
+assertEquals('10.0.0.0/8', $ciCheck['rows'][6]['value'], '0015 check: only the accepted range is listed as trusted');
+
+// ☁️ Review nit: Cloudflare data may not hold a very wide range either.
+$ciCfGood = clientIpCheckCloudflareList(['173.245.48.0/20', '104.16.0.0/13'], 4);
+assertEquals(['173.245.48.0/20', '104.16.0.0/13'], $ciCfGood['texts'], 'Cloudflare check: real ranges are accepted');
+assertEquals('', $ciCfGood['problem'], 'Cloudflare check: ...with no problem');
+assertEquals(['2a06:98c0::/29'], clientIpCheckCloudflareList(['2a06:98c0::/29'], 6)['texts'], 'Cloudflare check: their widest real IPv6 range (/29) is accepted');
+foreach ([[['0.0.0.0/0'], 4], [['173.245.48.0/20', '0.0.0.0/7'], 4], [['::/0'], 6], [['2000::/23'], 6]] as $ciCfCase) {
+    $ciCfBad = clientIpCheckCloudflareList($ciCfCase[0], $ciCfCase[1]);
+    assertEquals(null, $ciCfBad['texts'], 'Cloudflare check: a list holding ' . end($ciCfCase[0]) . ' is refused as a whole');
+    assertContains('too wide', $ciCfBad['problem'], 'Cloudflare check: ...saying it is too wide');
+}
+assertEquals(null, clientIpCheckCloudflareList(['2606:4700::/32'], 4)['texts'], 'Cloudflare check: an IPv6 range in the IPv4 list is refused');
+assertEquals(null, clientIpCheckCloudflareList([], 4)['texts'], 'Cloudflare check: an empty list is refused');
+assertEquals(null, clientIpCheckCloudflareList(['104.16.0.0/013'], 4)['texts'], 'Cloudflare check: a zero-padded "/013" is refused');
+$ciCfTemp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_cf_' . bin2hex(random_bytes(4)) . '.php';
+file_put_contents($ciCfTemp, "<?php\nreturn ['fetchedOn' => '2026-11-25', 'sources' => [], 'ipv4' => ['0.0.0.0/0', '173.245.48.0/20'], 'ipv6' => ['::/0']];\n");
+$ciCfTampered = clientIpCloudflareData($ciCfTemp);
+unlink($ciCfTemp);
+assertEquals(['0.0.0.0/0', '::/0'], $ciCfTampered['invalid'], 'Cloudflare file: a /0 in a tampered file is listed as invalid');
+assertEquals(1, count($ciCfTampered['ranges']), 'Cloudflare file: ...and only the real range is trusted');
+assertFalse(clientIpInRanges('198.51.100.7', $ciCfTampered['ranges']), 'Cloudflare file: an ordinary address is NOT treated as Cloudflare');
+$ciRefreshSource = (string) file_get_contents(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'refresh_cloudflare_ranges.php');
+assertContains('clientIpCheckCloudflareList($entries, $family)', $ciRefreshSource, 'the refresh tool checks every fetched list with clientIpCheckCloudflareList()');
 
 // ==============================================================================
 // 🧱 Wiring: every page uses the same answer
@@ -327,6 +401,11 @@ $ciRun = ciRunCli($ciCliPath, ['--trusted=', '--remote=198.51.100.1', '--xff=1.2
 assertContains('Address the site will use: 198.51.100.1', $ciRun['out'], 'CLI: a faked header from an ordinary connection is ignored');
 $ciRun = ciRunCli($ciCliPath, ['--trusted=10.0.0.0/8, bogus']);
 assertEquals(0, $ciRun['exit'], 'CLI: the settings summary exits 0');
-assertContains('Ignored (not valid addresses or ranges): bogus', $ciRun['out'], 'CLI: bad setting entries are named');
+assertContains('Ignored: "bogus" is not a valid address or range', $ciRun['out'], 'CLI: bad setting entries are named, with the reason');
+$ciRun = ciRunCli($ciCliPath, ['--trusted=0.0.0.0/0, 10.0.0.0/8']);
+assertContains('Ignored: "0.0.0.0/0" is too wide', $ciRun['out'], '0015 CLI: a /0 entry is refused and the reason printed');
+assertContains('Trusted forwarders (given with --trusted): 10.0.0.0/8', $ciRun['out'], '0015 CLI: only the accepted range is trusted');
+$ciRun = ciRunCli($ciCliPath, ['--trusted=0.0.0.0/0', '--remote=198.51.100.1', '--xff=6.6.6.6']);
+assertContains('Address the site will use: 198.51.100.1', $ciRun['out'], '0015 CLI: with only a /0 entry, nobody is a trusted forwarder (the faked header is ignored)');
 $ciRun = ciRunCli($ciCliPath, ['--nonsense']);
 assertEquals(2, $ciRun['exit'], 'CLI: an unknown option exits 2');

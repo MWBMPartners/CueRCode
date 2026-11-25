@@ -753,6 +753,8 @@ $asTrusted = clientIpTrustedProxySetting();
 asCheck('H', count($asTrusted['ranges']) === 3 && $asTrusted['invalid'] === [], 'clientIpTrustedProxySetting() reads the three ranges');
 $asResult = adminSaveSetting(['key' => 'trusted_proxy_ips'], '10.0.0.0/8, nonsense', $asAdmin);
 asCheck('H', $asResult['ok'] === false && asSetting($asServer, 'trusted_proxy_ips')['settingValue'] === '10.0.0.0/8, 2001:db8::/32, 192.0.2.7', 'a bad entry is refused and the saved list stays');
+$asResult = adminSaveSetting(['key' => 'trusted_proxy_ips'], '10.0.0.0/8, 0.0.0.0/0', $asAdmin);
+asCheck('H', $asResult['ok'] === false && asSetting($asServer, 'trusted_proxy_ips')['settingValue'] === '10.0.0.0/8, 2001:db8::/32, 192.0.2.7', 'decision 0015: a /0 range is refused and the saved list stays');
 
 // ==============================================================================
 // I. A failure leaks no secret

@@ -804,8 +804,21 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
         }
         $parsed = clientIpParseRangeList(implode(' ', $entries));
         if ($parsed['invalid'] !== []) {
-            $shown = array_slice($parsed['invalid'], 0, 3);
-            return ['ok' => false, 'value' => '', 'error' => 'These are not valid addresses or ranges: ' . implode(', ', $shown) . '.'];
+            // 📏 Decision 0015: say WHY each entry is refused (not an address,
+            //    a "/024"-style number, or a range wider than /8 or /32). The
+            //    first three reasons are shown so the message stays readable.
+            $reasons = [];
+            if (isset($parsed['problems']) && is_array($parsed['problems'])) {
+                $reasons = array_slice($parsed['problems'], 0, 3);
+            }
+            if ($reasons === []) {
+                return ['ok' => false, 'value' => '', 'error' => 'These are not valid addresses or ranges: ' . implode(', ', array_slice($parsed['invalid'], 0, 3)) . '.'];
+            }
+            $more = '';
+            if (count($parsed['invalid']) > 3) {
+                $more = ' (' . (count($parsed['invalid']) - 3) . ' more entries have problems too.)';
+            }
+            return ['ok' => false, 'value' => '', 'error' => implode(' ', $reasons) . $more];
         }
         return ['ok' => true, 'value' => implode(', ', $entries), 'error' => ''];
     }
