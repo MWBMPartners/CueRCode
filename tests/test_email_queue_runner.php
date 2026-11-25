@@ -865,6 +865,11 @@ foreach (['--quiet', '--limit', '--check', '--help', '0 = ', '1 = ', '2 = ', '3 
     assertContains($eqrNeedle, $eqrUsage, 'emailQueueRunnerUsage mentions ' . trim($eqrNeedle));
 }
 
+// 📣 #113 B9 (findings 7 and 9): the help is honest about exit 0 and about what is printed versus logged.
+assertContains('does NOT mean every email was delivered', $eqrUsage, 'B9-7: help says exit 0 does not mean everything was delivered');
+assertContains('"will retry"', $eqrUsage, 'B9-7: ...and where a retry shows up');
+assertContains('activity log in the database is separate and does keep the full recipient address', $eqrUsage, 'B9-9: help says the activity log keeps full recipient addresses');
+
 // --- validateEmailQueueGateway() -----------------------------------------------------
 $eqrIncompleteGateway = $eqrMakeGateway($eqrNewStore(), 'A');
 unset($eqrIncompleteGateway['countByStatus']);

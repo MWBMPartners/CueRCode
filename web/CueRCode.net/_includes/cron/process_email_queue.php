@@ -28,8 +28,10 @@
  *     php process_email_queue.php --check                 test the set-up, send nothing
  *     php process_email_queue.php --help                  show the help
  *
- * Exit codes: 0 fine (including nothing to send, email switched off, another
- * run already working) | 1 could not start or crashed | 2 bad option |
+ * Exit codes: 0 finished normally (including nothing to send, email switched off,
+ * another run already working, AND an email that failed this time but will be
+ * retried - so 0 does not mean everything was delivered; the summary line says
+ * "will retry", and --quiet prints nothing for it) | 1 could not start or crashed | 2 bad option |
  * 3 database problem (including a failed clean-up, #122) | 4 sending blocked by settings/Microsoft Graph, or an
  * earlier run looks stuck | 5 gave up on at least one email | 255 PHP itself
  * stopped the run part-way (a fatal error such as running out of memory; the
@@ -45,9 +47,11 @@
  *   3. the very first statement below refuses any run that is not the
  *      command-line PHP, before anything else is loaded.
  *
- * Its own output never includes an email address, a subject, an email body, a
- * one-time link, a secret or a setting value - only counts and plain-English
- * problems. If writing the activity log to the database fails mid-run, the
+ * Its own PRINTED output never includes an email address, a subject, an email
+ * body, a one-time link, a secret or a setting value - only counts and
+ * plain-English problems. (That is about what it prints. The activity log in
+ * the database is separate and DOES keep the full recipient address of each
+ * queued and sent email.) If writing the activity log to the database fails mid-run, the
  * site's shared activity logger falls back to PHP's error log, which on the
  * command line is the terminal (so the cron email). Since #126 that fallback
  * line hides every email address ("[address]"); it still includes the
