@@ -1201,7 +1201,11 @@ function oauthVerifyJwtSignatureRS256(string $jwt, array $jwks): array
         ];
     }
 
-    $algorithm = $decoded['header']['alg'] ?? null;
+    if (isset($decoded['header']['alg'])) {
+        $algorithm = $decoded['header']['alg'];
+    } else {
+        $algorithm = null;
+    }
 
     if ($algorithm !== 'RS256') {
         return [
@@ -1212,8 +1216,17 @@ function oauthVerifyJwtSignatureRS256(string $jwt, array $jwks): array
         ];
     }
 
-    $keyId = $decoded['header']['kid'] ?? null;
-    $jwk   = oauthFindJwkByKid($jwks, is_string($keyId) ? $keyId : null);
+    if (isset($decoded['header']['kid'])) {
+        $keyId = $decoded['header']['kid'];
+    } else {
+        $keyId = null;
+    }
+    if (is_string($keyId)) {
+        $keyIdForLookup = $keyId;
+    } else {
+        $keyIdForLookup = null;
+    }
+    $jwk = oauthFindJwkByKid($jwks, $keyIdForLookup);
 
     if ($jwk === null) {
         return [
@@ -1322,7 +1335,11 @@ function oauthValidateIdTokenClaims(
     int $now,
     int $clockSkewSeconds
 ): array {
-    $issuer = $claims['iss'] ?? null;
+    if (isset($claims['iss'])) {
+        $issuer = $claims['iss'];
+    } else {
+        $issuer = null;
+    }
 
     if (!is_string($issuer) || !hash_equals($expectedIssuer, $issuer)) {
         return [
@@ -1332,7 +1349,11 @@ function oauthValidateIdTokenClaims(
         ];
     }
 
-    $audienceClaim = $claims['aud'] ?? null;
+    if (isset($claims['aud'])) {
+        $audienceClaim = $claims['aud'];
+    } else {
+        $audienceClaim = null;
+    }
     $audienceMatches = false;
 
     if (is_string($audienceClaim)) {
@@ -1357,7 +1378,11 @@ function oauthValidateIdTokenClaims(
         // list. (A single-string `aud` has no `azp` requirement - the
         // simple equality check above already suffices per the spec.)
         if ($audienceMatches && count($audienceClaim) > 1) {
-            $authorizedPartyClaim = $claims['azp'] ?? null;
+            if (isset($claims['azp'])) {
+        $authorizedPartyClaim = $claims['azp'];
+    } else {
+        $authorizedPartyClaim = null;
+    }
 
             if (!is_string($authorizedPartyClaim) || !hash_equals($expectedAudience, $authorizedPartyClaim)) {
                 $audienceMatches = false;
@@ -1373,7 +1398,11 @@ function oauthValidateIdTokenClaims(
         ];
     }
 
-    $expiresAtClaim = $claims['exp'] ?? null;
+    if (isset($claims['exp'])) {
+        $expiresAtClaim = $claims['exp'];
+    } else {
+        $expiresAtClaim = null;
+    }
 
     if (!is_int($expiresAtClaim) && !is_float($expiresAtClaim)) {
         return [
@@ -1391,7 +1420,11 @@ function oauthValidateIdTokenClaims(
         ];
     }
 
-    $issuedAtClaim = $claims['iat'] ?? null;
+    if (isset($claims['iat'])) {
+        $issuedAtClaim = $claims['iat'];
+    } else {
+        $issuedAtClaim = null;
+    }
 
     if (($issuedAtClaim !== null) && (is_int($issuedAtClaim) || is_float($issuedAtClaim))) {
         if (((int) $issuedAtClaim) > ($now + $clockSkewSeconds)) {
@@ -1403,7 +1436,11 @@ function oauthValidateIdTokenClaims(
         }
     }
 
-    $nonceClaim = $claims['nonce'] ?? null;
+    if (isset($claims['nonce'])) {
+        $nonceClaim = $claims['nonce'];
+    } else {
+        $nonceClaim = null;
+    }
 
     if (!is_string($nonceClaim) || !hash_equals($expectedNonce, $nonceClaim)) {
         return [
@@ -1413,7 +1450,11 @@ function oauthValidateIdTokenClaims(
         ];
     }
 
-    $subjectClaim = $claims['sub'] ?? null;
+    if (isset($claims['sub'])) {
+        $subjectClaim = $claims['sub'];
+    } else {
+        $subjectClaim = null;
+    }
 
     if (!is_string($subjectClaim) || $subjectClaim === '') {
         return [
@@ -1563,8 +1604,16 @@ function beginAuth(string $provider, ?string $rawNextUrl = null): array
     // target user now so completeAuth()/applyOAuthAccountLink() can bind the
     // new identity to THIS specific account rather than treating it as a
     // fresh sign-in.
-    $requestingUser = function_exists('currentUser') ? currentUser() : null;
-    $linkUserId     = ($requestingUser !== null) ? (int) $requestingUser['userID'] : null;
+    if (function_exists('currentUser')) {
+        $requestingUser = currentUser();
+    } else {
+        $requestingUser = null;
+    }
+    if ($requestingUser !== null) {
+        $linkUserId = (int) $requestingUser['userID'];
+    } else {
+        $linkUserId = null;
+    }
 
     // 🕐 Review finding 2 (2026-11-25): for a "link" request, also save the
     //    account's "sessions valid from" mark as it is NOW. If the password is
@@ -1797,14 +1846,22 @@ function completeAuth(string $provider, string $code, string $state): array
     }
 
     $claims  = $validation['claims'];
-    $subject = (string) ($claims['sub'] ?? '');
+    if (isset($claims['sub'])) {
+        $subject = (string) $claims['sub'];
+    } else {
+        $subject = '';
+    }
 
     $email = null;
     if (isset($claims['email']) && is_string($claims['email']) && $claims['email'] !== '') {
         $email = mb_strtolower(trim($claims['email']));
     }
 
-    $emailVerifiedClaim = $claims['email_verified'] ?? false;
+    if (isset($claims['email_verified'])) {
+        $emailVerifiedClaim = $claims['email_verified'];
+    } else {
+        $emailVerifiedClaim = false;
+    }
 
     // 📌 Providers encode this as a real JSON boolean (Google) or - in some
     // Entra ID token variants - as the STRING "true"/"false"; normalise both.
@@ -1842,12 +1899,33 @@ function completeAuth(string $provider, string $code, string $state): array
 
     // 🔐 Build the AES-256-GCM-encrypted-at-rest token bundle for
     // tblUserOAuth.tokensEncrypted - never stored/logged in plaintext.
+    // 📌 Full notation (project rule; Codex C3 finding 6): each part with its fallback.
+    if (isset($tokenResponse['access_token'])) {
+        $bundleAccessToken = $tokenResponse['access_token'];
+    } else {
+        $bundleAccessToken = null;
+    }
+    if (isset($tokenResponse['refresh_token'])) {
+        $bundleRefreshToken = $tokenResponse['refresh_token'];
+    } else {
+        $bundleRefreshToken = null;
+    }
+    if (isset($tokenResponse['expires_in'])) {
+        $bundleExpiresAt = time() + (int) $tokenResponse['expires_in'];
+    } else {
+        $bundleExpiresAt = null;
+    }
+    if (isset($tokenResponse['scope'])) {
+        $bundleScope = $tokenResponse['scope'];
+    } else {
+        $bundleScope = $config['scopes'];
+    }
     $tokenBundle = [
-        'access_token'  => $tokenResponse['access_token'] ?? null,
-        'refresh_token' => $tokenResponse['refresh_token'] ?? null,
+        'access_token'  => $bundleAccessToken,
+        'refresh_token' => $bundleRefreshToken,
         'id_token'      => $tokenResponse['id_token'],
-        'expires_at'    => isset($tokenResponse['expires_in']) ? (time() + (int) $tokenResponse['expires_in']) : null,
-        'scope'         => $tokenResponse['scope'] ?? $config['scopes'],
+        'expires_at'    => $bundleExpiresAt,
+        'scope'         => $bundleScope,
     ];
 
     // 🕐 Review finding 2: the account's mark saved by beginAuth() for a
@@ -2573,7 +2651,11 @@ function countLinkedOAuthProvidersForUser(int $userID): int
         return 0;
     }
 
-    return $row !== null ? (int) $row['total'] : 0;
+    if ($row !== null) {
+        return (int) $row['total'];
+    }
+
+    return 0;
 }
 
 /**

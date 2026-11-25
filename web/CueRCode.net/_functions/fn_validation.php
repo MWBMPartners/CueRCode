@@ -982,8 +982,16 @@ function validateImageUpload(array $file, int $maxSize = 5242880): array
         //    hands it to GD (which would allocate ~4 bytes per pixel).
         // @see https://www.php.net/manual/en/function.getimagesize.php
         // @see CUERCODE_UPLOAD_MAX_WIDTH / CUERCODE_UPLOAD_MAX_HEIGHT
-        $imageWidth  = (int) ($imageInfo[0] ?? 0);
-        $imageHeight = (int) ($imageInfo[1] ?? 0);
+        if (isset($imageInfo[0])) {
+            $imageWidth = (int) $imageInfo[0];
+        } else {
+            $imageWidth = 0;
+        }
+        if (isset($imageInfo[1])) {
+            $imageHeight = (int) $imageInfo[1];
+        } else {
+            $imageHeight = 0;
+        }
 
         if ($imageWidth > CUERCODE_UPLOAD_MAX_WIDTH
             || $imageHeight > CUERCODE_UPLOAD_MAX_HEIGHT

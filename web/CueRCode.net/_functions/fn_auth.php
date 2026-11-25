@@ -718,7 +718,11 @@ function authLinkRequestLimitSettings(string $prefix, ?callable $getSetting = nu
  */
 function decideVerificationResend(array $facts, array $limits): array
 {
-    $ipRequests = (int) ($facts['ipRequestsInLastHour'] ?? 0);
+    if (isset($facts['ipRequestsInLastHour'])) {
+        $ipRequests = (int) $facts['ipRequestsInLastHour'];
+    } else {
+        $ipRequests = 0;
+    }
 
     if ($ipRequests > (int) $limits['ipPerHour']) {
         return ['send' => false, 'reason' => 'ip_limited'];
@@ -728,13 +732,23 @@ function decideVerificationResend(array $facts, array $limits): array
         return ['send' => false, 'reason' => 'no_pending_account'];
     }
 
-    $secondsSince = $facts['secondsSinceLastLink'] ?? null;
+    if (isset($facts['secondsSinceLastLink'])) {
+        $secondsSince = $facts['secondsSinceLastLink'];
+    } else {
+        $secondsSince = null;
+    }
 
     if ($secondsSince !== null && (int) $secondsSince < (int) $limits['minGapSeconds']) {
         return ['send' => false, 'reason' => 'too_soon'];
     }
 
-    if ((int) ($facts['linksInLast24Hours'] ?? 0) >= (int) $limits['dailyCap']) {
+    if (isset($facts['linksInLast24Hours'])) {
+        $linksInDay = (int) $facts['linksInLast24Hours'];
+    } else {
+        $linksInDay = 0;
+    }
+
+    if ($linksInDay >= (int) $limits['dailyCap']) {
         return ['send' => false, 'reason' => 'daily_cap'];
     }
 
@@ -1842,7 +1856,11 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
     $failedCount = (int) $row['failedLoginCount'];
 
     $lockedUntilRaw       = $row['lockedUntil'];
-    $lockedUntilTimestamp = $lockedUntilRaw !== null ? strtotime((string) $lockedUntilRaw) : false;
+    if ($lockedUntilRaw !== null) {
+        $lockedUntilTimestamp = strtotime((string) $lockedUntilRaw);
+    } else {
+        $lockedUntilTimestamp = false;
+    }
     $isLocked             = ($lockedUntilTimestamp !== false && $lockedUntilTimestamp > time());
 
     // 🔒 Always run verifyPassword() regardless of lock/status state, so a

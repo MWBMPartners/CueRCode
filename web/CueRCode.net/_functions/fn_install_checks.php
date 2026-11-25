@@ -117,7 +117,10 @@ function installParseDatabaseVersion(string $serverInfo): array
 
     if ($isMariaDb) {
         // 🧹 Drop the fake "5.5.5-" prefix some client libraries put in front.
-        $text = preg_replace('/^5\.5\.5-/', '', $text) ?? $text;
+        $withoutPrefix = preg_replace('/^5\.5\.5-/', '', $text);
+        if ($withoutPrefix !== null) {
+            $text = $withoutPrefix;
+        }
     }
 
     if (preg_match('/^(\d+\.\d+(?:\.\d+)?)/', $text, $matches) !== 1) {

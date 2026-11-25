@@ -1120,7 +1120,11 @@ function handleAccountProfilePatch(array $requestBody, array $auth): void
         return;
     }
 
-    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
 
     if ($currentUserId === null) {
         errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
@@ -1151,7 +1155,11 @@ function handleAccountProfilePatch(array $requestBody, array $auth): void
             return;
         }
 
-        $displayName = $rawDisplayName !== null ? trim($rawDisplayName) : '';
+        if ($rawDisplayName !== null) {
+        $displayName = trim($rawDisplayName);
+    } else {
+        $displayName = '';
+    }
 
         if (mb_strlen($displayName) > CUERCODE_ACCOUNT_DISPLAY_NAME_MAX_LEN) {
             errorResponse(
@@ -1243,7 +1251,11 @@ function handleAccountSessionsList(array $auth): void
         return;
     }
 
-    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
 
     if ($currentUserId === null) {
         errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
@@ -1294,7 +1306,11 @@ function handleAccountSessionDelete(string $sessionId, array $auth): void
         return;
     }
 
-    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
 
     if ($currentUserId === null) {
         errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
@@ -1346,7 +1362,11 @@ function handleAccountChangePassword(array $requestBody, array $auth): void
         return;
     }
 
-    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
 
     if ($currentUserId === null) {
         errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
@@ -1526,9 +1546,14 @@ function collectAccountExportData(int $userID): array
                 }
             }
 
+            $typeName = null;
+            if ($row['typeName'] !== null) {
+                $typeName = (string) $row['typeName'];
+            }
+
             $export['saved_qr_codes'][] = [
                 'uuid'           => (string) $row['qrUUID'],
-                'type'           => $row['typeName'] !== null ? (string) $row['typeName'] : null,
+                'type'           => $typeName,
                 'label'          => $row['qrLabel'],
                 'payload'        => (string) $row['qrPayload'],
                 'input_data'     => $inputData,
@@ -1693,7 +1718,11 @@ function handleAccountDataExport(array $auth): void
         return;
     }
 
-    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
 
     if ($currentUserId === null) {
         errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
@@ -2208,7 +2237,11 @@ function handleAccountErase(array $requestBody, array $auth): void
         return;
     }
 
-    $currentUserId = function_exists('resolveUserIdFromAuth') ? resolveUserIdFromAuth($auth) : null;
+    if (function_exists('resolveUserIdFromAuth')) {
+        $currentUserId = resolveUserIdFromAuth($auth);
+    } else {
+        $currentUserId = null;
+    }
 
     if ($currentUserId === null) {
         errorResponse('Unable to resolve the authenticated account for this request.', 401, 'AUTH_REQUIRED');
