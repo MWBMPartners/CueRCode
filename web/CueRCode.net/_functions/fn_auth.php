@@ -1337,11 +1337,16 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
             . 'Use "Forgot password" to set a new password; that also activates the account.',
         'data'      => [],
     ];
+    // 📣 #113 B9 (finding 8): a used-up link can mean TWO things - it was used,
+    //    or asking for a new link (resend) retired it. The token table keeps
+    //    only "usedAt" for both, and a link also stops after too many wrong
+    //    passwords, so the two cannot be told apart without a schema change.
+    //    The wording therefore covers both and says what to do next.
     $alreadyUsedResult = [
         'success'   => false,
         'httpCode'  => 409,
         'errorCode' => 'VERIFICATION_ALREADY_USED',
-        'message'   => 'This verification link has already been used.',
+        'message'   => 'This link has already been used or has been replaced by a newer one. Please use the newest email we sent you, or ask for a new link.',
         'data'      => [],
     ];
 

@@ -268,3 +268,10 @@ assertTrue(
     'I1: the admin check comes BEFORE the token is used up'
 );
 assertFalse(str_contains($rvAuth, 'CUERCODE_ROLE_GLOBAL_ADMIN'), 'I1: fn_auth.php never names the role number');
+
+// 📣 #113 B9 (finding 8): an old link replaced by a newer one (resend) no longer says only "already used".
+assertContains('This link has already been used or has been replaced by a newer one. Please use the newest email we sent you, or ask for a new link.', $rvAuth, 'B9-8: a used-up or replaced link says so, and what to do next');
+assertFalse(str_contains($rvAuth, "'This verification link has already been used.'"), 'B9-8: the old "already been used" only wording is gone');
+$rvOpenApi = (string) file_get_contents(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'web' . DIRECTORY_SEPARATOR . 'CueRCode.net' . DIRECTORY_SEPARATOR . 'public_html' . DIRECTORY_SEPARATOR . 'api' . DIRECTORY_SEPARATOR . 'v1' . DIRECTORY_SEPARATOR . 'openapi.json');
+assertContains('This link has already been used or has been replaced by a newer one.', $rvOpenApi, 'B9-8: the OpenAPI example shows the same message');
+assertFalse(str_contains($rvOpenApi, 'This verification link has already been used.'), 'B9-8: the OpenAPI example no longer shows the old message');

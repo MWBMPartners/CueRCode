@@ -431,6 +431,7 @@ arCheck($arSnap['user']['status'] === 'active' && $arSnap['user']['emailVerified
 arCheck($arSnap['user']['failedLoginCount'] === 0 && $arSnap['user']['lockedUntil'] === null, '...the lock-out counter is cleared');
 arCheck($arSnap['unusedVerifs'] === 0, '...the link is used up');
 arCheck(verifyEmailToken($arALink, $arStrangerPassword)['errorCode'] === 'VERIFICATION_ALREADY_USED', 'using it again: already used');
+arCheck(str_contains(verifyEmailToken($arALink, $arStrangerPassword)['message'], 'replaced by a newer one'), 'using it again: the message also covers a link replaced by a newer one (#113 B9-8)');
 
 // ==============================================================================
 // B. Too many wrong passwords
