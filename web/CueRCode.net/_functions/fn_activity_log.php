@@ -29,7 +29,7 @@
  * @package     CueRCode
  * @subpackage  Logging
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.1.0
+ * @version     1.2.0 (Codex round 2 R2-1: logActivityChecked())
  * @since       Phase 1
  * @see         fn_log_mask.php - cleanLogText(), used by the error-log fallbacks (#126)
  * @see         https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php
@@ -124,6 +124,41 @@ function logActivity(
     ?int    $entityID = null,
     array   $extra = []
 ): void {
+    // 📝 The work is done by logActivityChecked() below; ordinary callers do
+    //    not need to know whether the row was written, so the answer is
+    //    simply not used here (behaviour unchanged since before Codex round 2).
+    logActivityChecked($type, $detail, $entityType, $entityID, $extra);
+}
+
+/**
+ * ✅ Log an activity event exactly like logActivity(), and SAY whether the
+ *    database row was really written (independent review, Codex round 2
+ *    finding R2-1, 2026-11-25).
+ *
+ * logActivity() never reports failure: when the database is missing or the
+ * insert fails it writes a line to PHP's error log and carries on. That is
+ * right for ordinary events, but not when the activity row stands in for an
+ * admin change-log row (adminAuditOrFallback(), fn_admin.php, used before
+ * the change-log table exists): there, a lost row must stop the admin action.
+ * So this returns true ONLY when the insert ran and wrote exactly one row;
+ * every other outcome (no database, an error, zero rows) returns false. The
+ * error-log fallback lines are written exactly as before.
+ *
+ * @param string      $type       Activity type identifier (e.g. 'reauth.success')
+ * @param string      $detail     Human-readable description
+ * @param string|null $entityType Related entity type
+ * @param int|null    $entityID   ID of the related entity
+ * @param array       $extra      Extra context, stored as JSON
+ *
+ * @return bool True only when one tblActivityLog row was written
+ */
+function logActivityChecked(
+    string  $type,
+    string  $detail = '',
+    ?string $entityType = null,
+    ?int    $entityID = null,
+    array   $extra = []
+): bool {
     // ==================================================================
     // 📋 Gather request context
     // @see https://www.php.net/manual/en/reserved.variables.server.php
@@ -230,7 +265,8 @@ function logActivity(
                 'CueRCode Activity [' . cleanLogText($type, 100) . ']: ' . cleanLogText($detail, 1000)
                 . ' | Entity: ' . $entityTypeStr . ':' . $entityIDStr
             );
-            return;
+            // ❌ Only the error log has it - not a database row.
+            return false;
         }
 
         $stmt = dbQuery(
@@ -271,7 +307,15 @@ function logActivity(
                 $additionalDataJSON,                  // additionalData (JSON, nullable)
             ]
         );
+        // ✅ R2-1: written only when the insert reports exactly one new row.
+        $written = ($stmt->affected_rows === 1);
         $stmt->close();
+
+        if (!$written) {
+            error_log('CueRCode Activity Log FAILED [' . cleanLogText($type, 100) . ']: the insert wrote no row');
+        }
+
+        return $written;
     } catch (\Throwable $e) {
         // ❌ Database insert failed - fall back to error_log
         // We use error_log() directly instead of logError() to avoid potential
@@ -296,6 +340,8 @@ function logActivity(
             'CueRCode Activity Log FAILED [' . cleanLogText($type, 100) . ']: ' . cleanLogText($detail, 1000)
             . ' | DB Error: ' . cleanLogText($safeError, 1000)
         );
+
+        return false;
     }
 }
 

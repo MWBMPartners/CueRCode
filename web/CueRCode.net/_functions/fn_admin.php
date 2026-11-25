@@ -2551,11 +2551,37 @@ function adminRedirect(string $path): never
  * 🔎 Does a table exist in this database? Remembered for the rest of the
  *    request (so a page asks the database at most once per table).
  *
+ * A thin yes/no wrapper around adminTableExistsState(): "could not tell"
+ * reads as false here, which is the SAFE answer for every caller that uses it
+ * to decide whether a change may go ahead (they refuse when it is false).
+ * adminAuditOrFallback() must NOT use it, because there "false" leads to the
+ * activity-log stand-in - it uses adminTableExistsState() instead.
+ *
  * @param string $table Plain table name
  * @param bool   $forget True to drop the remembered answer (after an upgrade)
  * @return bool False also when the question could not be answered
  */
 function adminTableExists(string $table, bool $forget = false): bool
+{
+    return (adminTableExistsState($table, $forget) === 'yes');
+}
+
+/**
+ * 🔎 Does a table exist? Three answers (independent review, Codex round 2
+ *    finding R2-1, 2026-11-25):
+ *   - "yes"     - INFORMATION_SCHEMA says it exists;
+ *   - "no"      - INFORMATION_SCHEMA was asked successfully and says it does
+ *                 NOT exist (confirmed missing);
+ *   - "unknown" - the question could not be answered (no database, a query
+ *                 error). Never remembered, so the next call asks again.
+ * Before this, a failed question read as "missing", which sent admin actions
+ * to the activity-log stand-in even when the change-log table existed.
+ *
+ * @param string $table  Plain table name (a bound value)
+ * @param bool   $forget True to drop the remembered answer (after an upgrade)
+ * @return string "yes", "no" or "unknown"
+ */
+function adminTableExistsState(string $table, bool $forget = false): string
 {
     static $known = [];
 
@@ -2568,7 +2594,7 @@ function adminTableExists(string $table, bool $forget = false): bool
     }
 
     if (!function_exists('dbQuery')) {
-        return false;
+        return 'unknown';
     }
 
     try {
@@ -2581,13 +2607,22 @@ function adminTableExists(string $table, bool $forget = false): bool
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
     } catch (\Throwable $e) {
-        return false;
+        return 'unknown';
     }
 
-    $exists = (is_array($row) && (int) $row['tableCount'] > 0);
-    $known[$table] = $exists;
+    if (!is_array($row) || !array_key_exists('tableCount', $row)) {
+        return 'unknown';
+    }
 
-    return $exists;
+    if ((int) $row['tableCount'] > 0) {
+        $state = 'yes';
+    } else {
+        $state = 'no';
+    }
+
+    $known[$table] = $state;
+
+    return $state;
 }
 
 /**
@@ -2697,18 +2732,40 @@ function adminAuditWrite(array $entry): bool
 }
 
 /**
- * ✍️ Write an audit row, or - ONLY while tblAdminAuditLog does not exist yet
- *    (a database still waiting for its upgrades) - an activity-log row
- *    instead (plan §6.7: only /admin/reauth/ and /admin/upgrades/ may act
+ * ✍️ Write an audit row, or - ONLY while tblAdminAuditLog is CONFIRMED not to
+ *    exist yet (a database still waiting for its upgrades) - an activity-log
+ *    row instead (plan §6.7: only /admin/reauth/ and /admin/upgrades/ may act
  *    then, and they use this).
  *
+ * 🔒 Independent review, Codex round 2 finding R2-1 (2026-11-25): both halves
+ *    now fail closed. Before, the stand-in row was written with logActivity(),
+ *    which cannot report failure, so this returned true even when nothing was
+ *    written - and a failed "does the table exist?" question counted as
+ *    "missing". On a database waiting for upgrade 0002, a lost row still
+ *    unlocked admin editing and let an upgrade change the database with no
+ *    record (reproduced on MySQL 8.0.36 with a trigger refusing rows). Now:
+ *      - the table check has three answers, and "could not tell" refuses;
+ *      - the stand-in uses logActivityChecked(), which is true only when one
+ *        row was really written.
+ *
  * @param array $entry See adminAuditBuildRow()
- * @return bool True when either row was written (the activity log cannot say, so true)
+ * @return bool True only when the audit row, or the stand-in activity row, was written
  */
 function adminAuditOrFallback(array $entry): bool
 {
-    if (adminTableExists('tblAdminAuditLog')) {
+    $tableState = adminTableExistsState('tblAdminAuditLog');
+
+    if ($tableState === 'yes') {
         return adminAuditWrite($entry);
+    }
+
+    if ($tableState !== 'no') {
+        // ❓ Could not tell whether the change-log table exists: write nowhere
+        //    and report failure, so the caller refuses the action.
+        if (function_exists('logError')) {
+            logError('error', 'Admin action refused: could not check whether the admin change log table exists', '');
+        }
+        return false;
     }
 
     $row = adminAuditBuildRow($entry);
@@ -2716,7 +2773,7 @@ function adminAuditOrFallback(array $entry): bool
         return false;
     }
 
-    if (!function_exists('logActivity')) {
+    if (!function_exists('logActivityChecked')) {
         return false;
     }
 
@@ -2725,15 +2782,13 @@ function adminAuditOrFallback(array $entry): bool
         $entityID = (int) $row['actorUserID'];
     }
 
-    logActivity(
+    return logActivityChecked(
         $row['action'],
         'Admin action recorded here because the admin change log table does not exist yet (database upgrade waiting)',
         'user',
         $entityID,
         ['auditFallback' => true, 'outcome' => $row['outcome'], 'entityType' => $row['entityType'], 'entityKey' => $row['entityKey']]
     );
-
-    return true;
 }
 
 /**

@@ -643,6 +643,21 @@ $aiOverview = adminUpgradeOverview();
 aiCheck('B', $aiOverview['ok'] && count($aiOverview['pending']) >= 2, 'the overview lists the waiting upgrades (' . count($aiOverview['pending']) . ')');
 aiCheck('B', isset($aiOverview['pending'][0]['description']) && $aiOverview['pending'][0]['description'] !== '', 'each waiting upgrade has its plain-English description');
 
+// 🧾 Codex round 2 finding R2-1 (2026-11-25): before the audit table exists,
+//    the stand-in activity-log row must really be written. A trigger makes the
+//    activity log refuse every row; then nothing may be reported as recorded,
+//    editing must not unlock, and no upgrade may run.
+$aiServer->query('DROP TRIGGER IF EXISTS `aiForcedFailure`');
+$aiServer->query('CREATE TRIGGER `aiForcedFailure` BEFORE INSERT ON `tblActivityLog` FOR EACH ROW SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'forced failure for the integration test\'');
+$aiFallbackRefused = adminAuditOrFallback(adminAuditEntryForAdmin($aiHandAdmin, 'reauth.success', 'user', (string) $aiUserIDs['hand'], 'success'));
+aiCheck('B', $aiFallbackRefused === false, 'R2-1: with the activity log refusing rows, the stand-in entry is reported as NOT written');
+$aiReauthChildB = aiReauthInChild($aiDbName, (int) $aiUserIDs['hand']);
+aiCheck('B', isset($aiReauthChildB['session'], $aiReauthChildB['recorded'], $aiReauthChildB['unlocked']) && $aiReauthChildB['session'] === true && $aiReauthChildB['recorded'] === false && $aiReauthChildB['unlocked'] === false, 'R2-1: ...the password confirmation (a real PHP session, in a child process) does NOT unlock editing ' . json_encode($aiReauthChildB));
+$aiUpgradeRefusedB = adminRunUpgrades($aiHandAdmin);
+aiCheck('B', $aiUpgradeRefusedB['ok'] === false && $aiUpgradeRefusedB['status'] === 'audit_failed' && $aiUpgradeRefusedB['applied'] === [], 'R2-1: ...and the admin upgrade refuses to start (status ' . $aiUpgradeRefusedB['status'] . ')');
+aiCheck('B', aiCount($aiServer, "SELECT COUNT(*) FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` IN ('tblAdminAuditLog', 'tblSchemaMigrations')") === 0, 'R2-1: ...so the database structure was NOT changed (no audit table, no upgrade ledger)');
+$aiServer->query('DROP TRIGGER IF EXISTS `aiForcedFailure`');
+
 $aiFallback = adminAuditOrFallback(adminAuditEntryForAdmin($aiHandAdmin, 'reauth.success', 'user', (string) $aiUserIDs['hand'], 'success'));
 aiCheck('B', $aiFallback === true, 'an audit entry falls back to the activity log while the audit table is missing');
 aiCheck('B', aiCount($aiServer, "SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'reauth.success' AND `entityType` = 'user' AND `entityID` = ?", 'i', [$aiUserIDs['hand']]) === 1, 'the fallback row is in tblActivityLog, naming the admin');

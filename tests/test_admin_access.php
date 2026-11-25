@@ -1068,3 +1068,143 @@ $aaRunStart = strpos($aaAdminSource, 'function adminRunUpgrades(');
 $aaRunBody  = substr($aaAdminSource, $aaRunStart, strpos($aaAdminSource, "\nfunction ", $aaRunStart + 10) - $aaRunStart);
 assertTrue(strpos($aaRunBody, "'schema.migrate.started'") < strpos($aaRunBody, 'migrationApplyPending('), 'C2-2: the "started" row is written before any upgrade runs');
 assertTrue(strpos($aaRunBody, 'if (!$startedWritten) {') < strpos($aaRunBody, 'migrationApplyPending('), 'C2-2: ...and nothing runs if it could not be written');
+
+// ==============================================================================
+// 🧾 Independent review (Codex round 2 finding R2-1, 2026-11-25): BEFORE the
+//    admin change-log table exists, the stand-in activity-log row must be a
+//    CHECKED write, and "could not tell whether the table exists" must refuse,
+//    not fall back. Each case runs in its own child process with a stand-in
+//    dbQuery() (never defined in this process - other test files check it is
+//    absent). The real-database version is in
+//    tests/integration/admin_access_real_mysql.php, scenario B.
+// ==============================================================================
+/**
+ * 🧪 Run adminAuditOrFallback() and adminReauthRecordSuccess() in a child
+ *    process with a stand-in database. $aaMode picks the stand-in:
+ *      none           - no dbQuery() at all (database not loaded);
+ *      check-fails    - the "does the table exist?" question throws;
+ *      missing-refuse - table confirmed missing; the activity-log insert throws;
+ *      missing-zero   - table confirmed missing; the insert reports 0 rows;
+ *      missing-works  - table confirmed missing; the insert writes 1 row.
+ *
+ * @return array<string, mixed> {fallback, unlocked, inserts, schemaQueries} or {crashed}
+ */
+$aaAuditChild = static function (string $aaMode): array {
+    $aaProgram = tempnam(sys_get_temp_dir(), 'cuercode_aa_r21_');
+    $aaLog     = tempnam(sys_get_temp_dir(), 'cuercode_aa_r21_');
+    if ($aaProgram === false || $aaLog === false) {
+        return ['crashed' => 'tempnam failed'];
+    }
+    $aaBody = '<?php' . PHP_EOL
+        . 'require ' . var_export(CUERCODE_TEST_REPO_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'bootstrap.php', true) . ';' . PHP_EOL
+        . '$GLOBALS["aaMode"] = ' . var_export($aaMode, true) . ';' . PHP_EOL
+        . '$GLOBALS["aaInserts"] = 0;' . PHP_EOL
+        . '$GLOBALS["aaSchemaQueries"] = 0;' . PHP_EOL
+        . <<<'PHP'
+if ($GLOBALS['aaMode'] !== 'none') {
+    function dbQuery(string $sql, string $types = '', array $params = [])
+    {
+        if (str_contains($sql, 'INFORMATION_SCHEMA')) {
+            $GLOBALS['aaSchemaQueries'] = $GLOBALS['aaSchemaQueries'] + 1;
+            if ($GLOBALS['aaMode'] === 'check-fails') {
+                throw new \RuntimeException('stand-in: the table check failed');
+            }
+            return new class {
+                public function get_result(): object
+                {
+                    return new class {
+                        public function fetch_assoc(): array
+                        {
+                            return ['tableCount' => 0];
+                        }
+                    };
+                }
+                public function close(): bool
+                {
+                    return true;
+                }
+            };
+        }
+        if (str_contains($sql, 'INSERT INTO `tblActivityLog`')) {
+            $GLOBALS['aaInserts'] = $GLOBALS['aaInserts'] + 1;
+            if ($GLOBALS['aaMode'] === 'missing-refuse') {
+                throw new \RuntimeException('stand-in: the activity log refused the row');
+            }
+            $rows = 1;
+            if ($GLOBALS['aaMode'] === 'missing-zero') {
+                $rows = 0;
+            }
+            return new class ($rows) {
+                public int $affected_rows;
+                public function __construct(int $rows)
+                {
+                    $this->affected_rows = $rows;
+                }
+                public function close(): bool
+                {
+                    return true;
+                }
+            };
+        }
+        throw new \RuntimeException('stand-in: unexpected query');
+    }
+}
+ini_set('session.use_cookies', '0');
+ini_set('session.cache_limiter', '');
+ini_set('session.save_path', sys_get_temp_dir());
+session_start();
+requireFn('fn_activity_log.php');
+requireFn('fn_admin.php');
+$admin = ['userID' => 7, 'email' => 'it@admin.cuercode.invalid', 'displayName' => 'IT', 'sessionHash' => hash('sha256', 'x'), 'hasPassword' => true];
+$fallback = adminAuditOrFallback(adminAuditEntryForAdmin($admin, 'reauth.success', 'user', '7', 'success'));
+$unlocked = adminReauthRecordSuccess($admin);
+echo 'AA-R21:' . json_encode(['fallback' => $fallback, 'unlocked' => $unlocked, 'stored' => adminReauthStoredState() !== null, 'inserts' => $GLOBALS['aaInserts'], 'schemaQueries' => $GLOBALS['aaSchemaQueries'], 'session' => session_status() === PHP_SESSION_ACTIVE]) . PHP_EOL;
+session_destroy();
+PHP;
+    file_put_contents($aaProgram, $aaBody);
+    $aaOut  = [];
+    $aaCode = 0;
+    exec(escapeshellarg(PHP_BINARY) . ' -d error_log=' . escapeshellarg($aaLog) . ' -d log_errors=1 ' . escapeshellarg($aaProgram) . ' 2>&1', $aaOut, $aaCode);
+    @unlink($aaProgram);
+    @unlink($aaLog);
+    foreach ($aaOut as $aaLine) {
+        if (str_starts_with($aaLine, 'AA-R21:')) {
+            $aaDecoded = json_decode(substr($aaLine, strlen('AA-R21:')), true);
+            if (is_array($aaDecoded)) {
+                return $aaDecoded;
+            }
+        }
+    }
+    return ['crashed' => substr(implode(' | ', $aaOut), 0, 400)];
+};
+
+$aaR21 = $aaAuditChild('check-fails');
+assertTrue(isset($aaR21['session']) && $aaR21['session'] === true, 'R2-1 sanity: the child has a PHP session, so "not unlocked" means something ' . json_encode($aaR21));
+assertTrue(isset($aaR21['fallback']) && $aaR21['fallback'] === false, 'R2-1: when the "does the change-log table exist?" check FAILS, nothing is recorded as written ' . json_encode($aaR21));
+assertTrue(isset($aaR21['inserts']) && $aaR21['inserts'] === 0, 'R2-1: ...the activity log is NOT used as a stand-in (the table may well exist)');
+assertTrue(isset($aaR21['unlocked'], $aaR21['stored']) && $aaR21['unlocked'] === false && $aaR21['stored'] === false, 'R2-1: ...and editing is NOT unlocked');
+assertTrue(isset($aaR21['schemaQueries']) && $aaR21['schemaQueries'] >= 2, 'R2-1: a failed check is asked again next time, not remembered as "missing"');
+
+$aaR21 = $aaAuditChild('missing-refuse');
+assertTrue(isset($aaR21['fallback'], $aaR21['inserts']) && $aaR21['fallback'] === false && $aaR21['inserts'] >= 1, 'R2-1: table confirmed missing and the activity log refuses the row: reported as NOT written ' . json_encode($aaR21));
+assertTrue(isset($aaR21['unlocked'], $aaR21['stored']) && $aaR21['unlocked'] === false && $aaR21['stored'] === false, 'R2-1: ...and editing is NOT unlocked');
+
+$aaR21 = $aaAuditChild('missing-zero');
+assertTrue(isset($aaR21['fallback'], $aaR21['unlocked']) && $aaR21['fallback'] === false && $aaR21['unlocked'] === false, 'R2-1: an insert that writes no row counts as NOT written ' . json_encode($aaR21));
+
+$aaR21 = $aaAuditChild('none');
+assertTrue(isset($aaR21['fallback'], $aaR21['unlocked']) && $aaR21['fallback'] === false && $aaR21['unlocked'] === false, 'R2-1: with no database at all, nothing is recorded as written and nothing unlocks ' . json_encode($aaR21));
+
+$aaR21 = $aaAuditChild('missing-works');
+assertTrue(isset($aaR21['fallback'], $aaR21['inserts']) && $aaR21['fallback'] === true && $aaR21['inserts'] >= 1, 'R2-1: first install (table confirmed missing, activity log works): the stand-in row is written and reported as written ' . json_encode($aaR21));
+assertTrue(isset($aaR21['unlocked'], $aaR21['stored']) && $aaR21['unlocked'] === true && $aaR21['stored'] === true, 'R2-1: ...and the password confirmation unlocks editing as before');
+
+// 🔒 R2-1, by source: the fallback asks the three-answer table check and uses the CHECKED activity write.
+$aaR21Source = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php');
+$aaR21Start  = strpos($aaR21Source, 'function adminAuditOrFallback(');
+$aaR21Body   = substr($aaR21Source, (int) $aaR21Start, (int) strpos($aaR21Source, "\nfunction ", (int) $aaR21Start + 10) - (int) $aaR21Start);
+assertContains("adminTableExistsState('tblAdminAuditLog')", $aaR21Body, 'R2-1: the fallback tells "confirmed missing" from "could not tell"');
+assertContains('return logActivityChecked(', $aaR21Body, 'R2-1: the stand-in row is a checked write, and its answer is returned');
+assertFalse((bool) preg_match('/^\s*logActivity\(/m', $aaR21Body), 'R2-1: the unchecked logActivity() is no longer used by the fallback');
+$aaR21Log = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_activity_log.php');
+assertContains('$written = ($stmt->affected_rows === 1);', $aaR21Log, 'R2-1: logActivityChecked() is true only when exactly one row was written');
