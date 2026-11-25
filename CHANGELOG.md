@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - A password reset now also stops sign-ins already under way, and other review fixes (2026-11-25, independent review of decisions 0013/0014, #31, decision 0015)
+
+- **A sign-in already under way when a password is reset no longer survives it** (finding 1). Accounts get a "sessions valid from" mark (database upgrade `0003_sessions_valid_from`); a reset or an admin grant moves it, and a session counts only if it was made with the account's current mark. This also covers Google/Microsoft sign-in. **After deploying, apply the waiting database upgrade** (`/admin/upgrades/` or `migrate.php --apply`); until then sign-in works as before.
+- **A Google/Microsoft "link" started before a reset can no longer be finished after it** (finding 2): the same account must still be signed in and its mark must not have moved. Making an API key re-checks the session at the moment the key is written.
+- **"Forgot password" now has limits and an even answer time** (finding 3): one link per account per minute, five a day, ten requests per visitor address per hour, the same answer for every address, at least 250 ms every time (page and API).
+- **Visitor address behind Cloudflare** (finding 4): the address Cloudflare wrote is used and nothing further left is read, so a visitor's own Cloudflare Worker cannot choose the address.
+- **Two resets of the same account at the same moment no longer fail with a database deadlock** (finding 5): one wins, the other is told its link was already used.
+- The reset's log row is written after the reset is saved (finding 6); wrong passwords sent at the same moment now all count toward the lock-out (finding 7).
+- **"Trusted forwarding servers" refuses very wide ranges** (decision 0015, finding 8): wider than /8 (IPv4) or /32 (IPv6), or written like "/024", with a plain reason; the Cloudflare list refuses a "/0" too.
+- **Installer** (finding 9): refuses to start unless it can write its "already installed" lock; the lock file is now in `.gitignore`; one lock covers every copy of the site.
+- The `/admin/` header comment now says correctly which error pages get the admin headers (finding 10, measured on Apache 2.4.71). A verification link for an account that is already active now says nothing changed instead of "verified".
+- Tests: new `tests/test_sessions_valid_from.php` (61); suite 5124/5124 across 41 files. `tests/integration/account_recovery_real_mysql.php` 122/122 on MySQL 8.0.36 and MariaDB 10.6.28, including two real processes racing a reset, five rounds of two simultaneous resets and eight simultaneous wrong passwords. Not tested: a real browser, DreamHost, MySQL 8.4 for the new scenarios.
+
 ### Added - Admin settings editor: enter the email secrets safely (2026-11-25, task 7n Phase 1C, #31, #29)
 
 - **`/admin/settings/`** (Global Admins only): eight sections, one form each - Email (Microsoft 365), Email records, Sign in with Microsoft or Google, Bot protection, PayPal, Prices/VAT/refunds, Free trials, Admin security. Built from one list of allowed settings, so a hand-made request cannot reach anything else.

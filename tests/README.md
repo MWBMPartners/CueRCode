@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-25, after decisions 0013 and 0014; earlier the independent-review fixes I1/M1-M8, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-25, after the independent review of decisions 0013/0014 - findings 1-10 and decision 0015; earlier decisions 0013 and 0014, the review fixes I1/M1-M8, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 
@@ -48,16 +48,17 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | --- | --- |
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
-| `test_account_recovery.php` | 67 |
+| `test_account_recovery.php` | 100 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 552 |
+| `test_admin_access.php` | 565 |
+| `test_admin_settings.php` | 653 |
 | `test_api_keys.php` | 108 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
 | `test_barcode.php` | 120 |
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
-| `test_client_ip.php` | 160 |
+| `test_client_ip.php` | 230 |
 | `test_core.php` | 143 |
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
@@ -68,10 +69,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 134 |
 | `test_features.php` | 91 |
-| `test_install_checks.php` | 74 |
+| `test_install_checks.php` | 85 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 386 |
+| `test_migrations.php` | 392 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -83,9 +84,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_pricing_flex.php` | 51 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| `test_resend_verification.php` | 62 |
+| `test_resend_verification.php` | 63 |
+| `test_sessions_valid_from.php` | 61 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **4276** |
+| **Total** | **5124** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -456,6 +458,39 @@ decisions and the visitor-address rules without a database.
   trusts CF-Connecting-IP only from a Cloudflare range, and the activity log
   records the same address.
 
+Since the independent review of 0013/0014 (2026-11-25) the same script also
+applies the waiting database upgrades (so migration 0003 is in place) and
+proves:
+
+- **P** - before upgrade 0003 sign-in still works the old way; after it the
+  "sessions valid from" protection is on.
+- **R (finding 1)** - a sign-in that read the OLD password before a reset
+  never ends with a working session. Done twice: with **two real processes**
+  (the sign-in is paused inside the database by a trigger that sleeps 3
+  seconds on its "last sign-in" update, while this process runs the reset),
+  and step by step in the bad order with the real functions. The reset's own
+  follow-up sign-in, straight away, works (the same-second boundary); two
+  marks set in one instant still differ; a Google/Microsoft sign-in in the
+  same gap is refused too.
+- **L (finding 2)** - a Google/Microsoft "link" request started before a
+  reset is refused afterwards (nobody signed in; signed in again but the mark
+  moved; the locked re-check writes no link), and an API key cannot be made
+  with a session the reset ended.
+- **D2 (finding 5)** - two resets of one account at the same moment (two
+  processes, five rounds): one wins, the other is told its link was used, no
+  deadlock.
+- **W (finding 7)** - eight wrong passwords at the same moment (eight
+  processes) give a count of 8.
+- **FP (finding 3)** - "Forgot password": the same answer and at least
+  250 ms for a registered and an unknown address, the one-minute gap, the
+  daily cap of 5, the hourly cap of 10 per visitor address, and at most one
+  "refused by the limit" row per account per hour.
+- **V (nit)** - a verification link for an already-active account says
+  nothing changed; for a suspended account, the usual invalid answer.
+
+The script runs the extra processes itself (it starts copies of itself with
+`--child=...`); it needs nothing else installed.
+
 It deletes rows, so it refuses any database not named `cuercode_it_*`; it
 creates the database if it is missing. It never sends email.
 
@@ -468,8 +503,15 @@ CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
 docker stop p131-recovery-mysql
 ```
 
-Last run 2026-11-25: all 58 checks passed on MySQL 8.0.36, MySQL 8.4.11 and
-MariaDB 10.6.28 (Docker, macOS). In the same session
-`admin_access_real_mysql.php` passed 143/143 on MySQL 8.0.36 and MariaDB
-10.6.28 (with the real command in a pretend terminal), and
-`resend_verification_real_mysql.php` passed on MySQL 8.0.36.
+Last run 2026-11-25 (after the review fixes): all 122 checks passed on
+MySQL 8.0.36 and MariaDB 10.6.28 (Docker, macOS). MySQL 8.4 was not run for
+the new scenarios (the earlier 58 passed on 8.4.11). In the same session
+`admin_access_real_mysql.php`, `admin_settings_real_mysql.php`,
+`migrations_real_mysql.php` and `resend_verification_real_mysql.php` all
+passed on MySQL 8.0.36 and MariaDB 10.6.28. Note: `resend_verification`
+and `email_queue` expect the database to exist already (create it first, or
+use the `docker run ... -e MYSQL_DATABASE=...` form above); the others
+create their own.
+To prove the race checks really test something, they were also run once
+against a scratch copy with the protection switched off (9 failures) and
+with the old lock order (every round deadlocked).
