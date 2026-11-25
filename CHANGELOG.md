@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Website address setting: wrong advice about test sites, and new warnings (2026-11-25, review follow-up)
+
+- **Wrong advice removed.** Live, alpha and beta all use one database, so they share ONE Website address. The help text, `docs/INSTALL.md`, DEV_NOTES and the changelog no longer say a test site needs its own address; they now say it must stay the live address unless that copy has its own database.
+- **Warnings added.** The settings help says to register the new Microsoft/Google callback addresses first, and that the address also feeds every page's main-address and share-preview tags and the developer pages' example addresses. A warning in plain English now shows on the admin overview and in `process_email_queue.php --check` when the stored address is empty, not https, not valid or not tidy. It warns only; links are built exactly as before.
+- **Smaller fixes.** "A trailing slash is removed for you" replaces "no trailing slash". The no-scope API key message now says open endpoints (`/types`, `/formats`, `/health`, `/auth/*`) still work, and shows in its own warning box instead of the green success box. `tests/README.md` now lists all 44 test files.
+
 ### Added - Monthly library watch (2026-11-25, queue F8, #139)
 
 - **New monthly check of the hand-downloaded libraries** (`.github/workflows/library-watch.yml`, also has a "Run workflow" button). It looks up the newest release of each of the 10 libraries we keep (chillerlan/php-qrcode, php-settings-container, FPDF, tc-lib-barcode, tc-lib-color, Bootstrap, jQuery, Font Awesome, Swagger UI, Twemoji) and asks the OSV security-advisory database whether any known advisory affects the version we use.
@@ -24,12 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed and added - Fresh-install dry run findings (2026-11-25, queue B9, #113)
 
-- **New "Website address" setting on `/admin/settings/`** (`site_url`). Emailed links and the Microsoft/Google callback addresses are built from it; it was fixed at `https://cuercode.net` with no way to change it, so test sites (alpha, beta) emailed links to the live site. https only, website name only (no path, port, IP number, `localhost` or internal names), trailing slash removed, audited. Install guide step added before email is turned on.
+- **New "Website address" setting on `/admin/settings/`** (`site_url`). Emailed links and the Microsoft/Google callback addresses are built from it; it was fixed at `https://cuercode.net` with no way to change it. The value lives in the database, so every copy of the site using the same database shares it; with the standard layout it must stay the live address, and a test site may have its own only with its own database. https only, website name only (no path, port, IP number, `localhost` or internal names), trailing slash removed, audited. Install guide step added before email is turned on.
 - **`admin_access.php grant --activate` cancels the account's waiting verification and password-reset emails** in the same transaction (they would only arrive later, pointing at an already-verified account). The change-log row records counts only. Install guide updated; a no-SSH route still leaves the email to be ignored.
 - **Verify page** says "This link has already been used or has been replaced by a newer one. Please use the newest email we sent you, or ask for a new link." (was "has already been used"). OpenAPI example updated.
 - **Email runner help, install guide and DEV_NOTES:** exit 0 can still mean "delivery failed this time and will retry"; the runner's printed output has no addresses but the activity log in the database does keep recipient addresses.
 - **API keys:** the create message warns when no scopes were chosen; the account page, developer guide, OpenAPI text and install troubleshooting say a key needs at least one scope (default not widened). Install guide explains that the first admin is reached through the command line.
-- Tests: suite 5740/5740 across 41 files (PHP 8.5.12). Real databases (Docker, MySQL 8.0 and MariaDB 10.6): `admin_settings_real_mysql.php` 227 checks, `admin_access_real_mysql.php` 150 checks, `account_recovery_real_mysql.php` 171 checks, all passing on both.
+- Tests: suite 6141/6141 across 44 files (PHP 8.5.12; the earlier "41 files" was a miscount, the real number was 44). Real databases (Docker, MySQL 8.0 and MariaDB 10.6): `admin_settings_real_mysql.php` 227 checks, `admin_access_real_mysql.php` 150 checks, `account_recovery_real_mysql.php` 171 checks, all passing on both.
 
 ### Security - A password change, erase or confirmation can no longer act on a password that changed meanwhile, and other final-review fixes (2026-11-25, #31, decision 0016)
 

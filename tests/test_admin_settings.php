@@ -1012,3 +1012,51 @@ assertEquals(['verification_resend', 'password_reset_request'], array_values(arr
 }, array_filter(array_keys($asRegistry), static function (string $asK): bool {
     return (bool) preg_match('/_(min_gap_seconds|daily_cap|ip_per_hour)$/', $asK);
 })))), 'exactly the two forms\' limits are in the editor');
+
+// ==============================================================================
+// ✅ Section 10: Website address - wording guard and warning logic
+// ==============================================================================
+// 📝 Wording guard: alpha, beta and live all share ONE database and so ONE
+//    site_url. No file may again tell people a test site "must use its own address".
+$asRepoRoot = dirname(__DIR__) . DIRECTORY_SEPARATOR;
+foreach ([
+    'web/CueRCode.net/_functions/fn_admin_settings.php',
+    'docs/INSTALL.md',
+    'CHANGELOG.md',
+    'DEV_NOTES.md',
+    'web/CueRCode.net/public_html/admin/settings/index.php',
+] as $asGuardFile) {
+    $asGuardText = (string) file_get_contents($asRepoRoot . $asGuardFile);
+    assertFalse(stripos($asGuardText, 'must use its own address') !== false, 'wording guard: ' . $asGuardFile . ' does not say a test site must use its own address');
+}
+assertContains('shares this one value', $asFunctions, 'wording guard: the section help says copies sharing a database share one value');
+assertContains('a trailing slash is removed for you', $asFunctions, 'wording guard: the help says a trailing slash is removed for you');
+assertContains('register the new callback addresses', $asFunctions, 'the help warns to register new sign-in callback addresses first');
+
+// ⚠️ Warning logic (stand-in validator-free paths first, then the real validator).
+assertTrue(emailQueueSiteAddressWarning('') !== null, 'site address warning: empty -> warns');
+assertTrue(emailQueueSiteAddressWarning(null) !== null, 'site address warning: not a string -> warns');
+assertContains('does not start with https://', (string) emailQueueSiteAddressWarning('http://www.example.com'), 'site address warning: http -> plain-English warning');
+assertTrue(emailQueueSiteAddressWarning('https://localhost') !== null, 'site address warning: localhost fails the validator -> warns');
+assertTrue(emailQueueSiteAddressWarning('https://www.example.com/path') !== null, 'site address warning: a path -> warns');
+assertContains('tidy form', (string) emailQueueSiteAddressWarning('https://www.example.com/'), 'site address warning: trailing slash -> tidy-form warning');
+assertEquals(null, emailQueueSiteAddressWarning('https://www.example.com'), 'site address warning: a good address -> no warning');
+$asOwnValidator = static function (string $asText): array {
+    return ['ok' => false, 'value' => '', 'error' => 'stand-in refusal'];
+};
+assertContains('stand-in refusal', (string) emailQueueSiteAddressWarning('https://www.example.com', $asOwnValidator), 'site address warning: the validator reason is included');
+
+// The runner's settings check carries the warning, and does NOT change its state or problem list.
+$asRunnerGood = checkEmailQueueRunnerSettings(static function (string $asK, mixed $asD): mixed {
+    return $asK === 'site_url' ? 'https://www.example.com' : $asD;
+});
+assertEquals(null, $asRunnerGood['siteAddressWarning'], 'runner check: good site_url -> no warning');
+$asRunnerBad = checkEmailQueueRunnerSettings(static function (string $asK, mixed $asD): mixed {
+    return $asK === 'site_url' ? 'http://x' : $asD;
+});
+assertTrue(is_string($asRunnerBad['siteAddressWarning']), 'runner check: bad site_url -> warning text');
+assertEquals('disabled', $asRunnerBad['state'], 'runner check: a bad site_url does not change the state');
+$asRunnerSource = (string) file_get_contents($asSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_email.php');
+assertContains("'Website address: WARNING - '", $asRunnerSource, 'the --check output prints a website address warning line');
+$asOverview = (string) file_get_contents($asSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'index.php');
+assertContains('emailQueueSiteAddressWarning(', $asOverview, 'the admin overview shows the website address warning');

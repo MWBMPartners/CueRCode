@@ -49,7 +49,7 @@
         if ($el.length === 0) {
             return;
         }
-        $el.removeClass('d-none alert-success alert-danger')
+        $el.removeClass('d-none alert-success alert-danger alert-warning')
             .addClass('alert-' + type)
             .text(message)
             .attr('role', type === 'success' ? 'status' : 'alert');
@@ -651,7 +651,22 @@
                 contentType: 'application/json',
                 data: JSON.stringify({ name: name, scopes: scopes }),
                 success: function (response) {
-                    showAlert('api-key-ajax-alert', response.message, 'success');
+                    // ⚠️ A "no scopes" warning rides on the end of the message: show it in
+                    //    its own warning-style alert, not inside the green success one.
+                    var keyMessage = String(response.message || '');
+                    var warnPos = keyMessage.indexOf(' Warning: ');
+                    var keyWarning = '';
+                    if (warnPos !== -1) {
+                        keyWarning = keyMessage.substring(warnPos + 1);
+                        keyMessage = keyMessage.substring(0, warnPos);
+                    }
+                    showAlert('api-key-ajax-alert', keyMessage, 'success');
+                    $('#api-key-warning-ajax').remove();
+                    if (keyWarning !== '') {
+                        $('#api-key-ajax-alert').after(
+                            $('<div class="alert alert-warning" role="alert" id="api-key-warning-ajax"></div>').text(keyWarning)
+                        );
+                    }
                     if (response.data) {
                         renderApiKeyOneTimeSecret(response.data);
                     }

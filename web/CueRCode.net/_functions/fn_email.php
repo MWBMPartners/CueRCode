@@ -1453,6 +1453,55 @@ function emailQueueSafeDetail(string $text, int $maxLength = 200): string
 }
 
 /**
+ * 🌐 Say, in plain English, whether the stored "Website address" (`site_url`)
+ *    is safe to build emailed links from. PURE - it reads nothing itself.
+ *
+ * The link builders (buildAccountActionUrl() in fn_auth.php, ssoRedirectUri()
+ * in fn_oauth.php) use the stored value exactly as typed, so a bad value
+ * would quietly put a bad address into every email. This only WARNS; it
+ * never changes what the builders return.
+ *
+ * @param mixed         $stored    What getConfig('site_url') returned.
+ * @param callable|null $validator Called as $validator(string): array{ok,value,error};
+ *                                 defaults to adminSettingsValidateSiteAddress() when loaded.
+ *
+ * @return string|null A warning sentence, or null when the address looks fine.
+ */
+function emailQueueSiteAddressWarning($stored, ?callable $validator = null): ?string
+{
+    $text = is_scalar($stored) ? trim((string) $stored) : '';
+
+    if ($text === '') {
+        return 'The website address is empty, so emailed links and sign-in callback addresses fall back to https://cuercode.net. Set it in the admin settings (Website address).';
+    }
+
+    if (stripos($text, 'https://') !== 0) {
+        return 'The website address does not start with https://, so emailed links would be insecure or broken. Correct it in the admin settings (Website address).';
+    }
+
+    if ($validator === null && function_exists('adminSettingsValidateSiteAddress')) {
+        $validator = 'adminSettingsValidateSiteAddress';
+    }
+
+    if ($validator === null) {
+        return null; // no validator available here - the two checks above are all we can do
+    }
+
+    $verdict = $validator($text);
+
+    if (!is_array($verdict) || ($verdict['ok'] ?? false) !== true) {
+        $reason = is_array($verdict) && isset($verdict['error']) ? ' (' . (string) $verdict['error'] . ')' : '';
+        return 'The website address is not valid' . $reason . ', so emailed links may be wrong. Correct it in the admin settings (Website address).';
+    }
+
+    if ((string) $verdict['value'] !== $stored) {
+        return 'The website address is not in its tidy form (for example it has a trailing slash or capital letters), so emailed links may contain a double slash. Save it again in the admin settings (Website address).';
+    }
+
+    return null;
+}
+
+/**
  * 🔧 Check whether the email settings are good enough for the runner to send.
  *
  * Returns the NAMES of problem settings only - never their values. A
@@ -1518,10 +1567,25 @@ function checkEmailQueueRunnerSettings(callable $getSetting): array
         $state = 'ready';
     }
 
+    // 🌐 The website address (a warning only - it never changes the state or the exit code).
+    //    The validator lives in fn_admin_settings.php, which the cron start-up does not
+    //    always load, so load it here when it is available.
+    if (!function_exists('adminSettingsValidateSiteAddress')) {
+        $adminSettingsFile = __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin_settings.php';
+        if (is_file($adminSettingsFile) && function_exists('getConfig')) {
+            try {
+                require_once $adminSettingsFile;
+            } catch (\Throwable $loadError) {
+                // Could not load it: the basic empty / not-https checks still run.
+            }
+        }
+    }
+
     return [
-        'state'    => $state,
-        'enabled'  => $enabled,
-        'problems' => $problems,
+        'state'              => $state,
+        'enabled'            => $enabled,
+        'problems'           => $problems,
+        'siteAddressWarning' => emailQueueSiteAddressWarning($getSetting('site_url', '')),
     ];
 }
 
@@ -4008,6 +4072,12 @@ function emailQueueRunnerCheck(array $settings, array $gateway, callable $out, c
         $lines[] = 'Microsoft Graph settings: complete';
     } else {
         $lines[] = 'Microsoft Graph settings: NOT ready - ' . implode('; ', $settings['problems']);
+    }
+
+    if (isset($settings['siteAddressWarning']) && is_string($settings['siteAddressWarning'])) {
+        $lines[] = 'Website address: WARNING - ' . $settings['siteAddressWarning'];
+    } else {
+        $lines[] = 'Website address: looks fine.';
     }
 
     $lines[] = 'Queue: ' . $due . ' due now; '

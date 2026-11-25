@@ -51,7 +51,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_account_recovery.php` | 109 |
 | `test_account_ui.php` | 70 |
 | `test_admin_access.php` | 574 |
-| `test_admin_settings.php` | 1190 |
+| `test_admin_settings.php` | 1211 |
 | `test_api_keys.php` | 114 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -70,6 +70,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_error_catalogue.php` | 136 |
 | `test_features.php` | 91 |
 | `test_install_checks.php` | 85 |
+| `test_installer_load_order.php` | 6 |
+| `test_library_updates.php` | 116 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
 | `test_migrations.php` | 392 |
@@ -80,6 +82,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_php86_compat_scan.php` | 76 |
 | `test_php_lint_script.php` | 6 |
 | `test_php_runtime_guards.php` | 24 |
+| `test_predefined_logo_png.php` | 264 |
 | `test_pricing.php` | 107 |
 | `test_pricing_flex.php` | 51 |
 | `test_qr_logo.php` | 178 |
@@ -87,7 +90,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **5740** |
+| **Total** | **6141** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -222,7 +225,7 @@ all scenarios passed on MySQL 8.0.46.
 
 ## Optional real-database check (admin settings editor)
 
-`tests/test_admin_settings.php` (1,074 checks, no database) proves the
+`tests/test_admin_settings.php` (count in the table above; no database) proves the
 settings editor's decisions. `tests/integration/admin_settings_real_mysql.php`
 (213 checks, scenarios A-N, including the lost-update overlap with a second process waiting on the row lock) proves the rest on a throwaway database: secrets
 stored as ciphertext with a fresh salt per save and audited as set / replaced /

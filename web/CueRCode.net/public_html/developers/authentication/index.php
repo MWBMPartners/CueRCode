@@ -233,8 +233,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </p>
                         <div class="alert alert-warning" role="note">
                             <strong>A key needs at least one scope to do anything useful.</strong> A key
-                            created with no scopes ticked is accepted, but every call to a scoped endpoint
-                            is refused with <code>403 INSUFFICIENT_SCOPE</code>. For a simple integration that
+                            created with no scopes ticked is accepted, but it cannot call any scoped endpoint
+                            (<code>403 INSUFFICIENT_SCOPE</code>); open endpoints such as <code>/types</code>, <code>/formats</code>, <code>/health</code> and <code>/auth/*</code> still work. For a simple integration that
                             makes QR codes, tick <code>generate</code> (add <code>download</code> to fetch the
                             saved image). A key's scopes cannot be edited later, and <strong>rotating a key keeps
                             its scopes</strong>. On the free plan you may hold only one active key, so if

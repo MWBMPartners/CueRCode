@@ -1019,11 +1019,30 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         actually needs.
                     </p>
 
+                    <?php
+                    // ⚠️ A "no scopes" warning rides on the end of the success message. Split it
+                    //    off so it shows in its OWN warning-style box, not inside the green one.
+                    $apiKeyWarningText = '';
+                    $apiKeyMainText    = $apiKeyMessage !== null ? (string) $apiKeyMessage['text'] : '';
+                    if ($apiKeyMessage !== null && $apiKeyMessage['success']) {
+                        $apiKeyWarningPos = strpos($apiKeyMainText, ' Warning: ');
+                        if ($apiKeyWarningPos !== false) {
+                            $apiKeyWarningText = trim(substr($apiKeyMainText, $apiKeyWarningPos + 1));
+                            $apiKeyMainText    = substr($apiKeyMainText, 0, $apiKeyWarningPos);
+                        }
+                    }
+                    ?>
                     <?php if ($apiKeyMessage !== null) { ?>
                     <div class="alert <?php echo $apiKeyMessage['success'] ? 'alert-success' : 'alert-danger'; ?>"
                          role="<?php echo $apiKeyMessage['success'] ? 'status' : 'alert'; ?>" id="api-key-message">
                         <i class="fa-solid <?php echo $apiKeyMessage['success'] ? 'fa-circle-check' : 'fa-triangle-exclamation'; ?> me-1" aria-hidden="true"></i>
-                        <?php echo htmlspecialchars($apiKeyMessage['text'], ENT_QUOTES, 'UTF-8'); ?>
+                        <?php echo htmlspecialchars($apiKeyMainText, ENT_QUOTES, 'UTF-8'); ?>
+                    </div>
+                    <?php } ?>
+                    <?php if ($apiKeyWarningText !== '') { ?>
+                    <div class="alert alert-warning" role="alert" id="api-key-warning">
+                        <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                        <?php echo htmlspecialchars($apiKeyWarningText, ENT_QUOTES, 'UTF-8'); ?>
                     </div>
                     <?php } ?>
                     <div id="api-key-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
@@ -1086,7 +1105,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </label>
                                 </div>
                                 <?php } ?>
-                                <div class="form-text">Tick at least one. A key with no scopes ticked cannot do anything: every call is refused (403 INSUFFICIENT_SCOPE). For a simple integration that makes QR codes, tick Generate (and Download to fetch the image). Scopes cannot be changed later; to change them, revoke the key and create a new one.</div>
+                                <div class="form-text">Tick at least one. A key with no scopes ticked cannot call any scoped endpoint (403 INSUFFICIENT_SCOPE); open endpoints such as /types, /formats, /health and /auth/* still work. For a simple integration that makes QR codes, tick Generate (and Download to fetch the image). Scopes cannot be changed later; to change them, revoke the key and create a new one.</div>
                             </fieldset>
                         </div>
                         <div class="col-12">

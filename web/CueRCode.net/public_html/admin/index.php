@@ -83,6 +83,13 @@ foreach ($adminEmailSecrets as $adminSecretKey => $adminSecretLabel) {
 }
 $adminSenderSet = adminSettingHasValue('graph_sender_mailbox');
 
+// 🌐 Website address warning (plain English; null = looks fine). Warns only.
+require_once CUERCODE_FUNCTIONS_DIR . 'fn_admin_settings.php';
+$adminSiteAddressWarning = null;
+if (function_exists('getConfig') && function_exists('emailQueueSiteAddressWarning')) {
+    $adminSiteAddressWarning = emailQueueSiteAddressWarning(getConfig('site_url', ''));
+}
+
 $adminQueueCounts = null;
 if (function_exists('countEmailQueueRowsByStatus')) {
     $adminQueueCounts = countEmailQueueRowsByStatus();
@@ -229,6 +236,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <h2 class="h5 mb-0"><i class="fa-solid fa-envelope me-2" aria-hidden="true"></i>Email</h2>
                         </div>
                         <div class="card-body">
+                            <?php if ($adminSiteAddressWarning !== null) { ?>
+                            <div class="alert alert-warning" role="alert" id="admin-site-address-warning">
+                                <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                                <?php echo adminEscape($adminSiteAddressWarning); ?>
+                                <a href="/admin/settings/#section-website">Open the Website address setting</a>.
+                            </div>
+                            <?php } ?>
                             <dl class="row mb-0">
                                 <dt class="col-sm-5">Sending emails</dt>
                                 <dd class="col-sm-7">

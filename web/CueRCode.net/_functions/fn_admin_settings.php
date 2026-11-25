@@ -221,7 +221,7 @@ function adminSettingsSections(): array
             'saveLabel' => 'Save website address',
             'title' => 'Website address',
             'icon'  => 'fa-solid fa-globe',
-            'intro' => 'The address this copy of the site lives at. Links in emails (verify your email, reset your password) and the sign-in callback addresses below are built from it, so set it BEFORE you turn email on. A test site (alpha or beta) must use its own address, or its emails will point people at the live site.',
+            'intro' => 'The address people use to reach the site. Links in emails (verify your email, reset your password), the sign-in callback addresses below, the main-address and share-preview tags of every page and the example addresses on the developer pages are all built from it, so set it BEFORE you turn email on. It is stored in the database, so every copy of the site that uses the same database shares this one value. With the standard layout (one folder and one credentials file) it must stay the LIVE address. A test site may have its own value only if it has its own database (its own folder and credentials file). If Microsoft or Google sign-in is switched on, register the new callback addresses with them first, or sign-in will stop working; sign-ins in progress during the change also fail.',
         ],
         'email' => [
             'saveLabel' => 'Save email settings',
@@ -328,7 +328,7 @@ function adminSettingsRegistry(): array
     $fields[] = adminSettingsField([
         'key' => 'site_url', 'section' => 'website', 'kind' => 'site_url', 'group' => 'general', 'type' => 'url',
         'label' => 'Website address used in emailed links',
-        'help' => 'Start with https:// and give only the website name, for example https://alpha.example.com. No page path, no trailing slash, no port, no IP number and no localhost. Emailed links and the Microsoft and Google callback addresses are built from this.',
+        'help' => 'Start with https:// and give only the website name, for example https://www.example.com. No page path, no port, no IP number and no localhost; a trailing slash is removed for you. Emailed links, the Microsoft and Google callback addresses, the main-address and share-preview tags of every page, and the example addresses on the developer pages are all built from this.',
         'allowEmpty' => false, 'maxLength' => 253,
         'description' => 'The base URL of the website',
     ]);

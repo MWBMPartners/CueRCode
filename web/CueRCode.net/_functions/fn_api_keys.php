@@ -656,7 +656,7 @@ function createApiKeyForUser(int $userId, mixed $rawName, mixed $rawScopes): arr
     //    the owner later.
     $createdMessage = 'API key created. Copy it now - it will not be shown again.';
     if ($scopesValidation['value'] === []) {
-        $createdMessage .= ' Warning: this key has no scopes, so every call to a scoped endpoint is refused (403 INSUFFICIENT_SCOPE). Revoke it and create a new key with at least one scope ticked (for example generate).';
+        $createdMessage .= ' Warning: this key has no scopes, so it cannot call any scoped endpoint (403 INSUFFICIENT_SCOPE); open endpoints such as /types, /formats, /health and /auth/* still work. Revoke it and create a new key with at least one scope ticked (for example generate).';
     }
 
     return [
