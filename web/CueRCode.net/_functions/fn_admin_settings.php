@@ -72,6 +72,20 @@ if (basename($adminSettingsScriptFilename) === basename(__FILE__)) {
 // 📦 The admin functions this file builds on (audit helpers, HTML helpers).
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin.php';
 
+// 📏 The sizes of the "emailed link" limits live in ONE place (fn_auth.php), so
+//    this editor and the code that enforces them cannot disagree. The site's
+//    start-up loads fn_auth.php already; this only matters for a test or tool
+//    that loads this file alone.
+if (!function_exists('authLinkRequestLimitBounds')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_auth.php';
+}
+
+// 🌍 The trusted-forwarding-server range reader (decision 0015) is used for
+//    the trusted_proxy_ips box. Never copied here.
+if (!function_exists('clientIpParseRangeList')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
+}
+
 // ==============================================================================
 // 🔧 Constants
 // ==============================================================================
@@ -89,6 +103,25 @@ if (!defined('CUERCODE_ADMIN_TEST_EMAIL_MAX')) {
 /** @var int The test-email window, in seconds (10 minutes). */
 if (!defined('CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS')) {
     define('CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS', 600);
+}
+
+/** @var int "Check Microsoft connection" attempts allowed per window, per admin (counted from the audit log). */
+if (!defined('CUERCODE_ADMIN_TEST_GRAPH_MAX')) {
+    define('CUERCODE_ADMIN_TEST_GRAPH_MAX', 10);
+}
+
+/**
+ * @var string The reason text on the audit row written BEFORE a test runs.
+ *             The limits count these rows (one per attempt); the row written
+ *             afterwards carries CUERCODE_ADMIN_TEST_RESULT_REASON instead.
+ */
+if (!defined('CUERCODE_ADMIN_TEST_ATTEMPT_REASON')) {
+    define('CUERCODE_ADMIN_TEST_ATTEMPT_REASON', 'Test started (the result is in the next entry)');
+}
+
+/** @var string The reason text on the audit row that records how a test ended. */
+if (!defined('CUERCODE_ADMIN_TEST_RESULT_REASON')) {
+    define('CUERCODE_ADMIN_TEST_RESULT_REASON', 'Test finished');
 }
 
 /** @var string $_SESSION key holding the times of recent test emails. */
@@ -162,50 +195,58 @@ function adminSettingsChargingSwitches(): array
 /**
  * 📑 The eight sections, in page order.
  *
- * @return array<string, array{title: string, icon: string, intro: string}>
+ * @return array<string, array{saveLabel: string, title: string, icon: string, intro: string}> saveLabel = the words on the section's own Save button
  */
 function adminSettingsSections(): array
 {
     return [
         'email' => [
+            'saveLabel' => 'Save email settings',
             'title' => 'Email (Microsoft 365)',
             'icon'  => 'fa-solid fa-envelope',
             'intro' => 'The site sends its emails (account verification, password resets) through a Microsoft 365 mailbox. Fill in the details from your Microsoft Entra app registration, use "Check Microsoft connection", then turn email on. Also make sure the cron job that sends queued emails is set up (see the install notes).',
         ],
         'email-records' => [
+            'saveLabel' => 'Save email record periods',
             'title' => 'Email records',
             'icon'  => 'fa-solid fa-broom',
             'intro' => 'How long the record of each sent or given-up email is kept before it is deleted. Whole days, 1 to 3650. The privacy page must say the same (task #38).',
         ],
         'signin' => [
+            'saveLabel' => 'Save sign-in provider settings',
             'title' => 'Sign in with Microsoft or Google',
             'icon'  => 'fa-solid fa-right-to-bracket',
             'intro' => 'Lets people sign in with a Microsoft or Google account. Everything stays off until the main switch and the provider switch are both on and the client ID and secret are set.',
         ],
         'bot' => [
+            'saveLabel' => 'Save bot protection settings',
             'title' => 'Bot protection',
             'icon'  => 'fa-solid fa-robot',
             'intro' => 'Stored now; the forms start using these keys with task #114.',
         ],
         'paypal' => [
+            'saveLabel' => 'Save PayPal settings',
             'title' => 'PayPal',
             'icon'  => 'fa-brands fa-paypal',
             'intro' => 'Stored safely now; used when checkout is built (task #26). Charging stays off.',
         ],
         'prices' => [
+            'saveLabel' => 'Save prices, VAT and refunds',
             'title' => 'Prices, VAT and refunds',
             'icon'  => 'fa-solid fa-sterling-sign',
             'intro' => 'How prices are described on the pricing page, and the money-back period. The Terms page must say the same refund period (task #38).',
         ],
         'trials' => [
+            'saveLabel' => 'Save free trial settings',
             'title' => 'Free trials',
             'icon'  => 'fa-solid fa-gift',
             'intro' => 'Saved now; nothing changes for visitors until the trial sign-up flow is built.',
         ],
         'admin-security' => [
+            'saveLabel' => 'Save admin security settings',
             'title' => 'Admin security',
             'icon'  => 'fa-solid fa-user-shield',
-            'intro' => 'How long "confirm your password" lasts in the admin area, the time zone used to show dates, and which forwarding servers the site trusts when working out a visitor\'s address.',
+            'intro' => 'How long "confirm your password" lasts in the admin area, the time zone used to show dates, which forwarding servers the site trusts when working out a visitor\'s address, and how often someone may ask for a new verification link or a password-reset link.',
         ],
     ];
 }
@@ -495,6 +536,47 @@ function adminSettingsRegistry(): array
         'description' => 'Forwarding servers trusted to report the visitor address (addresses or CIDR ranges)',
     ]);
 
+    // The two "send me an emailed link" forms share three limits each. The
+    // allowed range and the starting value come from fn_auth.php (the same
+    // numbers the code enforces), so the editor and the code cannot disagree.
+    // The rows are not seeded: with no row the code uses its default, and the
+    // first save from this screen creates the row.
+    $linkBounds = authLinkRequestLimitBounds();
+    $linkForms = [
+        'verification_resend'    => 'Asking for a new verification link',
+        'password_reset_request' => 'Forgot password',
+    ];
+    $linkLimitWords = [
+        'min_gap_seconds' => [
+            'label' => 'Shortest wait between two links to the same account (seconds)',
+            'what'  => 'The shortest time, in whole seconds, before the same account can be sent another link.',
+            'text'  => 'Seconds between links to the same account',
+        ],
+        'daily_cap' => [
+            'label' => 'Most links one account can be sent in 24 hours',
+            'what'  => 'The most links one account can be sent in 24 hours.',
+            'text'  => 'Most links per account in 24 hours',
+        ],
+        'ip_per_hour' => [
+            'label' => 'Most requests from one visitor address in an hour',
+            'what'  => 'The most requests one visitor address can make in an hour, whoever the account is.',
+            'text'  => 'Most requests per visitor address per hour',
+        ],
+    ];
+    foreach ($linkForms as $linkPrefix => $linkFormName) {
+        foreach ($linkLimitWords as $linkSuffix => $linkWords) {
+            $linkBound = $linkBounds[$linkSuffix];
+            $fields[] = adminSettingsField([
+                'key' => $linkPrefix . '_' . $linkSuffix, 'section' => 'admin-security', 'subgroup' => $linkFormName,
+                'kind' => 'int', 'group' => 'security', 'type' => 'integer',
+                'label' => $linkWords['label'],
+                'help' => $linkWords['what'] . ' Whole numbers, ' . $linkBound['min'] . ' to ' . $linkBound['max'] . '. The default is ' . $linkBound['default'] . '. A bigger gap or a smaller number is stricter.',
+                'min' => $linkBound['min'], 'max' => $linkBound['max'], 'rowOptional' => true,
+                'description' => $linkFormName . ': ' . $linkWords['text'],
+            ]);
+        }
+    }
+
     $registry = [];
     foreach ($fields as $field) {
         $registry[$field['key']] = $field;
@@ -543,7 +625,7 @@ function adminSettingsFieldIsSecret(array $field): bool
  * @param string $text Text to test
  * @return bool
  */
-function adminSettingsIsGuid(string $text): bool
+function adminSettingsIsGuid(#[\SensitiveParameter] string $text): bool
 {
     return preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/', $text) === 1;
 }
@@ -554,13 +636,37 @@ function adminSettingsIsGuid(string $text): bool
  * @param string $text Text to test
  * @return bool
  */
-function adminSettingsIsDomainName(string $text): bool
+function adminSettingsIsDomainName(#[\SensitiveParameter] string $text): bool
 {
     if (strlen($text) > 253) {
         return false;
     }
 
     return preg_match('/^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/', $text) === 1;
+}
+
+/**
+ * 🙈 Does this text hold a hidden character? PURE. "Hidden" means a control
+ *    character (so a line break or tab too), an invisible formatting
+ *    character (zero-width space, direction marks, the byte-order mark) or
+ *    the Unicode line and paragraph separators. The text must already be
+ *    valid UTF-8 (the callers check that first); invalid text counts as
+ *    hidden-character trouble too, so it is never let through.
+ *
+ * @param string $text            Text to test
+ * @param bool   $allowLineBreaks True to let ordinary tab, line feed and carriage return through
+ * @return bool
+ */
+function adminSettingsHasHiddenCharacter(#[\SensitiveParameter] string $text, bool $allowLineBreaks): bool
+{
+    if ($allowLineBreaks) {
+        $text = str_replace(["\t", "\n", "\r"], ' ', $text);
+    }
+
+    $found = preg_match('/[\p{Cc}\p{Cf}\x{2028}\x{2029}]/u', $text);
+
+    // preg_match() gives false for invalid UTF-8: treat that as a problem.
+    return ($found !== 0);
 }
 
 /**
@@ -579,12 +685,15 @@ function adminSettingsCheckSecretValue(#[\SensitiveParameter] string $typed, str
         return ['ok' => true, 'value' => '', 'error' => ''];
     }
 
+    // 🔤 Invalid UTF-8 is refused first (the pattern below needs valid text).
     if (preg_match('//u', $value) !== 1) {
         return ['ok' => false, 'value' => '', 'error' => 'That contains characters that are not valid text. Copy and paste it again.'];
     }
 
-    // 🚫 Control characters (and so line breaks and tabs) inside the value.
-    if (preg_match('/[\x00-\x1F\x7F]/', $value) === 1) {
+    // 🚫 Control characters (so line breaks and tabs), invisible formatting
+    //    characters (zero-width spaces, direction marks) and the Unicode line
+    //    and paragraph separators inside the value.
+    if (adminSettingsHasHiddenCharacter($value, false)) {
         return ['ok' => false, 'value' => '', 'error' => 'That contains a line break or another hidden character. Copy and paste it again, without anything around it.'];
     }
 
@@ -642,6 +751,76 @@ function adminSettingsSecretIntent(#[\SensitiveParameter] string $typed, bool $r
 }
 
 /**
+ * 🌐 Check a discovery address (an https web address the site will fetch from
+ *    the server). PURE. Because the SITE visits this address, it is kept
+ *    narrow: https only; a website NAME (never an IP number, written plainly
+ *    or in square brackets, and never "localhost"); no port except the
+ *    standard 443; no user name or password; and ASCII only (an international
+ *    name must be written in its "xn--" form).
+ *
+ * @param string $text The trimmed address
+ * @return array{ok: bool, value: string, error: string}
+ */
+function adminSettingsValidateHttpsAddress(string $text): array
+{
+    $refuse = static function (string $message): array {
+        return ['ok' => false, 'value' => '', 'error' => $message];
+    };
+
+    if (preg_match('/\s/', $text) === 1) {
+        return $refuse('An address cannot contain spaces.');
+    }
+
+    // A backslash is read differently by browsers and servers: never allowed.
+    if (str_contains($text, '\\')) {
+        return $refuse('Type a web address that starts with https:// (use / and not \\).');
+    }
+
+    // Split off the part between "https://" and the first / ? or #.
+    if (preg_match('~^https://([^/?#]*)~i', $text, $match) !== 1 || $match[1] === '') {
+        return $refuse('Type a web address that starts with https:// followed by a website name.');
+    }
+    $authority = $match[1];
+
+    if (str_contains($authority, '@')) {
+        return $refuse('Type a web address with no user name or password in it.');
+    }
+
+    if (str_starts_with($authority, '[')) {
+        return $refuse('The address must name a website (such as login.example.com), not an IP number.');
+    }
+
+    $host = $authority;
+    $colon = strpos($authority, ':');
+    if ($colon !== false) {
+        $host = substr($authority, 0, $colon);
+        if (substr($authority, $colon + 1) !== '443') {
+            return $refuse('Leave the port out (or use :443). No other port is allowed.');
+        }
+    }
+
+    if (preg_match('/^[\x21-\x7E]+$/', $host) !== 1) {
+        return $refuse('Write the website name with letters, numbers and dashes only. An international name must be written in its "xn--" form.');
+    }
+
+    if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+        return $refuse('The address must name a website (such as login.example.com), not an IP number.');
+    }
+
+    // Labels of letters, numbers and dashes, at least two of them, and a last
+    // label that starts with a letter (so "127.1" and "0x7f.1" never pass).
+    if (preg_match('/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i', $host) !== 1) {
+        return $refuse('The address must name a website with a proper domain, such as login.example.com.');
+    }
+
+    if (parse_url($text) === false) {
+        return $refuse('That does not look like a web address.');
+    }
+
+    return ['ok' => true, 'value' => $text, 'error' => ''];
+}
+
+/**
  * ✅ Validate and tidy ONE non-secret value for its registry entry (and, for
  *    secrets, the value mode: '' means "clear"). PURE.
  *
@@ -660,17 +839,21 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
 
     $text = trim($raw);
 
-    // 🚫 No control characters or line breaks in any single-line value.
-    if ($kind !== 'ip_ranges') {
-        if (preg_match('/[\x00-\x1F\x7F]/', $text) === 1) {
-            return ['ok' => false, 'value' => '', 'error' => 'That contains a line break or another hidden character.'];
-        }
-    } elseif (preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $text) === 1) {
-        return ['ok' => false, 'value' => '', 'error' => 'That contains a hidden character.'];
-    }
-
+    // 🔤 Invalid UTF-8 is refused first (the hidden-character test needs valid text).
     if (preg_match('//u', $text) !== 1) {
         return ['ok' => false, 'value' => '', 'error' => 'That contains characters that are not valid text.'];
+    }
+
+    // 🚫 No control characters, line breaks, invisible formatting characters
+    //    or Unicode line separators in any single-line value. The list of
+    //    trusted forwarding servers is a multi-line box, so ordinary line
+    //    breaks and tabs are fine there (and only there).
+    if ($kind !== 'ip_ranges') {
+        if (adminSettingsHasHiddenCharacter($text, false)) {
+            return ['ok' => false, 'value' => '', 'error' => 'That contains a line break or another hidden character.'];
+        }
+    } elseif (adminSettingsHasHiddenCharacter($text, true)) {
+        return ['ok' => false, 'value' => '', 'error' => 'That contains a hidden character.'];
     }
 
     $maxLength = (int) $field['maxLength'];
@@ -699,9 +882,11 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
     }
 
     if ($kind === 'int') {
-        // 🔢 Digits only: no sign, no decimal point, no "1e3".
-        if (preg_match('/^[0-9]{1,6}$/', $text) !== 1) {
-            return ['ok' => false, 'value' => '', 'error' => 'Type a whole number, for example 30.'];
+        // 🔢 Digits only: no sign, no decimal point, no "1e3" - and no leading
+        //    zero ("01" and "000030" are refused the same way, so a number is
+        //    only ever written one way).
+        if (!adminSettingsNumberTextIsCanonical('int', $text)) {
+            return ['ok' => false, 'value' => '', 'error' => 'Type a whole number with no zero at the start, for example 30.'];
         }
         $number = (int) $text;
         if ($number < (int) $field['min'] || $number > (int) $field['max']) {
@@ -718,8 +903,8 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
     }
 
     if ($kind === 'decimal') {
-        if (preg_match('/^[0-9]{1,3}(\.[0-9]{1,2})?$/', $text) !== 1) {
-            return ['ok' => false, 'value' => '', 'error' => 'Type a number with up to two decimal places, for example 20 or 17.5.'];
+        if (!adminSettingsNumberTextIsCanonical('decimal', $text)) {
+            return ['ok' => false, 'value' => '', 'error' => 'Type a number with up to two decimal places and no zero at the start, for example 20 or 17.5.'];
         }
         $number = (float) $text;
         if ($number < (float) $field['min'] || $number > (float) $field['max']) {
@@ -739,21 +924,16 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
         if (preg_match('/\s/', $text) === 1 || strlen($text) > 254 || filter_var($text, FILTER_VALIDATE_EMAIL) === false) {
             return ['ok' => false, 'value' => '', 'error' => 'Type a full email address, for example notifications@example.com.'];
         }
+        // 🚫 PHP accepts "a@[127.0.0.1]" (an address written with an IP number
+        //    in square brackets). A mailbox is never given that way.
+        if (preg_match('/@\[/', $text) === 1) {
+            return ['ok' => false, 'value' => '', 'error' => 'Type an email address that ends in a domain name such as example.com, not in an IP number.'];
+        }
         return ['ok' => true, 'value' => $text, 'error' => ''];
     }
 
     if ($kind === 'https_url') {
-        if (preg_match('/\s/', $text) === 1) {
-            return ['ok' => false, 'value' => '', 'error' => 'An address cannot contain spaces.'];
-        }
-        $parts = parse_url($text);
-        $isHttps = (is_array($parts) && isset($parts['scheme']) && strtolower((string) $parts['scheme']) === 'https');
-        $hasHost = (is_array($parts) && isset($parts['host']) && (string) $parts['host'] !== '');
-        $hasLogin = (is_array($parts) && (isset($parts['user']) || isset($parts['pass'])));
-        if (!$isHttps || !$hasHost || $hasLogin) {
-            return ['ok' => false, 'value' => '', 'error' => 'Type a web address that starts with https:// (and has no user name or password in it).'];
-        }
-        return ['ok' => true, 'value' => $text, 'error' => ''];
+        return adminSettingsValidateHttpsAddress($text);
     }
 
     if ($kind === 'scopes') {
@@ -828,6 +1008,30 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
 }
 
 /**
+ * 🔢 Is this number written in the one allowed way? PURE. A whole number is
+ *    "0" or digits that do not start with 0 (up to 6); a decimal is the same
+ *    (up to 3 digits) with an optional "." and one or two more digits. So
+ *    "01", "000030", "+5", "1e3" and ".5" are all refused, and "30" and
+ *    "030" can never be treated differently.
+ *
+ * @param string $kind 'int' or 'decimal'
+ * @param string $text The (already trimmed) text
+ * @return bool
+ */
+function adminSettingsNumberTextIsCanonical(string $kind, string $text): bool
+{
+    if ($kind === 'int') {
+        return preg_match('/^(?:0|[1-9][0-9]{0,5})$/', $text) === 1;
+    }
+
+    if ($kind === 'decimal') {
+        return preg_match('/^(?:0|[1-9][0-9]{0,2})(?:\.[0-9]{1,2})?$/', $text) === 1;
+    }
+
+    return false;
+}
+
+/**
  * 🔄 A stored value in the same shape the validator produces, so "unchanged"
  *    can be told reliably (the database keeps '1' for on, '30' for 30 and so
  *    on, but may hold older spellings). PURE.
@@ -892,7 +1096,7 @@ function adminSettingsCanonicalCurrent(array $field, ?string $raw): string
  * @param array<string, mixed>                    $context   'planKeys' => list
  * @return array{unknownSection: bool, errors: array<string, string>, changes: array<int, array<string, mixed>>}
  */
-function adminSettingsProcessSection(string $sectionId, array $post, array $current, array $context = []): array
+function adminSettingsProcessSection(string $sectionId, #[\SensitiveParameter] array $post, array $current, array $context = []): array
 {
     $outcome = ['unknownSection' => false, 'errors' => [], 'changes' => []];
 
@@ -971,8 +1175,16 @@ function adminSettingsProcessSection(string $sectionId, array $post, array $curr
         $currentCanonical = adminSettingsCanonicalCurrent($field, $state['value']);
         $newCanonical[$key] = $currentCanonical;
 
-        // ➖ Same as what is stored: nothing to check, nothing to save.
-        if (adminSettingsCanonicalCurrent($field, $posted[$key]) === $currentCanonical) {
+        // ➖ Same as what is stored: nothing to check, nothing to save. A
+        //    number only counts as "the same" when it is written the one
+        //    allowed way (so "030" is refused like "000030", never waved
+        //    through because it happens to equal the stored 30).
+        $postedTrimmed = trim($posted[$key]);
+        $writtenProperly = true;
+        if ($field['kind'] === 'int' || $field['kind'] === 'decimal') {
+            $writtenProperly = adminSettingsNumberTextIsCanonical((string) $field['kind'], $postedTrimmed);
+        }
+        if ($writtenProperly && adminSettingsCanonicalCurrent($field, $posted[$key]) === $currentCanonical) {
             continue;
         }
 
@@ -1073,7 +1285,7 @@ function adminSettingsTestEmailWindow(array $times, int $now, int $max = CUERCOD
  * @param array<string, mixed> $row A row with settingKey, settingType, isSensitive, isEditable, settingValue, updatedAt
  * @return array<string, mixed>
  */
-function adminSettingsStateFromRow(array $row): array
+function adminSettingsStateFromRow(#[\SensitiveParameter] array $row): array
 {
     $isSensitive = ((int) $row['isSensitive'] === 1);
 
@@ -1094,8 +1306,15 @@ function adminSettingsStateFromRow(array $row): array
         $updatedAt = (string) $row['updatedAt'];
     }
 
+    // 🔖 A change marker for the lost-update check (plan §7.5): a short hash
+    //    of the stored value (for a secret, of its ciphertext, which is new on
+    //    every save) and the last-changed time. The value itself is dropped
+    //    below; only this hash is kept, and it cannot be turned back into it.
+    $marker = substr(hash('sha256', (string) $rawValue . "\x1f" . (string) $updatedAt), 0, 24);
+
     return [
         'exists'      => true,
+        'marker'      => $marker,
         'type'        => (string) $row['settingType'],
         'isSensitive' => $isSensitive,
         'isEditable'  => ((int) $row['isEditable'] === 1),
@@ -1106,17 +1325,89 @@ function adminSettingsStateFromRow(array $row): array
 }
 
 /**
+ * 🧾 The fingerprint of what one section's form showed (plan §7.5, lost-update
+ *    protection). PURE. Every section form carries this in a hidden box; the
+ *    save recomputes it from the database INSIDE its transaction (with the
+ *    rows locked) and refuses when it differs, so a form opened earlier can
+ *    never silently undo a newer change.
+ *
+ * What goes in: the section's name, then for each registry entry in the
+ * section its key and either "set" / "not set" (a secret - never its value)
+ * or its saved value, plus its change marker (a hash of the stored value and
+ * its last-changed time; see adminSettingsStateFromRow()). The marker is why
+ * a change within the same second, or a secret replaced by another secret,
+ * still shows up. A row that does not exist yet counts as "missing", so the
+ * first save of a row that the screen creates changes the fingerprint too.
+ *
+ * A plain hash is enough: the admin is already signed in and re-confirmed;
+ * this guards against honest overlap, not against an attacker.
+ *
+ * @param string                               $sectionId Section id
+ * @param array<string, array<string, mixed>>  $states    key => state from adminSettingsLoadRows()
+ * @return string 64 hexadecimal characters
+ */
+function adminSettingsSectionFingerprint(string $sectionId, array $states): string
+{
+    $parts = [];
+
+    foreach (adminSettingsFieldsForSection($sectionId) as $key => $field) {
+        $state = ['exists' => false, 'hasValue' => false, 'value' => null, 'marker' => ''];
+        if (isset($states[$key]) && is_array($states[$key])) {
+            $state = array_merge($state, $states[$key]);
+        }
+
+        if ($state['exists'] !== true) {
+            $parts[$key] = 'missing';
+            continue;
+        }
+
+        if (adminSettingsFieldIsSecret($field)) {
+            $shown = 'not-set';
+            if ($state['hasValue']) {
+                $shown = 'set';
+            }
+        } else {
+            $shown = adminSettingsCanonicalCurrent($field, $state['value']);
+        }
+
+        $parts[$key] = [$shown, (string) $state['marker']];
+    }
+
+    $encoded = json_encode($parts, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded)) {
+        $encoded = '';
+    }
+
+    return hash('sha256', 'cuercode-settings-form-v1' . "\n" . $sectionId . "\n" . $encoded);
+}
+
+/**
+ * 💬 What the admin is told when a form turned out to be out of date. Plain
+ *    English, and it says nothing was saved. PURE.
+ *
+ * @return string
+ */
+function adminSettingsStaleMessage(): string
+{
+    return 'Someone changed these settings while you were editing. Nothing was saved. Reload the page and try again.';
+}
+
+/**
  * 📥 Read the rows for some setting keys in one query. A secret's value is
  *    not kept (see adminSettingsStateFromRow()).
  *
- * @param array<int, string> $keys Setting keys
+ * @param array<int, string> $keys      Setting keys
+ * @param bool               $forUpdate True inside a transaction to LOCK the rows until it ends
+ *                                      (a second save of the same rows waits, then sees the first
+ *                                      one's result - used by the lost-update check and the
+ *                                      "set or replaced" decision)
  * @return array<string, array<string, mixed>>|null key => state ('exists' false when missing); null when the database could not be read
  */
-function adminSettingsLoadRows(array $keys): ?array
+function adminSettingsLoadRows(array $keys, bool $forUpdate = false): ?array
 {
     $states = [];
     foreach ($keys as $key) {
-        $states[$key] = ['exists' => false, 'hasValue' => false, 'value' => null, 'updatedAt' => null, 'isSensitive' => false, 'isEditable' => true, 'type' => 'string'];
+        $states[$key] = ['exists' => false, 'hasValue' => false, 'value' => null, 'updatedAt' => null, 'isSensitive' => false, 'isEditable' => true, 'type' => 'string', 'marker' => ''];
     }
 
     if ($keys === []) {
@@ -1130,10 +1421,16 @@ function adminSettingsLoadRows(array $keys): ?array
     // The placeholder list is built from the NUMBER of keys only.
     $placeholders = implode(', ', array_fill(0, count($keys), '?'));
 
+    // 🔒 The lock clause is fixed text, never built from input.
+    $lockClause = '';
+    if ($forUpdate) {
+        $lockClause = ' ORDER BY `settingKey` FOR UPDATE';
+    }
+
     try {
         $stmt = dbQuery(
             'SELECT `settingKey`, `settingType`, `isSensitive`, `isEditable`, `settingValue`, `updatedAt` '
-            . 'FROM `tblSettings` WHERE `settingKey` IN (' . $placeholders . ')',
+            . 'FROM `tblSettings` WHERE `settingKey` IN (' . $placeholders . ')' . $lockClause,
             str_repeat('s', count($keys)),
             array_values($keys)
         );
@@ -1273,8 +1570,21 @@ function adminSettingsRunAfterSave(string $name): void
  */
 function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, array $admin, ?string $reason = null, bool $ownTransaction = true): array
 {
-    $refuse = static function (string $message): array {
-        return ['ok' => false, 'outcome' => 'refused', 'message' => $message, 'afterSave' => '', 'auditAction' => ''];
+    // 🔓 Set to true while THIS call has a transaction open and has not ended it.
+    $transactionOpen = false;
+
+    // 🚪 Every early exit goes through here, so an open transaction (and the
+    //    row lock it holds) is always ended.
+    $leave = function (array $result) use (&$transactionOpen): array {
+        if ($transactionOpen) {
+            adminRollbackQuietly(getDB());
+            $transactionOpen = false;
+        }
+        return $result;
+    };
+
+    $refuse = function (string $message) use ($leave): array {
+        return $leave(['ok' => false, 'outcome' => 'refused', 'message' => $message, 'afterSave' => '', 'auditAction' => '']);
     };
 
     $key = '';
@@ -1301,10 +1611,26 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
         return $refuse('Database upgrades are waiting, so nothing can be saved yet.');
     }
 
-    // 📥 4. The stored row.
-    $rows = adminSettingsLoadRows([$key]);
+    // 🔐 4. When this call owns the transaction, open it BEFORE reading the
+    //       row, and read the row with a lock (FOR UPDATE). Two saves of the
+    //       same setting then queue up, so "set" or "replaced" (and the audit
+    //       row that says which) is decided from the row as it really is.
+    if ($ownTransaction) {
+        try {
+            getDB()->begin_transaction();
+            $transactionOpen = true;
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'Admin setting could not start a save', 'key: ' . $key . ' | ' . get_class($e));
+            }
+            return ['ok' => false, 'outcome' => 'failed', 'message' => 'Not saved. Nothing was changed. Please try again.', 'afterSave' => '', 'auditAction' => ''];
+        }
+    }
+
+    // 📥 5. The stored row (locked).
+    $rows = adminSettingsLoadRows([$key], true);
     if ($rows === null) {
-        return ['ok' => false, 'outcome' => 'failed', 'message' => 'The setting could not be read, so nothing was saved.', 'afterSave' => '', 'auditAction' => ''];
+        return $leave(['ok' => false, 'outcome' => 'failed', 'message' => 'The setting could not be read, so nothing was saved.', 'afterSave' => '', 'auditAction' => '']);
     }
     $state = $rows[$key];
 
@@ -1318,7 +1644,7 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
         }
     }
 
-    // ✅ 5. Validate again, whatever the page did.
+    // ✅ 6. Validate again, whatever the page did.
     $text = '';
     if (is_string($newValue)) {
         $text = $newValue;
@@ -1345,18 +1671,18 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
     }
     $value = $checked['value'];
 
-    // ➖ 6. Nothing to do?
+    // ➖ 7. Nothing to do?
     $oldCanonical = '';
     if (!$isSecret) {
         $oldCanonical = adminSettingsCanonicalCurrent($field, $state['value']);
         if ($state['exists'] && $oldCanonical === $value) {
-            return ['ok' => true, 'outcome' => 'unchanged', 'message' => '', 'afterSave' => '', 'auditAction' => ''];
+            return $leave(['ok' => true, 'outcome' => 'unchanged', 'message' => '', 'afterSave' => '', 'auditAction' => '']);
         }
     } elseif ($value === '' && !$state['hasValue']) {
-        return ['ok' => true, 'outcome' => 'unchanged', 'message' => '', 'afterSave' => '', 'auditAction' => ''];
+        return $leave(['ok' => true, 'outcome' => 'unchanged', 'message' => '', 'afterSave' => '', 'auditAction' => '']);
     }
 
-    // 🧾 7. The audit entry (what changed, with secrets reduced to a marker).
+    // 🧾 8. The audit entry (what changed, with secrets reduced to a marker).
     $auditAction = 'setting.update';
     $changes = [];
     if ($isSecret) {
@@ -1386,7 +1712,7 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
 
     $entry = adminAuditEntryForAdmin($admin, $auditAction, 'setting', $key, 'success', $changes, $reason);
 
-    // 💾 8. One transaction: the setting AND its audit row.
+    // 💾 9. The setting AND its audit row, in the one transaction.
     $options = [
         'group'       => (string) $field['group'],
         'type'        => (string) $field['type'],
@@ -1400,10 +1726,6 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
     $failed = false;
 
     try {
-        if ($ownTransaction) {
-            getDB()->begin_transaction();
-        }
-
         if (!setConfig($key, $value, $options)) {
             $failed = true;
         } elseif (!adminAuditWrite($entry)) {
@@ -1411,16 +1733,19 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
         }
 
         if ($failed) {
-            if ($ownTransaction) {
+            if ($transactionOpen) {
                 adminRollbackQuietly(getDB());
+                $transactionOpen = false;
             }
-        } elseif ($ownTransaction) {
+        } elseif ($transactionOpen) {
             getDB()->commit();
+            $transactionOpen = false;
         }
     } catch (\Throwable $e) {
         $failed = true;
-        if ($ownTransaction) {
+        if ($transactionOpen) {
             adminRollbackQuietly(getDB());
+            $transactionOpen = false;
         }
         // 🤫 Only the kind of problem is logged - never a message that could hold a value.
         if (function_exists('logError')) {
@@ -1437,7 +1762,7 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
         return ['ok' => false, 'outcome' => 'failed', 'message' => 'Not saved. Nothing was changed. Please try again.', 'afterSave' => '', 'auditAction' => $auditAction];
     }
 
-    // 🔁 9. After the save (when this call owns the transaction).
+    // 🔁 10. After the save (when this call owns the transaction).
     $afterSave = (string) $field['afterSave'];
     if ($ownTransaction && $afterSave !== '') {
         adminSettingsRunAfterSave($afterSave);
@@ -1452,15 +1777,27 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
  *    their audit rows) or none. The "afterSave" actions run once, after the
  *    commit.
  *
- * @param array<string, mixed>              $admin   From requireGlobalAdminPage()
- * @param array<int, array<string, mixed>>  $changes From adminSettingsProcessSection()
- * @param string|null                       $reason  Optional reason
- * @return array{ok: bool, saved: int, message: string}
+ * 🧾 Lost-update protection (plan §7.5): the section's rows are locked first
+ *    and their fingerprint is recomputed from the database. If it is not the
+ *    one the form carried, the form was out of date: NOTHING is saved and
+ *    'stale' is true. A missing fingerprint counts as out of date.
+ *
+ * @param array<string, mixed>              $admin              From requireGlobalAdminPage()
+ * @param string                            $sectionId          Section id
+ * @param string                            $postedFingerprint  The form's hidden fingerprint ('' when absent)
+ * @param array<int, array<string, mixed>>  $changes            From adminSettingsProcessSection()
+ * @param string|null                       $reason             Optional reason
+ * @return array{ok: bool, saved: int, stale: bool, message: string}
  */
-function adminSettingsSaveSection(array $admin, array $changes, ?string $reason = null): array
+function adminSettingsSaveSection(array $admin, string $sectionId, string $postedFingerprint, #[\SensitiveParameter] array $changes, ?string $reason = null): array
 {
     if ($changes === []) {
-        return ['ok' => true, 'saved' => 0, 'message' => ''];
+        return ['ok' => true, 'saved' => 0, 'stale' => false, 'message' => ''];
+    }
+
+    $sectionKeys = array_keys(adminSettingsFieldsForSection($sectionId));
+    if ($sectionKeys === []) {
+        return ['ok' => false, 'saved' => 0, 'stale' => false, 'message' => 'That section was not recognised, so nothing was saved.'];
     }
 
     $afterSaves = [];
@@ -1472,7 +1809,20 @@ function adminSettingsSaveSection(array $admin, array $changes, ?string $reason 
         if (function_exists('logError')) {
             logError('error', 'Admin settings could not start a save', get_class($e));
         }
-        return ['ok' => false, 'saved' => 0, 'message' => 'Not saved. Nothing was changed. Please try again.'];
+        return ['ok' => false, 'saved' => 0, 'stale' => false, 'message' => 'Not saved. Nothing was changed. Please try again.'];
+    }
+
+    // 🔐 Lock the section's rows, then compare what is there NOW with what the
+    //    form showed.
+    $lockedStates = adminSettingsLoadRows($sectionKeys, true);
+    if ($lockedStates === null) {
+        adminRollbackQuietly(getDB());
+        return ['ok' => false, 'saved' => 0, 'stale' => false, 'message' => 'The saved settings could not be read, so nothing was saved. Please try again.'];
+    }
+    $fingerprintNow = adminSettingsSectionFingerprint($sectionId, $lockedStates);
+    if ($postedFingerprint === '' || !hash_equals($fingerprintNow, $postedFingerprint)) {
+        adminRollbackQuietly(getDB());
+        return ['ok' => false, 'saved' => 0, 'stale' => true, 'message' => adminSettingsStaleMessage()];
     }
 
     foreach ($changes as $change) {
@@ -1489,7 +1839,7 @@ function adminSettingsSaveSection(array $admin, array $changes, ?string $reason 
             if ($message === '') {
                 $message = 'Not saved. Nothing was changed.';
             }
-            return ['ok' => false, 'saved' => 0, 'message' => $message . ' None of this section\'s changes were saved.'];
+            return ['ok' => false, 'saved' => 0, 'stale' => false, 'message' => $message . ' None of this section\'s changes were saved.'];
         }
 
         if ($result['outcome'] === 'saved') {
@@ -1507,14 +1857,14 @@ function adminSettingsSaveSection(array $admin, array $changes, ?string $reason 
         if (function_exists('logError')) {
             logError('error', 'Admin settings could not finish a save', get_class($e));
         }
-        return ['ok' => false, 'saved' => 0, 'message' => 'Not saved. Nothing was changed. Please try again.'];
+        return ['ok' => false, 'saved' => 0, 'stale' => false, 'message' => 'Not saved. Nothing was changed. Please try again.'];
     }
 
     foreach ($afterSaves as $afterSave) {
         adminSettingsRunAfterSave($afterSave);
     }
 
-    return ['ok' => true, 'saved' => $saved, 'message' => ''];
+    return ['ok' => true, 'saved' => $saved, 'stale' => false, 'message' => ''];
 }
 
 // ==============================================================================
@@ -1522,18 +1872,114 @@ function adminSettingsSaveSection(array $admin, array $changes, ?string $reason 
 // ==============================================================================
 
 /**
+ * 🔢 When did this admin last START the given test? (From the admin's own
+ *    audit rows, so the limit holds across browsers, tabs and sessions - a
+ *    session-only count could be dodged by signing in again.) Only the rows
+ *    written BEFORE a test runs are counted: one per attempt, whether or not
+ *    the test worked.
+ *
+ * @param int    $userID        The admin's user id
+ * @param string $action        'setting.test_graph' or 'setting.test_email'
+ * @param int    $now           Now (Unix time)
+ * @param int    $windowSeconds How far back to look
+ * @return array<int, int>|null Unix times, oldest first; null when the log could not be read
+ */
+function adminSettingsRecentAttemptTimes(int $userID, string $action, int $now, int $windowSeconds): ?array
+{
+    if (!function_exists('dbQuery')) {
+        return null;
+    }
+
+    $times = [];
+
+    try {
+        // The age is worked out by the database itself (both ends of the
+        // sum are in the database's own clock), so no time-zone maths here.
+        $stmt = dbQuery(
+            'SELECT TIMESTAMPDIFF(SECOND, `createdAt`, NOW()) AS `ageSeconds` FROM `tblAdminAuditLog` '
+            . 'WHERE `actorUserID` = ? AND `action` = ? AND `reason` = ? AND `createdAt` >= DATE_SUB(NOW(), INTERVAL ? SECOND) '
+            . 'ORDER BY `auditID`',
+            'issi',
+            [$userID, $action, CUERCODE_ADMIN_TEST_ATTEMPT_REASON, $windowSeconds]
+        );
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $age = (int) $row['ageSeconds'];
+            if ($age < 0) {
+                $age = 0;
+            }
+            $times[] = $now - $age;
+        }
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Admin test limit could not be read', get_class($e));
+        }
+        return null;
+    }
+
+    sort($times);
+
+    return $times;
+}
+
+/**
+ * 🧾 Write the audit row that says a test is ABOUT to run. Written first, so a
+ *    test that cannot be recorded is not run at all. It counts toward the
+ *    limit. (The outcome says "failed" until the next row says otherwise.)
+ *
+ * @param array<string, mixed> $admin  From requireGlobalAdminPage()
+ * @param string               $action 'setting.test_graph' or 'setting.test_email'
+ * @param string               $entity The entity key for the row
+ * @return bool True when the row was written
+ */
+function adminSettingsWriteTestAttempt(array $admin, string $action, string $entity): bool
+{
+    return adminAuditWrite(adminAuditEntryForAdmin($admin, $action, 'setting', $entity, 'failed', [], CUERCODE_ADMIN_TEST_ATTEMPT_REASON));
+}
+
+/**
+ * 🧾 Write the audit row that says how a test ended.
+ *
+ * @param array<string, mixed> $admin   From requireGlobalAdminPage()
+ * @param string               $action  'setting.test_graph' or 'setting.test_email'
+ * @param string               $entity  The entity key for the row
+ * @param bool                 $success Did it work?
+ * @return bool True when the row was written
+ */
+function adminSettingsWriteTestResult(array $admin, string $action, string $entity, bool $success): bool
+{
+    $outcome = 'failed';
+    if ($success) {
+        $outcome = 'success';
+    }
+
+    return adminAuditWrite(adminAuditEntryForAdmin($admin, $action, 'setting', $entity, $outcome, [], CUERCODE_ADMIN_TEST_RESULT_REASON));
+}
+
+/**
  * 🔌 "Check Microsoft connection": forget the saved token, ask Microsoft for a
  *    new one, and say Connected or Could not connect. NEVER returns the token
- *    or any error text from Microsoft. Writes audit row setting.test_graph.
+ *    or any error text from Microsoft.
+ *
+ * Audit (setting.test_graph): a row is written BEFORE the check (if it cannot
+ * be written the check is not run), and a second row says how it ended. At
+ * most CUERCODE_ADMIN_TEST_GRAPH_MAX attempts per 10 minutes per admin,
+ * counted from the first kind of row.
  *
  * @param array<string, mixed> $admin        From requireGlobalAdminPage()
  * @param callable|null        $tokenFetcher Stand-in for getGraphAccessToken() (tests); null = the real one
+ * @param int|null             $now          Stand-in clock (tests); null = now
  * @return array{ok: bool, message: string}
  */
-function adminSettingsTestGraph(array $admin, ?callable $tokenFetcher = null): array
+function adminSettingsTestGraph(array $admin, ?callable $tokenFetcher = null, ?int $now = null): array
 {
     if (!adminTableExists('tblAdminAuditLog')) {
         return ['ok' => false, 'message' => 'Database upgrades are waiting, so this cannot be checked yet.'];
+    }
+
+    if ($now === null) {
+        $now = time();
     }
 
     if ($tokenFetcher === null) {
@@ -1541,6 +1987,22 @@ function adminSettingsTestGraph(array $admin, ?callable $tokenFetcher = null): a
             return ['ok' => false, 'message' => 'The email code is not available, so this cannot be checked.'];
         }
         $tokenFetcher = 'getGraphAccessToken';
+    }
+
+    // 🚦 At most 10 in 10 minutes for this admin, counted from the audit log.
+    $earlier = adminSettingsRecentAttemptTimes((int) $admin['userID'], 'setting.test_graph', $now, CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS);
+    if ($earlier === null) {
+        return ['ok' => false, 'message' => 'The limit on checks could not be read, so nothing was checked. Please try again.'];
+    }
+    $window = adminSettingsTestEmailWindow($earlier, $now, CUERCODE_ADMIN_TEST_GRAPH_MAX);
+    if (!$window['allowed']) {
+        $minutes = (int) ceil($window['waitSeconds'] / 60);
+        return ['ok' => false, 'message' => 'Too many connection checks just now (the limit is ' . CUERCODE_ADMIN_TEST_GRAPH_MAX . ' in 10 minutes). Try again in about ' . $minutes . ' minute(s).'];
+    }
+
+    // 🧾 Record the attempt FIRST: no record, no check.
+    if (!adminSettingsWriteTestAttempt($admin, 'setting.test_graph', 'graph_connection')) {
+        return ['ok' => false, 'message' => 'This check could not be recorded in the admin change log, so it was not run. Please try again.'];
     }
 
     $allThreeSet = (adminSettingHasValue('graph_tenant_id') && adminSettingHasValue('graph_client_id') && adminSettingHasValue('graph_client_secret'));
@@ -1562,27 +2024,32 @@ function adminSettingsTestGraph(array $admin, ?callable $tokenFetcher = null): a
         }
     }
 
-    $outcome = 'failed';
-    if ($connected) {
-        $outcome = 'success';
+    $recorded = adminSettingsWriteTestResult($admin, 'setting.test_graph', 'graph_connection', $connected);
+    $recordNote = '';
+    if (!$recorded) {
+        $recordNote = ' (The result could not be written to the admin change log.)';
     }
-    adminAuditWrite(adminAuditEntryForAdmin($admin, 'setting.test_graph', 'setting', 'graph_connection', $outcome));
 
     if ($connected) {
-        return ['ok' => true, 'message' => 'Connected. Microsoft accepted the tenant ID, app ID and app secret.'];
+        return ['ok' => true, 'message' => 'Connected. Microsoft accepted the tenant ID, app ID and app secret.' . $recordNote];
     }
 
     if (!$allThreeSet) {
-        return ['ok' => false, 'message' => 'Could not connect: the tenant ID, app ID and app secret are not all filled in yet.'];
+        return ['ok' => false, 'message' => 'Could not connect: the tenant ID, app ID and app secret are not all filled in yet.' . $recordNote];
     }
 
-    return ['ok' => false, 'message' => 'Could not connect. Check the tenant ID, app ID and app secret (and that the secret has not expired). More detail is in the server error log.'];
+    return ['ok' => false, 'message' => 'Could not connect. Check the tenant ID, app ID and app secret (and that the secret has not expired). More detail is in the activity log (the "email failed" entries).' . $recordNote];
 }
 
 /**
  * ✉️ "Send me a test email": one fixed message to the SIGNED-IN admin's own
- *    address, only while email is on, at most 5 per 10 minutes per session.
- *    Writes audit row setting.test_email. Never shows an error from Microsoft.
+ *    address, only while email is on, at most 5 per 10 minutes. Never shows an
+ *    error from Microsoft.
+ *
+ * The limit counts BOTH this browser session and the admin's own audit rows
+ * (so signing in again does not reset it). Audit (setting.test_email): a row
+ * is written BEFORE the email is sent (if it cannot be written, nothing is
+ * sent), and a second row says how it ended.
  *
  * @param array<string, mixed> $admin  From requireGlobalAdminPage()
  * @param callable|null        $sender Stand-in for sendEmailNow() (tests); null = the real one
@@ -1610,15 +2077,29 @@ function adminSettingsSendTestEmail(array $admin, ?callable $sender = null, ?int
         return ['ok' => false, 'message' => 'Email is switched off, so no test email was sent. Turn on "Send emails" and save first.'];
     }
 
-    // 🚦 At most 5 in 10 minutes for this browser session.
+    // 🚦 At most 5 in 10 minutes: for this browser session AND for this admin
+    //    as counted in the audit log (the stricter of the two applies).
     $earlier = [];
     if (session_status() === PHP_SESSION_ACTIVE && isset($_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY]) && is_array($_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY])) {
         $earlier = $_SESSION[CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY];
     }
     $window = adminSettingsTestEmailWindow($earlier, $now);
-    if (!$window['allowed']) {
-        $minutes = (int) ceil($window['waitSeconds'] / 60);
+
+    $auditTimes = adminSettingsRecentAttemptTimes((int) $admin['userID'], 'setting.test_email', $now, CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS);
+    if ($auditTimes === null) {
+        return ['ok' => false, 'message' => 'The limit on test emails could not be read, so none was sent. Please try again.'];
+    }
+    $auditWindow = adminSettingsTestEmailWindow($auditTimes, $now);
+
+    if (!$window['allowed'] || !$auditWindow['allowed']) {
+        $wait = max((int) $window['waitSeconds'], (int) $auditWindow['waitSeconds']);
+        $minutes = (int) ceil($wait / 60);
         return ['ok' => false, 'message' => 'Too many test emails just now (the limit is ' . CUERCODE_ADMIN_TEST_EMAIL_MAX . ' in 10 minutes). Try again in about ' . $minutes . ' minute(s).'];
+    }
+
+    // 🧾 Record the attempt FIRST: no record, no email.
+    if (!adminSettingsWriteTestAttempt($admin, 'setting.test_email', 'email_enabled')) {
+        return ['ok' => false, 'message' => 'This test could not be recorded in the admin change log, so no email was sent. Please try again.'];
     }
 
     // The attempt counts whether or not it works.
@@ -1644,22 +2125,47 @@ function adminSettingsSendTestEmail(array $admin, ?callable $sender = null, ?int
         }
     }
 
-    $outcome = 'failed';
-    if ($sent) {
-        $outcome = 'success';
-    }
-    adminAuditWrite(adminAuditEntryForAdmin($admin, 'setting.test_email', 'setting', 'email_enabled', $outcome));
-
-    if ($sent) {
-        return ['ok' => true, 'message' => 'A test email was sent to your own address (' . adminMaskEmail($address) . '). It can take a minute to arrive.'];
+    $recorded = adminSettingsWriteTestResult($admin, 'setting.test_email', 'email_enabled', $sent);
+    $recordNote = '';
+    if (!$recorded) {
+        $recordNote = ' (The result could not be written to the admin change log.)';
     }
 
-    return ['ok' => false, 'message' => 'The test email could not be sent. Check the connection first. More detail is in the server error log.'];
+    if ($sent) {
+        return ['ok' => true, 'message' => 'A test email was sent to your own address (' . adminMaskEmail($address) . '). It can take a minute to arrive.' . $recordNote];
+    }
+
+    return ['ok' => false, 'message' => 'The test email could not be sent. Check the connection first. More detail is in the activity log (the "email failed" entries).' . $recordNote];
 }
 
 // ==============================================================================
 // 🧱 PURE: HTML for the settings forms (the page owns <form> and the CSRF field)
 // ==============================================================================
+
+/**
+ * ❗ Must this box have a value? PURE. True for numbers, choices, the time
+ *    zone, the plan, web addresses and scopes (the validator refuses an empty
+ *    one), and for any text box whose registry entry says it cannot be empty.
+ *    False for switches (always on or off), secrets (empty means "keep what
+ *    is saved") and the free-text boxes that may be left empty.
+ *
+ * @param array<string, mixed> $field A registry entry
+ * @return bool
+ */
+function adminSettingsFieldIsRequired(array $field): bool
+{
+    $kind = (string) $field['kind'];
+
+    if (in_array($kind, ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'scopes'], true)) {
+        return true;
+    }
+
+    if (in_array($kind, ['text', 'email', 'ip_ranges'], true) && $field['allowEmpty'] === false) {
+        return true;
+    }
+
+    return false;
+}
 
 /**
  * 🧱 One settings box with its label, help text and any error. PURE.
@@ -1706,7 +2212,16 @@ function adminSettingsRenderField(array $field, array $view): string
     }
 
     $helpHtml = '<div class="form-text" id="' . adminEscape($helpId) . '">' . adminEscape($field['help']) . '</div>';
-    $labelHtml = '<label for="' . adminEscape($id) . '" class="form-label">' . adminEscape($field['label']) . '</label>';
+    // ❗ A box that cannot be left empty says so in its label (and to screen
+    //    readers via aria-required), not only by refusing the save.
+    $required = adminSettingsFieldIsRequired($field);
+    $requiredWords = '';
+    $requiredAttribute = '';
+    if ($required) {
+        $requiredWords = ' <span class="text-body-secondary fw-normal">(required)</span>';
+        $requiredAttribute = ' aria-required="true"';
+    }
+    $labelHtml = '<label for="' . adminEscape($id) . '" class="form-label">' . adminEscape($field['label']) . $requiredWords . '</label>';
     $name = 'f[' . $key . ']';
 
     // 🔀 What the box shows: what was typed (after a mistake) or what is saved.
@@ -1715,6 +2230,11 @@ function adminSettingsRenderField(array $field, array $view): string
         $shown = $view['posted'];
     } elseif (is_string($state['value'])) {
         $shown = $state['value'];
+        // A number is drawn the one allowed way ("30", not an older "030"), so
+        // saving the form untouched never trips the leading-zero rule.
+        if ($kind === 'int' || $kind === 'decimal') {
+            $shown = adminSettingsCanonicalCurrent($field, $shown);
+        }
     }
 
     // ------------------------------------------------------------------ secret
@@ -1742,7 +2262,7 @@ function adminSettingsRenderField(array $field, array $view): string
         if ($state['hasValue']) {
             $removeId = 'rm-' . $key;
             $removeHtml = '<div class="form-check mt-2">'
-                . '<input class="form-check-input" type="checkbox" id="' . adminEscape($removeId) . '" name="rm[' . adminEscape($key) . ']" value="1">'
+                . '<input class="form-check-input" type="checkbox" id="' . adminEscape($removeId) . '" name="rm[' . adminEscape($key) . ']" value="1" data-admin-confirm-check="Remove this stored secret?">'
                 . '<label class="form-check-label" for="' . adminEscape($removeId) . '">Remove this secret (the setting will be empty)</label>'
                 . '</div>';
         }
@@ -1814,9 +2334,22 @@ function adminSettingsRenderField(array $field, array $view): string
         }
         $currentChoice = adminSettingsCanonicalCurrent($field, $shown);
 
-        // The saved plan may no longer be on the list: still show it, so nothing silently changes.
-        if ($kind === 'plan_key' && $currentChoice !== '' && !array_key_exists($currentChoice, $options)) {
-            $options[$currentChoice] = $currentChoice . ' (not an active paid plan)';
+        // The saved value may not be on the list (an older plan that is no
+        // longer active, or a value set by hand): still show it, selected, so
+        // saving the form does not silently change it. A saved value that IS
+        // on the list is drawn normally.
+        if ($currentChoice !== '' && !array_key_exists($currentChoice, $options)) {
+            if ($kind === 'plan_key') {
+                $options = [$currentChoice => $currentChoice . ' (not an active paid plan)'] + $options;
+            } else {
+                $options = [$currentChoice => 'Current value (not in list): ' . $currentChoice] + $options;
+            }
+        }
+
+        // Nothing saved and empty is not allowed: lead with "Choose...", so
+        // the box does not look as if the first real option were already saved.
+        if ($currentChoice === '' && adminSettingsFieldIsRequired($field)) {
+            $options = ['' => 'Choose...'] + $options;
         }
 
         $optionHtml = '';
@@ -1830,7 +2363,7 @@ function adminSettingsRenderField(array $field, array $view): string
 
         return '<div class="mb-4">'
             . $labelHtml
-            . '<select class="form-select' . $invalidClass . '" id="' . adminEscape($id) . '" name="' . adminEscape($name) . '"' . $invalidAttributes
+            . '<select class="form-select' . $invalidClass . '" id="' . adminEscape($id) . '" name="' . adminEscape($name) . '"' . $invalidAttributes . $requiredAttribute
             . ' aria-describedby="' . adminEscape($describedBy) . '">' . $optionHtml . '</select>'
             . $helpHtml
             . $errorHtml
@@ -1860,7 +2393,7 @@ function adminSettingsRenderField(array $field, array $view): string
         return '<div class="mb-4">'
             . $labelHtml
             . '<textarea class="form-control' . $invalidClass . '" id="' . adminEscape($id) . '" name="' . adminEscape($name) . '" rows="3" spellcheck="false" autocomplete="off"'
-            . ' maxlength="' . (int) $field['maxLength'] . '"' . $invalidAttributes . ' aria-describedby="' . adminEscape($describedBy) . '">' . adminEscape($shown) . '</textarea>'
+            . ' maxlength="' . (int) $field['maxLength'] . '"' . $invalidAttributes . $requiredAttribute . ' aria-describedby="' . adminEscape($describedBy) . '">' . adminEscape($shown) . '</textarea>'
             . $helpHtml
             . $errorHtml
             . '</div>';
@@ -1869,7 +2402,7 @@ function adminSettingsRenderField(array $field, array $view): string
     return '<div class="mb-4">'
         . $labelHtml
         . '<input type="' . $inputType . '" class="form-control' . $invalidClass . '" id="' . adminEscape($id) . '" name="' . adminEscape($name) . '" value="' . adminEscape($shown) . '"'
-        . ' maxlength="' . (int) $field['maxLength'] . '"' . $extra . $invalidAttributes . ' aria-describedby="' . adminEscape($describedBy) . '">'
+        . ' maxlength="' . (int) $field['maxLength'] . '"' . $extra . $invalidAttributes . $requiredAttribute . ' aria-describedby="' . adminEscape($describedBy) . '">'
         . $helpHtml
         . $errorHtml
         . '</div>';

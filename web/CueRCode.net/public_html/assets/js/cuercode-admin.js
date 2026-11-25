@@ -22,6 +22,10 @@
  *      and visible text (used by the settings screen from Phase 1C).
  *   4. 📝 Warns before leaving a page with unsaved changes in a form marked
  *      data-admin-dirty-check.
+ *   5. ☑️ Asks "are you sure?" when a tick box marked
+ *      data-admin-confirm-check="..." is ticked (the settings "Remove this
+ *      secret" ticks). Saying no unticks it. With JavaScript off the tick
+ *      simply works; the server still decides what is saved.
  *
  * No framework is needed (plain DOM), so it works whether or not jQuery has
  * loaded.
@@ -129,6 +133,24 @@
     }
 
     // ==========================================================================
+    // ☑️ 5. "Are you sure?" when a risky tick box is ticked
+    // ==========================================================================
+    function wireConfirmChecks() {
+        var boxes = document.querySelectorAll('input[type="checkbox"][data-admin-confirm-check]');
+        var index;
+
+        for (index = 0; index < boxes.length; index++) {
+            boxes[index].addEventListener('change', function () {
+                var question = this.getAttribute('data-admin-confirm-check');
+
+                if (this.checked && question && !window.confirm(question)) {
+                    this.checked = false;
+                }
+            });
+        }
+    }
+
+    // ==========================================================================
     // 🚀 Start when the page is ready
     // ==========================================================================
     function start() {
@@ -136,6 +158,7 @@
         wireConfirmForms();
         wireRevealButtons();
         wireDirtyCheck();
+        wireConfirmChecks();
     }
 
     if (document.readyState === 'loading') {

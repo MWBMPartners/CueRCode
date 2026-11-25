@@ -24,6 +24,10 @@
  * 🤫 A secret box is always empty. An empty box keeps what is saved; the
  *    "Remove" tick clears it. The saved value is never put on the page.
  *
+ * 🧾 Every section form carries a hidden fingerprint of what it showed. If the
+ *    settings changed since (another tab, another admin), the save is refused
+ *    and nothing is written (plan §7.5).
+ *
  * 🚪 requireGlobalAdminPage() is the first application call (a test checks
  *    this for every admin page).
  *
@@ -65,6 +69,7 @@ $settingsErrors       = [];      // setting key => message (shown beside the box
 $settingsPosted       = [];      // setting key => what was typed (NEVER a secret)
 $settingsConfirmed    = [];      // setting key => true when a "confirm" tick was ticked
 $settingsErrorSection = '';
+$settingsPostedFingerprint = '';   // the fingerprint the submitted form carried (kept when the form is shown again)
 
 $settingsPlanKeys = adminSettingsTrialPlanKeys();
 if ($settingsPlanKeys === null) {
@@ -127,6 +132,12 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
         } else {
             $settingsProcessed = adminSettingsProcessSection($settingsSectionID, $_POST, $settingsCurrent, ['planKeys' => $settingsPlanKeys]);
 
+            // 🧾 The fingerprint of what this form showed (plan §7.5). The save
+            //    compares it with the database inside its transaction.
+            if (isset($_POST['fp']) && is_string($_POST['fp'])) {
+                $settingsPostedFingerprint = $_POST['fp'];
+            }
+
             if ($settingsProcessed['errors'] !== []) {
                 // ❌ Show the problems; save nothing. Secrets are never sent back.
                 $settingsErrors       = $settingsProcessed['errors'];
@@ -146,13 +157,31 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
                 adminFlashAdd('info', 'Nothing was different, so nothing was saved.');
                 adminRedirect('/admin/settings/#section-' . $settingsSectionID);
             } else {
-                $settingsSaved = adminSettingsSaveSection($adminUser, $settingsProcessed['changes']);
+                $settingsSaved = adminSettingsSaveSection($adminUser, $settingsSectionID, $settingsPostedFingerprint, $settingsProcessed['changes']);
                 if ($settingsSaved['ok']) {
                     adminReauthTouch($adminUser);
                     adminFlashAdd('success', 'Saved: ' . $settingsSections[$settingsSectionID]['title'] . ' (' . (int) $settingsSaved['saved'] . ' change(s) recorded in the admin change log).');
                     adminRedirect('/admin/settings/#section-' . $settingsSectionID);
                 }
                 $settingsMessages[] = ['type' => 'danger', 'text' => $settingsSaved['message']];
+
+                // 📋 Out of date: show the form again with what was typed (never a
+                //    secret), keeping the OLD fingerprint so sending it again is
+                //    refused again until the page is reloaded.
+                if ($settingsSaved['stale']) {
+                    $settingsErrorSection = $settingsSectionID;
+                    foreach (adminSettingsFieldsForSection($settingsSectionID) as $settingsFieldKey => $settingsFieldDef) {
+                        if (adminSettingsFieldIsSecret($settingsFieldDef)) {
+                            continue;
+                        }
+                        if (isset($_POST['f'][$settingsFieldKey]) && is_string($_POST['f'][$settingsFieldKey])) {
+                            $settingsPosted[$settingsFieldKey] = $_POST['f'][$settingsFieldKey];
+                        }
+                        if (isset($_POST['confirm'][$settingsFieldKey]) && $_POST['confirm'][$settingsFieldKey] === '1') {
+                            $settingsConfirmed[$settingsFieldKey] = true;
+                        }
+                    }
+                }
             }
         }
     } else {
@@ -272,10 +301,21 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                             <?php } ?>
 
-                            <form method="POST" action="/admin/settings/" novalidate>
+                            <?php
+                            // 🧾 What this form shows, as a fingerprint (lost-update check). When the
+                            //    form is shown again after a problem, it keeps the fingerprint it
+                            //    was sent with, so an out-of-date form cannot be saved by pressing
+                            //    the button again.
+                            $settingsFormFingerprint = adminSettingsSectionFingerprint($settingsSectionKey, $settingsStates);
+                            if ($settingsErrorSection === $settingsSectionKey && $settingsPostedFingerprint !== '') {
+                                $settingsFormFingerprint = $settingsPostedFingerprint;
+                            }
+                            ?>
+                            <form method="POST" action="/admin/settings/" novalidate data-admin-dirty-check>
                                 <?php echo csrfField(); ?>
                                 <input type="hidden" name="settings_action" value="save_section">
                                 <input type="hidden" name="section" value="<?php echo adminEscape($settingsSectionKey); ?>">
+                                <input type="hidden" name="fp" value="<?php echo adminEscape($settingsFormFingerprint); ?>">
 
                                 <fieldset <?php if (!$settingsCanEdit) { ?>disabled<?php } ?>>
                                     <legend class="visually-hidden"><?php echo adminEscape($settingsSection['title']); ?> settings</legend>
@@ -330,7 +370,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                                 <?php if ($settingsCanEdit) { ?>
                                 <button type="submit" class="btn btn-primary">
-                                    <i class="fa-solid fa-floppy-disk me-1" aria-hidden="true"></i> Save <?php echo adminEscape(strtolower($settingsSection['title'])); ?> settings
+                                    <i class="fa-solid fa-floppy-disk me-1" aria-hidden="true"></i> <?php echo adminEscape($settingsSection['saveLabel']); ?>
                                 </button>
                                 <?php } ?>
                             </form>
