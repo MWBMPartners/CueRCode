@@ -205,5 +205,7 @@ assertTrue($posSeedState !== false && $posSeedRun !== false && $posSeedState < $
 assertFalse(str_contains($installerSource, '$mysqli->multi_query($seedSQL)'), 'C1-1: the starting data is no longer loaded with a bare multi_query() (it goes through the all-or-nothing loader)');
 assertTrue($posFinal !== false && $posLockFile !== false && $posFinal < $posLockFile, 'C1-1: the starting data is checked complete before the lock file is written');
 assertMatches("/\\\$seedState\\['state'\\] === 'partial'\\) \\{.*?\\\$seedStepFailed = true;/s", $installerSource, 'C1-1: a PART-loaded database stops the install (no lock)');
+assertContains('delete the seed_data_loaded row from the', $installerSource, 'decision 0018: the skip message tells the owner how to force a clean re-seed (remove the seed_data_loaded setting first)');
+assertMatches("/\\\$seedState\\['marker'\\] === true\\) \\{\\s*\\\$results\\[\\] = \\[\\s*'status' => 'info'/s", $installerSource, 'decision 0018: a present marker is reported as an information message, not an error');
 assertMatches("/elseif \\(!file_exists\\(\\\$seedSQLPath\\)\\) \\{\\s*\\\$results\\[\\] = \\[\\s*'status' => 'error',.*?\\\$seedStepFailed = true;/s", $installerSource, 'C1-3: a missing seed file is an error that stops the install (no lock)');
 

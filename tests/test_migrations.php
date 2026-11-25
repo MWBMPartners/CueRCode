@@ -951,6 +951,40 @@ foreach ($migExpectedRows as $migExpectedTable => $migExpectedSpec) {
     assertTrue(isset($migInstallSchema[$migExpectedTable]) && in_array($migExpectedSpec['column'], $migInstallSchema[$migExpectedTable], true), 'R1-1: ' . $migExpectedTable . '.' . $migExpectedSpec['column'] . ' is a real install.sql column');
 }
 
+// 🔑 Codex round 3 finding 2: the marker-free "complete" check also needs the
+//    starting SETTINGS. The runtime list is short and explicit, and is checked
+//    here against seed_data.sql so it cannot drift.
+$migSettingsKeys = [];
+$migSettingsPieces = preg_split('/INSERT INTO `tblSettings`/', $migSeedNoComments);
+if (!is_array($migSettingsPieces)) {
+    $migSettingsPieces = [];
+}
+// The first piece is the file head; the second is the big settings insert; the
+// last is the completion marker, which is NOT one of the 80 starting settings.
+$migSettingsBig = isset($migSettingsPieces[1]) ? $migSettingsPieces[1] : '';
+$migSettingsEnd = strpos($migSettingsBig, 'INSERT INTO');
+if (is_int($migSettingsEnd)) {
+    $migSettingsBig = substr($migSettingsBig, 0, $migSettingsEnd);
+}
+preg_match_all("/^\\s*\\('[a-z_]+',\\s*'([^']+)'/m", $migSettingsBig, $migSettingsKeys);
+$migSeededSettingKeys = $migSettingsKeys[1];
+assertTrue(!in_array('seed_data_loaded', $migSeededSettingKeys, true), 'round 3 (2): the settings count leaves out the completion marker');
+assertEquals(count($migSeededSettingKeys), count(array_unique($migSeededSettingKeys)), 'round 3 (2): seed_data.sql seeds no setting twice');
+assertEquals(count($migSeededSettingKeys), migrationSeedMinimumSettingsCount(), 'round 3 (2): migrationSeedMinimumSettingsCount() is exactly the number of settings seed_data.sql inserts (' . count($migSeededSettingKeys) . ')');
+foreach (migrationSeedRequiredSettingKeys() as $migRequiredKey) {
+    assertTrue(in_array($migRequiredKey, $migSeededSettingKeys, true), 'round 3 (2): required setting ' . $migRequiredKey . ' is really seeded by seed_data.sql');
+}
+assertTrue(count(migrationSeedRequiredSettingKeys()) >= 5 && count(migrationSeedRequiredSettingKeys()) <= 12, 'round 3 (2): the required-setting list stays short and explicit');
+assertEquals(count(migrationSeedRequiredSettingKeys()), count(array_unique(migrationSeedRequiredSettingKeys())), 'round 3 (2): no required setting is listed twice');
+
+// 📌 Decision 0018 (Codex round 3 finding 1): the completion marker is checked
+//    BEFORE "all three tables empty", in the source, so a present marker can
+//    never fall through to "none".
+$migStateSource = substr($migRunnerSource, (int) strpos($migRunnerSource, 'function migrationDbSeedDataState('));
+$migMarkerCallAt = strpos($migStateSource, 'migrationDbSeedMarkerPresent($db)');
+$migNoneAt       = strpos($migStateSource, "'state'] = 'none'");
+assertTrue(is_int($migMarkerCallAt) && is_int($migNoneAt) && $migMarkerCallAt < $migNoneAt, 'decision 0018: migrationDbSeedDataState() asks for the marker BEFORE it can answer "none"');
+
 // 🧱 R1-2: the storage-type check runs BEFORE the transaction is opened, and a
 //    refusal is reported in plain words the installer shows.
 $migRunSeedSource = substr($migRunnerSource, (int) strpos($migRunnerSource, 'function migrationDbRunSeedSql('));

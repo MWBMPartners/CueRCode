@@ -1462,6 +1462,52 @@ function migrationSeedExpectedRows(): array
 }
 
 /**
+ * 🔑 The starting SETTINGS a database seeded before the completion marker
+ *    existed must hold, by name (independent review, Codex round 3 finding
+ *    2, 2026-11-25).
+ *
+ * Used ONLY when there is no completion marker. The 68 starting rows in the
+ * three tables (migrationSeedExpectedRows()) are not enough on their own: a
+ * database holding all 68 but missing a starting setting was called
+ * "complete", the installer skipped the seed and wrote its lock, and the
+ * missing setting was never put back. The list is kept short and explicit
+ * (a handful of settings from different groups, each of which seed_data.sql
+ * writes); migrationSeedMinimumSettingsCount() is the second guard, on the
+ * number of settings. tests/test_migrations.php reads seed_data.sql and
+ * fails if a name here is not seeded or the count drifts.
+ *
+ * @return array<int, string> settingKey values
+ */
+function migrationSeedRequiredSettingKeys(): array
+{
+    return [
+        'site_name',
+        'site_url',
+        'app_version',
+        'copyright_holder',
+        'bot_protection_provider',
+        'sso_enabled',
+        'dynamic_qr_enabled',
+        'dynamic_redirect_base_url',
+        'redirect_allow_http',
+    ];
+}
+
+/**
+ * 🔢 The fewest rows tblSettings may hold for a marker-free database to be
+ *    called complete: the number of starting settings seed_data.sql inserts
+ *    (not counting the completion marker). Settings added later by upgrades
+ *    only push the real count higher. tests/test_migrations.php counts the
+ *    settings in seed_data.sql and fails if this number is not the same.
+ *
+ * @return int Minimum number of tblSettings rows
+ */
+function migrationSeedMinimumSettingsCount(): int
+{
+    return 80;
+}
+
+/**
  * 🌱 Does this database already hold seed data? A thin yes/no wrapper around
  *    migrationDbSeedDataState() below, kept for older callers and tests.
  *
@@ -1499,14 +1545,18 @@ function migrationDbSeedDataAlreadyPresent(\mysqli $db): array
  *    finding R1-1, 2026-11-25)
  *
  * Looks at every table from migrationSeedProtectionTables() and answers:
- *   - "none"     - every one of them is empty or missing: seed_data.sql has
- *                  not run (or a failed run was rolled back), so it may run;
+ *   - "none"     - there is NO completion marker and every one of them is
+ *                  empty or missing: seed_data.sql has not run (or a failed
+ *                  run was rolled back), so it may run;
  *   - "complete" - seed_data.sql has run in full. Proven EITHER by its
  *                  completion marker (migrationSeedMarkerKey(), the file's
  *                  last statement - so rows the owner has since changed or
  *                  deleted do not matter), OR, for a database with no marker,
  *                  by EVERY starting row in migrationSeedExpectedRows() being
- *                  there;
+ *                  there AND the starting settings (migrationSeedRequiredSettingKeys()
+ *                  and migrationSeedMinimumSettingsCount()). A PRESENT marker
+ *                  always means complete, even when the owner has emptied the
+ *                  three tables (decision 0018): seeding already happened;
  *   - "partial"  - anything else: some starting rows are there but not all of
  *                  them, and there is no marker. seed_data.sql cannot be run
  *                  again safely (plain INSERTs), and the database must not be
@@ -1581,14 +1631,12 @@ function migrationDbSeedDataState(\mysqli $db): array
     $result['filled'] = $filledTables;
     $result['empty']  = $emptyTables;
 
-    // 🈳 Nothing in any of them: seed_data.sql may run.
-    if ($filledTables === []) {
-        $result['ok']    = true;
-        $result['state'] = 'none';
-        return $result;
-    }
-
-    // 3️⃣ The completion marker: the last thing seed_data.sql writes.
+    // 3️⃣ The completion marker: the last thing seed_data.sql writes. It is
+    //    checked BEFORE "are the tables empty?" (decision 0018, Codex round 3
+    //    finding 1): a present marker means seeding already happened, so an
+    //    owner who deliberately emptied the three tables does not get the
+    //    default rows put back just because the installer lock file was lost.
+    //    A deliberate clean re-seed means removing the marker setting first.
     $marker = migrationDbSeedMarkerPresent($db);
 
     if ($marker['ok'] !== true) {
@@ -1600,6 +1648,14 @@ function migrationDbSeedDataState(\mysqli $db): array
         $result['ok']     = true;
         $result['state']  = 'complete';
         $result['marker'] = true;
+        return $result;
+    }
+
+    // 🈳 No marker and nothing in any of the three tables: a fresh install,
+    //    so seed_data.sql may run.
+    if ($filledTables === []) {
+        $result['ok']    = true;
+        $result['state'] = 'none';
         return $result;
     }
 
@@ -1636,6 +1692,21 @@ function migrationDbSeedDataState(\mysqli $db): array
         }
     }
 
+    // 5️⃣ ...and the starting settings too (Codex round 3 finding 2): the key
+    //    settings by name, and a minimum number of settings rows. A missing
+    //    tblSettings counts as having none of them.
+    $settingsCheck = migrationDbSeedSettingsShortfall($db);
+
+    if ($settingsCheck['ok'] !== true) {
+        $result['error'] = $settingsCheck['error'];
+        return $result;
+    }
+
+    if ($settingsCheck['short'] > 0) {
+        $missingCounts['tblSettings'] = $settingsCheck['short'];
+        $summaryParts[]               = $settingsCheck['summary'];
+    }
+
     $result['ok']      = true;
     $result['missing'] = $missingCounts;
 
@@ -1647,6 +1718,77 @@ function migrationDbSeedDataState(\mysqli $db): array
     }
 
     return $result;
+}
+
+/**
+ * 🔑 How many of the starting settings is this marker-free database short of?
+ *    (Codex round 3 finding 2.) Counts the key settings from
+ *    migrationSeedRequiredSettingKeys() that are not there, and compares the
+ *    number of tblSettings rows with migrationSeedMinimumSettingsCount();
+ *    "short" is the larger of the two shortfalls. All values are bound; any
+ *    failure of any question is ok = false, never "nothing missing".
+ *
+ * @param \mysqli $db Connection with the site database selected
+ * @return array{ok: bool, short: int, summary: string, error: string}
+ */
+function migrationDbSeedSettingsShortfall(\mysqli $db): array
+{
+    $failed = ['ok' => false, 'short' => 0, 'summary' => '', 'error' => ''];
+    $keys   = migrationSeedRequiredSettingKeys();
+    $minimum = migrationSeedMinimumSettingsCount();
+
+    $settingsTable = migrationDbTableExistsState($db, 'tblSettings');
+
+    if ($settingsTable['ok'] !== true) {
+        $failed['error'] = $settingsTable['error'];
+        return $failed;
+    }
+
+    if ($settingsTable['exists'] !== true) {
+        return [
+            'ok'      => true,
+            'short'   => $minimum,
+            'summary' => 'tblSettings does not exist, so none of the ' . $minimum . ' starting settings are there',
+            'error'   => '',
+        ];
+    }
+
+    $placeholders = implode(', ', array_fill(0, count($keys), '?'));
+    $keyRows      = migrationDbFetchAll(
+        $db,
+        'SELECT COUNT(*) AS `foundCount` FROM `tblSettings` WHERE `settingKey` IN (' . $placeholders . ')',
+        str_repeat('s', count($keys)),
+        $keys
+    );
+
+    if ($keyRows['ok'] !== true || $keyRows['rows'] === []) {
+        $failed['error'] = 'Could not check the starting settings in tblSettings (' . $keyRows['error'] . ')';
+        return $failed;
+    }
+
+    $totalRows = migrationDbFetchAll($db, 'SELECT COUNT(*) AS `rowCount` FROM `tblSettings`');
+
+    if ($totalRows['ok'] !== true || $totalRows['rows'] === []) {
+        $failed['error'] = 'Could not count the rows in tblSettings (' . $totalRows['error'] . ')';
+        return $failed;
+    }
+
+    $keysMissing  = count($keys) - (int) $keyRows['rows'][0]['foundCount'];
+    $rowCount     = (int) $totalRows['rows'][0]['rowCount'];
+    $countMissing = max(0, $minimum - $rowCount);
+    $short        = max($keysMissing, $countMissing);
+
+    if ($short <= 0) {
+        return ['ok' => true, 'short' => 0, 'summary' => '', 'error' => ''];
+    }
+
+    return [
+        'ok'      => true,
+        'short'   => $short,
+        'summary' => 'tblSettings is missing starting settings (' . $keysMissing . ' of ' . count($keys)
+            . ' key settings absent; ' . $rowCount . ' settings rows where at least ' . $minimum . ' are expected)',
+        'error'   => '',
+    ];
 }
 
 /**

@@ -1032,7 +1032,7 @@ $itM->query("INSERT INTO `tblPredefinedLogos` (`logoName`, `logoLabel`, `logoFil
 $itM->query("INSERT INTO `tblSubscriptionPlans` (`planKey`, `planName`, `featuresJSON`, `limitsJSON`) VALUES ('free', 'Free', '{}', '{}')");
 $itStateM = migrationDbSeedDataState($itM);
 itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'partial', 'one QR type, one logo and one plan is PART-loaded, not complete (R1-1; before the fix this read "complete"): ' . $itStateM['state']);
-itCheck('M seed completeness', $itStateM['marker'] === false && $itStateM['missing'] === ['tblQRCodeTypes' => 37, 'tblPredefinedLogos' => 25, 'tblSubscriptionPlans' => 3], 'it counts what is missing per table: ' . json_encode($itStateM['missing']));
+itCheck('M seed completeness', $itStateM['marker'] === false && $itStateM['missing'] === ['tblQRCodeTypes' => 37, 'tblPredefinedLogos' => 25, 'tblSubscriptionPlans' => 3, 'tblSettings' => 80], 'it counts what is missing per table: ' . json_encode($itStateM['missing']));
 itCheck('M seed completeness', str_contains($itStateM['summary'], 'tblPredefinedLogos has 1 of its 26 starting rows'), 'the plain-English summary says what is there: ' . $itStateM['summary']);
 
 // M2. A complete seed, then the marker removed (a database seeded before the
@@ -1061,17 +1061,49 @@ $itM->query("UPDATE `tblSubscriptionPlans` SET `planKey` = 'pro_2027' WHERE `pla
 $itStateM = migrationDbSeedDataState($itM);
 itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'complete', 'with the marker, rows the owner later deleted or renamed do not make it "part-loaded"');
 
-// M5. Marker left behind but the three tables emptied: "none", and a reload works
-//     (the marker insert skips the existing marker instead of failing the load).
+// M5. Marker left behind but the three tables emptied (decision 0018, Codex
+//     round 3 finding 1): the marker means seeding already happened, so the
+//     state is "complete" and the installer skips seeding - it must NOT put
+//     back rows the owner deliberately removed. (Before this fix the answer was
+//     "none" and the default rows were loaded again; reproduced first.)
 $itM->query('SET FOREIGN_KEY_CHECKS = 0');
 foreach (migrationSeedProtectionTables() as $itTableM) {
     $itM->query('DELETE FROM `' . $itTableM . '`');
 }
 $itM->query('SET FOREIGN_KEY_CHECKS = 1');
 $itStateM = migrationDbSeedDataState($itM);
-itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'none', 'marker present but every starting table empty: "none", so it may load again');
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'complete' && $itStateM['marker'] === true, 'marker present but every starting table empty: "complete" (seeding already happened), so it is NOT loaded again: ' . $itStateM['state']);
+$itWrapperM = migrationDbSeedDataAlreadyPresent($itM);
+itCheck('M seed completeness', $itWrapperM['ok'] === true && $itWrapperM['present'] === true, 'and the older yes/no check says "present"');
+itCheck('M seed completeness', itCountRows($itM, 'tblQRCodeTypes') === 0 && itCountRows($itM, 'tblPredefinedLogos') === 0 && itCountRows($itM, 'tblSubscriptionPlans') === 0, 'nothing was put back in the three emptied tables');
+// 🔁 The documented way to force a clean re-seed: remove the marker first.
+$itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'seed_data_loaded'");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed completeness', $itStateM['ok'] === true && $itStateM['state'] === 'none', 'marker removed and the three tables empty: "none" (a deliberate clean re-seed is allowed)');
 $itSeedRunM = migrationDbRunSeedSql($itM, $itSeedSql);
-itCheck('M seed completeness', $itSeedRunM['ok'] === true && migrationDbSeedDataState($itM)['state'] === 'complete', 'and loading again succeeds: ' . $itSeedRunM['error']);
+itCheck('M seed completeness', $itSeedRunM['ok'] === true && migrationDbSeedDataState($itM)['state'] === 'complete', 'and loading again then succeeds: ' . $itSeedRunM['error']);
+itCheck('M seed completeness', itCountRows($itM, 'tblQRCodeTypes') === 38 && itCountRows($itM, 'tblPredefinedLogos') === 26 && itCountRows($itM, 'tblSubscriptionPlans') === 4, 'with every starting row back');
+
+// M5b. No marker, all 68 rows present, but a starting SETTING missing (Codex
+//      round 3 finding 2): part-loaded, not complete. Before this fix the three
+//      tables alone decided it and the answer was "complete".
+$itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'seed_data_loaded'");
+itCheck('M seed settings', migrationDbSeedDataState($itM)['state'] === 'complete', 'baseline: no marker, 68 rows and every starting setting is complete');
+$itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'site_name'");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed settings', $itStateM['ok'] === true && $itStateM['state'] === 'partial' && $itStateM['missing'] === ['tblSettings' => 1], 'no marker, all 68 rows, one key setting (site_name) missing: partial: ' . json_encode($itStateM['missing']));
+itCheck('M seed settings', str_contains($itStateM['summary'], 'tblSettings is missing starting settings'), 'and the summary names the settings: ' . $itStateM['summary']);
+// A setting that is not on the short key list: the row count catches it.
+$itM->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('general', 'site_name', 'CueRCode', 'string', 0, 1, 'x')");
+itCheck('M seed settings', migrationDbSeedDataState($itM)['state'] === 'complete', 'putting it back makes it complete again');
+$itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'copyright_year'");
+$itStateM = migrationDbSeedDataState($itM);
+itCheck('M seed settings', $itStateM['ok'] === true && $itStateM['state'] === 'partial' && $itStateM['missing'] === ['tblSettings' => 1], 'a missing starting setting that is not on the key list is caught by the row count: ' . json_encode($itStateM['missing']));
+$itM->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('general', 'copyright_year', '2026', 'string', 0, 1, 'x')");
+// With the marker, a missing setting is the owner's business.
+$itM->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'site_name'");
+$itM->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('system', 'seed_data_loaded', '1', 'boolean', 0, 0, 'x')");
+itCheck('M seed settings', migrationDbSeedDataState($itM)['state'] === 'complete', 'with the marker, a missing setting does not matter');
 
 // M6. Not InnoDB (R1-2). First show WHY it matters: the same all-or-nothing
 //     wrapping, run by hand on a MyISAM table, keeps that table's rows after

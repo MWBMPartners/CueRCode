@@ -401,8 +401,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                 // looking only at the tables ONLY seed_data.sql fills
                 // (migrationSeedProtectionTables() - deliberately NOT tblSettings,
                 // which migrations also insert into, review finding F1):
-                //   - "complete": skip it and say so plainly;
-                //   - "none": load it, ALL-OR-NOTHING (one transaction), so a
+                //   - "complete": skip it and say so plainly (a present
+                //     completion marker always means complete - decision 0018);
+                //   - "none": no marker and nothing loaded: load it, ALL-OR-NOTHING (one transaction), so a
                 //     failure leaves nothing behind and a retry starts clean;
                 //   - "partial", or the check itself failed: STOP. Before the
                 //     independent review (Codex C1 findings 1 and 4, 2026-11-25)
@@ -422,12 +423,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                     ];
                     $seedStepFailed = true;
                 } elseif ($seedState['state'] === 'complete') {
-                    $results[] = [
-                        'status' => 'info',
-                        'message' => 'Seed data skipped: this database already holds all of the starting data. Running '
-                            . 'seed_data.sql again would fail or duplicate rows, so it was not run. Any database changes '
-                            . 'since the first install are applied in the next step instead, by the upgrade tool.'
-                    ];
+                    // 📌 Decision 0018 (Codex round 3 finding 1): a present
+                    //    completion marker means seeding already happened, even
+                    //    if the three starting tables have since been emptied on
+                    //    purpose. Say so, and say how to force a clean re-seed.
+                    if ($seedState['marker'] === true) {
+                        $results[] = [
+                            'status' => 'info',
+                            'message' => 'Seed data skipped: this database says the starting data was already loaded (the '
+                                . 'seed_data_loaded setting is there), so it was not loaded again and any rows you have '
+                                . 'removed or changed since are left alone. If you really want a clean re-seed of the '
+                                . 'starting QR code types, logos and plans, delete the seed_data_loaded row from the '
+                                . 'tblSettings table first (and empty tblQRCodeTypes, tblPredefinedLogos and '
+                                . 'tblSubscriptionPlans), then reload this page. Any database changes since the first '
+                                . 'install are applied in the next step instead, by the upgrade tool.'
+                        ];
+                    } else {
+                        $results[] = [
+                            'status' => 'info',
+                            'message' => 'Seed data skipped: this database already holds all of the starting data. Running '
+                                . 'seed_data.sql again would fail or duplicate rows, so it was not run. Any database changes '
+                                . 'since the first install are applied in the next step instead, by the upgrade tool.'
+                        ];
+                    }
                 } elseif ($seedState['state'] === 'partial') {
                     // 🔎 Codex round 2 (finding R1-1): "partial" now also covers
                     //    a table holding only SOME of its starting rows, and the
