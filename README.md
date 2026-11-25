@@ -244,7 +244,7 @@ AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.cl
 php tests/run.php
 ```
 
-runs the full dependency-free characterization suite - 3942 assertions across 36 test files, no database or Composer required.
+runs the full dependency-free characterization suite - 3941 assertions across 36 test files, no database or Composer required.
 
 There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL or MariaDB container - see [tests/README.md](tests/README.md).
 

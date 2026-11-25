@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DEV_NOTES.md: the phpMyAdmin route is now marked as a **last resort**, because it cannot set a
   safe password. It now says to check the account first and to change the password straight
   after.
-- Tests: `tests/test_admin_access.php` grows to 534 checks.
+- Tests: `tests/test_admin_access.php` grows to 535 checks (whole suite 3941).
   `tests/integration/admin_access_real_mysql.php` has 134 checks and passes on MySQL 8.0.36,
   MySQL 8.4.11 and MariaDB 11.4.13. It drives the real command in a pretend terminal, proves
   the typed passwords never appear on screen, and forces database failures part-way through

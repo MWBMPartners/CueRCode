@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-24, task 7n Phase 1B #31; earlier #151, #112, #122/#123/#126)
+## Current suite (2026-11-25, decision 0010 #31, at commit 765ce17; earlier #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 
@@ -57,6 +57,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
 | `test_core.php` | 143 |
+| `test_credentials_template.php` | 8 |
 | `test_curl_content_decoding_guard.php` | 3 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
@@ -65,7 +66,9 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 134 |
 | `test_features.php` | 91 |
+| `test_install_checks.php` | 50 |
 | `test_log_mask.php` | 56 |
+| `test_login_next_url.php` | 21 |
 | `test_migrations.php` | 386 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
@@ -78,7 +81,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_pricing_flex.php` | 51 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| **Total** | **3739** |
+| `test_vendored_libraries.php` | 11 |
+| **Total** | **3941** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
