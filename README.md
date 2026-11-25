@@ -28,7 +28,7 @@ A web-based service for generating customisable, downloadable QR codes via a ful
 | Component | Technology |
 | --- | --- |
 | 🖥️ Backend | PHP 8.4, 8.5 or 8.6 (aim: 8.5; see `docs/decisions/0002-php-support-matrix-8-4-to-8-6.md`) |
-| 🗄️ Database | MySQL via MySQLi (prepared statements only) |
+| 🗄️ Database | MySQL 8.0.13+ or MariaDB 10.6+ via MySQLi (prepared statements only) |
 | 📦 QR Library | [chillerlan/php-qrcode](https://github.com/chillerlan/php-qrcode) v5.x |
 | 📊 Barcode Library | [tecnickcom/tc-lib-barcode](https://github.com/tecnickcom/tc-lib-barcode) v2.12.0 (#69) |
 | 🙂 Emoji Assets | [Twemoji](https://github.com/jdecked/twemoji) v17.0.3, CC-BY-4.0 (#67) |
@@ -52,7 +52,7 @@ CueRCode/
 │       ├── _auth_keys/             ← 🔐 Site-specific credentials
 │       ├── _includes/              ← 📦 Site-specific includes (bootstrap, SQL, templates, cron jobs)
 │       ├── _functions/             ← ⚙️ Site-specific functions (QR engine, API handlers)
-│       ├── _libraries/             ← 📚 Third-party libraries (chillerlan, FPDF, tecnickcom)
+│       ├── _libraries/             ← 📚 Third-party libraries (chillerlan, FPDF, tecnickcom - committed, decision 0011)
 │       ├── _uploads/               ← 📤 User uploads (logos, generated QR codes)
 │       ├── _backups/               ← 💾 Site backups
 │       ├── public_html/            ← 🌍 Production web root
@@ -73,60 +73,44 @@ CueRCode/
 
 ### Prerequisites
 
-- 🐘 PHP 8.4, 8.5 or 8.6 with extensions: `mbstring`, `gd`, `json`, `openssl`, `mysqli`, `curl` (email/SSO), `zip` (bulk downloads), `bcmath` (PDF417 barcodes). `imagick` is optional (only used for predefined logos on raster output) - the installer itself only checks for `mysqli`, `mbstring`, `gd`, `json` and `openssl`.
-- 🗄️ MySQL 5.7+ or MariaDB 10.3+
-- 🌐 Apache with `mod_rewrite` enabled
+- 🐘 PHP 8.4, 8.5 or 8.6 with these extensions (the installer checks all eight and says in plain words what each is for): `mysqli` (database), `mbstring` (text in any language), `gd` (images), `json`, `openssl` (encryption), `zip` (bulk ZIP downloads), `bcmath` (PDF417 barcodes), `curl` (email, bot checks and sign-in providers). `imagick` is optional (only used for predefined logos on raster output).
+- 🗄️ **MySQL 8.0.13 or newer, or MariaDB 10.6 or newer** (decision 0012). The installer refuses an older database with a plain message before it creates anything. Older MySQL 5.7 and MariaDB 10.3 are no longer supported.
+- 🌐 Apache with `mod_rewrite` enabled (DreamHost shared hosting has it)
+- 📁 Two storage folders that PHP can write to: `_uploads` and `_backups` (next to `public_html`). The deploy creates them; the installer checks they exist and are writable.
 
 ### Installation
 
-1. **📥 Clone the repository:**
+This is how a fresh copy gets onto DreamHost. **Nothing is cloned on the server:** GitHub Actions uploads the files over SFTP (`.github/workflows/deploy.yml`) whenever the `alpha`, `beta` or `main` branch is pushed, and only when the repository variable `SFTP_ENABLED` is set. The repository secrets `SFTP_*`, `SFTP_REMOTE_BASE` (the server folder that holds `CueRCode.net/`, for example `/home/your-user`) and `SFTP_KNOWN_HOSTS` must be set first (see DEV_NOTES.md).
+
+1. **📤 Get the files onto the server.** Each branch uploads the private folders (`_auth_keys`, `_functions`, `_includes`, `_libraries`, `_uploads`, `_backups`) plus ONE public folder:
+
+   | Branch | Public folder it uploads | Point the matching DreamHost domain at it |
+   | --- | --- | --- |
+   | `main` | `public_html/` | the live site (production) |
+   | `beta` | `public_html_dev_beta/` | the beta site |
+   | `alpha` | `public_html_dev_alpha/` | the alpha site |
+
+   In the DreamHost panel (Websites > Manage Websites), set each domain's "web directory" to the matching folder. Which hostname is used for alpha and beta is your choice; this repository does not fix it.
+
+2. **📦 Third-party libraries need no separate step.** The QR, PDF and barcode libraries (chillerlan/php-qrcode 5.0.5, php-settings-container 3.2.1, FPDF 1.86, tc-lib-barcode 2.12.0, tc-lib-color 2.13.1) are committed under `web/CueRCode.net/_libraries/` (decision 0011) and ship with the normal deploy. Their pinned versions are in `_libraries/PINNED_VERSIONS.json`; `php tools/check_vendored_libraries.php` confirms the committed copies match. Bootstrap, jQuery, FontAwesome and Swagger UI fallback copies are committed too, under `public_html/assets/vendor/`.
+
+3. **🔐 Create the credentials file on the server** (it is never in git). A template is committed at `web/CueRCode.net/_auth_keys/auth_creds.example.php.dist`. On the server, in the `_auth_keys` folder:
 
    ```bash
-   git clone https://github.com/MWBMPartners/CueRCode.git
+   cp auth_creds.example.php.dist auth_creds.php
+   chmod 640 auth_creds.php
    ```
 
-2. **📦 Download third-party libraries** (not included in repo, and the auto-deploy workflow does NOT upload them - they must be put on the server by hand, once):
-   - [chillerlan/php-qrcode v5.0.5](https://github.com/chillerlan/php-qrcode/releases) → `web/CueRCode.net/_libraries/chillerlan/php-qrcode/`
-   - [chillerlan/php-settings-container v3.2.1](https://github.com/chillerlan/php-settings-container/releases) → `web/CueRCode.net/_libraries/chillerlan/php-settings-container/`
-   - [FPDF v1.86](https://www.fpdf.org/) → `web/CueRCode.net/_libraries/fpdf/`
-   - [tecnickcom/tc-lib-barcode v2.12.0](https://github.com/tecnickcom/tc-lib-barcode/releases) → `web/CueRCode.net/_libraries/tecnickcom/tc-lib-barcode/`
-   - [tecnickcom/tc-lib-color v2.13.1](https://github.com/tecnickcom/tc-lib-color/releases) → `web/CueRCode.net/_libraries/tecnickcom/tc-lib-color/`
-   - *(No longer needed - #137.)* Local fallback copies of Bootstrap 5.3.3, jQuery 3.7.1 and FontAwesome 6.5.1 are now **committed** under `web/CueRCode.net/public_html/assets/vendor/` (like the Swagger UI fallback, #111), so the auto-deploy uploads them. `header.php`/`footer.php` check whether each CDN copy loaded and, if not, switch to the local file - for FontAwesome too (#119). `php tools/check_site_polish.php` confirms every CDN integrity hash matches these copies.
+   Then edit `auth_creds.php` and replace every `REPLACE_ME` (database host, name, user and password, and an `ENCRYPTION_KEY` made with `openssl rand -hex 32`). Keep a safe copy of the key. (The site-specific file is loaded first; `web/_auth_keys/auth_creds.php` - the server-wide equivalent - is the fallback.)
 
-3. **🔐 Configure credentials:**
-
-   There is no `auth_creds.example.php` template in the repo - `.gitignore`'s `**/_auth_keys/*.php` rule deliberately blocks any PHP file under `_auth_keys/` from ever being committed, template or otherwise. Instead, create the file yourself on the server:
-
-   ```bash
-   touch web/CueRCode.net/_auth_keys/auth_creds.php
-   ```
-
-   (The site-specific file is loaded first; `web/_auth_keys/auth_creds.php` - the server-wide equivalent - is used as a fallback if the site-specific one is missing a value.)
-
-   Give it real values in this shape (these are placeholders - never commit real secrets):
-
-   ```php
-   <?php
-   // web/CueRCode.net/_auth_keys/auth_creds.php - NOT committed to git
-
-   define('DB_HOST', 'localhost');           // required
-   define('DB_NAME', 'your_database_name');  // required
-   define('DB_USER', 'your_database_user');  // required
-   define('DB_PASS', 'your_database_password'); // required
-   define('DB_PORT', 3306);                  // optional
-   define('DB_CHARSET', 'utf8mb4');          // optional
-
-   // A long random value used to derive the AES-256-GCM encryption key -
-   // e.g. generate one with: openssl rand -hex 32
-   define('ENCRYPTION_KEY', 'REPLACE_WITH_A_LONG_RANDOM_VALUE');
-   ```
-
-4. **🗄️ Run the database installer:**
-   Navigate to `https://your-domain/install/` in your browser. It creates the tables, loads the starting data and applies the numbered database upgrades.
+4. **🗄️ Run the database installer.** The folder `public_html/install/` ships with an `.htaccess` that **denies all web access**, on purpose, so nobody can reach the installer by accident. To run it once:
+   1. On the server, rename `install/.htaccess` to `install/.htaccess.off` (with your SFTP program or File Manager).
+   2. Open `https://your-domain/install/`. Check every line of the prerequisites list is green (PHP version, the eight extensions, the credentials file, `_uploads` and `_backups`), then press **Install Database**. It checks the database version, creates the tables, loads the starting data and applies the numbered database upgrades, then writes `install/.installed.lock` and disables itself.
+   3. **Close it again straight away:** rename `install/.htaccess.off` back to `install/.htaccess`. Better still, delete the whole `install/` folder from the server. Note the next deploy will upload the folder and its `.htaccess` again, so check that `.htaccess` is in place after each deploy.
 
    **Upgrading an existing site later:** run `php web/CueRCode.net/_includes/cli/migrate.php --apply` on the server, or use **Database upgrades** in the admin area (`/admin/upgrades/`). See DEV_NOTES.md "Changing the database from now on".
 
-5. **🌍 Point your web server** to `web/CueRCode.net/public_html/` as the document root.
+5. **🌍 Check the domain points at the right folder** (step 1) and that `https://your-domain/` loads the home page.
 
 6. **🛡️ Make yourself the first Global Admin:** sign up at `/register/`, then on the server run
    `php web/CueRCode.net/_includes/cli/admin_access.php grant you@example.com --activate`
@@ -256,7 +240,7 @@ AI coding tools working on this repo should start with [`.claude/CLAUDE.md`](.cl
 php tests/run.php
 ```
 
-runs the full dependency-free characterization suite - 2871 assertions across 28 test files, no database or Composer required.
+runs the full dependency-free characterization suite - 3942 assertions across 36 test files, no database or Composer required.
 
 There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL or MariaDB container - see [tests/README.md](tests/README.md).
 

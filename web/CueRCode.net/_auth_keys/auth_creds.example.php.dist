@@ -1,0 +1,44 @@
+<?php
+/**
+ * ==============================================================================
+ * 🔐 CueRCode - Credentials TEMPLATE (placeholders only)
+ * ==============================================================================
+ *
+ * Path: _auth_keys/auth_creds.example.php.dist
+ *
+ * HOW TO USE (on the server, never in git):
+ *   1. Copy this file to the SAME folder with the name  auth_creds.php
+ *        cp auth_creds.example.php.dist auth_creds.php
+ *   2. Replace every REPLACE_ME value below with your real value.
+ *   3. Set the file so only your account can read it (permissions 600 or 640).
+ *
+ * The real auth_creds.php is ignored by git on purpose (.gitignore rules
+ * "**\/auth_creds.php" and "**\/_auth_keys/*.php") so a real password can never
+ * be committed. This template ends in ".dist" so those rules do not block it.
+ * NEVER put real secrets in THIS file - it is committed.
+ *
+ * The folder's .htaccess already denies all web access to this folder.
+ *
+ * @package     CueRCode
+ * @subpackage  Configuration
+ * @copyright   2025-2026 MWBM Partners Ltd
+ * @since       #113 (B3)
+ */
+
+// 🗄️ Database (all four are required). On DreamHost the host is the database
+//    hostname you chose in Panel > MySQL Databases (NOT always "localhost").
+define('DB_HOST', 'REPLACE_ME');       // e.g. mysql.example.com
+define('DB_NAME', 'REPLACE_ME');       // the database name
+define('DB_USER', 'REPLACE_ME');       // the database user
+define('DB_PASS', 'REPLACE_ME');       // the database password
+
+// 🗄️ Optional database settings (remove the leading // to change them)
+// define('DB_PORT', 3306);
+// define('DB_CHARSET', 'utf8mb4');
+
+// 🔑 A long random secret used to encrypt sensitive values (AES-256-GCM).
+//    Generate one on your own computer or the server with:
+//        openssl rand -hex 32
+//    Keep a safe copy: if it is lost, encrypted values (such as saved email
+//    passwords) cannot be read back and must be entered again.
+define('ENCRYPTION_KEY', 'REPLACE_ME_WITH_64_RANDOM_HEX_CHARACTERS');
