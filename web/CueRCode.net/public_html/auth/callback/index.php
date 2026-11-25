@@ -37,6 +37,13 @@
  *      session - they were already authenticated before this flow began.
  *   5. Redirect to the caller's (re-validated) safe post-login destination.
  *
+ * 🕐 Review findings 1 and 2 (2026-11-25): a "link" request is completed only
+ *    if the same account is still signed in and its "sessions valid from"
+ *    mark has not moved since the request began (oauthLinkRequestCheck());
+ *    and a Google/Microsoft SIGN-IN passes the mark it read with the linked
+ *    sign-in to issueUserSession(), so a password reset in the middle stops
+ *    it too.
+ *
  * @package     CueRCode
  * @subpackage  Pages / Auth
  * @copyright   2025–2026 MWBM Partners Ltd
@@ -120,8 +127,28 @@ if (!$providerIsValid) {
     } else {
         $completeResult = completeAuth($requestedProvider, $authorizationCode, $stateValue);
 
+        // 🔗 Review finding 2 (2026-11-25): a "link to my account" request is
+        //    completed only if the SAME account is still signed in now and
+        //    its "sessions valid from" mark has not moved since the request
+        //    started (a password reset moves it). Otherwise nothing is linked
+        //    - and it is never treated as an ordinary sign-in instead.
+        $linkCheck = 'ok';
+        if ($completeResult['success'] && $completeResult['data']['linkUserId'] !== null) {
+            $linkCheck = oauthLinkRequestCheck(
+                currentUser(),
+                (int) $completeResult['data']['linkUserId'],
+                (bool) $completeResult['data']['linkValidFromSaved'],
+                $completeResult['data']['linkValidFrom']
+            );
+        }
+
         if (!$completeResult['success']) {
             $errorMessage = $completeResult['message'];
+        } elseif ($linkCheck !== 'ok') {
+            $errorMessage = oauthLinkRequestRefusalMessage($linkCheck);
+            if (function_exists('logActivity')) {
+                logActivity('sso_link_refused', 'Refused ' . $requestedProvider . ' link (' . $linkCheck . ')', 'user', (int) $completeResult['data']['linkUserId'], ['provider' => $requestedProvider]);
+            }
         } else {
             $verifiedIdentity = $completeResult['data'];
 
@@ -132,7 +159,8 @@ if (!$providerIsValid) {
                 $verifiedIdentity['emailVerified'],
                 $verifiedIdentity['displayName'],
                 $verifiedIdentity['tokensEncrypted'],
-                $verifiedIdentity['linkUserId']
+                $verifiedIdentity['linkUserId'],
+                $verifiedIdentity['linkValidFrom']
             );
 
             if (!$linkResult['success']) {
@@ -161,13 +189,27 @@ if (!$providerIsValid) {
                         $userAgent = '';
                     }
 
-                    issueUserSession((int) $resolvedUserId, $clientIp, $userAgent);
+                    // 🕐 Review finding 1: pass the account's "sessions valid
+                    //    from" mark read together with the linked sign-in, so
+                    //    a reset that removed the link meanwhile also stops
+                    //    this session (empty answer = refused).
+                    $sessionsValidFromSeen = null;
+                    if (isset($linkResult['data']['sessionsValidFromSeen'])) {
+                        $sessionsValidFromSeen = (string) $linkResult['data']['sessionsValidFromSeen'];
+                    }
+
+                    $issuedSession = issueUserSession((int) $resolvedUserId, $clientIp, $userAgent, $sessionsValidFromSeen);
+                    if ($issuedSession === '') {
+                        $errorMessage = 'Sign-in could not be completed: the account was secured (for example its password was reset) while you were signing in. Please try again.';
+                    }
                 }
 
-                $successResult = [
-                    'nextUrl' => resolveSafeSameSiteRedirect($verifiedIdentity['nextUrl'], '/account/'),
-                    'action'  => $resolvedAction,
-                ];
+                if ($errorMessage === null) {
+                    $successResult = [
+                        'nextUrl' => resolveSafeSameSiteRedirect($verifiedIdentity['nextUrl'], '/account/'),
+                        'action'  => $resolvedAction,
+                    ];
+                }
             }
         }
     }

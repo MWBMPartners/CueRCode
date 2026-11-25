@@ -1511,6 +1511,15 @@ function beginAuth(string $provider, ?string $rawNextUrl = null): array
     $requestingUser = function_exists('currentUser') ? currentUser() : null;
     $linkUserId     = ($requestingUser !== null) ? (int) $requestingUser['userID'] : null;
 
+    // 🕐 Review finding 2 (2026-11-25): for a "link" request, also save the
+    //    account's "sessions valid from" mark as it is NOW. If the password is
+    //    reset before the visitor comes back from Google/Microsoft, the mark
+    //    moves and the callback refuses to link (see oauthLinkRequestCheck()).
+    $linkValidFrom = null;
+    if ($requestingUser !== null && isset($requestingUser['sessionsValidFrom'])) {
+        $linkValidFrom = (string) $requestingUser['sessionsValidFrom'];
+    }
+
     if (session_status() !== PHP_SESSION_ACTIVE) {
         session_start();
     }
@@ -1518,13 +1527,14 @@ function beginAuth(string $provider, ?string $rawNextUrl = null): array
     // 📌 Only ONE pending SSO attempt is tracked per browser session - a new
     // beginAuth() call always overwrites (invalidates) any prior one.
     $_SESSION[CUERCODE_OAUTH_SESSION_KEY] = [
-        'provider'     => $provider,
-        'state'        => $state,
-        'nonce'        => $nonce,
-        'verifier'     => $codeVerifier,
-        'next'         => $safeNextUrl,
-        'link_user_id' => $linkUserId,
-        'expires_at'   => time() + CUERCODE_OAUTH_STATE_TTL_SECONDS,
+        'provider'        => $provider,
+        'state'           => $state,
+        'nonce'           => $nonce,
+        'verifier'        => $codeVerifier,
+        'next'            => $safeNextUrl,
+        'link_user_id'    => $linkUserId,
+        'link_valid_from' => $linkValidFrom,
+        'expires_at'      => time() + CUERCODE_OAUTH_STATE_TTL_SECONDS,
     ];
 
     $authorizeParams = [
@@ -1785,6 +1795,16 @@ function completeAuth(string $provider, string $code, string $state): array
         'scope'         => $tokenResponse['scope'] ?? $config['scopes'],
     ];
 
+    // 🕐 Review finding 2: the account's mark saved by beginAuth() for a
+    //    "link" request. A request saved before this change has no such
+    //    entry; it is then reported as "not saved" and refused (fail closed -
+    //    the visitor simply starts the link again).
+    $linkValidFromSaved = array_key_exists('link_valid_from', $pending);
+    $linkValidFrom      = null;
+    if ($linkValidFromSaved && $pending['link_valid_from'] !== null) {
+        $linkValidFrom = (string) $pending['link_valid_from'];
+    }
+
     $tokensEncrypted = null;
 
     if (function_exists('encryptValue')) {
@@ -1809,10 +1829,99 @@ function completeAuth(string $provider, string $code, string $state): array
             'emailVerified'   => $emailVerified,
             'displayName'     => $displayName,
             'tokensEncrypted' => $tokensEncrypted,
-            'nextUrl'         => (string) $pending['next'],
-            'linkUserId'      => $pending['link_user_id'],
+            'nextUrl'            => (string) $pending['next'],
+            'linkUserId'         => $pending['link_user_id'],
+            'linkValidFromSaved' => $linkValidFromSaved,
+            'linkValidFrom'      => $linkValidFrom,
         ],
     ];
+}
+
+// ==============================================================================
+// 🔗 oauthLinkRequestCheck() - is a saved "link" request still good? (PURE)
+// ==============================================================================
+
+/**
+ * 🔗 Decide whether a Google/Microsoft "link to my account" request that has
+ *    just come back from the provider may still be completed. PURE.
+ *
+ * Review finding 2 (2026-11-25): a link request started BEFORE a password
+ * reset must never be completed AFTER it - otherwise a stranger who started
+ * one while signed in with the old password could attach their own Google or
+ * Microsoft sign-in to the account the owner has just taken back. So, at the
+ * callback, ALL of these must hold:
+ *   1. somebody is signed in NOW (currentUser(), which itself refuses a
+ *      session from before a reset);
+ *   2. it is the SAME account that started the request;
+ *   3. the account's "sessions valid from" mark is the one saved when the
+ *      request started (a reset or an admin grant moves it).
+ *
+ * @param array|null  $userNow        currentUser() now (null = nobody signed in)
+ * @param int         $linkUserId     The account that started the request
+ * @param bool        $markWasSaved   The saved request holds a mark at all
+ * @param string|null $savedMark      The mark saved at the start (NULL = never moved)
+ * @return string 'ok', 'not_signed_in', 'different_account' or 'account_secured'
+ */
+function oauthLinkRequestCheck(?array $userNow, int $linkUserId, bool $markWasSaved, ?string $savedMark): string
+{
+    if ($userNow === null || !isset($userNow['userID'])) {
+        return 'not_signed_in';
+    }
+
+    if ((int) $userNow['userID'] !== $linkUserId) {
+        return 'different_account';
+    }
+
+    if (!$markWasSaved) {
+        return 'account_secured';
+    }
+
+    $markNow = null;
+    if (isset($userNow['sessionsValidFrom']) && $userNow['sessionsValidFrom'] !== null) {
+        $markNow = (string) $userNow['sessionsValidFrom'];
+    }
+
+    if ($markNow !== $savedMark) {
+        return 'account_secured';
+    }
+
+    return 'ok';
+}
+
+/**
+ * ↩️ Roll a transaction back, ignoring any error from the rollback itself
+ *    (the original problem is the one worth reporting). fn_auth.php has the
+ *    same helper; this file keeps its own so it can be loaded on its own.
+ *
+ * @param \mysqli $db The connection
+ * @return void
+ */
+function oauthRollbackQuietly(\mysqli $db): void
+{
+    try {
+        $db->rollback();
+    } catch (\Throwable $e) {
+        // Nothing more can be done; the caller reports the original problem.
+    }
+}
+
+/**
+ * 📣 The plain-English answer for each refusal from oauthLinkRequestCheck().
+ *
+ * @param string $reason The check's answer (not 'ok')
+ * @return string
+ */
+function oauthLinkRequestRefusalMessage(string $reason): string
+{
+    if ($reason === 'not_signed_in') {
+        return 'Nothing was linked: to link a Google or Microsoft sign-in you must still be signed in to the account you started from. Sign in, then start the link again from your account page.';
+    }
+
+    if ($reason === 'different_account') {
+        return 'Nothing was linked: you are now signed in to a different account from the one that asked for this link. Start the link again from the account page of the account you want it on.';
+    }
+
+    return 'Nothing was linked: the account\'s password was reset (or the account was otherwise secured) after this link was started. Sign in, then start the link again from your account page.';
 }
 
 // ==============================================================================
@@ -1976,9 +2085,15 @@ function decideOAuthAccountLinkAction(
  * @param string|null $displayName      IdP-asserted display name, if any (only used when creating a new account).
  * @param string|null $tokensEncrypted  The AES-256-GCM-encrypted token bundle (from completeAuth()'s data).
  * @param int|null    $requestingUserID The `linkUserId` captured at beginAuth() time (from completeAuth()'s data).
+ * @param string|null $requestingUserValidFrom For a link request: the account's "sessions valid from"
+ *                                     mark saved at beginAuth() time (review finding 2). The link
+ *                                     is written only if the mark is STILL that value, checked
+ *                                     with the account row locked. NULL = never moved.
  *
  * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
- *         data['userID'] holds the account to issue a session for on success.
+ *         data['userID'] holds the account to issue a session for on success;
+ *         data['sessionsValidFromSeen'] the account's mark read together with
+ *         the linked-sign-in row, to hand to issueUserSession() (review finding 1).
  */
 function applyOAuthAccountLink(
     string $provider,
@@ -1987,7 +2102,8 @@ function applyOAuthAccountLink(
     bool $emailVerified,
     ?string $displayName,
     ?string $tokensEncrypted,
-    ?int $requestingUserID
+    ?int $requestingUserID,
+    ?string $requestingUserValidFrom = null
 ): array {
     if (!function_exists('dbQuery')) {
         return [
@@ -2003,10 +2119,24 @@ function applyOAuthAccountLink(
     $identityAlreadyLinked  = false;
     $identityLinkedToUserID = null;
     $existingOAuthID        = null;
+    $linkedUserValidFrom    = null;
+
+    // 🕐 Review finding 1: the linked account's "sessions valid from" mark is
+    //    read in the SAME statement as the link itself. A password reset
+    //    removes the link AND moves the mark in one transaction, so a sign-in
+    //    that saw the link before the reset carries the old mark, and its
+    //    session is refused (issueUserSession() / currentUser()).
+    $markReady = function_exists('authSessionsValidFromReady') && authSessionsValidFromReady();
+    $markSql   = ', NULL AS `sessionsValidFrom`';
+    if ($markReady) {
+        $markSql = ', `u`.`sessionsValidFrom`';
+    }
 
     try {
         $lookupStmt = dbQuery(
-            'SELECT `oauthID`, `userID` FROM `tblUserOAuth` WHERE `provider` = ? AND `providerSubjectID` = ? LIMIT 1',
+            'SELECT `o`.`oauthID`, `o`.`userID`' . $markSql . ' FROM `tblUserOAuth` AS `o` '
+            . 'INNER JOIN `tblUsers` AS `u` ON `u`.`userID` = `o`.`userID` '
+            . 'WHERE `o`.`provider` = ? AND `o`.`providerSubjectID` = ? LIMIT 1',
             'ss',
             [$provider, $subject]
         );
@@ -2017,6 +2147,9 @@ function applyOAuthAccountLink(
             $identityAlreadyLinked  = true;
             $identityLinkedToUserID = (int) $lookupRow['userID'];
             $existingOAuthID        = (int) $lookupRow['oauthID'];
+            if ($lookupRow['sessionsValidFrom'] !== null) {
+                $linkedUserValidFrom = (string) $lookupRow['sessionsValidFrom'];
+            }
         }
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
@@ -2097,18 +2230,65 @@ function applyOAuthAccountLink(
                 'httpCode'  => $decision['httpCode'],
                 'errorCode' => null,
                 'message'   => $decision['message'],
-                'data'      => ['userID' => $decision['userID'], 'action' => $decision['action']],
+                'data'      => [
+                    'userID'                => $decision['userID'],
+                    'action'                => $decision['action'],
+                    'sessionsValidFromSeen' => $linkedUserValidFrom,
+                ],
             ];
 
         case 'link_to_current':
+            // 🔐 Review finding 2: re-check, with the account row LOCKED, that
+            //    it is still active and its "sessions valid from" mark is still
+            //    the one saved when the link was started - then write the link
+            //    in the same transaction. A password reset locks the same row
+            //    first, so the two can only happen one after the other: either
+            //    the link is written first (and the reset then removes it), or
+            //    the reset is first (and this refuses).
+            $linkDb      = getDB();
+            $linkStarted = false;
             try {
+                $linkDb->begin_transaction();
+                $linkStarted = true;
+
+                $guardSql = 'SELECT `status`, 1 AS `markMatches` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE';
+                $guardTypes  = 'i';
+                $guardParams = [$requestingUserID];
+                if ($markReady) {
+                    $guardSql    = 'SELECT `status`, (`sessionsValidFrom` <=> ?) AS `markMatches` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE';
+                    $guardTypes  = 'si';
+                    $guardParams = [$requestingUserValidFrom, $requestingUserID];
+                }
+                $guardStmt = dbQuery($guardSql, $guardTypes, $guardParams);
+                $guardRow  = $guardStmt->get_result()->fetch_assoc();
+                $guardStmt->close();
+
+                if (!is_array($guardRow) || (string) $guardRow['status'] !== 'active' || (int) $guardRow['markMatches'] !== 1) {
+                    oauthRollbackQuietly($linkDb);
+                    if (function_exists('logActivity')) {
+                        logActivity('sso_link_refused', 'Refused ' . $provider . ' link (the account was secured after the link was started)', 'user', $requestingUserID, ['provider' => $provider]);
+                    }
+                    return [
+                        'success'   => false,
+                        'httpCode'  => 409,
+                        'errorCode' => 'SSO_LINK_EXPIRED',
+                        'message'   => oauthLinkRequestRefusalMessage('account_secured'),
+                        'data'      => [],
+                    ];
+                }
+
                 $linkStmt = dbQuery(
                     'INSERT INTO `tblUserOAuth` (`userID`, `provider`, `providerSubjectID`, `tokensEncrypted`) VALUES (?, ?, ?, ?)',
                     'isss',
                     [$requestingUserID, $provider, $subject, $tokensEncrypted]
                 );
                 $linkStmt->close();
+
+                $linkDb->commit();
             } catch (\Throwable $e) {
+                if ($linkStarted) {
+                    oauthRollbackQuietly($linkDb);
+                }
                 if (function_exists('logError')) {
                     logError('error', 'OAuth link-to-current insert failed', $e->getMessage());
                 }
@@ -2214,7 +2394,8 @@ function applyOAuthAccountLink(
                 'httpCode'  => $decision['httpCode'],
                 'errorCode' => null,
                 'message'   => $decision['message'],
-                'data'      => ['userID' => $newUserID, 'action' => 'create_new'],
+                // 🕐 A brand-new account has never had its mark moved (NULL).
+                'data'      => ['userID' => $newUserID, 'action' => 'create_new', 'sessionsValidFromSeen' => null],
             ];
 
         default:

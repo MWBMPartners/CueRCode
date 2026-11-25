@@ -1245,8 +1245,15 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
     }
 
     if ($outcome === 'wrong_password' || $outcome === 'wrong_password_link_stopped') {
-        // 🔢 A wrong password counts toward the normal sign-in lock-out.
-        recordFailedLogin($userID, $failedCount + 1);
+        // 🔢 A wrong password counts toward the normal sign-in lock-out. The
+        //    database adds the one and says the real new count (review
+        //    finding 7), which may be higher than our guess if other wrong
+        //    tries landed at the same moment - so the "stop the link" decision
+        //    is taken again with the real number.
+        $recordedCount = recordFailedLogin($userID);
+        if ($recordedCount !== null) {
+            $outcome = emailVerificationPasswordOutcome(true, true, false, false, $recordedCount, $maxAttempts);
+        }
 
         if ($outcome === 'wrong_password') {
             return $invalidResult;
@@ -1279,9 +1286,39 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
     $db = getDB();
     $transactionStarted = false;
 
+    // 📣 Review nit (2026-11-25): only a WAITING account is "verified, you
+    //    can now log in". An account that is already active is told plainly
+    //    that nothing changed; a suspended or deleted one gets the usual
+    //    "invalid" answer, and nothing changes.
+    $alreadyActiveResult = [
+        'success'   => false,
+        'httpCode'  => 409,
+        'errorCode' => 'VERIFICATION_ALREADY_USED',
+        'message'   => 'This email address had already been confirmed, so nothing was changed. You can sign in as usual.',
+        'data'      => [],
+    ];
+
     try {
         $db->begin_transaction();
         $transactionStarted = true;
+
+        // 🔐 The account FIRST, locked until the end of the transaction -
+        //    the same order as a password reset (review finding 5), so the
+        //    two can never wait for each other in a circle.
+        $statusStmt = dbQuery('SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', 'i', [$userID]);
+        $statusRow  = $statusStmt->get_result()->fetch_assoc();
+        $statusStmt->close();
+
+        $accountStatus = '';
+        if (is_array($statusRow)) {
+            $accountStatus = (string) $statusRow['status'];
+        }
+
+        if ($accountStatus !== 'pending' && $accountStatus !== 'active') {
+            // 🚫 Suspended, deleted or gone: nothing changes, the usual answer.
+            authRollbackQuietly($db);
+            return $invalidResult;
+        }
 
         // 🔒 Atomically claim the token (usedAt IS NULL guard) BEFORE
         // activating the account, closing the race window between two
@@ -1302,6 +1339,13 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
             return $alreadyUsedResult;
         }
 
+        if ($accountStatus === 'active') {
+            // ℹ️ Already active (for example a second, older link): the link
+            //    is used up (it can do nothing more) and nothing else changes.
+            $db->commit();
+            return $alreadyActiveResult;
+        }
+
         // 🧹 A successful password also clears the lock-out counter.
         $activateStmt = dbQuery(
             "UPDATE `tblUsers` SET `emailVerifiedAt` = NOW(), `status` = 'active', `failedLoginCount` = 0, `lockedUntil` = NULL "
@@ -1309,7 +1353,18 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
             'i',
             [$userID]
         );
+        $activatedRows = $activateStmt->affected_rows;
         $activateStmt->close();
+
+        if ($activatedRows !== 1) {
+            // 🚫 Not activated (for example it holds the Global Admin role):
+            //    undo the claim so nothing at all changed.
+            authRollbackQuietly($db);
+            if (function_exists('logError')) {
+                logError('warning', 'Verification link did not activate the account; nothing was changed', 'userID ' . $userID);
+            }
+            return $invalidResult;
+        }
 
         $db->commit();
     } catch (\Throwable $e) {
@@ -1387,10 +1442,19 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
 
     $normalizedEmail = mb_strtolower(trim($email));
 
+    // 🕐 Review finding 1: the account's "sessions valid from" mark is read in
+    //    the SAME statement as the password hash, so the two always belong
+    //    together. If a reset changes the password after this read, it also
+    //    moves the mark, and the session below is refused (issueUserSession()).
+    $validFromColumn = '';
+    if (authSessionsValidFromReady()) {
+        $validFromColumn = ', `sessionsValidFrom`';
+    }
+
     try {
         $stmt = dbQuery(
             'SELECT `userID`, `email`, `passwordHash`, `displayName`, `status`, '
-            . '`failedLoginCount`, `lockedUntil` '
+            . '`failedLoginCount`, `lockedUntil`' . $validFromColumn . ' '
             . 'FROM `tblUsers` WHERE `email` = ? LIMIT 1',
             's',
             [$normalizedEmail]
@@ -1431,10 +1495,17 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
         // 📌 Only extend the failure counter for a genuinely wrong password
         // against an ACTIVE, unlocked account - a probe against an
         // already-locked or not-yet-active account has nothing new to record.
+        // (Review finding 7: the counter is raised by the database itself,
+        // so wrong passwords sent at the same moment all count.)
         if (!$isLocked && $status === 'active' && !$passwordOk) {
-            recordFailedLogin($userID, $failedCount + 1);
+            recordFailedLogin($userID);
         }
         return $genericFailResult;
+    }
+
+    $sessionsValidFromSeen = null;
+    if (isset($row['sessionsValidFrom']) && $row['sessionsValidFrom'] !== null) {
+        $sessionsValidFromSeen = (string) $row['sessionsValidFrom'];
     }
 
     // ✅ Success - reset the failure counter and record the login.
@@ -1454,10 +1525,18 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
 
     // 🔁 Transparent Argon2id rehash if the stored hash used older cost
     // parameters than fn_password.php currently specifies.
+    // 🕐 Review finding 1: only while the stored hash is STILL the one just
+    //    checked. Otherwise a sign-in with the OLD password that was slow
+    //    enough to straddle a password reset would write the old password
+    //    back over the new one.
     if (function_exists('passwordNeedsRehash') && passwordNeedsRehash((string) $row['passwordHash'])) {
         try {
             $newHash      = hashPassword($plainPassword);
-            $rehashStmt   = dbQuery('UPDATE `tblUsers` SET `passwordHash` = ? WHERE `userID` = ?', 'si', [$newHash, $userID]);
+            $rehashStmt   = dbQuery(
+                'UPDATE `tblUsers` SET `passwordHash` = ? WHERE `userID` = ? AND `passwordHash` = ?',
+                'sis',
+                [$newHash, $userID, (string) $row['passwordHash']]
+            );
             $rehashStmt->close();
         } catch (\Throwable $e) {
             if (function_exists('logError')) {
@@ -1466,7 +1545,13 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
         }
     }
 
-    issueUserSession($userID, $ipAddress, $userAgent);
+    // 🎫 Refused (empty) when the password was reset while this sign-in was
+    //    being checked: the person sees the usual "invalid" answer.
+    $issuedSession = issueUserSession($userID, $ipAddress, $userAgent, $sessionsValidFromSeen);
+
+    if ($issuedSession === '') {
+        return $genericFailResult;
+    }
 
     return [
         'success'   => true,
@@ -1487,20 +1572,27 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
 // ==============================================================================
 
 /**
- * 🔢 Persist an incremented failed-login count and, once the configured
- * threshold is reached, an account lockout expiry.
+ * 🔢 Add one to the account's failed-login count and, once the configured
+ * threshold is reached, set the lock-out expiry.
  *
- * @param int $userID         The tblUsers.userID whose counter to update
- * @param int $newFailedCount The failedLoginCount value AFTER this failure
+ * 🔢 Review finding 7 (2026-11-25): the database adds the one itself
+ *    (`failedLoginCount` = `failedLoginCount` + 1) and the new value is read
+ *    back, instead of writing a number worked out from an earlier read. With
+ *    the old way, ten wrong passwords sent at the same moment could all read
+ *    "3" and all write "4", so the lock-out never came. Now each one counts.
+ *    The count stops at 65535 (the column's largest value) rather than fail.
  *
- * @return void
+ * @param int $userID The tblUsers.userID whose counter to update
+ *
+ * @return int|null The count AFTER this failure, or null if it could not be
+ *                  recorded or read back (the caller then uses its own guess)
  *
  * @see computeLockoutExpiry()
  */
-function recordFailedLogin(int $userID, int $newFailedCount): void
+function recordFailedLogin(int $userID): ?int
 {
     if (!function_exists('dbQuery')) {
-        return;
+        return null;
     }
 
     $maxAttempts    = CUERCODE_DEFAULT_MAX_LOGIN_ATTEMPTS;
@@ -1511,28 +1603,112 @@ function recordFailedLogin(int $userID, int $newFailedCount): void
         $lockoutSeconds = (int) getConfig('lockout_duration', $lockoutSeconds);
     }
 
-    $lockoutExpiry = computeLockoutExpiry($newFailedCount, $maxAttempts, $lockoutSeconds, time());
-
     try {
-        if ($lockoutExpiry !== null) {
-            $stmt = dbQuery(
-                'UPDATE `tblUsers` SET `failedLoginCount` = ?, `lockedUntil` = FROM_UNIXTIME(?) WHERE `userID` = ?',
-                'iii',
-                [$newFailedCount, $lockoutExpiry, $userID]
-            );
-        } else {
-            $stmt = dbQuery(
-                'UPDATE `tblUsers` SET `failedLoginCount` = ? WHERE `userID` = ?',
-                'ii',
-                [$newFailedCount, $userID]
-            );
-        }
+        // ➕ 1. The database adds one (no lost updates).
+        $stmt = dbQuery(
+            'UPDATE `tblUsers` SET `failedLoginCount` = LEAST(`failedLoginCount` + 1, 65535) WHERE `userID` = ?',
+            'i',
+            [$userID]
+        );
         $stmt->close();
+
+        // 👀 2. Read the count back (it includes any other failure that
+        //    landed at the same moment - that is the point).
+        $readStmt = dbQuery('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ? LIMIT 1', 'i', [$userID]);
+        $countRow = $readStmt->get_result()->fetch_assoc();
+        $readStmt->close();
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
             logError('warning', 'Failed-login counter update failed', $e->getMessage());
         }
+        return null;
     }
+
+    if (!is_array($countRow)) {
+        return null;
+    }
+
+    $newFailedCount = (int) $countRow['failedLoginCount'];
+
+    // 🔒 3. At (or past) the limit: lock the account for the set time.
+    $lockoutExpiry = computeLockoutExpiry($newFailedCount, $maxAttempts, $lockoutSeconds, time());
+
+    if ($lockoutExpiry !== null) {
+        try {
+            $lockStmt = dbQuery(
+                'UPDATE `tblUsers` SET `lockedUntil` = FROM_UNIXTIME(?) WHERE `userID` = ?',
+                'ii',
+                [$lockoutExpiry, $userID]
+            );
+            $lockStmt->close();
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('warning', 'Failed-login lock-out update failed', $e->getMessage());
+            }
+        }
+    }
+
+    return $newFailedCount;
+}
+
+// ==============================================================================
+// 🕐 authSessionsValidFromReady() - is migration 0003 in place?
+// ==============================================================================
+
+/**
+ * 🕐 Do tblUsers.sessionsValidFrom and tblUserSessions.sessionsValidFromSeen
+ *    exist (migration 0003)? Asked once per request and remembered.
+ *
+ * WHY THIS EXISTS: the code can reach the server before the database upgrade
+ * is applied. Without this check every sign-in would fail until the upgrade
+ * ran - including the Global Admin's, who applies upgrades from /admin/. So,
+ * until 0003 is applied, sign-in works exactly as it did before (and the
+ * admin overview lists 0003 as waiting); once it is applied, the "sessions
+ * valid from" protection is on. The question is asked of INFORMATION_SCHEMA
+ * (the same place the upgrade tool looks), so a missing column is a plain
+ * "0" answer rather than an error. If the question itself fails, the answer
+ * is "ready": a database fault can never quietly switch the protection off
+ * (the queries that follow then fail and nobody is signed in).
+ *
+ * @param bool $forget Forget the remembered answer (after an upgrade, and in tests)
+ * @return bool
+ */
+function authSessionsValidFromReady(bool $forget = false): bool
+{
+    static $ready = null;
+
+    if ($forget) {
+        $ready = null;
+        return false;
+    }
+
+    if ($ready !== null) {
+        return $ready;
+    }
+
+    if (!function_exists('dbQuery')) {
+        return false;
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT COUNT(*) AS `found` FROM `information_schema`.`COLUMNS` '
+            . 'WHERE `TABLE_SCHEMA` = DATABASE() AND ('
+            . '(`TABLE_NAME` = ? AND `COLUMN_NAME` = ?) OR (`TABLE_NAME` = ? AND `COLUMN_NAME` = ?))',
+            'ssss',
+            ['tblUsers', 'sessionsValidFrom', 'tblUserSessions', 'sessionsValidFromSeen']
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $ready = (is_array($row) && (int) $row['found'] === 2);
+    } catch (\Throwable $e) {
+        $ready = true;
+    }
+
+    // 📝 Deliberately no log line while the upgrade is waiting: it would be
+    //    written on every page view. The admin overview already lists 0003
+    //    as a waiting database upgrade.
+    return $ready;
 }
 
 // ==============================================================================
@@ -1552,15 +1728,28 @@ function recordFailedLogin(int $userID, int $newFailedCount): void
  *      may have fixed onto the victim's browser BEFORE login stops being
  *      valid the moment login succeeds.
  *
- * @param int    $userID    The newly-authenticated tblUsers.userID
- * @param string $ipAddress Client IP address (audit trail)
- * @param string $userAgent Client user agent string (audit trail)
+ * 🕐 Review finding 1 (2026-11-25): $sessionsValidFromSeen is the account's
+ *    tblUsers.sessionsValidFrom AS READ TOGETHER WITH the credential the caller
+ *    checked (the password row in loginUser(), the linked-sign-in row in the
+ *    Google/Microsoft callback). The session row is only written if the
+ *    account's mark is STILL that value, and the value is stored on the
+ *    session so currentUser() can refuse it later if the mark moves. So a
+ *    sign-in that started before a password reset can never end with a
+ *    working session, however slow it was. Every caller MUST pass the value it
+ *    read; there is no default on purpose.
  *
- * @return string The new session token (also stored in $_SESSION)
+ * @param int         $userID                The newly-authenticated tblUsers.userID
+ * @param string      $ipAddress             Client IP address (audit trail)
+ * @param string      $userAgent             Client user agent string (audit trail)
+ * @param string|null $sessionsValidFromSeen The account's sessionsValidFrom read with the credential (NULL = never moved)
+ *
+ * @return string The new session token (also stored in $_SESSION), or '' when
+ *                no session was made (the account changed meanwhile, or the
+ *                database refused) - the caller must then report a failure
  *
  * @see https://www.php.net/manual/en/function.session-regenerate-id.php
  */
-function issueUserSession(int $userID, string $ipAddress, string $userAgent): string
+function issueUserSession(int $userID, string $ipAddress, string $userAgent, ?string $sessionsValidFromSeen): string
 {
     $sessionID = generateRandomToken();
 
@@ -1575,17 +1764,44 @@ function issueUserSession(int $userID, string $ipAddress, string $userAgent): st
 
     if (function_exists('dbQuery')) {
         try {
-            $stmt = dbQuery(
-                'INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `ipAddress`, `userAgent`, `expiresAt`) '
-                . 'VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))',
-                'sissi',
-                [$sessionID, $userID, mb_substr($ipAddress, 0, 45), mb_substr($userAgent, 0, 500), $lifetimeSeconds]
-            );
+            if (authSessionsValidFromReady()) {
+                // 🕐 Written ONLY while the account's mark is still the one
+                //    the caller saw (<=> is "equal, counting NULL = NULL").
+                //    The account row is read with a shared lock (InnoDB does
+                //    that for INSERT ... SELECT), so a reset holding the row
+                //    makes this wait and then see the new mark.
+                $stmt = dbQuery(
+                    'INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `ipAddress`, `userAgent`, `expiresAt`, `sessionsValidFromSeen`) '
+                    . 'SELECT ?, `u`.`userID`, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND), `u`.`sessionsValidFrom` '
+                    . 'FROM `tblUsers` AS `u` WHERE `u`.`userID` = ? AND `u`.`sessionsValidFrom` <=> ?',
+                    'sssiis',
+                    [$sessionID, mb_substr($ipAddress, 0, 45), mb_substr($userAgent, 0, 500), $lifetimeSeconds, $userID, $sessionsValidFromSeen]
+                );
+            } else {
+                // 🕰️ Before migration 0003: exactly the old behaviour.
+                $stmt = dbQuery(
+                    'INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `ipAddress`, `userAgent`, `expiresAt`) '
+                    . 'VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))',
+                    'sissi',
+                    [$sessionID, $userID, mb_substr($ipAddress, 0, 45), mb_substr($userAgent, 0, 500), $lifetimeSeconds]
+                );
+            }
+            $inserted = $stmt->affected_rows;
             $stmt->close();
         } catch (\Throwable $e) {
             if (function_exists('logError')) {
                 logError('error', 'Session issuance failed', $e->getMessage());
             }
+            return '';
+        }
+
+        if ($inserted !== 1) {
+            // 🚫 The account's password was reset (or it was otherwise
+            //    secured) while this sign-in was being checked.
+            if (function_exists('logError')) {
+                logError('warning', 'Sign-in refused: the account was secured while the sign-in was being checked', 'userID ' . $userID);
+            }
+            return '';
         }
     }
 
@@ -1667,8 +1883,10 @@ function logoutCurrentUser(): array
  * opportunistically bumps tblUserSessions.lastSeenAt (best-effort, failure
  * is non-fatal).
  *
- * @return array{userID: int, email: string, displayName: string|null, avatarPath: string|null, roleID: int|null}|null
+ * @return array{userID: int, email: string, displayName: string|null, avatarPath: string|null, roleID: int|null, sessionsValidFrom: string|null}|null
  *         The current user, or null if there is no valid authenticated session
+ *         (sessionsValidFrom: the account's mark - review finding 1; NULL when
+ *         never moved or before database upgrade 0003)
  *
  * 🎭 'roleID' (task 7n Phase 1B, #31) is the platform-wide role from
  *    tblUsers.roleID (NULL for ordinary accounts). It is returned ONLY so
@@ -1696,12 +1914,26 @@ function currentUser(): ?array
 
     $sessionID = (string) $_SESSION[CUERCODE_SESSION_TOKEN_KEY];
 
+    // 🕐 Review finding 1: the session counts only while the account's
+    //    "sessions valid from" mark is still the one this sign-in saw when it
+    //    checked the password. The comparison is done by the database on the
+    //    two stored values (<=> = "equal, NULL counting as equal to NULL"), so
+    //    there is no time-zone or same-second question at all. This refuses
+    //    every session created BEFORE a reset, and also one created AFTER it
+    //    by a sign-in that started before it. The reset's own follow-up
+    //    sign-in reads the new mark, so it is never locked out.
+    $validFromSql = ', 1 AS `validFromMatches`, NULL AS `sessionsValidFrom` ';
+    if (authSessionsValidFromReady()) {
+        $validFromSql = ', (`s`.`sessionsValidFromSeen` <=> `u`.`sessionsValidFrom`) AS `validFromMatches`, `u`.`sessionsValidFrom` ';
+    }
+
     try {
         $stmt = dbQuery(
-            'SELECT s.`userID`, s.`expiresAt`, s.`revokedAt`, u.`email`, u.`displayName`, u.`avatarPath`, u.`status`, u.`roleID` '
-            . 'FROM `tblUserSessions` s '
-            . 'INNER JOIN `tblUsers` u ON u.`userID` = s.`userID` '
-            . 'WHERE s.`sessionID` = ? LIMIT 1',
+            'SELECT `s`.`userID`, `s`.`expiresAt`, `s`.`revokedAt`, `u`.`email`, `u`.`displayName`, `u`.`avatarPath`, `u`.`status`, `u`.`roleID`'
+            . $validFromSql
+            . 'FROM `tblUserSessions` AS `s` '
+            . 'INNER JOIN `tblUsers` AS `u` ON `u`.`userID` = `s`.`userID` '
+            . 'WHERE `s`.`sessionID` = ? LIMIT 1',
             's',
             [$sessionID]
         );
@@ -1716,6 +1948,10 @@ function currentUser(): ?array
     }
 
     if ($row['revokedAt'] !== null) {
+        return null;
+    }
+
+    if ((int) $row['validFromMatches'] !== 1) {
         return null;
     }
 
@@ -1744,13 +1980,94 @@ function currentUser(): ?array
         $roleID = (int) $row['roleID'];
     }
 
+    // 🕐 The mark itself, for the Google/Microsoft "link" request (review
+    //    finding 2): beginAuth() saves it, the callback refuses if it moved.
+    $sessionsValidFrom = null;
+    if ($row['sessionsValidFrom'] !== null) {
+        $sessionsValidFrom = (string) $row['sessionsValidFrom'];
+    }
+
     return [
-        'userID'      => (int) $row['userID'],
-        'email'       => (string) $row['email'],
-        'displayName' => $row['displayName'],
-        'avatarPath'  => $row['avatarPath'],
-        'roleID'      => $roleID,
+        'userID'            => (int) $row['userID'],
+        'email'             => (string) $row['email'],
+        'displayName'       => $row['displayName'],
+        'avatarPath'        => $row['avatarPath'],
+        'roleID'            => $roleID,
+        'sessionsValidFrom' => $sessionsValidFrom,
     ];
+}
+
+// ==============================================================================
+// 🔐 authLockLiveSessionForUser() - "is this session STILL good?" under lock
+// ==============================================================================
+
+/**
+ * 🔐 Inside the CALLER's transaction: lock the account row and then this
+ *    browser's session row, and say whether the session is still good for
+ *    that account RIGHT NOW. Any database error is thrown (the caller rolls
+ *    back).
+ *
+ * Review finding 2 (2026-11-25), the "checked, then acted" gap: a page checks
+ * currentUser() at the top and only writes something (for example a new API
+ * key) a moment later. A password reset in between ends the session and
+ * switches off every API key - and then the late write would create a fresh,
+ * working key for whoever held the old session. Calling this just before the
+ * write, in the same transaction, closes that gap: the reset locks the same
+ * account row first, so the two happen strictly one after the other. Either
+ * the write is first (and the reset then switches the new key off), or the
+ * reset is first (and this says "no").
+ *
+ * "Still good" means: the account is active; the session belongs to it, is
+ * not ended and not expired; and its "sessions valid from" copy still equals
+ * the account's mark (review finding 1).
+ *
+ * @param int $userID The account the caller is about to change
+ * @return bool True when the write may go ahead
+ * @throws \Throwable On a database error
+ */
+function authLockLiveSessionForUser(int $userID): bool
+{
+    if (session_status() !== PHP_SESSION_ACTIVE || !isset($_SESSION[CUERCODE_SESSION_TOKEN_KEY]) || !function_exists('dbQuery')) {
+        return false;
+    }
+
+    $sessionID = (string) $_SESSION[CUERCODE_SESSION_TOKEN_KEY];
+    $markReady = authSessionsValidFromReady();
+
+    // 🔐 1. The account row FIRST (the same order as a password reset).
+    $accountSql = 'SELECT `status`, NULL AS `sessionsValidFrom` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE';
+    if ($markReady) {
+        $accountSql = 'SELECT `status`, `sessionsValidFrom` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE';
+    }
+    $accountStmt = dbQuery($accountSql, 'i', [$userID]);
+    $account     = $accountStmt->get_result()->fetch_assoc();
+    $accountStmt->close();
+
+    if (!is_array($account) || (string) $account['status'] !== 'active') {
+        return false;
+    }
+
+    // 🎫 2. Then this browser's session row.
+    $sessionSql = 'SELECT `userID`, `expiresAt`, `revokedAt`, NULL AS `sessionsValidFromSeen` FROM `tblUserSessions` WHERE `sessionID` = ? LIMIT 1 FOR UPDATE';
+    if ($markReady) {
+        $sessionSql = 'SELECT `userID`, `expiresAt`, `revokedAt`, `sessionsValidFromSeen` FROM `tblUserSessions` WHERE `sessionID` = ? LIMIT 1 FOR UPDATE';
+    }
+    $sessionStmt = dbQuery($sessionSql, 's', [$sessionID]);
+    $session     = $sessionStmt->get_result()->fetch_assoc();
+    $sessionStmt->close();
+
+    if (!is_array($session) || (int) $session['userID'] !== $userID || $session['revokedAt'] !== null) {
+        return false;
+    }
+
+    $expiresAt = strtotime((string) $session['expiresAt']);
+    if ($expiresAt === false || $expiresAt < time()) {
+        return false;
+    }
+
+    // 🕐 Both values come from DATETIME(6) columns, so the same moment is
+    //    always written the same way and a plain comparison is exact.
+    return ($session['sessionsValidFromSeen'] === $account['sessionsValidFrom']);
 }
 
 // ==============================================================================
@@ -1913,6 +2230,18 @@ function authRollbackQuietly(\mysqli $db): void
  *     the same transaction (decision 0010 recorded exactly five counts).
  * There are no "remember me" tokens on this site.
  *
+ * 🕐 Review finding 1: FIRST, the account's "sessions valid from" mark
+ *    (tblUsers.sessionsValidFrom) is moved forward to now (UTC, to the
+ *    millionth of a second). Ending the sessions that exist is not enough on
+ *    its own: a sign-in that checked the OLD password a moment earlier could
+ *    still write a new session after this transaction. Such a session carries
+ *    the old mark, so currentUser() refuses it and issueUserSession() will
+ *    not even write it. The new mark is always LATER than the old one (one
+ *    millionth of a second later if the clock has not moved on, or has gone
+ *    back), so two resets in the same instant still give two different marks.
+ *    It is not one of the counts: decision 0010's record stays five counts.
+ *    The caller must already hold the account row (SELECT ... FOR UPDATE).
+ *
  * @param int  $userID                      The account
  * @param bool $alsoCancelVerificationLinks Also cancel unused email-check links
  * @return array<string, int> How many of each were removed (no secrets)
@@ -1920,6 +2249,24 @@ function authRollbackQuietly(\mysqli $db): void
  */
 function accountRemoveOtherWaysIn(int $userID, bool $alsoCancelVerificationLinks): array
 {
+    if (authSessionsValidFromReady()) {
+        $markStmt = dbQuery(
+            'UPDATE `tblUsers` SET `sessionsValidFrom` = CASE '
+            . 'WHEN `sessionsValidFrom` IS NOT NULL AND `sessionsValidFrom` >= UTC_TIMESTAMP(6) '
+            . 'THEN DATE_ADD(`sessionsValidFrom`, INTERVAL 1 MICROSECOND) '
+            . 'ELSE UTC_TIMESTAMP(6) END '
+            . 'WHERE `userID` = ?',
+            'i',
+            [$userID]
+        );
+        $marked = $markStmt->affected_rows;
+        $markStmt->close();
+
+        if ($marked !== 1) {
+            throw new \RuntimeException('the sign-in mark could not be moved');
+        }
+    }
+
     $statements = [
         'sessions_ended'                 => 'UPDATE `tblUserSessions` SET `revokedAt` = NOW() WHERE `userID` = ? AND `revokedAt` IS NULL',
         'api_keys_turned_off'            => 'UPDATE `tblAPIKeys` SET `isActive` = 0 WHERE `userID` = ? AND `isActive` = 1',
@@ -2065,18 +2412,25 @@ function requestPasswordReset(string $email, string $ipAddress): array
  * 🔐 Decision 0013 (the "someone signed up first with my email" trick): a
  *    successful reset - on an active OR a waiting account - does ALL of this
  *    in ONE database transaction, so either all of it happens or none of it:
- *      1. uses up this reset link;
- *      2. stores the new password and clears the sign-in lock-out;
- *      3. on a waiting ('pending') account, also activates it and marks the
+ *      1. locks the account row (review finding 5: the account FIRST, then
+ *         the link, the same order as every other change to an account, so
+ *         two resets of one account at the same moment queue up instead of
+ *         deadlocking - one wins, the other is told its link was used);
+ *      2. uses up this reset link;
+ *      3. stores the new password and clears the sign-in lock-out; on a
+ *         waiting ('pending') account, also activates it and marks the
  *         email address as checked (the reset link proves the person owns
  *         the address) - never for an account holding the Global Admin role
  *         (review fix I1: an emailed link never activates an admin);
- *      4. ends every signed-in session, switches off every API key, removes
- *         linked Microsoft/Google sign-ins and passkeys, and cancels every
- *         other unused reset and verification link
- *         (accountRemoveOtherWaysIn());
- *      5. writes an activity row with COUNTS only (never the password, the
- *         link or the address).
+ *      4. moves the account's "sessions valid from" mark forward, ends every
+ *         signed-in session, switches off every API key, removes linked
+ *         Microsoft/Google sign-ins and passkeys, and cancels every other
+ *         unused reset and verification link (accountRemoveOtherWaysIn()).
+ *    AFTER the commit (review finding 6) it writes an activity row with
+ *    COUNTS only (never the password, the link or the address). It is
+ *    outside the transaction on purpose: the log must never be able to undo
+ *    or block the reset, and a row written inside a transaction that then
+ *    failed would describe something that never happened.
  *    The slow password hashing happens BEFORE the transaction starts, so the
  *    account row is locked only for a moment.
  *
@@ -2213,7 +2567,21 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
         $db->begin_transaction();
         $transactionStarted = true;
 
-        // 🔒 1. Atomically claim the token BEFORE applying the password change.
+        // 🔐 1. The account FIRST, locked until the end of the transaction
+        //    (review finding 5 - see the docblock). The role is asked of
+        //    fn_admin.php below, so this file never handles the role column
+        //    in a statement that changes anything.
+        $accountStmt = dbQuery(
+            'SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE',
+            'i',
+            [$userID]
+        );
+        $account = $accountStmt->get_result()->fetch_assoc();
+        $accountStmt->close();
+
+        // 🔒 2. Atomically claim the token BEFORE applying the password change.
+        //    A second reset of the same account waited at step 1 for this one
+        //    to finish, so here it finds its link already cancelled.
         $claimStmt = dbQuery(
             'UPDATE `tblPasswordResets` SET `usedAt` = NOW() WHERE `resetID` = ? AND `usedAt` IS NULL',
             'i',
@@ -2226,17 +2594,6 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
             authRollbackQuietly($db);
             return $alreadyUsedResult;
         }
-
-        // 🔐 The account, locked until the end of the transaction. (The role
-        //    is asked of fn_admin.php below, so this file never handles the
-        //    role column in a statement that changes anything.)
-        $accountStmt = dbQuery(
-            'SELECT `status` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE',
-            'i',
-            [$userID]
-        );
-        $account = $accountStmt->get_result()->fetch_assoc();
-        $accountStmt->close();
 
         $status = '';
         if (is_array($account)) {
@@ -2259,7 +2616,7 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
             return $invalidResult;
         }
 
-        // 🔑 2 + 3. New password, lock-out cleared - and a waiting account
+        // 🔑 3. New password, lock-out cleared - and a waiting account
         //    becomes active with a checked email address.
         if ($status === 'pending') {
             $updateStmt = dbQuery(
@@ -2285,19 +2642,8 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
             throw new \RuntimeException('the account changed while it was being updated');
         }
 
-        // 🚪 4. Every other way in, in THIS transaction.
+        // 🚪 4. The sign-in mark and every other way in, in THIS transaction.
         $removed = accountRemoveOtherWaysIn($userID, true);
-
-        // 🧾 5. What happened - counts only.
-        if (function_exists('logActivity')) {
-            logActivity(
-                'password_reset_completed',
-                'Password reset with an emailed link; every other way into the account was removed',
-                'user',
-                $userID,
-                ['account_activated' => $activated, 'removed' => $removed]
-            );
-        }
 
         $db->commit();
     } catch (\Throwable $e) {
@@ -2308,6 +2654,18 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
             logError('error', 'Password reset failed; nothing was changed', $e->getMessage());
         }
         return $failedResult;
+    }
+
+    // 🧾 After the commit (review finding 6): what happened - counts only.
+    //    logActivity() never throws; if it cannot write, the reset still stands.
+    if (function_exists('logActivity')) {
+        logActivity(
+            'password_reset_completed',
+            'Password reset with an emailed link; every other way into the account was removed',
+            'user',
+            $userID,
+            ['account_activated' => $activated, 'removed' => $removed]
+        );
     }
 
     // 📣 Say plainly what changed, so nobody is surprised that an API key

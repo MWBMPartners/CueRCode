@@ -2946,6 +2946,11 @@ function adminRunUpgrades(array $admin): array
     // 🔄 The upgrade may just have created the audit table.
     adminTableExists('tblAdminAuditLog', true);
 
+    // 🔄 ...or the "sessions valid from" columns (migration 0003, fn_auth.php).
+    if (function_exists('authSessionsValidFromReady')) {
+        authSessionsValidFromReady(true);
+    }
+
     $auditOutcome = 'failed';
     if ($status === 'ok') {
         $auditOutcome = 'success';

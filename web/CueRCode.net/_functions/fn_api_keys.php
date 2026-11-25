@@ -579,7 +579,35 @@ function createApiKeyForUser(int $userId, mixed $rawName, mixed $rawScopes): arr
         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
     );
 
+    // 🔐 Review finding 2 (2026-11-25): the caller checked the session at the
+    //    top of the request; a password reset could have ended it (and
+    //    switched every key off) since. So, in ONE transaction: lock the
+    //    account and this browser's session, check the session is STILL good
+    //    (authLockLiveSessionForUser() in fn_auth.php), and only then write
+    //    the key. A reset locks the same account row first, so it either
+    //    waits for this key and then switches it off, or comes first and this
+    //    refuses. Keys are only ever made from a signed-in browser (the
+    //    dashboard or the CSRF-authenticated API call), never from an API key.
+    $keyDb      = null;
+    $keyStarted = false;
+    $newKeyId   = 0;
+
     try {
+        $keyDb = getDB();
+        $keyDb->begin_transaction();
+        $keyStarted = true;
+
+        if (!function_exists('authLockLiveSessionForUser') || !authLockLiveSessionForUser($userId)) {
+            $keyDb->rollback();
+            return [
+                'success'   => false,
+                'httpCode'  => 401,
+                'errorCode' => 'AUTH_REQUIRED',
+                'message'   => 'Your session has ended (for example because the password was reset). Please sign in again; no API key was created.',
+                'data'      => [],
+            ];
+        }
+
         $insertStmt = dbQuery(
             'INSERT INTO `tblAPIKeys` '
             . '(`apiKeyHash`, `apiKeyPrefix`, `apiKeyName`, `userID`, `permissions`, `rateLimitPerMin`, `rateLimitPerDay`, `isActive`) '
@@ -589,7 +617,16 @@ function createApiKeyForUser(int $userId, mixed $rawName, mixed $rawScopes): arr
         );
         $newKeyId = (int) $insertStmt->insert_id;
         $insertStmt->close();
+
+        $keyDb->commit();
     } catch (\Throwable $e) {
+        if ($keyStarted && $keyDb instanceof \mysqli) {
+            try {
+                $keyDb->rollback();
+            } catch (\Throwable $rollbackError) {
+                // The original problem is the one reported below.
+            }
+        }
         if (function_exists('logError')) {
             logError('error', 'API key creation failed', 'userID: ' . $userId . ' | ' . $e->getMessage());
         }
