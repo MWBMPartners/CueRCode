@@ -17,10 +17,18 @@
 #     with frame-ancestors 'none'. Scripts still come only from this site and
 #     https://cdn.jsdelivr.net - no new script source. Keep the two in step.
 #
-# "Header always set" (also on error pages) replaces the value public_html/.htaccess set for the same
-# header, so each header is sent once. The admin PHP code
-# (adminSendSecurityHeaders() in _functions/fn_admin.php) sends the same
-# headers itself too, in case a host ignores these lines.
+# Each header must be sent ONCE. "Header always set" alone does NOT do that:
+# public_html/.htaccess uses plain "Header set" (which Apache keeps in a
+# separate list that only applies to successful answers), so on a normal 200
+# page a browser would get the site value AND the admin value (checked on a
+# real Apache 2.4.71: X-Frame-Options, Content-Security-Policy and
+# Cache-Control were each sent twice). So each header is first removed with
+# "Header unset" (clears the site value) and "Header always unset", and then
+# set with "Header always set" (also on error pages). mod_expires would add
+# its own "Cache-Control: max-age=0" to static files, so it is switched off
+# here. The admin PHP code (adminSendSecurityHeaders() in
+# _functions/fn_admin.php) sends the same headers itself too, in case a host
+# ignores these lines.
 #
 # The admin path is deliberately NOT listed in robots.txt: that would
 # advertise it.
@@ -32,7 +40,19 @@
 # @see         https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control
 # ==============================================================================
 
+<IfModule mod_expires.c>
+    ExpiresActive Off
+</IfModule>
+
 <IfModule mod_headers.c>
+    Header unset X-Frame-Options
+    Header always unset X-Frame-Options
+    Header unset Cache-Control
+    Header always unset Cache-Control
+    Header unset X-Robots-Tag
+    Header always unset X-Robots-Tag
+    Header unset Content-Security-Policy
+    Header always unset Content-Security-Policy
     Header always set X-Frame-Options "DENY"
     Header always set Cache-Control "no-store"
     Header always set X-Robots-Tag "noindex, nofollow"
