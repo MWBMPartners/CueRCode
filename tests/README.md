@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-25, after the independent review of decisions 0013/0014 - findings 1-10 and decision 0015; earlier decisions 0013 and 0014, the review fixes I1/M1-M8, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-25, after the final review of 68ad1fb..bffdff3 - I-1, M-1 to M-4, N-1 to N-3; earlier the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 
@@ -48,17 +48,17 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | --- | --- |
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
-| `test_account_recovery.php` | 100 |
+| `test_account_recovery.php` | 109 |
 | `test_account_ui.php` | 70 |
 | `test_admin_access.php` | 565 |
-| `test_admin_settings.php` | 653 |
+| `test_admin_settings.php` | 1147 |
 | `test_api_keys.php` | 108 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
 | `test_barcode.php` | 120 |
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
-| `test_client_ip.php` | 230 |
+| `test_client_ip.php` | 246 |
 | `test_core.php` | 143 |
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
@@ -67,7 +67,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_email.php` | 69 |
 | `test_email_queue_runner.php` | 476 |
 | `test_emoji_logo.php` | 123 |
-| `test_error_catalogue.php` | 134 |
+| `test_error_catalogue.php` | 136 |
 | `test_features.php` | 91 |
 | `test_install_checks.php` | 85 |
 | `test_log_mask.php` | 56 |
@@ -84,10 +84,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing:
 | `test_pricing_flex.php` | 51 |
 | `test_qr_logo.php` | 178 |
 | `test_qrcodes.php` | 83 |
-| `test_resend_verification.php` | 63 |
-| `test_sessions_valid_from.php` | 61 |
+| `test_resend_verification.php` | 67 |
+| `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **5124** |
+| **Total** | **5669** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -244,7 +244,7 @@ CUERCODE_IT_DB_NAME=cuercode_it_p1c CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS
 docker stop cuercode-it-settings
 ```
 
-Run 2026-11-25 (after the second independent review): 213/213 on MySQL 8.0.36, MySQL 8.4.11 and MariaDB 10.6.28.
+Run 2026-11-25 (after the final review: test buttons record each press before counting it, `.started` rows, optional limits show their default, odd stored numbers, internal-only discovery names): 216/216 on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28. (Earlier the same day, after the second independent review: 213/213 on MySQL 8.0.36, 8.4.11 and MariaDB 10.6.28.)
 
 ## Optional real-database check (Global Admin access)
 
@@ -488,6 +488,31 @@ proves:
 - **V (nit)** - a verification link for an already-active account says
   nothing changed; for a suspended account, the usual invalid answer.
 
+Since the final review of 68ad1fb..bffdff3 (2026-11-25) it also proves:
+
+- **CP (I-1, decision 0016)** - a voluntary password change keeps the
+  session that made it, signs out the others, stops a sign-in still being
+  checked, and leaves API keys and linked sign-ins alone; THE REVIEWER'S
+  RACE with the real functions in two processes (this script holds the
+  account row, the reset waits, the change checks the OLD password and waits
+  too, then both go: the reset wins, the change is refused, the owner's
+  password stands); a forced reset while the change waits; two tabs of one
+  session (one wins, the other gets `PASSWORD_CHANGED_MEANWHILE`).
+- **ER (I-1)** - the same forced gap for account erase (nothing erased),
+  the verification link (nothing activated, the link still works) and the
+  admin password re-confirm (confirms nothing, counter untouched).
+- **SO (I-1)** - "Sign out everywhere" also stops a sign-in still being
+  checked.
+- **M1 (M-1)** - bursts of 20 processes: "Forgot password" for one account
+  from one address and from 20 addresses gives ONE link; an account at the
+  daily cap gets none and exactly one "refused" row; 20 accounts from one
+  address get exactly 10 links; "Send me a new link" the same; every answer
+  (also for unknown addresses) still takes at least 250 ms.
+
+The way it holds a process half-way: its own separate connection locks the
+account row, starts the child, and watches `information_schema.PROCESSLIST`
+until the child is seen waiting for that row.
+
 The script runs the extra processes itself (it starts copies of itself with
 `--child=...`); it needs nothing else installed.
 
@@ -503,12 +528,15 @@ CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
 docker stop p131-recovery-mysql
 ```
 
-Last run 2026-11-25 (after the review fixes): all 122 checks passed on
-MySQL 8.0.36 and MariaDB 10.6.28 (Docker, macOS). MySQL 8.4 was not run for
-the new scenarios (the earlier 58 passed on 8.4.11). In the same session
-`admin_access_real_mysql.php`, `admin_settings_real_mysql.php`,
-`migrations_real_mysql.php` and `resend_verification_real_mysql.php` all
-passed on MySQL 8.0.36 and MariaDB 10.6.28. Note: `resend_verification`
+Last run 2026-11-25 (after the final review): all 170 checks passed on
+MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28 (Docker, macOS). In the same
+session `admin_access_real_mysql.php` (143), `admin_settings_real_mysql.php`
+(216), `email_queue_real_mysql.php`, `migrations_real_mysql.php` and
+`resend_verification_real_mysql.php` (32) all passed on all three. The new
+CP/ER scenarios were also run against the code before the fix: they fail
+there (the other person's password overwrote the reset; the old password
+erased the account, activated the link and confirmed the admin). (Before
+that: 122/122 on MySQL 8.0.36 and MariaDB 10.6.28 after the earlier review.) Note: `resend_verification`
 and `email_queue` expect the database to exist already (create it first, or
 use the `docker run ... -e MYSQL_DATABASE=...` form above); the others
 create their own.
