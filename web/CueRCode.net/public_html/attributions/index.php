@@ -103,6 +103,18 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </p>
 
                         <?php /* ============================================================
+                             ™ Brand logos (trademark statement - #65)
+                             ============================================================ */ ?>
+                        <h2 id="brand-logos" class="h5 mt-4 mb-3">Brand Logos</h2>
+                        <p>
+                            The brand logos offered in the centre-icon picker (for example social
+                            networks, messaging and payment services) are trademarks of their
+                            respective owners. They are shown only to identify the service a QR code
+                            links to. <?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>
+                            is not affiliated with, endorsed by or sponsored by any of those owners.
+                        </p>
+
+                        <?php /* ============================================================
                              📚 Other vendored open-source libraries
                              ============================================================ */ ?>
                         <h2 id="libraries" class="h5 mt-4 mb-3">Open-Source Libraries</h2>

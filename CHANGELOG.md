@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Predefined centre-logos now work without Imagick (2026-11-25, queue B10, #65)
+
+- **The 26 predefined brand logos now come with committed PNG copies** (512 x 512, transparent) beside the SVGs in `public_html/assets/img/logos/`. Picking one as the QR centre icon now works for PNG, JPG, GIF and WebP codes on DreamHost with no Imagick; SVG codes still embed the SVG. The path fix and the "use the PNG copy" code had already landed (commit 495e765); only the PNG files were missing, so the logo was still silently left off.
+- The PNGs were made with `php tools/render_logo_pngs.php` (rsvg-convert 2.63.4 on the build machine; the tool now uses rsvg-convert when the Imagick extension is not loaded). Re-run it with `--force` after editing an SVG.
+- `/attributions` now says the logos are trademarks of their owners, used only to identify the service a QR code links to.
+- Tests: new `tests/test_predefined_logo_png.php` (all 26 ids through the real `generateQRCode()` with a stubbed database lookup: PNG differs from the plain code, same size, corner unchanged, centre changed; SVG still embeds the logo). Suite 6004/6004. Not done: decoding the codes with a real scanner (none installed here).
+
 ### Fixed and added - Fresh-install dry run findings (2026-11-25, queue B9, #113)
 
 - **New "Website address" setting on `/admin/settings/`** (`site_url`). Emailed links and the Microsoft/Google callback addresses are built from it; it was fixed at `https://cuercode.net` with no way to change it, so test sites (alpha, beta) emailed links to the live site. https only, website name only (no path, port, IP number, `localhost` or internal names), trailing slash removed, audited. Install guide step added before email is turned on.
