@@ -54,6 +54,10 @@ function vendoredLibraryFingerprint(string $dir): string
         if (!$fileInfo->isFile()) {
             continue;
         }
+        // 🍎 macOS Finder litter is not part of a library (review fix).
+        if ($fileInfo->getFilename() === '.DS_Store') {
+            continue;
+        }
         $relative = substr($fileInfo->getPathname(), strlen(rtrim($dir, '/\\')) + 1);
         $relative = str_replace(DIRECTORY_SEPARATOR, '/', $relative);
         $lines[]  = $relative . "\0" . hash_file('sha256', $fileInfo->getPathname());
@@ -65,6 +69,40 @@ function vendoredLibraryFingerprint(string $dir): string
     sort($lines, SORT_STRING);
 
     return hash('sha256', implode("\n", $lines));
+}
+
+/**
+ * 🔗 List symbolic links inside a library folder (review fix).
+ *
+ * A link can point at a file or folder OUTSIDE the library, so the fingerprint
+ * would follow it and the pinned copy could change without a visible edit
+ * (or, on another machine, the link may not exist at all). Links are
+ * reported so a person can replace them with real files.
+ *
+ * @param string $dir Absolute folder path.
+ *
+ * @return array<int, string> Relative paths of links ('/' separators).
+ */
+function vendoredLibrarySymlinks(string $dir): array
+{
+    if (!is_dir($dir)) {
+        return [];
+    }
+
+    $links    = [];
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    foreach ($iterator as $fileInfo) {
+        if ($fileInfo->isLink()) {
+            $relative = substr($fileInfo->getPathname(), strlen(rtrim($dir, '/\\')) + 1);
+            $links[]  = str_replace(DIRECTORY_SEPARATOR, '/', $relative);
+        }
+    }
+    sort($links, SORT_STRING);
+
+    return $links;
 }
 
 /**
@@ -102,6 +140,11 @@ function vendoredLibrariesCheck(string $libraryRoot, array $manifest): array
             if ($found !== (string) $pin['version']) {
                 $problems[] = $name . ': version marker says "' . $found . '" but ' . $pin['version'] . ' is pinned.';
             }
+        }
+
+        // 🔗 Symbolic links are not allowed inside a pinned library.
+        foreach (vendoredLibrarySymlinks($path) as $link) {
+            $problems[] = $name . ': "' . $link . '" is a symbolic link; replace it with the real file.';
         }
 
         // 🔏 Fingerprint of every file.

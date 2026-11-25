@@ -75,3 +75,26 @@ unlink($base . '/demo/VERSION');
 unlink($base . '/demo/code.php');
 rmdir($base . '/demo');
 rmdir($base);
+
+// 🔗 Review fix: symbolic links are reported; .DS_Store is ignored.
+$linkBase = sys_get_temp_dir() . '/cuercode_vendor_' . bin2hex(random_bytes(4));
+mkdir($linkBase . '/demo', 0700, true);
+file_put_contents($linkBase . '/demo/a.php', '<?php // a');
+file_put_contents($linkBase . '/outside.txt', 'outside');
+$linkDemo = ['libraries' => ['demo' => ['path' => 'demo', 'version' => '1', 'sha256' => vendoredLibraryFingerprint($linkBase . '/demo')]]];
+file_put_contents($linkBase . '/demo/.DS_Store', 'finder');
+assertEquals([], vendoredLibrariesCheck($linkBase, $linkDemo), '.DS_Store is ignored by the fingerprint');
+assertEquals([], vendoredLibrarySymlinks($linkBase . '/demo'), 'no links in a plain library');
+if (@symlink($linkBase . '/outside.txt', $linkBase . '/demo/link.txt')) {
+    assertEquals(['link.txt'], vendoredLibrarySymlinks($linkBase . '/demo'), 'a symbolic link is listed');
+    $linkProblems = vendoredLibrariesCheck($linkBase, $linkDemo);
+    assertTrue(count($linkProblems) >= 1 && str_contains(implode(' ', $linkProblems), 'symbolic link'), 'a library containing a symbolic link is reported');
+    unlink($linkBase . '/demo/link.txt');
+} else {
+    assertTrue(true, 'symlink test skipped: this machine cannot create symbolic links');
+}
+unlink($linkBase . '/demo/.DS_Store');
+unlink($linkBase . '/demo/a.php');
+unlink($linkBase . '/outside.txt');
+rmdir($linkBase . '/demo');
+rmdir($linkBase);
