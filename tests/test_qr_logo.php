@@ -631,23 +631,100 @@ if ($fixtureMkdirOk) {
             'loadLogoImage() returns null (NON-SILENT - a logged warning fires, not a broken image) for an SVG with no PNG twin and no Imagick extension (#65 fix)'
         );
     } else {
-        // 📌 Imagick IS loaded — but whether it can actually rasterise SVG
-        //    depends on the ImageMagick build + policy.xml. The SVG coder is
-        //    DISABLED by default on many distros (incl. GitHub's runners, for
-        //    security), so the branch legitimately yields EITHER a valid
-        //    GdImage (SVG supported) OR a NON-SILENT null (SVG blocked) — but
-        //    never a broken image, a bare false, or a fatal. Accept both real
-        //    outcomes and forbid anything else. (We deliberately do NOT assert
-        //    successful rasterisation, because a hardened Imagick policy makes
-        //    that environment-dependent — the #65 contract is only that the
-        //    logo path degrades gracefully, never silently or destructively.)
-        $imagickLogoResult = loadLogoImage($noTwinSvgPath);
-        assertTrue(
-            ($imagickLogoResult instanceof \GdImage) || ($imagickLogoResult === null),
-            'loadLogoImage() with Imagick loaded returns a valid GdImage (SVG supported) OR a NON-SILENT null (SVG blocked by build/policy) — never a broken image (#65 fix, Imagick branch)'
+        // 📌 Imagick IS loaded. Whether it can rasterise SVG depends on the
+        //    ImageMagick build and its policy.xml (the SVG coder is switched
+        //    off on many systems), so FIRST find out, independently of the
+        //    code under test, whether this machine has a WORKING SVG delegate:
+        //    it must list SVG AND turn a tiny SVG into a real PNG.
+        //
+        // 🔎 Independent review, Codex round 2 finding R3-2 (2026-11-25):
+        //    this branch used to accept "an image OR null" whatever the
+        //    machine could do, so it also passed on the code from BEFORE the
+        //    ImageMagick 7 fix, which silently lost the logo (ImageMagick
+        //    7.1.2 throws "Failed to get the image contents" there, the code
+        //    caught it and returned null). Now, with a working delegate, an
+        //    image MUST come back and the logo MUST be in the QR code; only a
+        //    machine with no working delegate may give null. The fallback is
+        //    tested separately below with an SVG Imagick cannot read. Proven
+        //    to fail on the pre-fix code in Docker (Alpine, PHP 8.4,
+        //    ImageMagick 7.1.2) - see the queue F2 round-2 table.
+        $imagickSvgDelegateWorks = false;
+        try {
+            if (\Imagick::queryFormats('SVG') !== []) {
+                $imagickProbe = new \Imagick();
+                $imagickProbe->setFormat('svg');
+                $imagickProbe->readImageBlob('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#000"/></svg>');
+                $imagickProbe->setImageFormat('png32');
+                $imagickProbe->setFormat('png32');
+                $imagickProbeBytes = $imagickProbe->getImageBlob();
+                $imagickProbe->clear();
+                if (str_starts_with($imagickProbeBytes, "\x89PNG")) {
+                    $imagickSvgDelegateWorks = true;
+                }
+            }
+        } catch (\Throwable $imagickProbeError) {
+            $imagickSvgDelegateWorks = false;
+        }
+
+        // A solid red square logo, so "the logo is there" is easy to see.
+        $redSvgPath = $logoFixtureDir . DIRECTORY_SEPARATOR . 'icon-red-no-twin.svg';
+        file_put_contents(
+            $redSvgPath,
+            '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">'
+                . '<rect width="40" height="40" fill="#ff0000"/></svg>'
         );
-        // 🧹 No imagedestroy($imagickLogoResult) here - see the #117 note
-        // above (imagedestroy() has been a no-op since PHP 8.0).
+
+        if ($imagickSvgDelegateWorks) {
+            $imagickLogoResult = loadLogoImage($redSvgPath);
+            assertTrue(
+                $imagickLogoResult instanceof \GdImage,
+                'R3-2: with a WORKING Imagick SVG delegate, loadLogoImage() returns an image for an SVG with no PNG twin (it used to return null on ImageMagick 7)'
+            );
+
+            // 🔳 Overlay it on a plain white "QR code" and look at the centre.
+            $whiteQr = imagecreatetruecolor(200, 200);
+            imagefilledrectangle($whiteQr, 0, 0, 199, 199, imagecolorallocate($whiteQr, 255, 255, 255));
+            ob_start();
+            imagepng($whiteQr);
+            $whiteQrBytes = (string) ob_get_clean();
+            $overlaidBytes = overlayLogoOnRaster($whiteQrBytes, $redSvgPath, ['output_format' => 'png']);
+            $overlaid = @imagecreatefromstring($overlaidBytes);
+            assertTrue($overlaid instanceof \GdImage, 'R3-2: the QR code with the SVG logo is still a readable PNG');
+            if ($overlaid instanceof \GdImage) {
+                $centreColour = imagecolorsforindex($overlaid, imagecolorat($overlaid, 100, 100));
+                assertTrue(
+                    $centreColour['red'] > 200 && $centreColour['green'] < 60 && $centreColour['blue'] < 60,
+                    'R3-2: the red SVG logo really is in the centre of the QR code (centre pixel ' . json_encode($centreColour) . ')'
+                );
+            }
+        } else {
+            // 🚫 No working delegate here: the only honest outcome is a
+            //    NON-SILENT null (a warning is logged), never a broken image.
+            assertEquals(
+                null,
+                loadLogoImage($redSvgPath),
+                'R3-2: Imagick is loaded but has NO working SVG delegate here, so loadLogoImage() returns null (non-silent), never a broken image'
+            );
+        }
+
+        // ↩️ The fallback, tested separately on every Imagick machine: an SVG
+        //    Imagick cannot read gives a NON-SILENT null, and the QR code is
+        //    returned unchanged and valid.
+        $brokenSvgPath = $logoFixtureDir . DIRECTORY_SEPARATOR . 'icon-broken-no-twin.svg';
+        file_put_contents($brokenSvgPath, '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect');
+        assertEquals(null, loadLogoImage($brokenSvgPath), 'R3-2 fallback: an SVG Imagick cannot read gives null (non-silent), never a broken image');
+        $plainQr = imagecreatetruecolor(50, 50);
+        imagefilledrectangle($plainQr, 0, 0, 49, 49, imagecolorallocate($plainQr, 255, 255, 255));
+        ob_start();
+        imagepng($plainQr);
+        $plainQrBytes = (string) ob_get_clean();
+        $plainResult  = getimagesizefromstring(overlayLogoOnRaster($plainQrBytes, $brokenSvgPath, ['output_format' => 'png']));
+        assertTrue($plainResult !== false && $plainResult[0] === 50 && $plainResult[1] === 50, 'R3-2 fallback: the QR code comes back valid and the same size when the logo is skipped');
+
+        @unlink($redSvgPath);
+        @unlink($brokenSvgPath);
+        // 🧹 No imagedestroy() here - see the #117 note above (imagedestroy()
+        // has been a no-op since PHP 8.0).
     }
 
     // --------------------------------------------------------------------
