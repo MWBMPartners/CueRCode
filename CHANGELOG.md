@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security and fixes - Codex re-check of the review fixes, round 3 (2026-11-25, queue F2, #113)
+
+Codex re-read the round-2 fixes (read-only, no PHP or MySQL) and raised four leads. All four were reproduced or shown on the real code first (MySQL 8.0.36 and MariaDB 10.6.28 in Docker) and are fixed with tests.
+
+- **Installer: a present "starting data loaded" marker now always means skip (decision 0018).** If the installer's lock file was lost and the owner had deliberately emptied the QR types, logos and plans tables, the installer used to put the default rows back. It now leaves them alone. To force a clean re-seed, remove the `seed_data_loaded` row from `tblSettings` (and empty the three tables) first; the installer's message says so. No marker and empty tables is still a fresh install and still seeds. Commit 28f8e4d.
+- **Installer: "complete" without the marker now needs the starting settings too.** A database holding all 68 starting rows but missing a starting setting used to be called complete, so the installer skipped the seed and locked itself. It now also needs nine named key settings and at least 80 settings rows (a test reads `seed_data.sql` so the list cannot drift); otherwise it is "part-loaded" and the installer stops and says what is missing. Commit 28f8e4d.
+- **Admin change log: "table missing" is now read from the database's own error.** The check used a count from `INFORMATION_SCHEMA`, which only lists tables the account may see, so an existing table the account could not read counted as "missing" (shown on MySQL 8.0.36) and an admin action went to the activity-log stand-in. A cheap `SELECT 1` on the table now decides: error 1146 means confirmed missing; success means it exists; any other error (no permission, lost connection, timeout) means "could not tell" and the action is refused. Proved with a restricted database user on MySQL 8.0.36 and MariaDB 10.6.28. Commit 6b205e5.
+- **Library watch: `withdrawn` must be a real timestamp.** `{"id":"GHSA-example","withdrawn":true}` (or `"yes"`) used to hide an advisory. `withdrawn` must now be absent or an RFC 3339 timestamp; anything else is "could not check". Commit ab1fa31.
+- Suite: 6409 assertions in 45 files (PHP 8.5.12). Real-database scripts pass on MySQL 8.0.36 and MariaDB 10.6.28 (migrations 121, admin access 167, admin settings 232 checks).
+
 ### Security and fixes - Codex re-check of the review fixes, round 2 (2026-11-25, queue F2, #113)
 
 Codex re-read the round-1 fixes read-only and raised six leads. All six were reproduced on the real code first (MySQL 8.0.36 and MariaDB 10.6.28 in Docker; PHP 8.5.12, and PHP 8.4.27 with ImageMagick 7.1.2) and are fixed with tests.
