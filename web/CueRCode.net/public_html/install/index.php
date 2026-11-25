@@ -23,6 +23,11 @@
  *              ("migrations") in _includes/sql/migrations/, and refuses to
  *              re-run seed_data.sql (which is not safe to run twice) against
  *              a database that already has starting data.
+ * @since       2026-11-25 (independent review, Codex C1 findings 1-5) - one
+ *              installer at a time (a database named lock), starting data
+ *              loaded all-or-nothing and checked complete before locking, a
+ *              missing seed file is an error, and a failed database connection
+ *              shows the plain message instead of crashing.
  * @see         https://www.php.net/manual/en/book.mysqli.php
  * @see         ../../_functions/fn_migrations.php - migrationApplyPending(), the database upgrade engine
  * @see         .claude/plans/7n-admin-commerce-plan.md §5.1 (the migration runner specification)
@@ -256,13 +261,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
             $dbCharset = 'utf8mb4';
         }
 
-        /** @var \mysqli|false Database connection */
-        $mysqli = @new \mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, $dbPort);
+        // ----------------------------------------------------------------
+        // 🧯 Last-resort safety net (independent review, Codex C1 finding 5,
+        //    2026-11-25). Since PHP 8.1 MySQLi THROWS on a database error by
+        //    default. Every database call below that is expected to fail now
+        //    and then catches that itself; this handler only catches anything
+        //    unexpected, so the visitor sees a plain message (never raw
+        //    database text) and the full detail goes to the server log.
+        //    Nothing is half-done by it: the lock file is the very last step,
+        //    so an install interrupted here simply has not finished, and the
+        //    installer's database lock is freed when the connection closes.
+        // ----------------------------------------------------------------
+        set_exception_handler(static function (\Throwable $unexpected): void {
+            error_log('CueRCode Installer: stopped by an unexpected error: ' . get_class($unexpected) . ': ' . $unexpected->getMessage());
+            if (!headers_sent()) {
+                header('HTTP/1.1 500 Internal Server Error');
+            }
+            echo '<!DOCTYPE html><html lang="en-GB"><head><meta charset="UTF-8"><title>Installation stopped</title></head><body>'
+                . '<h1>Installation stopped</h1>'
+                . '<p>The installer stopped because of an unexpected database error. Nothing has been marked as installed. '
+                . 'The details are in the server error log. Fix the problem there, then reload this page to try again.</p>'
+                . '</body></html>';
+        });
 
-        if ($mysqli->connect_error) {
+        // 🔌 Codex C1 finding 5: `@new \mysqli(...)` does not stop the
+        //    exception PHP 8.1+ throws on a failed connection, so a wrong
+        //    password crashed the page. installOpenDatabase() catches it.
+        $connection = installOpenDatabase(DB_HOST, DB_USER, DB_PASS, DB_NAME, (int) $dbPort);
+
+        /** @var \mysqli|null Database connection (null when it failed) */
+        $mysqli = $connection['db'];
+
+        if ($connection['ok'] !== true) {
             // 🔒 Log detailed error internally but show generic message to user
-            error_log('CueRCode Installer: DB connection failed: ' . $mysqli->connect_error
-                . ' (Error ' . $mysqli->connect_errno . ')');
+            error_log('CueRCode Installer: DB connection failed: ' . $connection['error']);
             $results[] = [
                 'status' => 'error',
                 'message' => 'Database connection failed. Please verify your credentials in _auth_keys/auth_creds.php and ensure the database server is running.'
@@ -285,350 +317,406 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                     . DB_HOST . ':' . $dbPort . '/' . DB_NAME . ')'
             ];
 
+            // 🧰 The upgrade engine: the installer's lock, the starting-data
+            //    checks and loader, and the upgrades themselves (Step 5b).
+            require_once $siteRoot . '_functions' . $ds . 'fn_migrations.php';
+
             // ----------------------------------------------------------------
-            // 📌 Step 4: Execute install.sql (table creation)
-            // @see https://www.php.net/manual/en/mysqli.multi-query.php
+            // 🔒 Step 3b: one installer at a time (independent review, Codex C1
+            //    finding 2, 2026-11-25). The lock-file check at the top of the
+            //    page happens before anything else, so two people pressing
+            //    "Install" at the same moment could both get past it and both
+            //    load the starting data. A database "named lock" (one per
+            //    database) is now held from here until the lock file is
+            //    written; a second installer is told to wait, and once it has
+            //    the lock it checks the lock file AGAIN, in case the first one
+            //    finished in the meantime.
             // ----------------------------------------------------------------
-            if (!file_exists($installSQLPath)) {
+            $installerLockState = migrationDbAcquireInstallerLock($mysqli);
+
+            if ($installerLockState === 'busy') {
                 $results[] = [
                     'status' => 'error',
-                    'message' => 'Installation SQL file not found: ' . $installSQLPath
+                    'message' => 'Another installation is running against this database at this moment, so this one has not '
+                        . 'started and nothing was changed. Wait a minute, then reload this page.'
                 ];
+            } elseif ($installerLockState !== 'got') {
+                error_log('CueRCode Installer: could not take the installer lock (GET_LOCK returned an error).');
+                $results[] = [
+                    'status' => 'error',
+                    'message' => 'The installer could not make sure it is the only installation running, so it has not '
+                        . 'started and nothing was changed. Check the server error log, then reload this page.'
+                ];
+            } elseif (installIsLocked($lockPaths)) {
+                $results[] = [
+                    'status' => 'info',
+                    'message' => 'Installation has already been completed (it finished while this request was waiting). Nothing was changed.'
+                ];
+                $isLocked = true;
             } else {
-                $installSQL = file_get_contents($installSQLPath);
-
-                if ($installSQL === false) {
+                // ----------------------------------------------------------------
+                // 📌 Step 4: Execute install.sql (table creation)
+                // Run through migrationDbRunInstallSql() (the same function the
+                // upgrade tool uses), which catches the exception PHP 8.1+ throws
+                // on a database error (Codex C1 finding 5) and puts the
+                // connection's settings back afterwards.
+                // ----------------------------------------------------------------
+                if (!file_exists($installSQLPath)) {
                     $results[] = [
                         'status' => 'error',
-                        'message' => 'Failed to read installation SQL file'
+                        'message' => 'Installation SQL file not found: ' . $installSQLPath
                     ];
                 } else {
-                    // Execute multi-query SQL
-                    if ($mysqli->multi_query($installSQL)) {
-                        // Process all result sets from multi_query
-                        do {
-                            if ($result = $mysqli->store_result()) {
-                                $result->free();
-                            }
-                        } while ($mysqli->next_result());
+                    $installSQL = file_get_contents($installSQLPath);
 
-                        if ($mysqli->errno) {
-                            error_log('CueRCode Installer: install.sql error: ' . $mysqli->error . ' (' . $mysqli->errno . ')');
-                            $results[] = [
-                                'status' => 'error',
-                                'message' => 'Error executing install.sql. Check server error log for details.'
-                            ];
-                        } else {
+                    if ($installSQL === false) {
+                        $results[] = [
+                            'status' => 'error',
+                            'message' => 'Failed to read installation SQL file'
+                        ];
+                    } else {
+                        $installRun = migrationDbRunInstallSql($mysqli, $installSQL);
+
+                        if ($installRun['ok'] === true) {
                             $results[] = [
                                 'status' => 'success',
                                 'message' => 'Database tables created successfully (install.sql)'
                             ];
-                        }
-                    } else {
-                        error_log('CueRCode Installer: Failed to execute install.sql: ' . $mysqli->error);
-                        $results[] = [
-                            'status' => 'error',
-                            'message' => 'Failed to execute install.sql. Check server error log for details.'
-                        ];
-                    }
-                }
-            }
-
-            // ----------------------------------------------------------------
-            // 📌 Step 5: Execute seed_data.sql (initial data)
-            // ----------------------------------------------------------------
-            // ⚠️ KNOWN LIMITATION (task 7n Phase 1A, #113 item 5): unlike
-            // install.sql (every CREATE TABLE is "IF NOT EXISTS"), seed_data.sql
-            // is a set of plain INSERT statements with no "insert if missing"
-            // protection, so running it twice against the same database throws
-            // duplicate primary/unique key errors - or, with multi_query(),
-            // could stop part-way through. This page is meant to run once (the
-            // lock file above normally stops a second visit), but an admin
-            // could still reach this code a second time - for example by
-            // deleting the lock file to re-run the installer after a later
-            // code update. Before ever touching seed_data.sql, ask
-            // migrationDbSeedDataAlreadyPresent() (_functions/fn_migrations.php)
-            // whether any of the tables ONLY seed_data.sql ever fills already
-            // has rows (migrationSeedProtectionTables() - deliberately NOT
-            // tblSettings, which a migration file can also insert into, see
-            // review finding F1); if it does, skip the seed step and say so
-            // plainly - nothing is duplicated and nothing already there is
-            // overwritten.
-            // ----------------------------------------------------------------
-            // Loaded here (rather than only before Step 5b below) because this
-            // check needs it first; migrationApplyPending() further down reuses
-            // the same require_once (require_once never loads a file twice).
-            require_once $siteRoot . '_functions' . $ds . 'fn_migrations.php';
-
-            $seedPresenceCheck      = migrationDbSeedDataAlreadyPresent($mysqli);
-            $seedDataAlreadyPresent = ($seedPresenceCheck['ok'] === true && $seedPresenceCheck['present'] === true);
-
-            if ($seedDataAlreadyPresent) {
-                $results[] = [
-                    'status' => 'info',
-                    'message' => 'Seed data skipped: this database already holds starting data (tblQRCodeTypes, '
-                        . 'tblPredefinedLogos or tblSubscriptionPlans already has rows). Running seed_data.sql '
-                        . 'again would fail or duplicate rows, so it was not run. Any database changes since the '
-                        . 'first install are applied in the next step instead, by the upgrade tool.'
-                ];
-            } elseif (!file_exists($seedSQLPath)) {
-                $results[] = [
-                    'status' => 'warning',
-                    'message' => 'Seed data SQL file not found: ' . $seedSQLPath
-                        . ' (tables created but no initial data loaded)'
-                ];
-            } else {
-                $seedSQL = file_get_contents($seedSQLPath);
-
-                if ($seedSQL === false) {
-                    $results[] = [
-                        'status' => 'error',
-                        'message' => 'Failed to read seed data SQL file'
-                    ];
-                    // 🔒 F1: a seed_data.sql failure must stop the installer
-                    //    before the lock file is ever written - see Step 6
-                    //    below, where this flag is checked.
-                    $seedStepFailed = true;
-                } else {
-                    if ($mysqli->multi_query($seedSQL)) {
-                        do {
-                            if ($result = $mysqli->store_result()) {
-                                $result->free();
-                            }
-                        } while ($mysqli->next_result());
-
-                        if ($mysqli->errno) {
-                            error_log('CueRCode Installer: seed_data.sql error: ' . $mysqli->error . ' (' . $mysqli->errno . ')');
+                        } else {
+                            error_log('CueRCode Installer: install.sql error: ' . $installRun['error']);
                             $results[] = [
                                 'status' => 'error',
-                                'message' => 'Error executing seed_data.sql. Check server error log for details.'
+                                'message' => 'Error executing install.sql. Check server error log for details.'
                             ];
-                            $seedStepFailed = true;
-                        } else {
+                        }
+                    }
+                }
+
+                // ----------------------------------------------------------------
+                // 📌 Step 5: Execute seed_data.sql (initial data)
+                // ----------------------------------------------------------------
+                // seed_data.sql is a set of plain INSERT statements, so it must
+                // never run twice. Before touching it, ask how much starting data
+                // is already here (migrationDbSeedDataState(), fn_migrations.php),
+                // looking only at the tables ONLY seed_data.sql fills
+                // (migrationSeedProtectionTables() - deliberately NOT tblSettings,
+                // which migrations also insert into, review finding F1):
+                //   - "complete": skip it and say so plainly;
+                //   - "none": load it, ALL-OR-NOTHING (one transaction), so a
+                //     failure leaves nothing behind and a retry starts clean;
+                //   - "partial", or the check itself failed: STOP. Before the
+                //     independent review (Codex C1 findings 1 and 4, 2026-11-25)
+                //     any row at all meant "skip", and a failed check meant "no
+                //     data", so a half-loaded database could be locked in as done.
+                // A missing seed_data.sql is now an error too (Codex C1 finding
+                // 3): the installer must not lock itself with no starting data.
+                // ----------------------------------------------------------------
+                $seedState = migrationDbSeedDataState($mysqli);
+
+                if ($seedState['ok'] !== true) {
+                    error_log('CueRCode Installer: could not check for existing starting data: ' . $seedState['error']);
+                    $results[] = [
+                        'status' => 'error',
+                        'message' => 'The installer could not check whether the starting data is already loaded, so it did '
+                            . 'not load it. Check the server error log for details.'
+                    ];
+                    $seedStepFailed = true;
+                } elseif ($seedState['state'] === 'complete') {
+                    $results[] = [
+                        'status' => 'info',
+                        'message' => 'Seed data skipped: this database already holds starting data (tblQRCodeTypes, '
+                            . 'tblPredefinedLogos and tblSubscriptionPlans all have rows). Running seed_data.sql '
+                            . 'again would fail or duplicate rows, so it was not run. Any database changes since the '
+                            . 'first install are applied in the next step instead, by the upgrade tool.'
+                    ];
+                } elseif ($seedState['state'] === 'partial') {
+                    $results[] = [
+                        'status' => 'error',
+                        'message' => 'This database holds only PART of the starting data: ' . implode(', ', $seedState['filled'])
+                            . ' already has rows, but ' . implode(', ', $seedState['empty']) . ' is empty. seed_data.sql '
+                            . 'cannot safely be run a second time, so it was not run, and the installer will not mark '
+                            . 'itself as finished. Empty the tables that have rows (or start again with an empty '
+                            . 'database), then reload this page.'
+                    ];
+                    $seedStepFailed = true;
+                } elseif (!file_exists($seedSQLPath)) {
+                    $results[] = [
+                        'status' => 'error',
+                        'message' => 'Seed data SQL file not found: ' . $seedSQLPath
+                            . ' (tables created but no starting data loaded, so the installer will not mark itself as finished)'
+                    ];
+                    $seedStepFailed = true;
+                } else {
+                    $seedSQL = file_get_contents($seedSQLPath);
+
+                    if ($seedSQL === false) {
+                        $results[] = [
+                            'status' => 'error',
+                            'message' => 'Failed to read seed data SQL file'
+                        ];
+                        // 🔒 F1: a seed_data.sql failure must stop the installer
+                        //    before the lock file is ever written - see Step 6
+                        //    below, where this flag is checked.
+                        $seedStepFailed = true;
+                    } else {
+                        $seedRun = migrationDbRunSeedSql($mysqli, $seedSQL);
+
+                        if ($seedRun['ok'] === true) {
                             $results[] = [
                                 'status' => 'success',
                                 'message' => 'Seed data loaded successfully (seed_data.sql)'
                             ];
+                        } else {
+                            error_log('CueRCode Installer: ' . $seedRun['error']);
+                            $results[] = [
+                                'status' => 'error',
+                                'message' => 'Error executing seed_data.sql. Nothing from it was kept, so it is safe to '
+                                    . 'try again. Check server error log for details.'
+                            ];
+                            $seedStepFailed = true;
+                        }
+                    }
+                }
+                // ----------------------------------------------------------------
+                // 📌 Step 5a: Put the connection back the way it was set up
+                //    (review findings F2/F4)
+                // ----------------------------------------------------------------
+                // install.sql and seed_data.sql each contain their own
+                // "SET CHARACTER SET utf8mb4" and the baseline's own SQL-mode
+                // line (NO_AUTO_VALUE_ON_ZERO) - both of which this page's own
+                // multi_query() calls above have just run directly, bypassing
+                // migrationDbRunInstallSql()'s own save/restore (that function is
+                // only used when the UPGRADE TOOL itself has to re-run
+                // install.sql, in Step 5b below, for a table the tool finds
+                // missing - not for this page's own first run of it). Without
+                // putting the charset and strict mode back here, every migration
+                // step applied in Step 5b would run in whatever state those two
+                // files happened to leave the connection in - exactly the same
+                // mismatch migrationDbRunInstallSql() guards against. Setting
+                // these again is simply repeating exactly what this page set up
+                // in Step 3 above.
+                // ----------------------------------------------------------------
+                $mysqli->set_charset($dbCharset);
+                $mysqli->query("SET SQL_MODE = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
+
+                // ----------------------------------------------------------------
+                // 📌 Step 5b: Apply database upgrades ("migrations")
+                // ----------------------------------------------------------------
+                // From task 7n Phase 1A onwards, install.sql and seed_data.sql are
+                // a frozen starting point: every later database change - the #70
+                // price-point/discount snapshot columns, the admin change log
+                // table, the Phase 1A admin settings - lives in small numbered
+                // files under _includes/sql/migrations/ and is applied by the same
+                // engine the command-line tool (_includes/cli/migrate.php) uses.
+                // $dryRun is false here so the upgrades are genuinely applied; every
+                // step checks the live database first, so running this page again
+                // later is exactly as safe as every other step above. (fn_migrations.php
+                // was already loaded just after connecting, in Step 3.)
+                // ----------------------------------------------------------------
+                $migrationResult = migrationApplyPending($mysqli, 'installer', false);
+                $migrationsOk    = ($migrationResult['status'] === 'ok');
+
+                // 🔒 F3: the FULL technical detail (which can include raw
+                //    MySQL/PHP error text) goes only to the server's error log,
+                //    never to this page - the installer sits in public_html/ and
+                //    can be reached by anyone until its lock file exists. The
+                //    command-line tool (_includes/cli/migrate.php) is a trusted
+                //    operator at a terminal, so IT keeps showing full detail
+                //    (migrationFormatReport() called there with its default
+                //    $includeErrorDetail of true).
+                if (!$migrationsOk) {
+                    error_log(
+                        'CueRCode Installer: database upgrades did not finish - full detail: '
+                        . implode(' | ', migrationFormatReport('apply', $migrationResult, true))
+                    );
+                }
+
+                // 📝 Turn the plain-English report lines into the same kind of
+                //    result rows the rest of this page already shows, so the
+                //    screen keeps its existing look. migrationReportLineSeverity()
+                //    is the one shared classifier (also used by the Phase 1B admin
+                //    "Upgrades" page later), so the two screens never disagree on
+                //    what counts as a warning or an error. $includeErrorDetail is
+                //    false here (F3): this is the page a member of the public can
+                //    reach, so only generic, plain-English lines are shown - the
+                //    full detail just went to the error log above.
+                foreach (migrationFormatReport('apply', $migrationResult, false) as $migrationLine) {
+                    $results[] = [
+                        'status'  => migrationReportLineSeverity($migrationLine),
+                        'message' => $migrationLine
+                    ];
+                }
+
+                if (!$migrationsOk) {
+                    $results[] = [
+                        'status' => 'error',
+                        'message' => 'Database upgrades did not finish, so installation has stopped here. Fix the '
+                            . 'problem shown above, then reload this page to try again - every upgrade step is safe '
+                            . 'to repeat.'
+                    ];
+                }
+
+                // 🚦 Everything from here on only runs once the upgrades are in a
+                //    known-good state ("ok": up to date, or just applied).
+                if ($migrationsOk) {
+                    // ----------------------------------------------------------------
+                    // 📌 Step 6: Verify table creation
+                    // ----------------------------------------------------------------
+                    $expectedTables = [
+                        'tblSettings', 'tblErrorLog', 'tblActivityLog', 'tblQRCodeTypes',
+                        'tblQRCodes', 'tblPredefinedLogos', 'tblAPIKeys', 'tblAPIRateLog',
+                        'tblUsers', 'tblOrganisations',
+                        // 🧱 Added by the database-upgrade tool in Step 5b above
+                        // (task 7n Phase 1A): tblSchemaMigrations is the runner's
+                        // own ledger, tblAdminAuditLog is created by migration 0002.
+                        'tblSchemaMigrations', 'tblAdminAuditLog'
+                    ];
+
+                    $verifyResult = $mysqli->query("SHOW TABLES");
+                    $existingTables = [];
+
+                    if ($verifyResult) {
+                        while ($row = $verifyResult->fetch_row()) {
+                            $existingTables[] = $row[0];
+                        }
+                        $verifyResult->free();
+                    }
+
+                    $missingTables = array_diff($expectedTables, $existingTables);
+
+                    if (empty($missingTables)) {
+                        $results[] = [
+                            'status' => 'success',
+                            'message' => 'All ' . count($expectedTables) . ' core tables verified (database upgrades add the rest): '
+                                . implode(', ', $expectedTables)
+                        ];
+
+                        // 🔒 F1: tables existing and the upgrade tool succeeding
+                        //    is NOT enough on its own - if seed_data.sql itself
+                        //    failed above, the starting data (QR code types,
+                        //    predefined logos, subscription plans) never loaded,
+                        //    so the installer must not lock itself in as "done".
+                        if (!$seedStepFailed) {
+                            $overallSuccess = true;
+                        }
+
+                        // 🔎 Independent review (Codex C1 finding 1, 2026-11-25):
+                        //    check the starting data really is ALL there before
+                        //    the lock file is written - every table only
+                        //    seed_data.sql fills must have rows. This catches
+                        //    anything the steps above did not report.
+                        if ($overallSuccess) {
+                            $finalSeedState = migrationDbSeedDataState($mysqli);
+
+                            if ($finalSeedState['ok'] !== true) {
+                                error_log('CueRCode Installer: final starting-data check failed: ' . $finalSeedState['error']);
+                                $results[] = [
+                                    'status' => 'error',
+                                    'message' => 'The installer could not confirm that all the starting data is loaded, so it '
+                                        . 'will NOT lock itself in. Check the server error log, then reload this page.'
+                                ];
+                                $overallSuccess = false;
+                            } elseif ($finalSeedState['state'] !== 'complete') {
+                                $results[] = [
+                                    'status' => 'error',
+                                    'message' => 'Some starting data is missing (' . implode(', ', $finalSeedState['empty'])
+                                        . ' is empty), so the installer will NOT lock itself in. Fix the problem shown '
+                                        . 'above, then reload this page.'
+                                ];
+                                $overallSuccess = false;
+                            }
                         }
                     } else {
-                        error_log('CueRCode Installer: Failed to execute seed_data.sql: ' . $mysqli->error);
                         $results[] = [
                             'status' => 'error',
-                            'message' => 'Failed to execute seed_data.sql. Check server error log for details.'
+                            'message' => 'Missing tables: ' . implode(', ', $missingTables)
                         ];
-                        $seedStepFailed = true;
                     }
-                }
-            }
 
-            // ----------------------------------------------------------------
-            // 📌 Step 5a: Put the connection back the way it was set up
-            //    (review findings F2/F4)
-            // ----------------------------------------------------------------
-            // install.sql and seed_data.sql each contain their own
-            // "SET CHARACTER SET utf8mb4" and the baseline's own SQL-mode
-            // line (NO_AUTO_VALUE_ON_ZERO) - both of which this page's own
-            // multi_query() calls above have just run directly, bypassing
-            // migrationDbRunInstallSql()'s own save/restore (that function is
-            // only used when the UPGRADE TOOL itself has to re-run
-            // install.sql, in Step 5b below, for a table the tool finds
-            // missing - not for this page's own first run of it). Without
-            // putting the charset and strict mode back here, every migration
-            // step applied in Step 5b would run in whatever state those two
-            // files happened to leave the connection in - exactly the same
-            // mismatch migrationDbRunInstallSql() guards against. Setting
-            // these again is simply repeating exactly what this page set up
-            // in Step 3 above.
-            // ----------------------------------------------------------------
-            $mysqli->set_charset($dbCharset);
-            $mysqli->query("SET SQL_MODE = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
-
-            // ----------------------------------------------------------------
-            // 📌 Step 5b: Apply database upgrades ("migrations")
-            // ----------------------------------------------------------------
-            // From task 7n Phase 1A onwards, install.sql and seed_data.sql are
-            // a frozen starting point: every later database change - the #70
-            // price-point/discount snapshot columns, the admin change log
-            // table, the Phase 1A admin settings - lives in small numbered
-            // files under _includes/sql/migrations/ and is applied by the same
-            // engine the command-line tool (_includes/cli/migrate.php) uses.
-            // $dryRun is false here so the upgrades are genuinely applied; every
-            // step checks the live database first, so running this page again
-            // later is exactly as safe as every other step above. (fn_migrations.php
-            // was already loaded just above, for the seed-presence check.)
-            // ----------------------------------------------------------------
-            $migrationResult = migrationApplyPending($mysqli, 'installer', false);
-            $migrationsOk    = ($migrationResult['status'] === 'ok');
-
-            // 🔒 F3: the FULL technical detail (which can include raw
-            //    MySQL/PHP error text) goes only to the server's error log,
-            //    never to this page - the installer sits in public_html/ and
-            //    can be reached by anyone until its lock file exists. The
-            //    command-line tool (_includes/cli/migrate.php) is a trusted
-            //    operator at a terminal, so IT keeps showing full detail
-            //    (migrationFormatReport() called there with its default
-            //    $includeErrorDetail of true).
-            if (!$migrationsOk) {
-                error_log(
-                    'CueRCode Installer: database upgrades did not finish - full detail: '
-                    . implode(' | ', migrationFormatReport('apply', $migrationResult, true))
-                );
-            }
-
-            // 📝 Turn the plain-English report lines into the same kind of
-            //    result rows the rest of this page already shows, so the
-            //    screen keeps its existing look. migrationReportLineSeverity()
-            //    is the one shared classifier (also used by the Phase 1B admin
-            //    "Upgrades" page later), so the two screens never disagree on
-            //    what counts as a warning or an error. $includeErrorDetail is
-            //    false here (F3): this is the page a member of the public can
-            //    reach, so only generic, plain-English lines are shown - the
-            //    full detail just went to the error log above.
-            foreach (migrationFormatReport('apply', $migrationResult, false) as $migrationLine) {
-                $results[] = [
-                    'status'  => migrationReportLineSeverity($migrationLine),
-                    'message' => $migrationLine
-                ];
-            }
-
-            if (!$migrationsOk) {
-                $results[] = [
-                    'status' => 'error',
-                    'message' => 'Database upgrades did not finish, so installation has stopped here. Fix the '
-                        . 'problem shown above, then reload this page to try again - every upgrade step is safe '
-                        . 'to repeat.'
-                ];
-            }
-
-            // 🚦 Everything from here on only runs once the upgrades are in a
-            //    known-good state ("ok": up to date, or just applied).
-            if ($migrationsOk) {
-                // ----------------------------------------------------------------
-                // 📌 Step 6: Verify table creation
-                // ----------------------------------------------------------------
-                $expectedTables = [
-                    'tblSettings', 'tblErrorLog', 'tblActivityLog', 'tblQRCodeTypes',
-                    'tblQRCodes', 'tblPredefinedLogos', 'tblAPIKeys', 'tblAPIRateLog',
-                    'tblUsers', 'tblOrganisations',
-                    // 🧱 Added by the database-upgrade tool in Step 5b above
-                    // (task 7n Phase 1A): tblSchemaMigrations is the runner's
-                    // own ledger, tblAdminAuditLog is created by migration 0002.
-                    'tblSchemaMigrations', 'tblAdminAuditLog'
-                ];
-
-                $verifyResult = $mysqli->query("SHOW TABLES");
-                $existingTables = [];
-
-                if ($verifyResult) {
-                    while ($row = $verifyResult->fetch_row()) {
-                        $existingTables[] = $row[0];
+                    if ($seedStepFailed) {
+                        $results[] = [
+                            'status' => 'error',
+                            'message' => 'Installation has stopped here: seed data failed to load (see above), so the '
+                                . 'installer will NOT lock itself in. Fix the problem shown above, then reload this '
+                                . 'page to try again.'
+                        ];
                     }
-                    $verifyResult->free();
-                }
 
-                $missingTables = array_diff($expectedTables, $existingTables);
+                    // ----------------------------------------------------------------
+                    // 📌 Step 7: Verify seed data counts
+                    // ----------------------------------------------------------------
+                    if ($overallSuccess) {
+                        $countChecks = [
+                            'tblSettings'       => 'Settings',
+                            'tblQRCodeTypes'    => 'QR Code Types',
+                            'tblPredefinedLogos' => 'Predefined Logos'
+                        ];
 
-                if (empty($missingTables)) {
-                    $results[] = [
-                        'status' => 'success',
-                        'message' => 'All ' . count($expectedTables) . ' core tables verified (database upgrades add the rest): '
-                            . implode(', ', $expectedTables)
-                    ];
-
-                    // 🔒 F1: tables existing and the upgrade tool succeeding
-                    //    is NOT enough on its own - if seed_data.sql itself
-                    //    failed above, the starting data (QR code types,
-                    //    predefined logos, subscription plans) never loaded,
-                    //    so the installer must not lock itself in as "done".
-                    if (!$seedStepFailed) {
-                        $overallSuccess = true;
-                    }
-                } else {
-                    $results[] = [
-                        'status' => 'error',
-                        'message' => 'Missing tables: ' . implode(', ', $missingTables)
-                    ];
-                }
-
-                if ($seedStepFailed) {
-                    $results[] = [
-                        'status' => 'error',
-                        'message' => 'Installation has stopped here: seed data failed to load (see above), so the '
-                            . 'installer will NOT lock itself in. Fix the problem shown above, then reload this '
-                            . 'page to try again.'
-                    ];
-                }
-
-                // ----------------------------------------------------------------
-                // 📌 Step 7: Verify seed data counts
-                // ----------------------------------------------------------------
-                if ($overallSuccess) {
-                    $countChecks = [
-                        'tblSettings'       => 'Settings',
-                        'tblQRCodeTypes'    => 'QR Code Types',
-                        'tblPredefinedLogos' => 'Predefined Logos'
-                    ];
-
-                    foreach ($countChecks as $table => $label) {
-                        $countResult = $mysqli->query("SELECT COUNT(*) as cnt FROM `{$table}`");
-                        if ($countResult) {
-                            $count = $countResult->fetch_assoc()['cnt'];
-                            $countResult->free();
-                            if ($count > 0) {
-                                $countStatus = 'success';
-                            } else {
-                                $countStatus = 'warning';
+                        foreach ($countChecks as $table => $label) {
+                            $countResult = $mysqli->query("SELECT COUNT(*) as cnt FROM `{$table}`");
+                            if ($countResult) {
+                                $count = $countResult->fetch_assoc()['cnt'];
+                                $countResult->free();
+                                if ($count > 0) {
+                                    $countStatus = 'success';
+                                } else {
+                                    $countStatus = 'warning';
+                                }
+                                $results[] = [
+                                    'status' => $countStatus,
+                                    'message' => "{$label}: {$count} records loaded"
+                                ];
                             }
+                        }
+                    }
+
+                    // ----------------------------------------------------------------
+                    // 📌 Step 8: Create lock file to prevent re-execution
+                    // ----------------------------------------------------------------
+                    if ($overallSuccess) {
+                        if (isset($_SERVER['SERVER_NAME'])) {
+                            $serverName = $_SERVER['SERVER_NAME'];
+                        } else {
+                            $serverName = 'unknown';
+                        }
+                        $lockContent = 'Installed on: ' . date('Y-m-d H:i:s T') . PHP_EOL
+                            . 'PHP Version: ' . PHP_VERSION . PHP_EOL
+                            . 'Server: ' . $serverName . PHP_EOL;
+
+                        // 🔒 Review fix M8: write the lock OUTSIDE install/ first
+                        //    (_auth_keys/), so deleting or re-deploying install/
+                        //    cannot lose it. If that folder is not writable, fall
+                        //    back to the old place inside install/ and say so.
+                        if (@file_put_contents($lockFile, $lockContent) !== false) {
                             $results[] = [
-                                'status' => $countStatus,
-                                'message' => "{$label}: {$count} records loaded"
+                                'status' => 'success',
+                                'message' => 'Installation lock file created in _auth_keys/. Installer is now disabled.'
+                            ];
+                            $isLocked = true;
+                        } elseif (@file_put_contents($legacyLockFile, $lockContent) !== false) {
+                            $results[] = [
+                                'status' => 'warning',
+                                'message' => 'The lock file could only be written inside install/ (the _auth_keys folder is not writable). '
+                                    . 'Keep the install folder and its .htaccess on the server: a later deploy that adds the folder again would not restore this lock.'
+                            ];
+                            $isLocked = true;
+                        } else {
+                            // 🛑 The folder check before the install said this
+                            //    would work; something changed meanwhile. Say so
+                            //    as an ERROR, not a warning: the installer is
+                            //    still reachable until this is fixed.
+                            $results[] = [
+                                'status' => 'error',
+                                'message' => 'The database is installed, but the installer could not write its lock file, so it is NOT switched off. '
+                                    . 'Make the _auth_keys folder writable and create an empty file called _auth_keys/.installed.lock now. Keep the install folder and its .htaccess file in place: deleting the folder does not help, because the next deploy puts it back.'
                             ];
                         }
                     }
                 }
 
-                // ----------------------------------------------------------------
-                // 📌 Step 8: Create lock file to prevent re-execution
-                // ----------------------------------------------------------------
-                if ($overallSuccess) {
-                    if (isset($_SERVER['SERVER_NAME'])) {
-                        $serverName = $_SERVER['SERVER_NAME'];
-                    } else {
-                        $serverName = 'unknown';
-                    }
-                    $lockContent = 'Installed on: ' . date('Y-m-d H:i:s T') . PHP_EOL
-                        . 'PHP Version: ' . PHP_VERSION . PHP_EOL
-                        . 'Server: ' . $serverName . PHP_EOL;
-
-                    // 🔒 Review fix M8: write the lock OUTSIDE install/ first
-                    //    (_auth_keys/), so deleting or re-deploying install/
-                    //    cannot lose it. If that folder is not writable, fall
-                    //    back to the old place inside install/ and say so.
-                    if (@file_put_contents($lockFile, $lockContent) !== false) {
-                        $results[] = [
-                            'status' => 'success',
-                            'message' => 'Installation lock file created in _auth_keys/. Installer is now disabled.'
-                        ];
-                        $isLocked = true;
-                    } elseif (@file_put_contents($legacyLockFile, $lockContent) !== false) {
-                        $results[] = [
-                            'status' => 'warning',
-                            'message' => 'The lock file could only be written inside install/ (the _auth_keys folder is not writable). '
-                                . 'Keep the install folder and its .htaccess on the server: a later deploy that adds the folder again would not restore this lock.'
-                        ];
-                        $isLocked = true;
-                    } else {
-                        // 🛑 The folder check before the install said this
-                        //    would work; something changed meanwhile. Say so
-                        //    as an ERROR, not a warning: the installer is
-                        //    still reachable until this is fixed.
-                        $results[] = [
-                            'status' => 'error',
-                            'message' => 'The database is installed, but the installer could not write its lock file, so it is NOT switched off. '
-                                . 'Make the _auth_keys folder writable and create an empty file called _auth_keys/.installed.lock now. Keep the install folder and its .htaccess file in place: deleting the folder does not help, because the next deploy puts it back.'
-                        ];
-                    }
-                }
+                // 🔓 Free the installer lock (the connection closing below would
+                //    free it anyway; done explicitly so the intent is clear).
+                migrationDbReleaseInstallerLock($mysqli);
             }
 
             // Close database connection

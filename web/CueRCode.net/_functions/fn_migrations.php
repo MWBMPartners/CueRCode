@@ -102,6 +102,17 @@ if (!defined('CUERCODE_MIGRATION_LOCK_NAME')) {
     define('CUERCODE_MIGRATION_LOCK_NAME', 'cuercode_schema_migrate');
 }
 
+// 🔒 The web installer's OWN named lock (independent review, Codex C1 finding
+//    2, 2026-11-25): held from just after connecting until the installer's
+//    permanent lock file is written, so two people pressing "Install" at the
+//    same moment cannot both create tables and load starting data. Built with
+//    the same per-database expression as the upgrade lock above (so it never
+//    blocks an installer on a different database), and at most 23 characters
+//    so the full name stays within MySQL's 64-character limit.
+if (!defined('CUERCODE_INSTALLER_LOCK_NAME')) {
+    define('CUERCODE_INSTALLER_LOCK_NAME', 'cuercode_web_installer');
+}
+
 // 🚦 Command-line exit codes (plan §5.1). "Refused" means no upgrades were applied.
 if (!defined('CUERCODE_MIGRATE_EXIT_OK')) {
     define('CUERCODE_MIGRATE_EXIT_OK', 0);        // up to date, or applied, or dry run done
@@ -1370,43 +1381,205 @@ function migrationSeedProtectionTables(): array
 }
 
 /**
- * 🌱 Does this database already hold seed data? Checks every table from
- *    migrationSeedProtectionTables() and stops at the first one with a row.
+ * 🌱 Does this database already hold seed data? A thin yes/no wrapper around
+ *    migrationDbSeedDataState() below, kept for older callers and tests.
  *
- * A table that does not exist yet (install.sql must have failed earlier) is
- * treated as "no data to protect" rather than an error of its own - the
- * caller's own install.sql result already explains that failure.
+ * "present" is true when ANY of the protection tables has rows - that is,
+ * when the state is "partial" or "complete". The web installer itself now
+ * uses the three-way state instead, because "partial" must never be treated
+ * as "already done" (independent review, Codex C1 finding 1, 2026-11-25).
+ *
+ * 🔒 Codex C1 finding 4 (2026-11-25): a check that FAILS (lost connection,
+ * missing permission, a broken view...) is now reported as ok = false with
+ * the error, never quietly as "no data". Only a table that genuinely does not
+ * exist yet still counts as "nothing to protect".
  *
  * @param \mysqli $db Connection with the site database selected
  * @return array{ok: bool, present: bool, error: string}
  */
 function migrationDbSeedDataAlreadyPresent(\mysqli $db): array
 {
+    $state = migrationDbSeedDataState($db);
+
+    if ($state['ok'] !== true) {
+        return ['ok' => false, 'present' => false, 'error' => $state['error']];
+    }
+
+    if ($state['state'] === 'none') {
+        return ['ok' => true, 'present' => false, 'error' => ''];
+    }
+
+    return ['ok' => true, 'present' => true, 'error' => ''];
+}
+
+/**
+ * 🌱 How much of the starting data (seed_data.sql) is in this database?
+ *    (independent review, Codex C1 findings 1 and 4, 2026-11-25)
+ *
+ * Looks at every table from migrationSeedProtectionTables() and answers:
+ *   - "none"     - every one of them is empty or missing: seed_data.sql has
+ *                  not run (or a failed run was rolled back), so it may run;
+ *   - "complete" - every one of them has rows: seed_data.sql has run;
+ *   - "partial"  - some have rows and some do not. seed_data.sql cannot be
+ *                  run again safely (plain INSERTs), and the database must not
+ *                  be called "installed" either, so the installer stops and
+ *                  says which tables are empty.
+ *
+ * A table that does not exist yet counts as empty. It is found by asking
+ * INFORMATION_SCHEMA first (a prepared statement), so the row count below is
+ * only ever run on a table that exists - and ANY failure of either question
+ * is returned as ok = false with the error, never as "no data".
+ *
+ * @param \mysqli $db Connection with the site database selected
+ * @return array{ok: bool, state: string, filled: array<int, string>, empty: array<int, string>, error: string}
+ */
+function migrationDbSeedDataState(\mysqli $db): array
+{
+    $filledTables = [];
+    $emptyTables  = [];
+
     foreach (migrationSeedProtectionTables() as $tableName) {
-        try {
-            // The table name comes only from the fixed list above (never
-            // from user input), so it is safe to place directly in the SQL
-            // text - a MySQL prepared statement cannot parameterise a table
-            // name in any case.
-            $fetched = migrationDbFetchAll($db, 'SELECT COUNT(*) AS rowCount FROM `' . $tableName . '`');
-        } catch (\Throwable $unexpected) {
-            // Defensive only: migrationDbFetchAll() already catches MySQLi's
-            // own exception type, but this keeps the check itself from ever
-            // being the reason the installer page fails to render.
+        // 1️⃣ Does the table exist? (prepared; the name is a bound value)
+        $existence = migrationDbFetchAll(
+            $db,
+            'SELECT COUNT(*) AS `tableCount` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?',
+            's',
+            [$tableName]
+        );
+
+        if ($existence['ok'] !== true || $existence['rows'] === []) {
+            return [
+                'ok'     => false,
+                'state'  => '',
+                'filled' => [],
+                'empty'  => [],
+                'error'  => 'Could not check whether ' . $tableName . ' exists (' . $existence['error'] . ')',
+            ];
+        }
+
+        if ((int) $existence['rows'][0]['tableCount'] === 0) {
+            // Missing table: nothing loaded into it yet.
+            $emptyTables[] = $tableName;
             continue;
         }
 
-        if ($fetched['ok'] !== true) {
-            // Most likely "table doesn't exist" - nothing to protect yet.
-            continue;
+        // 2️⃣ Does it have rows? The table name comes only from the fixed list
+        //    in migrationSeedProtectionTables() (never from user input), so it
+        //    is safe to place in the SQL text - a prepared statement cannot
+        //    take a table name as a bound value.
+        $counted = migrationDbFetchAll($db, 'SELECT COUNT(*) AS `rowCount` FROM `' . $tableName . '`');
+
+        if ($counted['ok'] !== true || $counted['rows'] === []) {
+            return [
+                'ok'     => false,
+                'state'  => '',
+                'filled' => [],
+                'empty'  => [],
+                'error'  => 'Could not count the rows in ' . $tableName . ' (' . $counted['error'] . ')',
+            ];
         }
 
-        if ($fetched['rows'] !== [] && (int) $fetched['rows'][0]['rowCount'] > 0) {
-            return ['ok' => true, 'present' => true, 'error' => ''];
+        if ((int) $counted['rows'][0]['rowCount'] > 0) {
+            $filledTables[] = $tableName;
+        } else {
+            $emptyTables[] = $tableName;
         }
     }
 
-    return ['ok' => true, 'present' => false, 'error' => ''];
+    if ($filledTables === []) {
+        $state = 'none';
+    } elseif ($emptyTables === []) {
+        $state = 'complete';
+    } else {
+        $state = 'partial';
+    }
+
+    return ['ok' => true, 'state' => $state, 'filled' => $filledTables, 'empty' => $emptyTables, 'error' => ''];
+}
+
+/**
+ * 🌱 Load seed_data.sql ALL-OR-NOTHING (independent review, Codex C1
+ *    finding 1, 2026-11-25).
+ *
+ * seed_data.sql is a handful of plain INSERT statements. Run on its own with
+ * multi_query(), a failure part-way left the earlier inserts behind, and the
+ * next attempt then saw "data already there" and skipped the rest - the
+ * installer could lock itself with no logos or plans. Here the whole file is
+ * wrapped in one transaction: every insert lands, or none does, so a failed
+ * attempt leaves the database exactly as it was and a retry simply runs the
+ * whole file again.
+ *
+ * ⚠️ This only works because every starting-data table is InnoDB and
+ *    seed_data.sql contains nothing that commits on its own (no CREATE,
+ *    ALTER, DROP, TRUNCATE...). tests/test_migrations.php checks the file
+ *    stays that way.
+ *
+ * Both kinds of MySQLi failure are handled: a false return and the
+ * mysqli_sql_exception PHP 8.1+ throws by default. On any failure the open
+ * transaction is rolled back here (and MySQL rolls it back anyway if the
+ * connection drops).
+ *
+ * @param \mysqli $db      Connection with the site database selected
+ * @param string  $seedSql Text of seed_data.sql
+ * @return array{ok: bool, error: string} error holds full MySQL detail - log it, never show it to a visitor
+ */
+function migrationDbRunSeedSql(\mysqli $db, string $seedSql): array
+{
+    // 🧱 Wrapped in one transaction. PHP_EOL before COMMIT matters: the file
+    //    ends in "--" comment lines, and a comment runs to the end of its line.
+    $wrappedSql = 'START TRANSACTION;' . PHP_EOL . $seedSql . PHP_EOL . 'COMMIT;' . PHP_EOL;
+    $error      = '';
+
+    try {
+        if ($db->multi_query($wrappedSql)) {
+            do {
+                $resultSet = $db->store_result();
+                if ($resultSet instanceof \mysqli_result) {
+                    $resultSet->free();
+                }
+                if (!$db->more_results()) {
+                    break;
+                }
+            } while ($db->next_result());
+
+            if ($db->errno !== 0) {
+                $error = 'MySQL error ' . $db->errno . ': ' . $db->error;
+            }
+        } else {
+            $error = 'MySQL error ' . $db->errno . ': ' . $db->error;
+        }
+    } catch (\mysqli_sql_exception $databaseError) {
+        $error = 'MySQL error ' . $databaseError->getCode() . ': ' . $databaseError->getMessage();
+
+        // Drain anything left so the connection can be used again.
+        try {
+            while ($db->more_results() && $db->next_result()) {
+                $leftover = $db->store_result();
+                if ($leftover instanceof \mysqli_result) {
+                    $leftover->free();
+                }
+            }
+        } catch (\mysqli_sql_exception $drainError) {
+            unset($drainError);
+        }
+    }
+
+    if ($error !== '') {
+        // ↩️ Undo whatever part of the file did run. A failure here is
+        //    reported too, but MySQL also discards an uncommitted transaction
+        //    when the connection closes, so nothing half-loaded can survive.
+        try {
+            if (!$db->rollback()) {
+                $error = $error . ' (and the rollback failed: ' . $db->error . ')';
+            }
+        } catch (\mysqli_sql_exception $rollbackError) {
+            $error = $error . ' (and the rollback failed: ' . $rollbackError->getMessage() . ')';
+        }
+
+        return ['ok' => false, 'error' => 'seed_data.sql failed and was rolled back: ' . $error];
+    }
+
+    return ['ok' => true, 'error' => ''];
 }
 
 // ==============================================================================
@@ -1570,6 +1743,60 @@ function migrationDbReleaseLock(\mysqli $db): void
         'SELECT RELEASE_LOCK(' . migrationLockNameSqlExpression() . ') AS released',
         's',
         [CUERCODE_MIGRATION_LOCK_NAME]
+    );
+    unset($fetched);
+}
+
+/**
+ * 🔒 Try to take the web installer's lock without waiting (Codex C1 finding 2).
+ *
+ * A different name from the upgrade lock, so the installer can hold this one
+ * while migrationApplyPending() takes and releases the upgrade lock inside it
+ * (MySQL 5.7+ and MariaDB 10.0.2+ allow one connection several named locks).
+ *
+ * @param \mysqli $db Connection with the site database selected
+ * @return string 'got', 'busy' or 'error'
+ */
+function migrationDbAcquireInstallerLock(\mysqli $db): string
+{
+    $fetched = migrationDbFetchAll(
+        $db,
+        'SELECT GET_LOCK(' . migrationLockNameSqlExpression() . ', 0) AS `gotLock`',
+        's',
+        [CUERCODE_INSTALLER_LOCK_NAME]
+    );
+
+    if ($fetched['ok'] !== true || $fetched['rows'] === []) {
+        return 'error';
+    }
+
+    $value = $fetched['rows'][0]['gotLock'];
+
+    if ($value === null) {
+        return 'error';
+    }
+
+    if ((int) $value === 1) {
+        return 'got';
+    }
+
+    return 'busy';
+}
+
+/**
+ * 🔓 Release the web installer's lock (harmless if it fails: MySQL releases
+ *    a named lock when the connection closes).
+ *
+ * @param \mysqli $db Connection
+ * @return void
+ */
+function migrationDbReleaseInstallerLock(\mysqli $db): void
+{
+    $fetched = migrationDbFetchAll(
+        $db,
+        'SELECT RELEASE_LOCK(' . migrationLockNameSqlExpression() . ') AS `released`',
+        's',
+        [CUERCODE_INSTALLER_LOCK_NAME]
     );
     unset($fetched);
 }

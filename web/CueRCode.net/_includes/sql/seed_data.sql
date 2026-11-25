@@ -17,7 +17,9 @@
 --    missing - so a value the owner has edited is never overwritten.
 --    ⚠️ Unlike install.sql, this file is NOT safe to run twice: it uses plain
 --    INSERTs, so a second run stops at the first row that already exists.
---    Run it once, on a new database only (the web installer does this).
+--    Run it once, on a new database only (the web installer does this, as
+--    ONE transaction, so a failure part-way leaves nothing behind). Only the
+--    settings insert skips rows that already exist (see the note there).
 -- ==============================================================================
 
 SET NAMES utf8mb4;
@@ -252,7 +254,16 @@ INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settin
 -- @see .dev-team/dynamic_dualfn_design.md - the full design spec, §9 owner decisions
 ('redirects', 'dynamic_qr_enabled', '0', 'boolean', 0, 1, 'Master kill-switch for the dynamic-redirect subsystem (E1a, #27) - 0 = the public /r/{uuid} route is not built this stage regardless of this flag; exists now so Stage S2 has a switch to check on day one'),
 ('redirects', 'dynamic_redirect_base_url', 'https://QRmy.Link', 'url', 0, 1, 'Base URL prefixed to /r/{uuid} when building a dynamic QR payload (buildPayload_dynamic_url(), fn_qr_payloads.php) - owner-confirmable before any code is printed for real; see LAUNCH_DECISIONS.md O-11 (defaults to the tertiary domain QRmy.Link to partition redirect-abuse reputation away from the primary product domain)'),
-('redirects', 'redirect_allow_http', '0', 'boolean', 0, 1, 'O-2: whether http:// (in addition to https://) is an acceptable dynamic-redirect destination scheme - 0 = https-only (recommended default, LAUNCH_DECISIONS.md O-2); validateRedirectDestination() (fn_redirects.php) stays a pure/DB-independent function and only honours this via its own $opts[''allow_http''] parameter, never by reading tblSettings itself');
+('redirects', 'redirect_allow_http', '0', 'boolean', 0, 1, 'O-2: whether http:// (in addition to https://) is an acceptable dynamic-redirect destination scheme - 0 = https-only (recommended default, LAUNCH_DECISIONS.md O-2); validateRedirectDestination() (fn_redirects.php) stays a pure/DB-independent function and only honours this via its own $opts[''allow_http''] parameter, never by reading tblSettings itself')
+-- ➕ Independent review follow-up (2026-11-25): "insert if missing" for the
+--    settings ONLY. Migration 0002 adds some of these same settings, so when
+--    the upgrade tool has run first (`migrate.php --apply` on an empty
+--    database, or an installer retry after a failed first attempt), a plain
+--    INSERT stopped here with a duplicate-key error and the starting data
+--    could never load. A setting that is already there keeps its value. The
+--    other tables below stay plain INSERTs: the installer only runs this file
+--    when all three of them are empty (migrationDbSeedDataState()).
+ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`;
 
 -- ==============================================================================
 -- 📱 QR Code Type Definitions (tblQRCodeTypes)

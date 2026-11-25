@@ -63,6 +63,16 @@
  *      never block each other's upgrades, while a database still correctly
  *      blocks a second run against ITSELF.
  *
+ * Added 2026-11-25 (independent review, Codex C1 findings 1, 2 and 4):
+ *
+ *   Scenario J (extended). After `migrate.php --apply` on an empty database,
+ *      the installer's seed load must SUCCEED, not just be allowed to run
+ *      (migration 0002 adds some of the same settings as seed_data.sql).
+ *   Scenario L. The starting data loads all-or-nothing (a file failing part-way
+ *      leaves nothing behind, so a retry starts clean); a part-loaded database
+ *      reads as "partial", not "already done"; a failed check is an error, not
+ *      "no data"; and only one web installer can run per database at a time.
+ *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
  *
@@ -484,6 +494,8 @@ $itDbI  = $itBaseName . '_i';
 $itDbJ  = $itBaseName . '_j';
 $itDbK1 = $itBaseName . '_k1';
 $itDbK2 = $itBaseName . '_k2';
+$itDbL  = $itBaseName . '_l';
+$itDbL2 = $itBaseName . '_l2';
 
 // ==============================================================================
 // 🅰️ Scenario A: fresh database - install.sql + seed + migrations; install.sql
@@ -849,6 +861,15 @@ itCheck(
     'the installer\'s seed-protection check correctly says "NOT seeded" (F1 fix) - so seed_data.sql would still be allowed to run if the web installer were used next'
 );
 
+// ➕ Independent review follow-up (2026-11-25): "allowed to run" is not enough -
+//    it must also SUCCEED. Migration 0002 inserts some of the same settings as
+//    seed_data.sql, so a plain INSERT of the settings stopped with a duplicate
+//    key here and the starting data could never be loaded.
+$itSeedAfterCliJ = migrationDbRunSeedSql($itJ, $itSeedSql);
+itCheck('J empty db then seed check', $itSeedAfterCliJ['ok'] === true, 'the web installer\'s seed load then SUCCEEDS on top of the CLI-created settings: ' . $itSeedAfterCliJ['error']);
+$itSeedStateJ = migrationDbSeedDataState($itJ);
+itCheck('J empty db then seed check', $itSeedStateJ['ok'] === true && $itSeedStateJ['state'] === 'complete', 'and the starting data is then complete');
+
 // ==============================================================================
 // 🅺 Scenario K: the upgrade lock name includes the database (review finding
 //    F6) - two different databases never block each other's upgrades
@@ -873,9 +894,104 @@ $itCliResultK1 = itCli($itDbK1, 'apply');
 itCheck('K per-database lock name', $itCliResultK1['exit'] === 0, 'once K1\'s own lock is released, an upgrade on K1 itself still runs normally (the lock genuinely protects K1 against itself, it is not simply "never blocks anything")');
 
 // ==============================================================================
+// 🅻 Scenario L (independent review, Codex C1 findings 1, 2 and 4, 2026-11-25):
+//    the installer's starting-data load is all-or-nothing, a part-loaded
+//    database is recognised as PART-loaded (not "already done"), a failed
+//    check is an error (not "no data"), and only one installer runs at once
+// ==============================================================================
+echo PHP_EOL . 'Scenario L: starting data loads all-or-nothing; part-loaded and unreadable states are caught; one installer at a time' . PHP_EOL;
+
+// 💥 A seed file that fails part-way: the real seed_data.sql with one bad
+//    statement slipped in just before the predefined-logos insert, so the
+//    settings and QR-code-type inserts have already happened when it fails.
+$itBrokenSeedSql = str_replace(
+    'INSERT INTO `tblPredefinedLogos`',
+    'INSERT INTO `tblItNoSuchTable` (`x`) VALUES (1);' . PHP_EOL . 'INSERT INTO `tblPredefinedLogos`',
+    $itSeedSql
+);
+itCheck('L seed all-or-nothing', $itBrokenSeedSql !== $itSeedSql, 'the deliberately broken seed file was built');
+
+// 🐞 Reproduce the reported fault the OLD way (plain multi_query, no
+//    transaction): the earlier inserts stay behind, and the old yes/no check
+//    then says "already present" - so a retry would have skipped the rest.
+$itL = itFreshDb($itEnv, $itPort, $itDbL);
+itRunSqlFile($itL, $itInstallSql);
+itCheck('L seed all-or-nothing', str_starts_with(itRunSqlFile($itL, $itBrokenSeedSql), 'ERR'), 'reproduction: the broken seed file fails part-way when run the old way');
+itCheck('L seed all-or-nothing', (int) $itL->query('SELECT COUNT(*) FROM `tblQRCodeTypes`')->fetch_row()[0] > 0, 'reproduction: the old way leaves QR code types behind');
+$itOldCheckL = migrationDbSeedDataAlreadyPresent($itL);
+itCheck('L seed all-or-nothing', $itOldCheckL['ok'] === true && $itOldCheckL['present'] === true, 'reproduction: the old yes/no check calls that "already present" (why a retry used to skip the rest)');
+
+$itStateL = migrationDbSeedDataState($itL);
+itCheck(
+    'L seed all-or-nothing',
+    $itStateL['ok'] === true && $itStateL['state'] === 'partial'
+        && in_array('tblPredefinedLogos', $itStateL['empty'], true)
+        && in_array('tblSubscriptionPlans', $itStateL['empty'], true)
+        && in_array('tblQRCodeTypes', $itStateL['filled'], true),
+    'the new three-way check calls it PART-loaded and names the empty tables'
+);
+
+// ✅ The NEW way: the same broken file, run through migrationDbRunSeedSql(),
+//    leaves nothing behind at all, so a retry starts from a clean slate.
+$itL = itFreshDb($itEnv, $itPort, $itDbL);
+itRunSqlFile($itL, $itInstallSql);
+$itSeedRunL = migrationDbRunSeedSql($itL, $itBrokenSeedSql);
+itCheck('L seed all-or-nothing', $itSeedRunL['ok'] === false && $itSeedRunL['error'] !== '', 'the broken seed file is reported as failed');
+$itLeftL = 0;
+foreach (['tblSettings', 'tblQRCodeTypes', 'tblPredefinedLogos', 'tblSubscriptionPlans'] as $itSeedTableL) {
+    $itLeftL = $itLeftL + (int) $itL->query('SELECT COUNT(*) FROM `' . $itSeedTableL . '`')->fetch_row()[0];
+}
+itCheck('L seed all-or-nothing', $itLeftL === 0, 'nothing from the failed load is left behind in any of the four starting-data tables (all-or-nothing)');
+$itStateL = migrationDbSeedDataState($itL);
+itCheck('L seed all-or-nothing', $itStateL['ok'] === true && $itStateL['state'] === 'none', 'so the database reads as "no starting data yet"');
+itCheck('L seed all-or-nothing', (int) $itL->query('SELECT 1')->fetch_row()[0] === 1,'the connection is still usable after the failed load');
+
+$itSeedRunL = migrationDbRunSeedSql($itL, $itSeedSql);
+itCheck('L seed all-or-nothing', $itSeedRunL['ok'] === true, 'a retry with the good file then loads everything: ' . $itSeedRunL['error']);
+$itStateL = migrationDbSeedDataState($itL);
+itCheck('L seed all-or-nothing', $itStateL['ok'] === true && $itStateL['state'] === 'complete' && $itStateL['empty'] === [], 'and the database reads as "complete"');
+$itWrapperL = migrationDbSeedDataAlreadyPresent($itL);
+itCheck('L seed all-or-nothing', $itWrapperL['ok'] === true && $itWrapperL['present'] === true, 'the older yes/no check still answers "present" for a complete database');
+
+// 🗂️ No tables at all: "none", not an error (install.sql has not run yet).
+$itL = itFreshDb($itEnv, $itPort, $itDbL);
+$itStateL = migrationDbSeedDataState($itL);
+itCheck('L seed check errors', $itStateL['ok'] === true && $itStateL['state'] === 'none', 'a database with no tables at all reads as "no starting data yet", not an error');
+
+// ⚠️ A check that FAILS (here: tblPredefinedLogos is a view over a table that
+//    has since been dropped, so counting its rows is a database error that is
+//    NOT "table missing") must be reported as an error, never as "no data".
+itRunSqlFile($itL, $itInstallSql);
+$itL->query('DROP TABLE `tblPredefinedLogos`');
+$itL->query('CREATE TABLE `tblItGone` (`x` INT) ENGINE=InnoDB');
+$itL->query('CREATE VIEW `tblPredefinedLogos` AS SELECT `x` FROM `tblItGone`');
+$itL->query('DROP TABLE `tblItGone`');
+$itStateL = migrationDbSeedDataState($itL);
+itCheck('L seed check errors', $itStateL['ok'] === false && $itStateL['error'] !== '', 'a failed row count is an ERROR, not "no data" (Codex C1 finding 4): ' . $itStateL['error']);
+$itWrapperL = migrationDbSeedDataAlreadyPresent($itL);
+itCheck('L seed check errors', $itWrapperL['ok'] === false, 'the older yes/no check also reports the error instead of "no data"');
+
+// 🔒 One installer at a time (Codex C1 finding 2): the installer's own named
+//    lock, per database.
+$itL   = itFreshDb($itEnv, $itPort, $itDbL);
+$itL2  = itFreshDb($itEnv, $itPort, $itDbL2);
+$itLb  = itServerConnect($itEnv, $itPort);
+$itLb->select_db($itDbL);
+itCheck('L installer lock', migrationDbAcquireInstallerLock($itL) === 'got', 'the first installer takes the lock');
+itCheck('L installer lock', migrationDbAcquireInstallerLock($itLb) === 'busy', 'a second installer on the SAME database is told "busy" straight away');
+itCheck('L installer lock', migrationDbAcquireInstallerLock($itL2) === 'got', 'an installer on a DIFFERENT database is not blocked');
+itCheck('L installer lock', migrationDbAcquireLock($itL) === 'got', 'holding the installer lock does not block the upgrade tool\'s own lock on the same connection');
+migrationDbReleaseLock($itL);
+migrationDbReleaseInstallerLock($itL);
+itCheck('L installer lock', migrationDbAcquireInstallerLock($itLb) === 'got', 'once released, the second installer can take it');
+migrationDbReleaseInstallerLock($itLb);
+migrationDbReleaseInstallerLock($itL2);
+$itLb->close();
+
+// ==============================================================================
 // 🧹 Clean up and report
 // ==============================================================================
-foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2] as $itDbToRemove) {
+foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2] as $itDbToRemove) {
     itDropDb($itEnv, $itPort, $itDbToRemove);
 }
 

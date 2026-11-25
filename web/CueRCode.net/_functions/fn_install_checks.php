@@ -13,8 +13,10 @@
  *   - installExtensionChecks()       - PHP extensions needed (decision 0012 list)
  *   - installCheckDatabaseVersion()  - MySQL 8.0.13+ / MariaDB 10.6+ (decision 0012)
  *   - installCheckWritableFolder()   - _uploads / _backups exist and PHP can write (B7)
+ *   - installOpenDatabase()          - connect without ever throwing (Codex C1 finding 5)
  *
- * Nothing here touches the database or sends output. Messages are written in
+ * Apart from installOpenDatabase() (which only opens a connection), nothing
+ * here touches the database, and nothing sends output. Messages are written in
  * plain English because the person reading them is setting up a server.
  *
  * @package     CueRCode
@@ -330,4 +332,53 @@ function installLockFolderCheck(array $paths): array
 function installIsLocked(array $paths): bool
 {
     return file_exists($paths['primary']) || file_exists($paths['legacy']);
+}
+
+/**
+ * 🔌 Open the installer's database connection WITHOUT ever throwing
+ *    (independent review, Codex C1 finding 5, 2026-11-25).
+ *
+ * Since PHP 8.1, MySQLi throws a mysqli_sql_exception when a connection fails
+ * (the default error mode is "report and throw"). The installer used
+ * `@new \mysqli(...)`, but "@" only hides warnings - it does not stop an
+ * exception - so a wrong password or a stopped database server crashed the
+ * page with an uncaught error instead of showing the plain message, and that
+ * error could include connection details if the host displays errors.
+ * Measured 2026-11-25 on PHP 8.4.27 and 8.5.12: both throw.
+ *
+ * This is the only function in this file that touches a database, and it is
+ * still unit tested without one: a connection to a closed port fails at once.
+ *
+ * @param string $host     Database host
+ * @param string $user     Database user
+ * @param string $password Database password
+ * @param string $name     Database name
+ * @param int    $port     Database port
+ *
+ * @return array{ok: bool, db: \mysqli|null, error: string} error holds the
+ *         technical detail - write it to the server log, never to the page.
+ */
+function installOpenDatabase(string $host, string $user, string $password, string $name, int $port): array
+{
+    try {
+        $connection = new \mysqli($host, $user, $password, $name, $port);
+    } catch (\mysqli_sql_exception $connectError) {
+        return [
+            'ok'    => false,
+            'db'    => null,
+            'error' => $connectError->getMessage() . ' (Error ' . $connectError->getCode() . ')',
+        ];
+    }
+
+    // 🧯 If error reporting has been switched off elsewhere, a failed
+    //    connection comes back as an object with connect_error set instead.
+    if ($connection->connect_error) {
+        return [
+            'ok'    => false,
+            'db'    => null,
+            'error' => $connection->connect_error . ' (Error ' . $connection->connect_errno . ')',
+        ];
+    }
+
+    return ['ok' => true, 'db' => $connection, 'error' => ''];
 }

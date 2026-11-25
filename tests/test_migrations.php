@@ -763,7 +763,7 @@ foreach (['dbQuery(', 'getDB(', 'getConfig(', 'logError(', 'logActivity(', 'requ
     );
 }
 assertFalse(str_contains($migRunnerSource, '->query('), 'fn_migrations.php never uses ->query() - prepared statements only');
-assertEquals(1, substr_count($migRunnerSource, '->multi_query('), 'fn_migrations.php uses multi_query() only once (re-running install.sql)');
+assertEquals(2, substr_count($migRunnerSource, '->multi_query('), 'fn_migrations.php uses multi_query() exactly twice: re-running install.sql, and loading seed_data.sql as one transaction (Codex C1 finding 1)');
 assertContains('->prepare($sql)', $migRunnerSource, 'fn_migrations.php runs SQL through prepare()');
 assertContains('->bind_param($types, ...$params)', $migRunnerSource, 'fn_migrations.php binds values with bind_param()');
 assertContains('@copyright   2025–2026 MWBM Partners Ltd', $migRunnerSource, 'fn_migrations.php has the house copyright header');
@@ -857,6 +857,31 @@ foreach ($migLoaded['migrations'] as $migSeedGuardKey => $migSeedGuardMigration)
         );
     }
 }
+
+// 🌱 Independent review (Codex C1 finding 1, 2026-11-25): seed_data.sql is
+// loaded inside ONE transaction (migrationDbRunSeedSql()), which only makes it
+// all-or-nothing if nothing in the file commits on its own. MySQL commits
+// silently before CREATE, ALTER, DROP, TRUNCATE, RENAME, LOCK TABLES, START
+// TRANSACTION/BEGIN and the like, so the file may hold only SET and INSERT
+// statements - checked statement by statement here, so a later edit that
+// breaks this fails a test instead of quietly undoing the protection.
+$migSeedSqlText = (string) file_get_contents(dirname(migrationDefaultInstallSqlPath()) . DIRECTORY_SEPARATOR . 'seed_data.sql');
+$migSeedBlanked = migrationBlankQuotedText((string) preg_replace('/^\s*--.*$/m', '', $migSeedSqlText));
+$migSeedStatementWords = [];
+assertTrue($migSeedBlanked['ok'], 'seed_data.sql: every quoted value is closed (so the statement check below reads it correctly)');
+foreach (explode(';', $migSeedBlanked['text']) as $migSeedStatement) {
+    $migSeedStatement = trim($migSeedStatement);
+    if ($migSeedStatement === '') {
+        continue;
+    }
+    $migSeedStatementWords[] = strtoupper((string) strtok($migSeedStatement, " \t\r\n("));
+}
+assertTrue(count($migSeedStatementWords) >= 5, 'seed_data.sql: the statement check found the file\'s statements (' . count($migSeedStatementWords) . ')');
+assertEquals([], array_values(array_diff(array_unique($migSeedStatementWords), ['SET', 'INSERT'])), 'seed_data.sql holds only SET and INSERT statements, so loading it in one transaction really is all-or-nothing');
+assertMatches('/never by reading tblSettings itself\'\)\s*(--[^\n]*\n\s*)*ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`;/', $migSeedSqlText, 'seed_data.sql: the settings insert skips settings that already exist (migration 0002 adds some of the same ones), so the seed still loads after the upgrade tool has run');
+assertEquals(1, substr_count($migSeedSqlText, 'ON DUPLICATE KEY UPDATE'), 'seed_data.sql: ONLY the settings insert skips existing rows - the other three tables stay plain INSERTs, guarded by migrationDbSeedDataState()');
+assertTrue(strlen(CUERCODE_INSTALLER_LOCK_NAME) <= 23, 'installer lock prefix fits the 64-character MySQL lock-name limit (23 + 1 + 30 + 1 + 8 = 63)');
+assertTrue(CUERCODE_INSTALLER_LOCK_NAME !== CUERCODE_MIGRATION_LOCK_NAME, 'installer lock and upgrade lock have different names, so one connection can hold both');
 
 // 🔒 F6: the lock name SQL expression includes the live database (not a
 // fixed, site-wide string) and has exactly one `?` placeholder (the prefix -

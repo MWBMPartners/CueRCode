@@ -121,7 +121,7 @@ assertEquals(1, count(installPreflightProblems('8.3.9', $allExtensions, $goodFol
 assertEquals(3, count(installPreflightProblems('8.4.0', array_values(array_diff($allExtensions, ['gd', 'zip'])), [['ok' => false, 'message' => 'x'], $goodFolders[0]])), 'M7: every problem is listed');
 $installerSource = (string) file_get_contents(dirname(__DIR__) . '/web/CueRCode.net/public_html/install/index.php');
 assertTrue(str_contains($installerSource, 'installPreflightProblems(PHP_VERSION, get_loaded_extensions(), $postFolderChecks)'), 'M7: the POST handler itself calls the prerequisite check');
-assertTrue(strpos($installerSource, 'installPreflightProblems(PHP_VERSION') < strpos($installerSource, 'new \\mysqli(DB_HOST'), 'M7: ...before the database is touched');
+assertTrue(strpos($installerSource, 'installPreflightProblems(PHP_VERSION') < strpos($installerSource, 'installOpenDatabase(DB_HOST'), 'M7: ...before the database is touched');
 
 // 🔒 M8: the lock lives outside install/, and the old place still counts.
 $lockBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_lock_' . bin2hex(random_bytes(4)) . DIRECTORY_SEPARATOR;
@@ -158,9 +158,52 @@ rmdir($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install');
 rmdir($lockBase . 'public_html');
 rmdir($lockBase);
 assertContains('$postFolderChecks[] = installLockFolderCheck($lockPaths);', $installerSource, 'F9: the POST handler adds the lock-folder check to the prerequisites it re-checks');
-assertTrue(strpos($installerSource, 'installLockFolderCheck($lockPaths)') < strpos($installerSource, 'new \\mysqli(DB_HOST'), 'F9: ...before the database is touched');
+assertTrue(strpos($installerSource, 'installLockFolderCheck($lockPaths)') < strpos($installerSource, 'installOpenDatabase(DB_HOST'), 'F9: ...before the database is touched');
 assertContains("'name' => 'Folder for the install lock (_auth_keys, or install as a fallback)'", $installerSource, 'F9: the page shows it in the prerequisites list (so the Install button is hidden too)');
 assertFalse(str_contains($installerSource, "'Could not create lock file. Please manually restrict access to /install/'"), 'F9: the old "finish with a warning" message is gone');
 assertContains("'message' => 'The database is installed, but the installer could not write its lock file, so it is NOT switched off. '", $installerSource, 'F9: an unexpected lock failure afterwards is an ERROR saying what to do');
 $gitignore = (string) file_get_contents(dirname(__DIR__) . DIRECTORY_SEPARATOR . '.gitignore');
 assertContains("\n**/_auth_keys/.installed.lock\n", $gitignore, 'F9: .gitignore keeps the lock file out of the repository');
+
+// ==============================================================================
+// 🔌 Independent review, Codex C1 finding 5 (2026-11-25): a failed database
+//    connection must give the plain message, not crash the page.
+// ==============================================================================
+// Reproduction on THIS PHP: "@" does not stop the exception PHP 8.1+ throws
+// (measured on 8.4.27 and 8.5.12). Port 1 on this machine refuses at once.
+assertThrows(
+    static function (): void {
+        $unused = @new \mysqli('127.0.0.1', 'nobody', 'wrong', 'nodb', 1);
+        unset($unused);
+    },
+    'C1-5 reproduction: @new mysqli() still throws when the connection fails',
+    \mysqli_sql_exception::class
+);
+$openFailed = installOpenDatabase('127.0.0.1', 'nobody', 'wrong', 'nodb', 1);
+assertFalse($openFailed['ok'], 'C1-5: installOpenDatabase() reports a failed connection as ok = false');
+assertTrue($openFailed['db'] === null, 'C1-5: ...with no connection object');
+assertTrue($openFailed['error'] !== '', 'C1-5: ...and the technical detail kept for the server log');
+assertFalse((bool) preg_match('/^(?!\s*(\/\/|\*|#)).*@new \\\\mysqli\(/m', $installerSource), 'C1-5: no code line of the installer uses @new mysqli() any more (comments may still mention it)');
+assertContains('installOpenDatabase(DB_HOST, DB_USER, DB_PASS, DB_NAME, (int) $dbPort)', $installerSource, 'C1-5: the installer connects through installOpenDatabase()');
+assertContains('set_exception_handler(', $installerSource, 'C1-5: anything unexpected after connecting shows a plain page, not raw database text');
+
+// ==============================================================================
+// 🔒 Codex C1 findings 1-3: the installer's order of work (the database
+//    behaviour itself is proven on real MySQL/MariaDB in
+//    tests/integration/migrations_real_mysql.php Scenario L).
+// ==============================================================================
+$posLock      = strpos($installerSource, 'migrationDbAcquireInstallerLock($mysqli)');
+$posRecheck   = strpos($installerSource, '} elseif (installIsLocked($lockPaths)) {');
+$posInstall   = strpos($installerSource, 'migrationDbRunInstallSql($mysqli, $installSQL)');
+$posSeedState = strpos($installerSource, '$seedState = migrationDbSeedDataState($mysqli);');
+$posSeedRun   = strpos($installerSource, 'migrationDbRunSeedSql($mysqli, $seedSQL)');
+$posFinal     = strpos($installerSource, '$finalSeedState = migrationDbSeedDataState($mysqli);');
+$posLockFile  = strpos($installerSource, '@file_put_contents($lockFile, $lockContent)');
+assertTrue($posLock !== false && $posInstall !== false && $posLock < $posInstall, 'C1-2: the installer takes its database lock before creating any table');
+assertTrue($posRecheck !== false && $posLock < $posRecheck && $posRecheck < $posInstall, 'C1-2: ...and checks the lock FILE again once it has the lock');
+assertTrue($posSeedState !== false && $posSeedRun !== false && $posSeedState < $posSeedRun, 'C1-1: it asks how much starting data is there before loading any');
+assertFalse(str_contains($installerSource, '$mysqli->multi_query($seedSQL)'), 'C1-1: the starting data is no longer loaded with a bare multi_query() (it goes through the all-or-nothing loader)');
+assertTrue($posFinal !== false && $posLockFile !== false && $posFinal < $posLockFile, 'C1-1: the starting data is checked complete before the lock file is written');
+assertMatches("/\\\$seedState\\['state'\\] === 'partial'\\) \\{.*?\\\$seedStepFailed = true;/s", $installerSource, 'C1-1: a PART-loaded database stops the install (no lock)');
+assertMatches("/elseif \\(!file_exists\\(\\\$seedSQLPath\\)\\) \\{\\s*\\\$results\\[\\] = \\[\\s*'status' => 'error',.*?\\\$seedStepFailed = true;/s", $installerSource, 'C1-3: a missing seed file is an error that stops the install (no lock)');
+
