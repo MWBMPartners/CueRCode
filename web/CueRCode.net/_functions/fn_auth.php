@@ -309,11 +309,15 @@ function issueEmailVerificationLink(int $userID, string $email, ?string $display
     }
 
     // 🔥 #128: burn the earlier unused tokens (never the one just made).
+    //    Review fix M4: only tokens with a SMALLER number are burned (`<`, not
+    //    `<>`). Two requests at the same moment each make a token; with `<>`
+    //    each would burn the other's, leaving the person with no working link.
+    //    With `<` the higher-numbered one always survives.
     if ($invalidateEarlier) {
         try {
             $burnStmt = dbQuery(
                 'UPDATE `tblEmailVerifications` SET `usedAt` = NOW() '
-                . 'WHERE `userID` = ? AND `usedAt` IS NULL AND `verificationID` <> ?',
+                . 'WHERE `userID` = ? AND `usedAt` IS NULL AND `verificationID` < ?',
                 'ii',
                 [$userID, $newVerificationID]
             );
@@ -553,6 +557,11 @@ if (!defined('CUERCODE_RESEND_VERIFICATION_MESSAGE')) {
  * @var string The name written to the request log for this form, so its
  * requests can be counted separately from the rest of the site's traffic.
  */
+/** @var int Shortest time (microseconds) the new-link request takes to answer, so timing does not show whether an address is waiting (review fix M3). */
+if (!defined('CUERCODE_RESEND_MIN_RESPONSE_MICROSECONDS')) {
+    define('CUERCODE_RESEND_MIN_RESPONSE_MICROSECONDS', 250000);
+}
+
 if (!defined('CUERCODE_RESEND_VERIFICATION_ENDPOINT')) {
     define('CUERCODE_RESEND_VERIFICATION_ENDPOINT', 'page/resend-verification');
 }
@@ -706,13 +715,25 @@ function countVerificationResendRequestsFromIp(string $ipAddress): int
  * issueEmailVerificationLink() that sign-up uses, and earlier unused links
  * for the account stop working.
  *
- * Nothing written to a log carries the address, the link or the token: the
- * activity row names only the account number.
+ * The activity rows THIS function writes carry no address, link or token: they
+ * name only the account number. Be aware that the shared queueEmail() writes
+ * its own `email_queued` activity row, and that row DOES contain the
+ * recipient's address (it is the email audit trail's deliberate design, so an
+ * operator can see who was sent what). Only the link and token are kept out
+ * of every log. Review fix M5 corrected an earlier comment that claimed
+ * "nothing written to a log" held the address.
+ *
+ * Time and noise limits (review fix M3): the answer is held back until at
+ * least CUERCODE_RESEND_MIN_RESPONSE_MICROSECONDS have passed since the
+ * request began, so how long it takes does not show whether the address is
+ * waiting; and a person or program hammering one account's address writes at
+ * most ONE `verification_link_resend_limited` row per account per hour.
  *
  * Known, accepted limits: two requests at exactly the same instant could both
- * pass the per-account gap check (the per-IP cap still applies); and the work
- * done for a waiting account takes a few milliseconds longer than for an
- * unknown address.
+ * pass the per-account gap check (the per-IP cap still applies), and could
+ * both write the hourly limited row; and the fixed minimum time only hides
+ * differences smaller than itself (a slow database or mail queue could still
+ * take longer than that for a waiting account).
  *
  * @param string $email     Address typed into the form (checked by the caller too)
  * @param string $ipAddress Client IP address
@@ -723,6 +744,89 @@ function countVerificationResendRequestsFromIp(string $ipAddress): int
  * @see issueEmailVerificationLink()
  */
 function requestNewVerificationLink(string $email, string $ipAddress): array
+{
+    // ⏱️ Review fix M3: note when the request began, do the work, then wait
+    //    out whatever is left of the fixed minimum time.
+    $startedAtNanos = hrtime(true);
+    $result         = requestNewVerificationLinkWork($email, $ipAddress);
+    padResponseToMinimumDuration($startedAtNanos, CUERCODE_RESEND_MIN_RESPONSE_MICROSECONDS);
+
+    return $result;
+}
+
+/**
+ * ⏱️ Wait until at least $minimumMicroseconds have passed since $startedAtNanos.
+ *
+ * Used so a "we have sent a link if that address is waiting" answer takes the
+ * same time whether or not the address is waiting. $nowNanos and $sleeper
+ * exist so a test can check the arithmetic without really waiting.
+ *
+ * @param int           $startedAtNanos      hrtime(true) taken when the request began
+ * @param int           $minimumMicroseconds Shortest total time allowed
+ * @param callable|null $sleeper             Called with the microseconds to wait (default usleep)
+ * @param int|null      $nowNanos            Current hrtime(true) (default: read the clock)
+ * @return int Microseconds waited (0 when the minimum had already passed)
+ */
+function padResponseToMinimumDuration(int $startedAtNanos, int $minimumMicroseconds, ?callable $sleeper = null, ?int $nowNanos = null): int
+{
+    if ($nowNanos === null) {
+        $nowNanos = hrtime(true);
+    }
+
+    $elapsedMicroseconds = intdiv($nowNanos - $startedAtNanos, 1000);
+    $remaining           = $minimumMicroseconds - $elapsedMicroseconds;
+
+    if ($remaining <= 0) {
+        return 0;
+    }
+
+    if ($sleeper === null) {
+        usleep($remaining);
+    } else {
+        $sleeper($remaining);
+    }
+
+    return $remaining;
+}
+
+/**
+ * 🕐 Has a "link refused by the rate limit" activity row already been written
+ *    for this account in the last hour? (Review fix M3.)
+ *
+ * On any database problem this answers TRUE, so a fault can only ever mean
+ * "write nothing", never "write another row".
+ *
+ * @param int $userID Account number
+ * @return bool
+ */
+function resendLimitedRowWrittenRecently(int $userID): bool
+{
+    try {
+        $stmt = dbQuery(
+            'SELECT COUNT(*) AS `rowCount` FROM `tblActivityLog` '
+            . "WHERE `activityType` = 'verification_link_resend_limited' AND `entityType` = 'user' AND `entityID` = ? "
+            . 'AND `createdAt` >= DATE_SUB(NOW(), INTERVAL 1 HOUR)',
+            'i',
+            [$userID]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        return true;
+    }
+
+    return (is_array($row) && (int) $row['rowCount'] > 0);
+}
+
+/**
+ * 📨 The real work of requestNewVerificationLink(), without the fixed minimum
+ *    time. Call requestNewVerificationLink() instead.
+ *
+ * @param string $email     Address typed into the form
+ * @param string $ipAddress Client IP address
+ * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
+ */
+function requestNewVerificationLinkWork(string $email, string $ipAddress): array
 {
     $genericResult = [
         'success'   => true,
@@ -832,8 +936,10 @@ function requestNewVerificationLink(string $email, string $ipAddress): array
             // 🙈 The account NUMBER only - never the address, link or token.
             logActivity('verification_link_resent', 'A new verification link was requested', 'user', (int) $account['userID'], []);
         }
-    } elseif ($isPending && $decision['reason'] !== 'too_soon' && function_exists('logActivity')) {
-        // 📝 A plain double-click inside the minimum gap is not worth a log row.
+    } elseif ($isPending && $decision['reason'] !== 'too_soon' && function_exists('logActivity') && !resendLimitedRowWrittenRecently((int) $account['userID'])) {
+        // 📝 A plain double-click inside the minimum gap is not worth a log row,
+        //    and (review fix M3) neither is every further request once the
+        //    limit is hit: at most one row per account per hour.
         logActivity(
             'verification_link_resend_limited',
             'A new verification link was refused by the rate limit (' . $decision['reason'] . ')',
@@ -927,6 +1033,19 @@ function verifyEmailToken(string $rawToken): array
 
     $userID = (int) $row['userID'];
 
+    // 🛑 Review fix I1 (belt and braces, decision 0010): an emailed link must
+    // never activate an account that already holds the Global Admin role. The
+    // only way to activate one is `admin_access.php grant --activate`, which
+    // asks for a NEW password. fn_admin.php is loaded here only when needed
+    // (require_once does nothing twice); the role number stays in that file.
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin.php';
+    if (adminUserHoldsGlobalAdminRole($userID)) {
+        if (function_exists('logError')) {
+            logError('warning', 'Verification link refused for a Global Admin account', 'userID ' . $userID);
+        }
+        return $invalidResult;
+    }
+
     // 🔒 Atomically claim the token (usedAt IS NULL guard) BEFORE activating
     // the account, closing the race window between two simultaneous requests
     // for the same token.
@@ -955,7 +1074,7 @@ function verifyEmailToken(string $rawToken): array
     try {
         $activateStmt = dbQuery(
             "UPDATE `tblUsers` SET `emailVerifiedAt` = NOW(), `status` = 'active' "
-            . "WHERE `userID` = ? AND `status` = 'pending'",
+            . "WHERE `userID` = ? AND `status` = 'pending' AND " . adminSqlNotGlobalAdminCondition(),
             'i',
             [$userID]
         );

@@ -1768,7 +1768,7 @@ function eraseUserAccount(int $userID, string $currentPassword, bool $confirm): 
             $recheckRow = $recheckStmt->get_result()->fetch_assoc();
             $recheckStmt->close();
 
-            if ($recheckRow !== null && $recheckRow['roleID'] !== null && (int) $recheckRow['roleID'] === 1) {
+            if ($recheckRow !== null && adminRoleIsGlobalAdmin($recheckRow['roleID'])) {
                 $adminRefusedDuringErase = true;
             } else {
                 $conflictDuringErase = true;

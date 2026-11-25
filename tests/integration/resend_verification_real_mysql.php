@@ -315,6 +315,57 @@ $rvRegUser = rvSelect('SELECT `userID`, `status` FROM `tblUsers` WHERE `email` =
 rvCheck($rvReg['success'] === true && count($rvRegUser) === 1 && $rvRegUser[0]['status'] === 'pending', 'sign-up made a pending account');
 rvCheck(rvTokenCount((int) $rvRegUser[0]['userID'], true) === 1 && rvQueueCount() === 1, 'with one unused token and one queued email');
 
+// ------------------------------------------------------------------ 8
+echo PHP_EOL . 'Scenario 8 (review fix M3): the limit is logged at most once an hour per account' . PHP_EOL;
+rvReset();
+$rvF = rvUser('f', 'pending', false);
+for ($rvI = 0; $rvI < 5; $rvI++) {
+    rvOldToken($rvF, 'f' . $rvI, 3600 + $rvI);
+}
+for ($rvI = 0; $rvI < 4; $rvI++) {
+    requestNewVerificationLink(rvAddr('f'), '203.0.113.20');
+}
+$rvLimited = rvSelect("SELECT COUNT(*) AS `c` FROM `tblActivityLog` WHERE `activityType` = 'verification_link_resend_limited' AND `entityID` = ?", 'i', [$rvF]);
+rvCheck((int) $rvLimited[0]['c'] === 1, 'four refused requests in a row wrote ONE limited row (not four)');
+rvCheck(rvTokenCount($rvF) === 5, '...and made no new token');
+rvExec("UPDATE `tblActivityLog` SET `createdAt` = DATE_SUB(NOW(), INTERVAL 2 HOUR) WHERE `activityType` = 'verification_link_resend_limited'");
+requestNewVerificationLink(rvAddr('f'), '203.0.113.20');
+$rvLimited = rvSelect("SELECT COUNT(*) AS `c` FROM `tblActivityLog` WHERE `activityType` = 'verification_link_resend_limited' AND `entityID` = ?", 'i', [$rvF]);
+rvCheck((int) $rvLimited[0]['c'] === 2, 'an hour later the next refusal is logged again (2 rows)');
+
+// ------------------------------------------------------------------ 9
+echo PHP_EOL . 'Scenario 9 (review fix M3): answer time does not depend on whether the address is waiting' . PHP_EOL;
+rvReset();
+$rvG = rvUser('g', 'pending', false);
+$rvTimes = [];
+foreach (['g' => rvAddr('g'), 'nobody' => rvAddr('nobody-at-all')] as $rvLabel => $rvAddress) {
+    $rvStartedAt = hrtime(true);
+    requestNewVerificationLink($rvAddress, '203.0.113.21');
+    $rvTimes[$rvLabel] = (hrtime(true) - $rvStartedAt) / 1000000;
+}
+rvCheck($rvTimes['g'] >= 245 && $rvTimes['nobody'] >= 245, 'both took at least the fixed minimum (waiting ' . round($rvTimes['g']) . ' ms, unknown ' . round($rvTimes['nobody']) . ' ms)');
+
+// ------------------------------------------------------------------ 10
+echo PHP_EOL . 'Scenario 10 (review fix M4): only SMALLER-numbered tokens are retired' . PHP_EOL;
+rvReset();
+$rvH = rvUser('h', 'pending', false);
+rvOldToken($rvH, 'h-old', 7200);
+$rvOldID = (int) rvSelect('SELECT MAX(`verificationID`) AS `m` FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$rvH])[0]['m'];
+issueEmailVerificationLink($rvH, rvAddr('h'), null, true);
+$rvNewID = (int) rvSelect('SELECT MAX(`verificationID`) AS `m` FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$rvH])[0]['m'];
+rvCheck($rvNewID > $rvOldID, 'the new token has the higher number');
+rvCheck((int) rvSelect('SELECT COUNT(*) AS `c` FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL AND `verificationID` = ?', 'ii', [$rvH, $rvNewID])[0]['c'] === 1, 'the newest is unused');
+rvCheck((int) rvSelect('SELECT COUNT(*) AS `c` FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL AND `verificationID` = ?', 'ii', [$rvH, $rvOldID])[0]['c'] === 0, 'the older one is retired');
+// 🔁 A token with a HIGHER number than ours (made by a request at the same moment) must survive our retire step.
+rvExec('INSERT INTO `tblEmailVerifications` (`userID`, `tokenHash`, `expiresAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR))', 'is', [$rvH, hash('sha256', 'rv-h-other')]);
+$rvOtherID = (int) rvSelect('SELECT MAX(`verificationID`) AS `m` FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$rvH])[0]['m'];
+$rvBurn = getDB()->prepare('UPDATE `tblEmailVerifications` SET `usedAt` = NOW() WHERE `userID` = ? AND `usedAt` IS NULL AND `verificationID` < ?');
+$rvBurnBelow = $rvNewID; // ours: the smaller number of the two
+$rvBurn->bind_param('ii', $rvH, $rvBurnBelow);
+$rvBurn->execute();
+$rvBurn->close();
+rvCheck((int) rvSelect('SELECT COUNT(*) AS `c` FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL AND `verificationID` = ?', 'ii', [$rvH, $rvOtherID])[0]['c'] === 1, 'a higher-numbered unused token is left alone by the same retire rule');
+
 rvReset();
 echo PHP_EOL . ($rvFailures === 0 ? 'ALL CHECKS PASSED' : $rvFailures . ' CHECK(S) FAILED') . PHP_EOL;
 exit($rvFailures === 0 ? 0 : 1);

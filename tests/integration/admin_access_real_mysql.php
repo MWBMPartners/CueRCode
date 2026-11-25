@@ -167,6 +167,44 @@ if (isset($aiArguments[0]) && $aiArguments[0] === '--run-admin-cli') {
 }
 
 // ==============================================================================
+// 👶 Self-invoked CHILD mode 2 (review fix M2): call adminRecordFirstSeen() at a
+//    shared start time, so several processes really do race for the same admin.
+// php <this file> --run-first-seen --db=<name> --user=<userID> --start=<unix time with decimals>
+// ==============================================================================
+if (isset($aiArguments[0]) && $aiArguments[0] === '--run-first-seen') {
+    $aiRaceDb = '';
+    $aiRaceUser = 0;
+    $aiRaceAt = 0.0;
+    foreach ($aiArguments as $aiRaceArgument) {
+        if (str_starts_with($aiRaceArgument, '--db=')) {
+            $aiRaceDb = substr($aiRaceArgument, 5);
+        } elseif (str_starts_with($aiRaceArgument, '--user=')) {
+            $aiRaceUser = (int) substr($aiRaceArgument, 7);
+        } elseif (str_starts_with($aiRaceArgument, '--start=')) {
+            $aiRaceAt = (float) substr($aiRaceArgument, 8);
+        }
+    }
+
+    if (preg_match('/^cuercode_it_[a-z0-9_]+$/', $aiRaceDb) !== 1 || $aiRaceUser < 1) {
+        fwrite(STDERR, 'Refusing: bad arguments.' . PHP_EOL);
+        exit(9);
+    }
+
+    aiDefineDatabase($aiRaceDb);
+    require_once $aiSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+    require_once $aiSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin.php';
+    restore_error_handler();
+    restore_exception_handler();
+
+    // ⏱️ Everything is loaded; wait for the shared start time, then go.
+    while (microtime(true) < $aiRaceAt) {
+        usleep(1000);
+    }
+    adminRecordFirstSeen(['userID' => $aiRaceUser]);
+    exit(0);
+}
+
+// ==============================================================================
 // 🛡️ Step 1: safety - only ever a throwaway database named cuercode_it_*
 // ==============================================================================
 $aiBaseName = aiEnv('NAME');
@@ -707,6 +745,48 @@ foreach (['suspended' => 'is suspended', 'deleted' => 'is deleted', 'ssoonly' =>
 $aiRun = aiCli($aiDbName, ['grant', 'nobody@it.cuercode.invalid', '--yes']);
 aiCheck('D', $aiRun['exit'] === 2 && str_contains($aiRun['err'], 'No account has that email'), 'unknown email refused (exit 2)');
 
+// ------------------------------------------------------------------------------
+// D2. Review fix I1: a grant on an account that is not active with a checked
+//     email is REFUSED without --activate, and an emailed link can never
+//     activate an account that already holds the Global Admin role.
+// ------------------------------------------------------------------------------
+echo PHP_EOL . 'D2. Review fix I1 (no grant without --activate; links never activate an admin)' . PHP_EOL;
+require_once $aiSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_auth.php';
+$aiPendingEmail = 'pendingi1@it.cuercode.invalid';
+$aiPendingPlain = 'Pending-' . bin2hex(random_bytes(8));
+aiInsertRows($aiServer, 'INSERT INTO `tblUsers` (`email`, `passwordHash`, `displayName`, `status`) VALUES (?, ?, ?, ?)', 'ssss', [
+    [$aiPendingEmail, $aiHash($aiPendingPlain), 'IT pending', 'pending'],
+]);
+$aiPendingID = (int) aiRow($aiServer, 'SELECT `userID` FROM `tblUsers` WHERE `email` = ?', 's', [$aiPendingEmail])['userID'];
+
+$aiRun = aiCli($aiDbName, ['grant', $aiPendingEmail, '--yes']);
+aiCheck('D2', $aiRun['exit'] === 2 && str_contains($aiRun['err'], '--activate'), 'grant on a pending account WITHOUT --activate: exit 2 and the message names --activate (got ' . $aiRun['exit'] . ')');
+$aiPendingRow = aiRow($aiServer, 'SELECT `roleID`, `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiPendingID]);
+aiCheck('D2', $aiPendingRow['roleID'] === null && $aiPendingRow['status'] === 'pending' && $aiPendingRow['emailVerifiedAt'] === null, '...and nothing changed (no role, still pending)');
+aiCheck('D2', aiCount($aiServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'admin.grant' AND `entityKey` = ?", 's', [(string) $aiPendingID]) === 0, '...and no grant row was written');
+
+// 🛠️ A hand-made admin (as in phpMyAdmin) that is still pending, with a live emailed link.
+$aiServer->query('UPDATE `tblUsers` SET `roleID` = 1 WHERE `userID` = ' . (int) $aiPendingID);
+$aiRawLink = bin2hex(random_bytes(16));
+aiInsertRows($aiServer, 'INSERT INTO `tblEmailVerifications` (`userID`, `tokenHash`, `expiresAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR))', 'is', [
+    [$aiPendingID, hashToken($aiRawLink)],
+]);
+$aiVerify = verifyEmailToken($aiRawLink);
+aiCheck('D2', $aiVerify['success'] === false, 'verifyEmailToken() refuses an account that already holds the Global Admin role');
+$aiPendingRow = aiRow($aiServer, 'SELECT `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiPendingID]);
+aiCheck('D2', $aiPendingRow['status'] === 'pending' && $aiPendingRow['emailVerifiedAt'] === null, '...the account stays pending with no checked email');
+aiCheck('D2', aiCount($aiServer, 'SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$aiPendingID]) === 1, '...and the link was not used up');
+
+// 👤 Without the role, the same link still works (the ordinary path is unharmed).
+$aiServer->query('UPDATE `tblUsers` SET `roleID` = NULL WHERE `userID` = ' . (int) $aiPendingID);
+$aiVerify = verifyEmailToken($aiRawLink);
+aiCheck('D2', $aiVerify['success'] === true, 'the same link activates an ordinary pending account');
+aiCheck('D2', aiRow($aiServer, 'SELECT `status` FROM `tblUsers` WHERE `userID` = ?', 'i', [$aiPendingID])['status'] === 'active', '...which is now active');
+
+// 🧹 Remove the temporary account so later counts are unchanged.
+$aiServer->query('DELETE FROM `tblEmailVerifications` WHERE `userID` = ' . (int) $aiPendingID);
+$aiServer->query('DELETE FROM `tblUsers` WHERE `userID` = ' . (int) $aiPendingID);
+
 // ==============================================================================
 // E. CLI list
 // ==============================================================================
@@ -767,6 +847,31 @@ $aiServer->query("INSERT INTO `tblAdminAuditLog` (`actorUserID`, `actorType`, `a
 adminRecordFirstSeen($aiHandAdmin);
 adminRecordFirstSeen($aiHandAdmin);
 aiCheck('H', aiCount($aiServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'admin.first_seen' AND `entityKey` = ?", 's', [(string) $aiUserIDs['hand']]) === 2, 'after a revoke and a hand-made re-grant, ONE more first_seen row is written (2 in total)');
+
+// 🏁 Review fix M2: two PHP processes call adminRecordFirstSeen() at the SAME
+//    moment for a Global Admin made by hand that has no grant row yet. The row
+//    lock on the admin's own tblUsers row must let exactly ONE audit row in.
+$aiRaceEmail = 'race@it.cuercode.invalid';
+aiInsertRows($aiServer, 'INSERT INTO `tblUsers` (`email`, `emailVerifiedAt`, `passwordHash`, `displayName`, `status`, `roleID`) VALUES (?, NOW(), ?, ?, ?, ?)', 'ssssi', [
+    [$aiRaceEmail, $aiHash('Race-' . bin2hex(random_bytes(8))), 'IT race', 'active', 1],
+]);
+$aiRaceID = (int) aiRow($aiServer, 'SELECT `userID` FROM `tblUsers` WHERE `email` = ?', 's', [$aiRaceEmail])['userID'];
+$aiRaceStart = microtime(true) + 3.0;
+$aiRaceProcs = [];
+for ($aiRaceN = 0; $aiRaceN < 4; $aiRaceN++) {
+    $aiRaceCommand = [PHP_BINARY, __FILE__, '--run-first-seen', '--db=' . $aiDbName, '--user=' . $aiRaceID, '--start=' . $aiRaceStart];
+    $aiRaceProcs[] = proc_open($aiRaceCommand, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $aiRacePipes[$aiRaceN]);
+}
+foreach ($aiRaceProcs as $aiRaceN => $aiRaceProc) {
+    if (is_resource($aiRaceProc)) {
+        stream_get_contents($aiRacePipes[$aiRaceN][1]);
+        stream_get_contents($aiRacePipes[$aiRaceN][2]);
+        proc_close($aiRaceProc);
+    }
+}
+aiCheck('H', aiCount($aiServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'admin.first_seen' AND `entityKey` = ?", 's', [(string) $aiRaceID]) === 1, 'M2: four processes racing at the same moment write exactly ONE admin.first_seen row (row lock, no server-wide named lock)');
+$aiServer->query('DELETE FROM `tblAdminAuditLog` WHERE `entityKey` = \'' . (int) $aiRaceID . '\'');
+$aiServer->query('DELETE FROM `tblUsers` WHERE `userID` = ' . (int) $aiRaceID);
 
 // ==============================================================================
 // I. The erasure guard

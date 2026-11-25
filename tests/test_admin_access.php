@@ -402,13 +402,16 @@ assertEquals('no_password', adminGrantDecision([$aaAccount(['hasPassword' => '0'
 $aaGrant = adminGrantDecision([$aaAccount([])], true);
 assertTrue($aaGrant['outcome'] === 'grant' && $aaGrant['activates'] === true, 'grant --activate on a pending account: grant and activate');
 $aaGrant = adminGrantDecision([$aaAccount([])], false);
-assertTrue($aaGrant['outcome'] === 'grant' && $aaGrant['activates'] === false && count($aaGrant['warnings']) === 1, 'grant on a pending account without --activate: grant, with a warning');
+assertTrue($aaGrant['outcome'] === 'refuse' && $aaGrant['code'] === 'needs_activation' && $aaGrant['activates'] === false, 'I1: grant on a pending account without --activate is REFUSED (the new password of decision 0010 must happen)');
+assertContains('--activate', $aaGrant['message'], 'I1: the refusal tells the operator to add --activate');
+$aaGrant = adminGrantDecision([$aaAccount(['status' => 'active', 'emailVerifiedAt' => null])], false);
+assertEquals('needs_activation', $aaGrant['code'], 'I1: grant on an active account whose email was never checked, without --activate, is refused');
 $aaGrant = adminGrantDecision([$aaAccount(['status' => 'active', 'emailVerifiedAt' => '2026-01-01 00:00:00'])], true);
 assertTrue($aaGrant['outcome'] === 'grant' && $aaGrant['activates'] === false && $aaGrant['warnings'] === [], 'grant on an active, verified account: nothing to activate, no warning');
 assertEquals('nothing', adminGrantDecision([$aaAccount(['roleID' => '1', 'status' => 'active', 'emailVerifiedAt' => '2026-01-01 00:00:00'])], true)['outcome'], 'grant on an existing working admin: nothing to do');
 $aaGrant = adminGrantDecision([$aaAccount(['roleID' => 1])], true);
 assertTrue($aaGrant['outcome'] === 'grant' && $aaGrant['activates'], 'grant --activate on an admin that is still pending: activates');
-assertEquals('nothing', adminGrantDecision([$aaAccount(['roleID' => 1])], false)['outcome'], 'grant without --activate on a pending admin: nothing to do (with a warning)');
+assertEquals('needs_activation', adminGrantDecision([$aaAccount(['roleID' => 1])], false)['code'], 'I1: grant without --activate on a pending admin is refused too');
 
 // ------------------------------------------------------------------------------
 // 🔐 Decision 0010: activating an account that has not proved its email
@@ -785,9 +788,31 @@ assertEquals(
 assertFalse(str_contains((string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'robots.txt'), 'admin'), 'robots.txt does not advertise /admin/');
 
 // 🧪 1B review fixes (#31): wording and ordering guards.
-assertFalse((bool) preg_match('/^\s*Header (?!always )(set|unset|append)/m', $aaHtaccess), 'admin .htaccess: every Header line is "Header always set" (review finding I)');
+assertFalse((bool) preg_match('/^\s*Header (set|append)/m', $aaHtaccess), 'admin .htaccess: no plain "Header set"/"Header append" (review finding I); only "Header always set" and unset lines');
+// 🔁 Review fix M1: on a real Apache the site's plain "Header set" and the admin's "Header always set"
+//    BOTH reach the browser unless the site value is removed first. Each admin header must be unset
+//    (plain and always) BEFORE it is set. (Checked on a real Apache 2.4.71 in Docker, 2026-11-25.)
+foreach (['X-Frame-Options', 'Cache-Control', 'X-Robots-Tag', 'Content-Security-Policy'] as $aaHeaderName) {
+    $aaUnsetPos  = strpos($aaHtaccess, 'Header unset ' . $aaHeaderName);
+    $aaAlwaysPos = strpos($aaHtaccess, 'Header always unset ' . $aaHeaderName);
+    $aaSetPos    = strpos($aaHtaccess, 'Header always set ' . $aaHeaderName);
+    assertTrue($aaUnsetPos !== false && $aaAlwaysPos !== false && $aaSetPos !== false && $aaUnsetPos < $aaSetPos && $aaAlwaysPos < $aaSetPos, 'M1: admin .htaccess removes ' . $aaHeaderName . ' (plain and always) before setting it, so it is sent once');
+}
+assertContains('ExpiresActive Off', $aaHtaccess, 'M1: admin .htaccess switches mod_expires off so static files get no second Cache-Control');
 
 $aaGateSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin.php');
+// 🔒 Review fix M2: the first-seen check locks the admin's own row, never a server-wide named lock.
+$aaFirstSeenStart = strpos($aaGateSource, 'function adminRecordFirstSeen(');
+$aaFirstSeenBody  = substr($aaGateSource, (int) $aaFirstSeenStart, 6000);
+$aaFirstSeenBody  = substr($aaFirstSeenBody, 0, (int) strpos($aaFirstSeenBody, "// 🗄️ DATABASE"));
+assertTrue($aaFirstSeenStart !== false && $aaFirstSeenBody !== '', 'M2 sanity: adminRecordFirstSeen() found');
+assertFalse(str_contains($aaFirstSeenBody, 'GET_LOCK') || str_contains($aaFirstSeenBody, 'RELEASE_LOCK'), 'M2: adminRecordFirstSeen() uses no server-wide GET_LOCK()');
+assertContains('FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE', $aaFirstSeenBody, 'M2: it locks the admin\'s own tblUsers row (SELECT ... FOR UPDATE)');
+assertContains('begin_transaction()', $aaFirstSeenBody, 'M2: inside a short transaction');
+assertFalse(str_contains($aaGateSource, 'CUERCODE_ADMIN_FIRST_SEEN_LOCK_PREFIX'), 'M2: the named-lock prefix constant is gone');
+// 🛑 Review fix I1: the helper that verifyEmailToken() relies on.
+assertTrue(function_exists('adminUserHoldsGlobalAdminRole'), 'I1: adminUserHoldsGlobalAdminRole() exists');
+assertTrue(adminUserHoldsGlobalAdminRole(1) === true, 'I1: with no database, the helper answers "treat as admin" (a fault can only refuse, never allow)');
 $aaGateStart  = strpos($aaGateSource, 'function requireGlobalAdminPage(');
 $aaGateBody   = substr($aaGateSource, (int) $aaGateStart, 4500);
 $aaHeadersAt  = strpos($aaGateBody, 'adminSendSecurityHeaders();');

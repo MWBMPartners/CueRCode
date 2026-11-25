@@ -126,11 +126,6 @@ if (!defined('CUERCODE_ADMIN_DENIED_KEY')) {
     define('CUERCODE_ADMIN_DENIED_KEY', 'cuercode_admin_denied_logged');
 }
 
-/** @var string Name prefix of the database lock that stops two pages writing the same admin.first_seen row. */
-if (!defined('CUERCODE_ADMIN_FIRST_SEEN_LOCK_PREFIX')) {
-    define('CUERCODE_ADMIN_FIRST_SEEN_LOCK_PREFIX', 'cuercode_admin_first_seen_');
-}
-
 /** @var string $_SESSION key remembering that the "first seen" check already ran for a user. */
 if (!defined('CUERCODE_ADMIN_FIRST_SEEN_KEY')) {
     define('CUERCODE_ADMIN_FIRST_SEEN_KEY', 'cuercode_admin_first_seen_checked');
@@ -1350,7 +1345,9 @@ function adminCliUsage(): array
         'Usage:',
         '  php admin_access.php grant <email> [--activate] [--yes]',
         '      Make an existing account a Global Admin.',
-        '      --activate  also mark the account active and its email as checked',
+        '      --activate  REQUIRED for an account that is not yet active with a checked',
+        '                  email address (the grant is refused without it). It marks the',
+        '                  account active and its email as checked',
         '                  (for the very first admin, before email sending works).',
         '                  If the account is still waiting for its email check, you',
         '                  must type a NEW password for it (hidden, twice) and every',
@@ -1462,8 +1459,16 @@ function adminGrantDecision(array $rows, bool $activate): array
         $decision['resetsPassword'] = true;
     }
 
+    // 🛑 Review fix I1: an account whose email address has not been proved
+    //    must NEVER be given the Global Admin role without the new-password
+    //    step of decision 0010. Without --activate that step cannot happen, so
+    //    the grant is refused outright (it used to go ahead with a warning,
+    //    leaving a pending account that a stranger's password could reach the
+    //    moment it was activated by an ordinary email link).
     if ($needsActivation && !$activate) {
-        $decision['warnings'][] = 'This account is not active with a checked email address yet, so it cannot open the admin area until it is. Add --activate to do that now.';
+        $decision['code']    = 'needs_activation';
+        $decision['message'] = 'Nothing was changed: this account is not active with a checked email address yet. Add --activate: you will then type a NEW password for it and every earlier way into it will be removed (decision 0010).';
+        return $decision;
     }
 
     if ($alreadyAdmin && !$decision['activates']) {
@@ -1874,6 +1879,44 @@ function adminRenderNotFoundAndExit(): never
     }
 
     exit;
+}
+
+/**
+ * 🔎 Does this account already hold the Global Admin role? (READ only.)
+ *
+ * Used by verifyEmailToken() as a second lock: an ordinary emailed link must
+ * never activate an account that already holds the role (decision 0010
+ * says the only way to activate such an account is `admin_access.php grant
+ * --activate`, which sets a new password). Kept here so the role number
+ * appears only in this file. Any database problem answers TRUE ("treat it as
+ * an admin"), so a fault can only ever refuse an activation, never allow one.
+ *
+ * @param int $userID tblUsers.userID
+ * @return bool True when the account is a Global Admin (or this could not be checked)
+ */
+function adminUserHoldsGlobalAdminRole(int $userID): bool
+{
+    if (!function_exists('dbQuery')) {
+        return true;
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT `roleID` FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
+            'i',
+            [$userID]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        return true;
+    }
+
+    if ($row === null) {
+        return false;
+    }
+
+    return adminRoleIsGlobalAdmin($row['roleID']);
 }
 
 /**
@@ -2622,8 +2665,8 @@ function adminAuditOrFallback(array $entry): bool
  *    first admin page an admin.first_seen row (actor: system) is written -
  *    the log is never silent about it. One INSERT that looks at the MOST
  *    RECENT grant / revoke / first_seen row (a later revoke followed by a
- *    hand-made re-grant gets a new row), inside a per-user database lock so
- *    two pages opened at once cannot write two. Checked once per session; skipped while the audit table does not exist yet.
+ *    hand-made re-grant gets a new row), inside a row lock on the admin's own
+ *    tblUsers row (a short transaction) so two pages opened at once cannot write two. Checked once per session; skipped while the audit table does not exist yet.
  *
  * @param array $admin From requireGlobalAdminPage()
  * @return void
@@ -2658,26 +2701,41 @@ function adminRecordFirstSeen(array $admin): void
         return;
     }
 
-    // 🔒 A named database lock around check + insert, so two admin pages
-    //    opened at the same instant cannot both decide "nothing recorded yet"
-    //    and both insert. The lock is per user and is always released.
-    $lockName   = CUERCODE_ADMIN_FIRST_SEEN_LOCK_PREFIX . $userKey;
-    $lockGained = false;
-
-    try {
-        $lockStmt = dbQuery('SELECT GET_LOCK(?, 5) AS `lockResult`', 's', [$lockName]);
-        $lockRow  = $lockStmt->get_result()->fetch_assoc();
-        $lockStmt->close();
-
-        // GET_LOCK() gives 1 (got it), 0 (timed out) or NULL (error).
-        if ($lockRow !== null && isset($lockRow['lockResult']) && (int) $lockRow['lockResult'] === 1) {
-            $lockGained = true;
-        }
-    } catch (\Throwable $e) {
-        $lockGained = false;
+    // 🔒 Review fix M2: a ROW lock on this admin's own `tblUsers` row, inside
+    //    a short transaction, so two admin pages opened at the same instant
+    //    cannot both decide "nothing recorded yet" and both insert. The lock
+    //    belongs to this database only. (A named server-wide lock is shared by the
+    //    whole MySQL server, so another customer's database on the same
+    //    shared server could hold up or block it.) It ends at commit or
+    //    rollback.
+    if (!function_exists('getDB')) {
+        return;
     }
 
-    if (!$lockGained) {
+    $db                 = getDB();
+    $transactionStarted = false;
+
+    try {
+        $db->begin_transaction();
+        $transactionStarted = true;
+
+        $lockStmt = dbQuery(
+            'SELECT `userID` FROM `tblUsers` WHERE `userID` = ? LIMIT 1 FOR UPDATE',
+            'i',
+            [(int) $admin['userID']]
+        );
+        $lockRow = $lockStmt->get_result()->fetch_assoc();
+        $lockStmt->close();
+
+        if ($lockRow === null) {
+            // The account is gone: nothing to record.
+            adminRollbackQuietly($db);
+            return;
+        }
+    } catch (\Throwable $e) {
+        if ($transactionStarted) {
+            adminRollbackQuietly($db);
+        }
         // Could not get the lock: write nothing now; the next admin page tries again.
         return;
     }
@@ -2713,19 +2771,14 @@ function adminRecordFirstSeen(array $admin): void
             ]
         );
         $stmt->close();
+        $db->commit();
         $written = true;
     } catch (\Throwable $e) {
+        // 🔓 Rolling back also lets go of the row lock.
+        adminRollbackQuietly($db);
         if (function_exists('logError')) {
             logError('warning', 'Admin first-seen audit row could not be written', get_class($e));
         }
-    }
-
-    // 🔓 Always let go of the lock (it also ends with the connection).
-    try {
-        $releaseStmt = dbQuery('SELECT RELEASE_LOCK(?) AS `releaseResult`', 's', [$lockName]);
-        $releaseStmt->close();
-    } catch (\Throwable $e) {
-        // Best effort: the lock ends with the connection anyway.
     }
 
     if (!$written) {
@@ -3220,9 +3273,53 @@ function adminCliTerminalRestore(): void
     $saved = adminCliTerminalState('get');
 
     if ($saved !== '') {
-        adminCliRunStty([$saved]);
+        $restored = adminCliRunStty([$saved]);
         adminCliTerminalState('forget');
+
+        // 🆘 Review fix: if putting the terminal back FAILED, the operator may
+        //    be typing blind, so say how to fix it (on the error channel, so a
+        //    redirect of the normal output does not hide it).
+        if ($restored === null && defined('STDERR')) {
+            fwrite(STDERR, PHP_EOL . 'The terminal could not be put back as it was. If your typing is invisible, type "stty sane" and press Enter.' . PHP_EOL);
+        }
     }
+}
+
+/**
+ * 🧹 Throw away anything already typed or pasted ahead on the keyboard input.
+ *
+ * Without this, text pasted after the answer to an earlier question (for
+ * example "you@example.com" followed by a password on the next line) would be
+ * taken as the answer to the NEXT hidden prompt. Reads and drops whatever is
+ * waiting, without waiting for more. Best effort: a terminal that cannot be
+ * read without waiting is left alone.
+ *
+ * @return int How many bytes were thrown away (0 when nothing was waiting)
+ */
+function adminCliDiscardPendingInput(): int
+{
+    if (!defined('STDIN') || !function_exists('stream_set_blocking')) {
+        return 0;
+    }
+
+    $discarded = 0;
+
+    if (!@stream_set_blocking(STDIN, false)) {
+        return 0;
+    }
+
+    // A pasted-ahead block is short; the cap only guards against a never-ending stream.
+    for ($rounds = 0; $rounds < 64; $rounds++) {
+        $chunk = fread(STDIN, 8192);
+        if (!is_string($chunk) || $chunk === '') {
+            break;
+        }
+        $discarded += strlen($chunk);
+    }
+
+    stream_set_blocking(STDIN, true);
+
+    return $discarded;
 }
 
 /**
@@ -3282,6 +3379,10 @@ function adminCliReadHiddenLine(string $prompt): array
         adminCliTerminalRestore();
         return ['ok' => false, 'line' => null, 'error' => 'your typing could not be hidden, so nothing was read'];
     }
+
+    // 🧹 Review fix: drop anything pasted ahead BEFORE asking, so earlier
+    //    pasted text is never taken as this password.
+    adminCliDiscardPendingInput();
 
     fwrite(STDOUT, $prompt);
     $raw = fgets(STDIN);
@@ -3390,6 +3491,8 @@ function adminCliAskNewPasswordHash(): array
     $signalsGuarded = adminCliGuardSignalsWhileTyping(true);
 
     fwrite(STDOUT, adminCliPasswordRulesText($minLength) . PHP_EOL);
+    // 🆘 Review fix: the hint is also useful when the terminal could not be
+    //    restored; adminCliTerminalRestore() prints it in that case.
     if (!$signalsGuarded) {
         fwrite(STDOUT, '(If you stop with Ctrl+C and your typing stays invisible afterwards, type "stty sane" and press Enter.)' . PHP_EOL);
     }

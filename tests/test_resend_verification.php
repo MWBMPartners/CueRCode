@@ -184,7 +184,7 @@ $rvRegister = substr($rvAuth, $rvRegStart, $rvRegEnd - $rvRegStart);
 assertContains('issueEmailVerificationLink(', $rvRegister, 'Guard: sign-up makes its link with the shared helper');
 assertFalse(str_contains($rvRegister, 'INSERT INTO `tblEmailVerifications`'), 'Guard: sign-up no longer has its own copy of the token insert');
 assertContains('issueEmailVerificationLink((int) $account[\'userID\'], $normalizedEmail, $displayName, true)', $rvSection, 'Guard: the resend uses the same helper and retires earlier links');
-assertContains("`usedAt` IS NULL AND `verificationID` <> ?", $rvAuth, 'Guard: earlier unused links are retired, never the new one');
+assertContains("`usedAt` IS NULL AND `verificationID` < ?", $rvAuth, 'Guard: earlier unused links are retired, never the new one');
 assertContains("(string) \$account['status'] === 'pending'", $rvSection, 'Guard: only a pending account is eligible');
 assertContains("\$account['emailVerifiedAt'] === null", $rvSection, 'Guard: only an account with no verified time is eligible');
 assertFalse(str_contains($rvSection, 'logError(\'error\', \'Resend-verification lookup failed\', $email'), 'Guard: errors never log the address');
@@ -215,3 +215,43 @@ assertContains('$pageNoIndex     = true;', $rvPage, 'Page: kept out of search re
 assertFalse(str_contains($rvPage, '<table'), 'Page: no layout table');
 assertContains('/resend-verification/', $rvVerify, 'The verify page links to the new-link form');
 assertContains('/resend-verification/', $rvLogin, 'The sign-in page links to the new-link form');
+
+// ==============================================================================
+// 🔧 Section 5: independent-review fixes (I1, M3, M4, M5)
+// ==============================================================================
+
+// ⏱️ M3: the fixed minimum time (pure arithmetic, no real waiting).
+$rvSlept = [];
+$rvSleeper = static function (int $microseconds) use (&$rvSlept): void {
+    $rvSlept[] = $microseconds;
+};
+assertEquals(250000, CUERCODE_RESEND_MIN_RESPONSE_MICROSECONDS, 'M3: the minimum answer time is 250 ms');
+assertEquals(200000, padResponseToMinimumDuration(1000000000, 250000, $rvSleeper, 1000000000 + 50000 * 1000), 'M3: 50 ms spent so far -> waits the remaining 200 ms');
+assertEquals([200000], $rvSlept, 'M3: ...and the sleeper was given 200000 microseconds');
+assertEquals(250000, padResponseToMinimumDuration(5, 250000, $rvSleeper, 5), 'M3: nothing spent -> waits the whole 250 ms');
+assertEquals(0, padResponseToMinimumDuration(0, 250000, $rvSleeper, 300000 * 1000), 'M3: already slower than the minimum -> waits no more');
+assertEquals(2, count($rvSlept), 'M3: a request that was already slow never sleeps');
+$rvStart = hrtime(true);
+requestNewVerificationLink('someone@example.com', '203.0.113.9');
+assertTrue((hrtime(true) - $rvStart) >= 240000 * 1000, 'M3: the real function (503 path here) takes at least about 250 ms');
+assertContains('requestNewVerificationLinkWork($email, $ipAddress)', $rvSection, 'M3: the public function wraps the work and pads the time');
+assertContains('resendLimitedRowWrittenRecently((int) $account[\'userID\'])', $rvSection, 'M3: the limited row is written at most once an hour per account');
+assertContains("`activityType` = 'verification_link_resend_limited'", $rvAuth, 'M3: the once-an-hour check looks at the limited rows');
+
+// 🔥 M4: only SMALLER-numbered tokens are retired.
+assertFalse(str_contains($rvAuth, '`verificationID` <> ?'), 'M4: no `<>` in the retire-earlier-tokens SQL');
+
+// 🙈 M5: the comment no longer claims nothing in a log carries the address.
+assertFalse(str_contains($rvAuth, 'Nothing written to a log carries the address'), 'M5: the false claim about logs is gone');
+assertContains('email_queued', $rvAuth, 'M5: the comment names the email_queued row that does hold the address');
+
+// 🛑 I1: an emailed link never activates a Global Admin account.
+$rvVerifyStart = strpos($rvAuth, 'function verifyEmailToken(');
+$rvVerifyBody  = substr($rvAuth, $rvVerifyStart, strpos($rvAuth, '🚪 loginUser()', $rvVerifyStart) - $rvVerifyStart);
+assertContains('adminUserHoldsGlobalAdminRole($userID)', $rvVerifyBody, 'I1: verifyEmailToken() asks fn_admin.php whether the account is a Global Admin');
+assertContains('adminSqlNotGlobalAdminCondition()', $rvVerifyBody, 'I1: ...and the activation UPDATE itself also refuses a Global Admin');
+assertTrue(
+    strpos($rvVerifyBody, 'adminUserHoldsGlobalAdminRole($userID)') < strpos($rvVerifyBody, 'SET `usedAt` = NOW()'),
+    'I1: the admin check comes BEFORE the token is used up'
+);
+assertFalse(str_contains($rvAuth, 'CUERCODE_ROLE_GLOBAL_ADMIN'), 'I1: fn_auth.php never names the role number');
