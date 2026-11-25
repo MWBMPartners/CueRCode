@@ -692,18 +692,41 @@ function regenerateQrOutputForPatch(string $payload, array $customization): arra
 
     // 📌 Post-process: logo overlay (mirrors generateQRCode() Step 5).
     if (!empty($customization['logo'])) {
+        // 📌 Declared before the try so the finally block below can always see it.
+        $logoPath = null;
         try {
-            $logoPath = null;
             if (function_exists('getLogoPath')) {
                 $logoPath = getLogoPath($customization['logo']);
             }
 
             if ($logoPath !== null) {
+                // 📌 Full notation (project rule): each option with its default.
+                if (isset($customization['logo_size_pct'])) {
+                    $patchLogoSizePct = (int) $customization['logo_size_pct'];
+                } else {
+                    $patchLogoSizePct = 20;
+                }
+                if (isset($customization['logo_padding'])) {
+                    $patchLogoPadding = (bool) $customization['logo_padding'];
+                } else {
+                    $patchLogoPadding = true;
+                }
+                if (isset($customization['logo_padding_pct'])) {
+                    $patchLogoPaddingPct = (int) $customization['logo_padding_pct'];
+                } else {
+                    $patchLogoPaddingPct = 15;
+                }
+                if (isset($customization['logo_padding_shape'])) {
+                    $patchLogoPaddingShape = $customization['logo_padding_shape'];
+                } else {
+                    $patchLogoPaddingShape = 'circle';
+                }
+
                 $logoConfig = [
-                    'size_pct'      => isset($customization['logo_size_pct']) ? (int) $customization['logo_size_pct'] : 20,
-                    'padding'       => isset($customization['logo_padding']) ? (bool) $customization['logo_padding'] : true,
-                    'padding_pct'   => isset($customization['logo_padding_pct']) ? (int) $customization['logo_padding_pct'] : 15,
-                    'padding_shape' => $customization['logo_padding_shape'] ?? 'circle',
+                    'size_pct'      => $patchLogoSizePct,
+                    'padding'       => $patchLogoPadding,
+                    'padding_pct'   => $patchLogoPaddingPct,
+                    'padding_shape' => $patchLogoPaddingShape,
                     'output_format' => $format,
                 ];
 
@@ -716,6 +739,11 @@ function regenerateQrOutputForPatch(string $payload, array $customization): arra
         } catch (\Throwable $e) {
             if (function_exists('logError')) {
                 logError('warning', 'Logo overlay failed during PATCH regeneration', $e->getMessage());
+            }
+        } finally {
+            // 🧹 Codex C5 finding 3: delete the base64 logo's temp file.
+            if (function_exists('cleanUpLogoPath')) {
+                cleanUpLogoPath($customization['logo'], $logoPath);
             }
         }
     }

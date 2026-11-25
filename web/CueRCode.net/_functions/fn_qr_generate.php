@@ -327,9 +327,10 @@ function generateQRCode(string $typeName, array $inputData, array $customization
     // @see fn_qr_logo.php - overlayLogoOnRaster(), overlayLogoOnSVG()
     // ==================================================================
     if (!empty($customization['logo'])) {
+        // 📌 Declared before the try so the finally block below can always see it.
+        $logoPath = null;
         try {
             // 📌 Resolve the logo path
-            $logoPath = null;
             if (function_exists('getLogoPath')) {
                 $logoPath = getLogoPath($customization['logo']);
             }
@@ -384,6 +385,12 @@ function generateQRCode(string $typeName, array $inputData, array $customization
             // The QR code itself is still valid; the logo is a nice-to-have.
             if (function_exists('logError')) {
                 logError('warning', 'Logo overlay failed', $e->getMessage());
+            }
+        } finally {
+            // 🧹 Codex C5 finding 3: delete the temp file a base64 logo was
+            //    written to, now that it has been drawn (whatever happened).
+            if (function_exists('cleanUpLogoPath')) {
+                cleanUpLogoPath($customization['logo'], $logoPath);
             }
         }
     }
@@ -619,8 +626,9 @@ function generatePreview(string $typeName, array $inputData, array $customizatio
     // 📌 Post-process: Logo overlay
     // ==================================================================
     if (!empty($customization['logo'])) {
+        // 📌 Declared before the try so the finally block below can always see it.
+        $logoPath = null;
         try {
-            $logoPath = null;
             if (function_exists('getLogoPath')) {
                 $logoPath = getLogoPath($customization['logo']);
             }
@@ -649,6 +657,11 @@ function generatePreview(string $typeName, array $inputData, array $customizatio
             }
         } catch (\Throwable $e) {
             // ⚠️ Logo overlay failed in preview - continue without logo
+        } finally {
+            // 🧹 Codex C5 finding 3: delete the base64 logo's temp file.
+            if (function_exists('cleanUpLogoPath')) {
+                cleanUpLogoPath($customization['logo'], $logoPath);
+            }
         }
     }
 

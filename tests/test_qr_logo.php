@@ -745,3 +745,90 @@ assertContains(
     (string) $qrLogoSource,
     'overlayLogoOnSVG() signature is unchanged by the #65 fix (it was already working, untouched)'
 );
+
+// ==============================================================================
+// 🔒 Independent review (Codex C5 findings 1-3, 2026-11-25)
+// ==============================================================================
+
+// ------------------------------------------------------------------------------
+// C5-1 (high): a REQUEST-supplied logo path inside the system temp folder used
+// to be accepted, and the SVG overlay embedded the file's bytes as a data URI
+// without checking it was an image - so any readable temp file could be read
+// back through an SVG QR code. Exploit first: a "secret" non-image file in the
+// temp folder, named directly as the logo.
+// ------------------------------------------------------------------------------
+$c51SecretPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_c51_secret_' . bin2hex(random_bytes(6)) . '.txt';
+$c51Secret     = 'TOP-SECRET-' . bin2hex(random_bytes(8));
+file_put_contents($c51SecretPath, $c51Secret);
+$c51Svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100"/></svg>';
+
+assertTrue(getLogoPath($c51SecretPath) === null, 'C5-1: a request naming a file in the system temp folder is refused (no longer an allowed place for a request-supplied path)');
+assertTrue(getLogoPath(realpath($c51SecretPath)) === null, 'C5-1: ...also when given its fully resolved path');
+
+// 🧱 Second layer: even if a non-image path ever reached the SVG overlay, its
+//    bytes must not be embedded.
+$c51Overlaid = overlayLogoOnSVG($c51Svg, $c51SecretPath, ['size_pct' => 20]);
+assertFalse(str_contains($c51Overlaid, base64_encode($c51Secret)), 'C5-1: the SVG overlay does not embed a file that is not an image');
+assertEquals($c51Svg, $c51Overlaid, 'C5-1: ...it returns the QR code unchanged instead');
+unlink($c51SecretPath);
+
+// ✅ Genuine images still work: a real PNG made through the base64 path (an
+//    internally created temp file, passed straight through) is embedded.
+$c51PngImage = imagecreatetruecolor(4, 4);
+ob_start();
+imagepng($c51PngImage);
+$c51PngBytes = (string) ob_get_clean();
+$c51PngPath  = getLogoPath('data:image/png;base64,' . base64_encode($c51PngBytes));
+assertTrue(is_string($c51PngPath) && is_file($c51PngPath), 'C5-1: a base64 PNG logo still resolves to its internal temp file');
+$c51PngOverlaid = overlayLogoOnSVG($c51Svg, (string) $c51PngPath, ['size_pct' => 20]);
+assertContains('data:image/png;base64,' . base64_encode($c51PngBytes), $c51PngOverlaid, 'C5-1: ...and a real PNG is still embedded, labelled image/png');
+
+// ✅ A genuine SVG logo is still embedded too (predefined/emoji logos are SVG).
+$c51SvgLogoPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_c51_logo_' . bin2hex(random_bytes(6)) . '.svg';
+file_put_contents($c51SvgLogoPath, '<?xml version="1.0"?>' . "\n" . '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>');
+assertContains('data:image/svg+xml;base64,', overlayLogoOnSVG($c51Svg, $c51SvgLogoPath, ['size_pct' => 20]), 'C5-1: a genuine SVG logo file is still embedded, labelled image/svg+xml');
+unlink($c51SvgLogoPath);
+
+// ------------------------------------------------------------------------------
+// C5-3: base64 logos written to temp files were never removed. The callers now
+// call cleanUpLogoPath() in a finally block; it deletes ONLY a temp file this
+// request created from a data URI.
+// ------------------------------------------------------------------------------
+cleanUpLogoPath('data:image/png;base64,' . base64_encode($c51PngBytes), (string) $c51PngPath);
+assertFalse(is_file((string) $c51PngPath), 'C5-3: the temp file made from a base64 logo is deleted after use');
+$c51KeepPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_logo_keepme_' . bin2hex(random_bytes(4)) . '.png';
+file_put_contents($c51KeepPath, $c51PngBytes);
+cleanUpLogoPath('5', $c51KeepPath);
+assertTrue(is_file($c51KeepPath), 'C5-3: a logo that did NOT come from a data URI (a predefined logo ID) is never deleted');
+cleanUpLogoPath('data:image/png;base64,AAAA', __FILE__);
+assertTrue(is_file(__FILE__), 'C5-3: a path outside the temp folder is never deleted, whatever the input');
+unlink($c51KeepPath);
+foreach (['fn_qr_generate.php', 'fn_api_qrcodes.php'] as $c53File) {
+    $c53Source = (string) file_get_contents(dirname(__DIR__) . '/web/CueRCode.net/_functions/' . $c53File);
+    assertTrue(
+        substr_count($c53Source, 'cleanUpLogoPath(') === substr_count($c53Source, '= getLogoPath('),
+        'C5-3: every getLogoPath() call in ' . $c53File . ' has a matching cleanUpLogoPath()'
+    );
+    assertTrue(substr_count($c53Source, 'cleanUpLogoPath(') > 0, 'C5-3: ' . $c53File . ' cleans up its logo temp files');
+}
+
+// ------------------------------------------------------------------------------
+// C5-2 (high): an SVG logo had a byte limit but no limit on the size it asks
+// to be drawn at, so a tiny file declaring a huge canvas could exhaust memory
+// or disk when Imagick rasterises it. The shared screener now measures the
+// canvas and refuses anything over CUERCODE_LOGO_MAX_WIDTH x HEIGHT.
+// ------------------------------------------------------------------------------
+$c52Huge = '<svg xmlns="http://www.w3.org/2000/svg" width="200000" height="200000"><rect width="10" height="10"/></svg>';
+assertTrue(strlen($c52Huge) < 200, 'C5-2: the oversized SVG is tiny in bytes (' . strlen($c52Huge) . ')');
+assertFalse(screenSvgLogoContent($c52Huge)['valid'], 'C5-2: the shared screener refuses an SVG asking for a 200000 x 200000 canvas');
+assertTrue(saveBase64LogoToTemp('data:image/svg+xml;base64,' . base64_encode($c52Huge)) === null, 'C5-2: ...so the base64 logo path refuses it before writing anything');
+assertFalse(screenSvgLogoContent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900000 900000"><rect width="1" height="1"/></svg>')['valid'], 'C5-2: a huge viewBox with no width/height is refused (it becomes the canvas)');
+assertFalse(screenSvgLogoContent('<svg xmlns="http://www.w3.org/2000/svg" width="100in" height="100in"></svg>')['valid'], 'C5-2: units are converted (100 inches = 9600 px, over the limit)');
+assertFalse(screenSvgLogoContent('<!-- <svg width="10" height="10"> --><svg xmlns="http://www.w3.org/2000/svg" width="99999" height="99999"></svg>')['valid'], 'C5-2: a decoy <svg> inside a comment does not hide the real one');
+assertFalse(screenSvgLogoContent('<svg xmlns="http://www.w3.org/2000/svg" width="banana" height="10"></svg>')['valid'], 'C5-2: a size that cannot be measured is refused (fail closed)');
+assertTrue(screenSvgLogoContent('<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>')['valid'], 'C5-2: a normal 512 px logo is still accepted');
+assertTrue(screenSvgLogoContent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100%" height="100%"><path d="M0 0h24v24H0z"/></svg>')['valid'], 'C5-2: 100% sizing (the viewBox size) is still accepted');
+assertTrue(screenSvgLogoContent('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h24v24H0z"/></svg>')['valid'], 'C5-2: an SVG with no size at all is still accepted (the renderer uses a small default)');
+$c52Measure = measureSvgLogoCanvas('<svg width="2in" height="30mm"></svg>');
+assertTrue($c52Measure['ok'] && abs($c52Measure['width'] - 192.0) < 0.01 && abs($c52Measure['height'] - 113.39) < 0.01, 'C5-2: measureSvgLogoCanvas() converts inches and millimetres to pixels (96 per inch)');
+assertContains('measureSvgLogoCanvas(', (string) $qrLogoSource, 'C5-2: loadLogoImage() measures an SVG before Imagick rasterises it (covers SVG files on disk too)');

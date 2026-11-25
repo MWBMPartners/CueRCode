@@ -423,14 +423,18 @@ function overlayLogoOnSVG(string $svgContent, string $logoPath, array $config = 
         return $svgContent;
     }
 
-    // 📌 Detect the logo MIME type for the data URI
-    // @see https://www.php.net/manual/en/function.mime-content-type.php
-    $logoMime = 'image/png';
-    if (function_exists('mime_content_type')) {
-        $detectedMime = @mime_content_type($logoPath);
-        if ($detectedMime !== false) {
-            $logoMime = $detectedMime;
+    // 🔒 Independent review (Codex C5 finding 1, 2026-11-25): only embed the
+    //    file if its CONTENT is really an image, and label it by what the
+    //    content is. Before this, any readable file was embedded with
+    //    whatever type mime_content_type() guessed (text/plain included), so
+    //    a non-image could be read back through the QR code.
+    $logoMime = detectEmbeddableLogoMime($logoData);
+
+    if ($logoMime === null) {
+        if (function_exists('logError')) {
+            logError('warning', 'Logo file is not a PNG, JPEG, GIF, WebP or SVG image - not embedded in the SVG QR code', 'Path: ' . $logoPath);
         }
+        return $svgContent;
     }
 
     // 📌 Base64-encode the logo data for embedding in SVG
@@ -466,6 +470,117 @@ function overlayLogoOnSVG(string $svgContent, string $logoPath, array $config = 
     $modifiedSvg = str_replace('</svg>', $imageElement . '</svg>', $svgContent);
 
     return $modifiedSvg;
+}
+
+// ==============================================================================
+// 🔎 detectEmbeddableLogoMime() - what kind of image is this, by its content?
+// ==============================================================================
+
+/**
+ * 🔎 Decide, from the file's CONTENT (never its name), whether a logo may be
+ *    embedded in an SVG QR code, and with which image type
+ *    (independent review, Codex C5 finding 1, 2026-11-25).
+ *
+ * Raster images are recognised by their header (getimagesizefromstring(),
+ * which reads only the first bytes). An SVG is recognised by its first real
+ * element being <svg> once any byte-order mark, XML declaration, comments and
+ * white space are skipped. Anything else - text, PHP, HTML, a session file -
+ * returns null and must not be embedded.
+ *
+ * @param string $bytes The file's contents
+ *
+ * @return string|null 'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+ *                     'image/svg+xml', or null when it is none of these
+ *
+ * @see https://www.php.net/manual/en/function.getimagesizefromstring.php
+ */
+function detectEmbeddableLogoMime(string $bytes): ?string
+{
+    if ($bytes === '') {
+        return null;
+    }
+
+    // 🖼️ Raster: the header decides.
+    $rasterInfo = @getimagesizefromstring($bytes);
+
+    if (is_array($rasterInfo)) {
+        $rasterTypes = [
+            IMAGETYPE_PNG  => 'image/png',
+            IMAGETYPE_JPEG => 'image/jpeg',
+            IMAGETYPE_GIF  => 'image/gif',
+            IMAGETYPE_WEBP => 'image/webp',
+        ];
+
+        if (isset($rasterTypes[$rasterInfo[2]])) {
+            return $rasterTypes[$rasterInfo[2]];
+        }
+
+        return null;
+    }
+
+    // ✏️ SVG: skip a byte-order mark, the XML declaration, comments and
+    //    white space, then the first element must be <svg.
+    $start = $bytes;
+
+    if (str_starts_with($start, "\xEF\xBB\xBF")) {
+        $start = substr($start, 3);
+    }
+
+    $start = (string) preg_replace('/^(\s+|<\?xml\b[^>]*\?>|<!--.*?-->)*/s', '', $start);
+
+    if (preg_match('/^<svg[\s>\/]/i', $start) === 1) {
+        return 'image/svg+xml';
+    }
+
+    return null;
+}
+
+// ==============================================================================
+// 🧹 cleanUpLogoPath() - delete a logo temp file once it has been used
+// ==============================================================================
+
+/**
+ * 🧹 Delete the temporary file getLogoPath() made from a base64 logo, once the
+ *    QR code has been drawn (independent review, Codex C5 finding 3,
+ *    2026-11-25 - before this, every base64 logo left a file behind in the
+ *    temp folder for ever, so repeated requests could fill it up).
+ *
+ * Deliberately narrow - it deletes ONLY when ALL of these hold:
+ *   - the logo input was a data URI (so getLogoPath() wrote a temp file for
+ *     THIS request - predefined, emoji and uploaded logos are never touched);
+ *   - the path is directly inside the system temp folder;
+ *   - the file name starts with saveBase64LogoToTemp()'s own prefix.
+ * Call it in a `finally` block straight after the last use of the path.
+ *
+ * @param mixed       $logoInput The logo value from the request
+ * @param string|null $logoPath  What getLogoPath() returned for it
+ *
+ * @return void
+ */
+function cleanUpLogoPath(mixed $logoInput, ?string $logoPath): void
+{
+    if ($logoPath === null || $logoPath === '') {
+        return;
+    }
+
+    if (!is_string($logoInput) || !str_starts_with($logoInput, 'data:')) {
+        return;
+    }
+
+    $tempFolder = realpath(sys_get_temp_dir());
+    $fileFolder = realpath(dirname($logoPath));
+
+    if ($tempFolder === false || $fileFolder === false || $tempFolder !== $fileFolder) {
+        return;
+    }
+
+    if (!str_starts_with(basename($logoPath), 'cuercode_logo_')) {
+        return;
+    }
+
+    if (is_file($logoPath)) {
+        @unlink($logoPath);
+    }
 }
 
 // ==============================================================================
@@ -563,9 +678,16 @@ function getLogoPath(mixed $logoInput): ?string
     //    uploads/logos directory. We mirror the traversal guard used by the
     //    download handler (fn_api_download.php): realpath() the candidate,
     //    realpath() the base, and reject anything that does not begin with
-    //    "<base>/". The system temp dir is ALSO allowed so that base64 logo
-    //    temp files (written by saveBase64LogoToTemp() under sys_get_temp_dir())
-    //    remain usable if their path is ever round-tripped through Case 3.
+    //    "<base>/".
+    //
+    // 🔒 Independent review (Codex C5 finding 1, 2026-11-25): the system temp
+    //    folder USED to be a second allowed base "in case a base64 temp file's
+    //    path was round-tripped". Nothing does that - Case 3 above returns the
+    //    temp path straight to its caller - but allowing it let a request
+    //    name ANY readable file in the temp folder (other sites' uploads,
+    //    session files...) and, for an SVG QR code, get its bytes back inside
+    //    the image. A request-supplied path may now only point into
+    //    uploads/logos.
     // @see https://www.php.net/manual/en/function.realpath.php
     // @see https://www.php.net/manual/en/function.file-exists.php
     // @see fn_api_download.php - identical realpath-under-base containment guard
@@ -582,15 +704,6 @@ function getLogoPath(mixed $logoInput): ?string
             if ($logosBase !== false) {
                 $allowedBases[] = $logosBase;
             }
-        }
-
-        // 🌡️ Secondary allowed base: the system temp dir (base64 temp logos).
-        //    saveBase64LogoToTemp() writes decoded uploads here; allowing it
-        //    keeps that legitimate path working without widening exposure to
-        //    arbitrary server locations.
-        $tempBase = realpath(sys_get_temp_dir());
-        if ($tempBase !== false) {
-            $allowedBases[] = $tempBase;
         }
 
         // 📌 Candidate 1: the raw input, resolved as-is. (An absolute path or a
@@ -1554,6 +1667,34 @@ function loadLogoImage(string $logoPath): ?\GdImage
                 // @see https://www.php.net/manual/en/imagick.readimageblob.php
                 $svgBytes = @file_get_contents($logoPath);
 
+                // 📐 Independent review (Codex C5 finding 2, 2026-11-25):
+                //    measure the canvas the SVG asks for BEFORE Imagick draws
+                //    it. A tiny file can declare an enormous canvas, and
+                //    Imagick would try to allocate all of it. The intake
+                //    screener already refuses such uploads; this also covers
+                //    any SVG file on disk. Too big, or unreadable: skip.
+                if ($svgBytes !== false && function_exists('measureSvgLogoCanvas')) {
+                    $svgCanvas = measureSvgLogoCanvas($svgBytes);
+
+                    if ($svgCanvas['ok'] !== true
+                        || $svgCanvas['width'] > CUERCODE_LOGO_MAX_WIDTH
+                        || $svgCanvas['height'] > CUERCODE_LOGO_MAX_HEIGHT
+                    ) {
+                        if (function_exists('logError')) {
+                            logError(
+                                'warning',
+                                'SVG logo not rasterised: its canvas is too large or cannot be measured (Codex C5-2)',
+                                'Path: ' . $logoPath
+                            );
+                        }
+                        return null;
+                    }
+                } elseif ($svgBytes !== false) {
+                    // 🔒 Fail closed: without the measuring function
+                    //    (fn_validation.php not loaded) the size is unknown.
+                    $svgBytes = false;
+                }
+
                 if ($svgBytes !== false) {
                     $imagickInstance = new \Imagick();
 
@@ -1569,6 +1710,14 @@ function loadLogoImage(string $logoPath): ?\GdImage
                     //     before handing the bytes to GD.
                     // @see https://www.php.net/manual/en/imagick.setimageformat.php
                     $imagickInstance->setImageFormat('png32');
+                    // 🐞 Found 2026-11-25 while checking Codex C5-2 on a real
+                    //    ImageMagick 7.1.1: the setFormat('svg') above also
+                    //    fixes the OUTPUT format there, so without this line
+                    //    getImageBlob() hands back the SVG text, GD cannot
+                    //    read it, and every raster QR code with an SVG logo
+                    //    silently lost its logo. Harmless on ImageMagick 6.
+                    // @see https://www.php.net/manual/en/imagick.setformat.php
+                    $imagickInstance->setFormat('png32');
                     $rasterisedPngBytes = $imagickInstance->getImageBlob();
 
                     // 🧹 Free the Imagick object's native resources.

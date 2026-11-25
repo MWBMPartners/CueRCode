@@ -31,6 +31,13 @@
  * @see         https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
  */
 
+// 📐 Largest canvas (pixels, each side) an SVG logo may ask to be drawn at -
+//    the same as the raster logo limit (CUERCODE_LOGO_MAX_WIDTH/HEIGHT in
+//    fn_qr_logo.php). Independent review, Codex C5 finding 2, 2026-11-25.
+if (!defined('CUERCODE_SVG_LOGO_MAX_CANVAS')) {
+    define('CUERCODE_SVG_LOGO_MAX_CANVAS', 4096);
+}
+
 // ==============================================================================
 // 🚫 Direct access protection
 // ==============================================================================
@@ -638,7 +645,140 @@ function screenSvgLogoContent(string $svgContent): array
         }
     }
 
+    // ==================================================================
+    // 📌 Step 3: the size the SVG asks to be drawn at (independent review,
+    // Codex C5 finding 2, 2026-11-25). A tiny file can declare an enormous
+    // canvas (width="200000" height="200000"), and turning it into a PNG
+    // (Imagick, for PNG/JPG/GIF/WebP QR codes) would then try to allocate
+    // that whole canvas - enough to exhaust the server's memory or disk.
+    // The same limit as raster logos applies.
+    // ==================================================================
+    $canvas = measureSvgLogoCanvas($svgContent);
+
+    if ($canvas['ok'] !== true) {
+        $result['valid'] = false;
+        $result['error'] = 'SVG content could not be measured: ' . $canvas['error'];
+        return $result;
+    }
+
+    if ($canvas['width'] > CUERCODE_SVG_LOGO_MAX_CANVAS || $canvas['height'] > CUERCODE_SVG_LOGO_MAX_CANVAS) {
+        $result['valid'] = false;
+        $result['error'] = 'SVG logo asks to be drawn too large ('
+            . (int) ceil($canvas['width']) . ' x ' . (int) ceil($canvas['height'])
+            . ' pixels; the most allowed is ' . CUERCODE_SVG_LOGO_MAX_CANVAS . ' x ' . CUERCODE_SVG_LOGO_MAX_CANVAS . ').';
+        return $result;
+    }
+
     return $result;
+}
+
+// ==============================================================================
+// 📐 measureSvgLogoCanvas() - how big does this SVG ask to be drawn?
+// ==============================================================================
+
+/**
+ * 📐 Work out the canvas size, in pixels, that an SVG's outermost <svg> element
+ *    asks for (independent review, Codex C5 finding 2, 2026-11-25).
+ *
+ * Renderers such as librsvg (used by Imagick) draw an SVG at its root width
+ * and height; when those are missing they use the viewBox size; when that is
+ * missing too they use a small default. This follows the same order:
+ *   - width/height may be plain numbers or px, pt, pc, mm, cm, in, em or ex
+ *     (converted at 96 pixels per inch, 16 px per em, 8 px per ex);
+ *   - a percentage is taken of the viewBox size (100% = the viewBox size);
+ *   - a value that cannot be read at all is an error, so the caller refuses
+ *     the logo (fail closed) rather than guess.
+ * Comments are removed first, so a decoy <svg> inside a comment cannot hide
+ * the real one. DOCTYPE and ENTITY declarations are already refused by
+ * screenSvgLogoContent() before this runs.
+ *
+ * Pure: no disk, no database.
+ *
+ * @param string $svgContent Raw SVG markup
+ *
+ * @return array{ok: bool, width: float, height: float, error: string}
+ *         width/height are 0.0 when the SVG declares no size at all
+ */
+function measureSvgLogoCanvas(string $svgContent): array
+{
+    $withoutComments = (string) preg_replace('/<!--.*?-->/s', '', $svgContent);
+
+    if (preg_match('/<svg\b([^>]*)>/i', $withoutComments, $rootMatch) !== 1) {
+        return ['ok' => false, 'width' => 0.0, 'height' => 0.0, 'error' => 'no <svg> element found.'];
+    }
+
+    $rootAttributes = $rootMatch[1];
+
+    // 🔎 Read one attribute from the root tag (either quote style).
+    $readAttribute = static function (string $name) use ($rootAttributes): ?string {
+        if (preg_match('/(?:^|\s)' . preg_quote($name, '/') . '\s*=\s*("([^"]*)"|\'([^\']*)\')/i', $rootAttributes, $attributeMatch) !== 1) {
+            return null;
+        }
+        if (isset($attributeMatch[3]) && $attributeMatch[3] !== '') {
+            return trim($attributeMatch[3]);
+        }
+        return trim($attributeMatch[2]);
+    };
+
+    // 📦 The viewBox size, if there is a readable one.
+    $viewBoxWidth  = 0.0;
+    $viewBoxHeight = 0.0;
+    $viewBoxValue  = $readAttribute('viewBox');
+
+    if ($viewBoxValue !== null && $viewBoxValue !== '') {
+        $viewBoxParts = preg_split('/[\s,]+/', $viewBoxValue);
+
+        if (!is_array($viewBoxParts) || count($viewBoxParts) !== 4 || !is_numeric($viewBoxParts[2]) || !is_numeric($viewBoxParts[3])) {
+            return ['ok' => false, 'width' => 0.0, 'height' => 0.0, 'error' => 'the viewBox could not be read.'];
+        }
+
+        $viewBoxWidth  = abs((float) $viewBoxParts[2]);
+        $viewBoxHeight = abs((float) $viewBoxParts[3]);
+    }
+
+    // 📏 Pixels per unit (96 px per inch, the CSS and SVG standard).
+    $unitPixels = [
+        ''   => 1.0,
+        'px' => 1.0,
+        'pt' => 96.0 / 72.0,
+        'pc' => 16.0,
+        'mm' => 96.0 / 25.4,
+        'cm' => 96.0 / 2.54,
+        'in' => 96.0,
+        'em' => 16.0,
+        'ex' => 8.0,
+    ];
+
+    $sizes = [];
+
+    foreach (['width' => $viewBoxWidth, 'height' => $viewBoxHeight] as $dimensionName => $viewBoxSize) {
+        $rawValue = $readAttribute($dimensionName);
+
+        if ($rawValue === null || $rawValue === '' || strtolower($rawValue) === 'auto') {
+            // No size given: the viewBox size is used (0 if there is none).
+            $sizes[$dimensionName] = $viewBoxSize;
+            continue;
+        }
+
+        if (preg_match('/^([0-9]*\.?[0-9]+(?:e[+-]?[0-9]+)?)\s*(px|pt|pc|mm|cm|in|em|ex|%)?$/i', $rawValue, $lengthMatch) !== 1) {
+            return ['ok' => false, 'width' => 0.0, 'height' => 0.0, 'error' => 'the ' . $dimensionName . ' "' . mb_substr($rawValue, 0, 40) . '" could not be read.'];
+        }
+
+        $number = (float) $lengthMatch[1];
+        $unit   = '';
+
+        if (isset($lengthMatch[2])) {
+            $unit = strtolower($lengthMatch[2]);
+        }
+
+        if ($unit === '%') {
+            $sizes[$dimensionName] = $viewBoxSize * ($number / 100.0);
+        } else {
+            $sizes[$dimensionName] = $number * $unitPixels[$unit];
+        }
+    }
+
+    return ['ok' => true, 'width' => $sizes['width'], 'height' => $sizes['height'], 'error' => ''];
 }
 
 // ==============================================================================
