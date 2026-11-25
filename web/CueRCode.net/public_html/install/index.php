@@ -184,6 +184,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
     foreach (['_uploads' => 'user-uploaded logos and files', '_backups' => 'database and file backups'] as $postFolderName => $postFolderPurpose) {
         $postFolderChecks[] = installCheckWritableFolder($siteRoot . $postFolderName, $postFolderName, $postFolderPurpose);
     }
+    // 🔒 Review finding 9: refuse to start unless the lock can be written
+    //    afterwards (in _auth_keys/ or, failing that, install/).
+    $postFolderChecks[] = installLockFolderCheck($lockPaths);
     $preflightProblems = installPreflightProblems(PHP_VERSION, get_loaded_extensions(), $postFolderChecks);
 
     foreach ($preflightProblems as $preflightProblem) {
@@ -612,9 +615,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                         ];
                         $isLocked = true;
                     } else {
+                        // 🛑 The folder check before the install said this
+                        //    would work; something changed meanwhile. Say so
+                        //    as an ERROR, not a warning: the installer is
+                        //    still reachable until this is fixed.
                         $results[] = [
-                            'status' => 'warning',
-                            'message' => 'Could not create lock file. Please manually restrict access to /install/'
+                            'status' => 'error',
+                            'message' => 'The database is installed, but the installer could not write its lock file, so it is NOT switched off. '
+                                . 'Delete the install folder from the server now (or make _auth_keys writable and create _auth_keys/.installed.lock).'
                         ];
                     }
                 }
@@ -675,6 +683,20 @@ foreach ($storageFolders as $folderName => $folderPurpose) {
         'ok' => $folderCheck['ok']
     ];
 }
+
+// 🔒 Review finding 9: somewhere to write the "already installed" lock
+$lockFolderCheck = installLockFolderCheck($lockPaths);
+if ($lockFolderCheck['ok']) {
+    $lockFolderStatus = 'Writable';
+} else {
+    $lockFolderStatus = $lockFolderCheck['message'];
+}
+$prerequisites[] = [
+    'name' => 'Folder for the install lock (_auth_keys, or install as a fallback)',
+    'required' => 'One of them writable',
+    'current' => $lockFolderStatus,
+    'ok' => $lockFolderCheck['ok']
+];
 
 // Credential files
 if ($credsAvailable) {

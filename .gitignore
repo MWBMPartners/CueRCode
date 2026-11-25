@@ -11,6 +11,10 @@
 **/auth_creds.php
 **/_auth_keys/*.php
 !**/_auth_keys/.htaccess
+# 🔒 The installer's "already installed" lock (review finding 9). It is made on
+#    the server and must never be committed: a committed lock would switch the
+#    installer off on a brand-new server before anything was installed.
+**/_auth_keys/.installed.lock
 
 # ==============================================================================
 # 📦 Third-party libraries ARE committed (decision 0011, #113)

@@ -140,6 +140,27 @@ assertTrue(installIsLocked($lockPaths), 'M8: the _auth_keys lock locks');
 rmdir($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install');
 assertTrue(installIsLocked($lockPaths), 'M8: with install/ deleted, the lock still holds');
 unlink($lockPaths['primary']);
+
+// 🔒 Review finding 9: the installer refuses to start if it could not write its lock afterwards.
+$lockCheck = installLockFolderCheck($lockPaths);
+assertTrue($lockCheck['ok'] && str_contains($lockCheck['message'], '_auth_keys'), 'F9: _auth_keys writable -> fine, the lock goes there');
 rmdir($lockBase . '_auth_keys');
+mkdir($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install', 0700, true);
+$lockCheck = installLockFolderCheck($lockPaths);
+assertTrue($lockCheck['ok'] && str_contains($lockCheck['message'], 'only inside install/'), 'F9: no _auth_keys but install/ writable -> fine, with the "keep install/" note');
+chmod($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install', 0500);
+$lockCheck = installLockFolderCheck($lockPaths);
+assertFalse($lockCheck['ok'], 'F9: neither folder writable -> refused');
+assertContains('cannot write its "already installed" lock file', $lockCheck['message'], 'F9: ...with a plain message saying why');
+assertEquals([$lockCheck['message']], installPreflightProblems('8.5.1', $allExtensions, [$lockCheck]), 'F9: ...and it is one of the problems that stop the install before anything is changed');
+chmod($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install', 0700);
+rmdir($lockBase . 'public_html' . DIRECTORY_SEPARATOR . 'install');
 rmdir($lockBase . 'public_html');
 rmdir($lockBase);
+assertContains('$postFolderChecks[] = installLockFolderCheck($lockPaths);', $installerSource, 'F9: the POST handler adds the lock-folder check to the prerequisites it re-checks');
+assertTrue(strpos($installerSource, 'installLockFolderCheck($lockPaths)') < strpos($installerSource, 'new \\mysqli(DB_HOST'), 'F9: ...before the database is touched');
+assertContains("'name' => 'Folder for the install lock (_auth_keys, or install as a fallback)'", $installerSource, 'F9: the page shows it in the prerequisites list (so the Install button is hidden too)');
+assertFalse(str_contains($installerSource, "'Could not create lock file. Please manually restrict access to /install/'"), 'F9: the old "finish with a warning" message is gone');
+assertContains("'message' => 'The database is installed, but the installer could not write its lock file, so it is NOT switched off. '", $installerSource, 'F9: an unexpected lock failure afterwards is an ERROR saying what to do');
+$gitignore = (string) file_get_contents(dirname(__DIR__) . DIRECTORY_SEPARATOR . '.gitignore');
+assertContains("\n**/_auth_keys/.installed.lock\n", $gitignore, 'F9: .gitignore keeps the lock file out of the repository');

@@ -288,6 +288,39 @@ function installLockFilePaths(string $siteRoot, string $installDir): array
 }
 
 /**
+ * 🔒 Can the installer write its "already installed" lock? (Review finding 9.)
+ *
+ * The lock goes in _auth_keys/ (preferred) or, failing that, install/. If
+ * NEITHER folder can be written, the installer must refuse to start: it would
+ * otherwise build the database and then be unable to switch itself off,
+ * leaving a working installer on the web. All the site's copies (public_html,
+ * the alpha and beta copies) share the ONE _auth_keys/ folder, so one lock
+ * there covers every copy.
+ *
+ * @param array{primary: string, legacy: string} $paths From installLockFilePaths()
+ * @return array{ok: bool, message: string}
+ */
+function installLockFolderCheck(array $paths): array
+{
+    $primaryFolder = dirname($paths['primary']);
+    $legacyFolder  = dirname($paths['legacy']);
+
+    if (is_dir($primaryFolder) && is_writable($primaryFolder)) {
+        return ['ok' => true, 'message' => 'The installer can write its lock file in _auth_keys/.'];
+    }
+
+    if (is_dir($legacyFolder) && is_writable($legacyFolder)) {
+        return ['ok' => true, 'message' => 'The installer can write its lock file only inside install/ (the _auth_keys folder is not writable). Keep the install folder and its .htaccess on the server afterwards.'];
+    }
+
+    return [
+        'ok'      => false,
+        'message' => 'The installer cannot write its "already installed" lock file in _auth_keys/ or in install/, so it could not switch itself off afterwards. '
+            . 'Let the website write to the _auth_keys folder (next to public_html, usually permissions 755 or 775 in your SFTP program) and run the check again.',
+    ];
+}
+
+/**
  * 🔎 Is the installer locked? True when a lock file exists in either place.
  *
  * @param array{primary: string, legacy: string} $paths From installLockFilePaths()
