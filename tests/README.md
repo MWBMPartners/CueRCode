@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-26, task 7n Phase 2 slice 2a added `test_money.php`; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -50,7 +50,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 611 |
+| `test_admin_access.php` | 612 |
 | `test_admin_settings.php` | 1211 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
@@ -76,6 +76,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
 | `test_migrations.php` | 442 |
+| `test_money.php` | 161 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -91,7 +92,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **6405** |
+| **Total** | **6567** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 

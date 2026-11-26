@@ -579,6 +579,15 @@ function pricingFormatPrice(float|int|string $amount, string $currency): string
  * function only does the ARITHMETIC once a discount is already known to
  * apply.
  *
+ * ⚠️ DISPLAY ONLY - NOT FOR CHARGING (task 7n Phase 2, plan §8.1): this works
+ * in floating-point numbers, which cannot hold most prices exactly, and it
+ * rounds with round(). It stays only because the existing pricing-display
+ * tests use it. Checkout, the admin editors and anything else that saves or
+ * charges money MUST use the whole-pence functions in fn_money.php instead
+ * (moneyParseToMinor(), moneyApplyPercentMinor(), moneyApplyFixedMinor(),
+ * moneyMinorToDecimalString()), which never use a float and round half up
+ * once, at the end.
+ *
  * @param float  $amount       The pre-discount price (e.g. a price point's `amount`).
  * @param string $discountType `tblDiscounts.discountType` - 'percent' or 'fixed'.
  * @param float  $value        `tblDiscounts.value` - a percentage (0-100) for
