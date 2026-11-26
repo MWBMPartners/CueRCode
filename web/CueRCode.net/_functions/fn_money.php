@@ -109,6 +109,47 @@ function moneyCurrencyKnown(string $currency): bool
 }
 
 /**
+ * 📋 Read a list of currency codes such as the billing_currencies setting
+ *    ("GBP,USD,EUR") into a tidy list. PURE.
+ *
+ * Commas and/or spaces separate the codes; each is upper-cased ON PURPOSE
+ * here (a person may type "gbp"), must be a code moneyCurrencyInfo() knows,
+ * and may appear only once. The order typed is kept (it is the order the
+ * admin screens show the currency boxes in).
+ *
+ * Added in slice 2c (task 7n Phase 2, #31) for the settings screen and the
+ * price editor, which must agree on what an acceptable list is.
+ *
+ * @param string $text The list as typed or stored
+ * @return array{ok: bool, codes: array<int, string>, error: string}
+ *         error is plain English, '' when ok; codes is empty when not ok
+ */
+function moneyParseCurrencyList(string $text): array
+{
+    $pieces = preg_split('/[\s,]+/', trim($text), -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($pieces) || $pieces === []) {
+        return ['ok' => false, 'codes' => [], 'error' => 'Type at least one currency code, for example GBP.'];
+    }
+
+    $codes = [];
+    foreach ($pieces as $piece) {
+        $code = strtoupper($piece);
+
+        if (preg_match('/^[A-Z]{3}$/D', $code) !== 1 || !moneyCurrencyKnown($code)) {
+            return ['ok' => false, 'codes' => [], 'error' => 'Each currency must be a three-letter code this site knows: ' . implode(', ', array_keys(moneyCurrencyInfo())) . '.'];
+        }
+
+        if (in_array($code, $codes, true)) {
+            return ['ok' => false, 'codes' => [], 'error' => $code . ' is listed twice.'];
+        }
+
+        $codes[] = $code;
+    }
+
+    return ['ok' => true, 'codes' => $codes, 'error' => ''];
+}
+
+/**
  * 🔢 How many decimal places a currency uses (2 for GBP, 0 for JPY).
  *
  * @param string $currency A known ISO 4217 code

@@ -16,8 +16,9 @@
  *   $adminActive = 'upgrades';
  *   require_once CUERCODE_INCLUDES_DIR . 'admin_nav.php';
  *
- * Recognised $adminActive values: 'overview', 'upgrades', 'reauth'. Anything
- * else leaves every link inactive.
+ * Recognised $adminActive values: 'overview', 'settings', 'plans' (every page
+ * under /admin/plans/, task 7n Phase 2), 'upgrades', 'reauth'. Anything else
+ * leaves every link inactive.
  *
  * @package     CueRCode
  * @subpackage  Admin
@@ -56,6 +57,7 @@ if (isset($adminActive) && is_string($adminActive)) {
 $adminNavLinks = [
     'overview' => ['Overview',          '/admin/',          'fa-solid fa-gauge'],
     'settings' => ['Settings',          '/admin/settings/', 'fa-solid fa-gear'],
+    'plans'    => ['Plans and prices',  '/admin/plans/',    'fa-solid fa-tags'],
     'upgrades' => ['Database upgrades', '/admin/upgrades/', 'fa-solid fa-database'],
     'reauth'   => ['Confirm password',  '/admin/reauth/',   'fa-solid fa-key'],
 ];

@@ -869,7 +869,8 @@ if (function_exists('curl_init')) {
 // ❗ M6: required boxes say so; the unsaved-changes warning is on.
 foreach ($asRegistry as $asKey => $asField) {
     $asBox = adminSettingsRenderField($asField, ['state' => ['exists' => true, 'hasValue' => false, 'value' => '', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);
-    $asKindIsRequired = in_array($asField['kind'], ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'site_url', 'scopes'], true);
+    // 💱 'currency_list' (billing_currencies, task 7n Phase 2) is required too.
+    $asKindIsRequired = in_array($asField['kind'], ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'site_url', 'scopes', 'currency_list'], true);
     if ($asKindIsRequired) {
         assertTrue(adminSettingsFieldIsRequired($asField), $asKey . ' is required');
         assertContains('(required)', $asBox, $asKey . ' says "(required)" in its label');

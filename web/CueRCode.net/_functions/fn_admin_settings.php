@@ -86,6 +86,12 @@ if (!function_exists('clientIpParseRangeList')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
 }
 
+// 💷 Currency facts and the currency-list reader (billing_currencies, task 7n
+//    Phase 2). Pure: loading it defines functions only.
+if (!function_exists('moneyParseCurrencyList')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_money.php';
+}
+
 // ==============================================================================
 // 🔧 Constants
 // ==============================================================================
@@ -257,7 +263,7 @@ function adminSettingsSections(): array
             'saveLabel' => 'Save prices, VAT and refunds',
             'title' => 'Prices, VAT and refunds',
             'icon'  => 'fa-solid fa-sterling-sign',
-            'intro' => 'How prices are described on the pricing page, and the money-back period. The Terms page must say the same refund period (task #38).',
+            'intro' => 'How prices are described on the pricing page, the money-back period, which currencies prices can be set in, and the price promise for existing customers. The Terms page must say the same refund period (task #38). The prices themselves are set on the Plans screen.',
         ],
         'trials' => [
             'saveLabel' => 'Save free trial settings',
@@ -513,6 +519,52 @@ function adminSettingsRegistry(): array
         'help' => '0 to 365. The Terms page must say the same (task #38).',
         'min' => 0, 'max' => 365,
         'description' => 'Money-back period in days',
+    ]);
+
+    // 💱 Task 7n Phase 2 (migration 0004): currencies, the price promise and
+    //    whether the pricing page shows prices. Group and type match the
+    //    migration's rows (tests/test_admin_settings.php checks this).
+    $currencyChoices = [];
+    foreach (moneyCurrencyInfo() as $currencyCode => $currencyFacts) {
+        $currencyChoices[$currencyCode] = $currencyCode . ' - ' . $currencyFacts['name'];
+    }
+    $fields[] = adminSettingsField([
+        'key' => 'billing_currencies', 'section' => 'prices', 'subgroup' => 'Currencies, price promise and the pricing page', 'kind' => 'currency_list', 'group' => 'billing', 'type' => 'string',
+        'label' => 'Currencies prices can be set in',
+        'help' => 'Three-letter codes separated by commas, for example GBP,USD,EUR. The plan price screen shows one box for each. Codes this site knows: ' . implode(', ', array_keys(moneyCurrencyInfo())) . '. Removing a currency hides its boxes; prices already saved in it are kept.',
+        'allowEmpty' => false, 'maxLength' => 100,
+        'description' => 'Currencies prices can be set in: three-letter codes separated by commas, for example GBP,USD,EUR',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'billing_default_currency', 'section' => 'prices', 'subgroup' => 'Currencies, price promise and the pricing page', 'kind' => 'choice', 'group' => 'billing', 'type' => 'string',
+        'label' => 'Main currency',
+        'help' => 'Must be one of the currencies above. While charging is off, the pricing page shows each plan\'s monthly and yearly prices in this currency. Changing it copies those prices across straight away.',
+        'options' => $currencyChoices, 'afterSave' => 'legacy_price_mirror',
+        'description' => 'The main currency (a three-letter code such as GBP). Its prices are the ones the public pricing page shows while charging is off',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'billing_price_promise_default_mode', 'section' => 'prices', 'subgroup' => 'Currencies, price promise and the pricing page', 'kind' => 'choice', 'group' => 'billing', 'type' => 'string',
+        'label' => 'Price promise for plans that do not set their own',
+        'help' => 'How long existing customers keep the price they signed up at when a price goes up. Each plan can choose its own on the Plans screen.',
+        'options' => [
+            'while_subscribed' => 'For as long as they stay subscribed',
+            'fixed_months'     => 'For a set number of months (below)',
+            'none'             => 'No promise (a price change applies at their next payment)',
+        ],
+        'description' => 'Price promise for plans that do not set their own: while_subscribed (customers keep their price for as long as they stay subscribed), fixed_months (for a set number of months) or none',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'billing_price_promise_default_months', 'section' => 'prices', 'subgroup' => 'Currencies, price promise and the pricing page', 'kind' => 'int', 'group' => 'billing', 'type' => 'integer',
+        'label' => 'Months the price is kept (for "a set number of months")',
+        'help' => '1 to 120. Used only when the promise is "for a set number of months". The default is 12.',
+        'min' => 1, 'max' => 120,
+        'description' => 'How many months customers keep their price when the price promise is fixed_months',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'pricing_show_prices', 'section' => 'prices', 'subgroup' => 'Currencies, price promise and the pricing page', 'kind' => 'bool', 'group' => 'billing', 'type' => 'boolean',
+        'label' => 'Show prices on the pricing page',
+        'help' => 'Off hides the price figures; the plans and what they include still show.',
+        'description' => 'Pricing page: 1 = show the prices, 0 = hide the price figures (the plans and what they include still show)',
     ]);
 
     // ------------------------------------------------------------ 7. Free trials
@@ -1136,6 +1188,16 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
         return ['ok' => true, 'value' => implode(', ', $entries), 'error' => ''];
     }
 
+    if ($kind === 'currency_list') {
+        // 💱 billing_currencies: known codes only, each once, stored as
+        //    "GBP,USD,EUR" (upper case, commas, no spaces).
+        $parsed = moneyParseCurrencyList($text);
+        if (!$parsed['ok']) {
+            return ['ok' => false, 'value' => '', 'error' => $parsed['error']];
+        }
+        return ['ok' => true, 'value' => implode(',', $parsed['codes']), 'error' => ''];
+    }
+
     // 🔤 'text': plain text.
     return ['ok' => true, 'value' => $text, 'error' => ''];
 }
@@ -1206,6 +1268,13 @@ function adminSettingsCanonicalCurrent(array $field, ?string $raw): string
         $entries = preg_split('/[\s,]+/', trim($raw), -1, PREG_SPLIT_NO_EMPTY);
         if (is_array($entries)) {
             return implode(', ', $entries);
+        }
+    }
+
+    if ($kind === 'currency_list') {
+        $parsed = moneyParseCurrencyList($raw);
+        if ($parsed['ok']) {
+            return implode(',', $parsed['codes']);
         }
     }
 
@@ -1385,6 +1454,29 @@ function adminSettingsProcessSection(string $sectionId, #[\SensitiveParameter] a
         }
         if (!isset($outcome['errors']['admin_reauth_max_minutes']) && !isset($outcome['errors']['admin_reauth_idle_minutes']) && $maxRaw < $idleRaw) {
             $outcome['errors']['admin_reauth_max_minutes'] = 'This cannot be shorter than the "without a change" time above (' . $idleRaw . ' minutes).';
+        }
+    }
+
+    // 💱 The main currency must be one of the offered currencies, counting
+    //    the saved value for a box that was not in the request. Checked only
+    //    when both are known (a request about something else in this section
+    //    is not refused because of them).
+    if ($sectionId === 'prices') {
+        foreach (['billing_currencies', 'billing_default_currency'] as $currencyKey) {
+            if (!isset($newCanonical[$currencyKey]) && isset($current[$currencyKey]['value']) && is_string($current[$currencyKey]['value'])) {
+                $newCanonical[$currencyKey] = adminSettingsCanonicalCurrent($fields[$currencyKey], $current[$currencyKey]['value']);
+            }
+        }
+        if (
+            isset($newCanonical['billing_currencies'], $newCanonical['billing_default_currency'])
+            && !isset($outcome['errors']['billing_currencies'])
+            && !isset($outcome['errors']['billing_default_currency'])
+            && $newCanonical['billing_default_currency'] !== ''
+        ) {
+            $offeredCheck = moneyParseCurrencyList($newCanonical['billing_currencies']);
+            if ($offeredCheck['ok'] && !in_array($newCanonical['billing_default_currency'], $offeredCheck['codes'], true)) {
+                $outcome['errors']['billing_default_currency'] = 'The main currency must be one of the currencies prices can be set in (' . implode(', ', $offeredCheck['codes']) . ').';
+            }
         }
     }
 
@@ -1680,7 +1772,10 @@ function adminSettingsClearCache(string $key): bool
  * 🔁 Run a registry entry's "afterSave" action (plan §6.6 step 5).
  *
  *   graph_token_cache     → forget the saved Microsoft access token;
- *   sso_discovery:<name>  → forget that provider's discovery and key caches.
+ *   sso_discovery:<name>  → forget that provider's discovery and key caches;
+ *   legacy_price_mirror   → the main currency changed: copy every plan's
+ *                           prices in it into the columns the pricing page
+ *                           reads (fn_admin_plans.php, task 7n Phase 2).
  *
  * 🔒 Independent review (Codex C4 finding 1, 2026-11-25): this now runs
  *    INSIDE the save's transaction, before the commit, and says whether it
@@ -1689,11 +1784,43 @@ function adminSettingsClearCache(string $key): bool
  *    in use. A save whose cache cannot be cleared is now refused, with
  *    nothing changed.
  *
- * @param string $name The entry's afterSave text
- * @return bool True when every cache it names was cleared (or had nothing in it)
+ * @param string               $name  The entry's afterSave text
+ * @param array<string, mixed> $admin The admin saving (needed by legacy_price_mirror, which writes audit rows)
+ * @return bool True when every cache it names was cleared (or had nothing in it), or the copy worked
  */
-function adminSettingsRunAfterSave(string $name): bool
+function adminSettingsRunAfterSave(string $name, array $admin = []): bool
 {
+    // 🪞 Task 7n Phase 2: the main currency changed, so copy every plan's
+    //    monthly and yearly prices in the NEW main currency into the older
+    //    columns the pricing page reads while charging is off. Runs inside the
+    //    save's transaction (like the cache clearing), reads the new value
+    //    from the database (this transaction sees its own change), and writes
+    //    its own audit rows for the admin who saved. Any failure refuses the
+    //    whole save.
+    if ($name === 'legacy_price_mirror') {
+        if (!isset($admin['userID'], $admin['email'])) {
+            return false;
+        }
+        $currencyRows = adminSettingsLoadRows(['billing_default_currency']);
+        if ($currencyRows === null || !is_string($currencyRows['billing_default_currency']['value'])) {
+            return false;
+        }
+        $mainCurrency = strtoupper(trim($currencyRows['billing_default_currency']['value']));
+        if (!moneyCurrencyKnown($mainCurrency)) {
+            return false;
+        }
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin_plans.php';
+        try {
+            adminMirrorAllLegacyPlanPrices($admin, $mainCurrency);
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'Admin settings: the pricing page prices could not be copied after the main currency changed', get_class($e));
+            }
+            return false;
+        }
+        return true;
+    }
+
     if ($name === 'graph_token_cache') {
         return adminSettingsClearCache('graph_token_cache');
     }
@@ -1898,7 +2025,7 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
             $failed = true;
         } elseif (!adminAuditWrite($entry)) {
             $failed = true;
-        } elseif ($ownTransaction && $afterSave !== '' && !adminSettingsRunAfterSave($afterSave)) {
+        } elseif ($ownTransaction && $afterSave !== '' && !adminSettingsRunAfterSave($afterSave, $admin)) {
             $failed = true;
         }
 
@@ -2021,7 +2148,7 @@ function adminSettingsSaveSection(array $admin, string $sectionId, string $poste
     // 🔁 Codex C4 finding 1: the caches are cleared INSIDE the transaction;
     //    if one cannot be, nothing in the section is saved.
     foreach ($afterSaves as $afterSave) {
-        if (!adminSettingsRunAfterSave($afterSave)) {
+        if (!adminSettingsRunAfterSave($afterSave, $admin)) {
             adminRollbackQuietly(getDB());
             foreach ($changes as $undone) {
                 if (function_exists('clearConfigCache')) {
@@ -2392,7 +2519,7 @@ function adminSettingsFieldIsRequired(array $field, ?array $state = null): bool
         return false;
     }
 
-    if (in_array($kind, ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'site_url', 'scopes'], true)) {
+    if (in_array($kind, ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'site_url', 'scopes', 'currency_list'], true)) {
         return true;
     }
 
@@ -2634,6 +2761,8 @@ function adminSettingsRenderField(array $field, array $view): string
         $extra = ' autocomplete="off" spellcheck="false" autocapitalize="off"';
     } elseif ($kind === 'timezone') {
         $extra = ' autocomplete="off" spellcheck="false" list="timezone-list"';
+    } elseif ($kind === 'currency_list') {
+        $extra = ' autocomplete="off" spellcheck="false" autocapitalize="characters"';
     }
 
     if ($kind === 'ip_ranges') {
