@@ -16,7 +16,7 @@
   - 2a money rules — **built** `87cbaf1` (unreviewed)
   - 2b migration `0004` (plan/price columns, settings, starting prices) — **built** `97cbaf0` (unreviewed). It changed two upgrade-tool/installer rules (plans-table writes; installer repeats data steps): reviewers must check those. `/pricing` shows Enterprise wrongly until 2d.
   - 2c plan and price screens — **built** `30f08cd`, `c853f76` (unreviewed; 7390/7390; real MySQL 8.0 and MariaDB 10.6)
-  - 2d public pricing page, preview, no-hard-coded-prices guard, docs — **built** `7bf5603`, `61df78b`, `4d5de13`, `07a6f55` (unreviewed). Not yet confirmed done: CHANGELOG and `.OpenAI/` updates for Phase 2 (check `git show --stat 4d5de13`).
+  - 2d public pricing page, preview, no-hard-coded-prices guard, docs — **built** `7bf5603`, `61df78b`, `4d5de13`, `07a6f55` (unreviewed). CHANGELOG, README, install guide and `.OpenAI/` pointers done in `4d5de13`.
   - **NEXT: Opus review of slices 2a-2d (reviewers must check the two upgrade-tool/installer rule changes from 2b), then Codex review, fix loop, then push `work-in-progress`.** Nothing is running in the background.
 - If a slice's agent is gone after a restart: `git status` shows its uncommitted files; finish or re-brief that slice only.
 
