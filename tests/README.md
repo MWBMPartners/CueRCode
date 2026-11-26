@@ -97,6 +97,12 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
+**Task 7n Phase 2 slice 2c (2026-11-26)** added `test_admin_plans.php` (566 assertions: the plan-key rule, UK-time dates, every freezing rule P1/P4/P5/P6 shown to refuse and to allow, new-version and price keys, fingerprints, the price-group form, the mirror, the five new settings, and static guards each proved against a bad sample first) and 54 assertions in `test_admin_settings.php`. The whole suite is then **7390** on PHP 8.5.12; the table above is from before slice 2c.
+
+### Real-database and HTTP runs for task 7n Phase 2 slice 2c (2026-11-26, plans and prices screens)
+
+`admin_plans_real_mysql.php` passed **96/96** on throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other. The pages were also driven once over real HTTP (PHP's built-in web server against a throwaway MySQL 8.0.36 database, curl with a cookie jar): signed out → sign-in page; real sign-in; the admin headers (`no-store`, `DENY`, `noindex`); a change refused before the password is confirmed; password confirmed; a plan made; a price group saved (£12.50 / $14.00, mirrored into the older column); a change and a hand-made delete of a BOUGHT price refused; a hand-made key change refused; a wrong CSRF token and a foreign Origin answered 403. No browser was used.
+
 ### Real-database runs for task 7n Phase 2 slice 2b (2026-11-26, migration 0004)
 
 Passed on throwaway Docker **MySQL 8.0.46** and **MariaDB 10.6.28**, one after the other: `migrations_real_mysql.php` 165 checks on each (A and B extended for 0004; J extended: 0004 leaves the plans tables empty on an empty database, then the installer's replay gives exactly a fresh install's plans, prices and settings, a second replay changes nothing, and the replay is refused while the upgrade lock is held; new N: a database at 0003 upgrades to 0004 identical to a fresh install, and the owner's own prices, price point, hand-made Enterprise plan and settings are kept, also when 0004 is forced to run again), `admin_access_real_mysql.php` 167, `admin_settings_real_mysql.php` 232 and `account_recovery_real_mysql.php` 192 on each (unchanged counts; re-run because they apply every migration). `email_queue_real_mysql.php` and `resend_verification_real_mysql.php` were not re-run (they do not use the migrations).
@@ -286,6 +292,27 @@ docker stop cuercode-it-settings
 
 Run 2026-11-25 (after the final review: test buttons record each press before counting it, `.started` rows, optional limits show their default, odd stored numbers, internal-only discovery names): 216/216 on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28. (Earlier the same day, after the second independent review: 213/213 on MySQL 8.0.36, 8.4.11 and MariaDB 10.6.28.)
 
+## Optional real-database check (admin plans and prices)
+
+`tests/test_admin_plans.php` proves the plans editor's decisions. `tests/integration/admin_plans_real_mysql.php`
+(96 checks, scenarios A-K) proves the rest on a throwaway database: the 0004 starting data; making a plan
+(off sale, features copied, audited, duplicate key refused); prices saved exactly as text and mirrored by
+price group; P1 a bought price cannot change or be deleted even when bought after the form was opened, but
+can be retired and replaced (`monthly_gbp_2`); a REAL race - a second process saving while another
+connection holds an uncommitted purchase waits, then is refused (commit) or goes ahead (rollback); two
+admins at once (the second save refused, nothing written); P4/P5/P6; new version; a price of another plan
+refused; one transaction (a trigger refusing the audit row undoes the whole save); changing the main
+currency re-runs the mirror; the charging switches stay 0.
+
+```bash
+docker run -d --rm --name cuercode-it-plans -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+  -p 127.0.0.1:33121:3306 mysql:8.0.36      # also mariadb:10.6
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33121 \
+CUERCODE_IT_DB_NAME=cuercode_it_p2c CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  php tests/integration/admin_plans_real_mysql.php
+docker stop cuercode-it-plans
+```
+
 ## Optional real-database check (Global Admin access)
 
 `tests/test_admin_access.php` proves the admin access DECISIONS without a
@@ -352,6 +379,7 @@ tests/
 ├── integration/       # OPTIONAL checks that need a real (throwaway) database - NOT run by run.php
 │   ├── account_recovery_real_mysql.php
 │   ├── admin_access_real_mysql.php
+│   ├── admin_plans_real_mysql.php
 │   ├── admin_settings_real_mysql.php
 │   ├── email_queue_real_mysql.php
 │   ├── migrations_real_mysql.php
