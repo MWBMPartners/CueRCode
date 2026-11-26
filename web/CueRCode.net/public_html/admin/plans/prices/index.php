@@ -290,7 +290,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <p class="mb-1">
                                 Monthly: <?php echo adminEscape($pricesAmountWords((string) $pricesPlan['priceMonthly'], $pricesShownCurrency)); ?>,
                                 yearly: <?php echo adminEscape($pricesAmountWords((string) $pricesPlan['priceYearly'], $pricesShownCurrency)); ?>
-                                (an amount of 0 is shown as "Free").
+                                (0 is shown as "Free" only for a plan with no price at all that is not a "Contact us" plan).
                             </p>
                             <p class="small text-body-secondary mb-0">
                                 These are copied from the current monthly and yearly prices in the main currency (<?php echo adminEscape($pricesCurrencies['default']); ?>)
