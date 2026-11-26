@@ -15,8 +15,8 @@
 - **7n Phase 2 (plans, prices, currencies), issue #31**, plan `.claude/plans/7n-admin-commerce-plan.md` §9. Built in slices, each committed locally, one agent at a time:
   - 2a money rules — **built** `87cbaf1` (unreviewed)
   - 2b migration `0004` (plan/price columns, settings, starting prices) — **built** `97cbaf0` (unreviewed). It changed two upgrade-tool/installer rules (plans-table writes; installer repeats data steps): reviewers must check those. `/pricing` shows Enterprise wrongly until 2d.
-  - 2c `fn_admin_plans.php` + `/admin/plans/` screens — **in progress**
-  - 2d public pricing page, preview page, no-hard-coded-prices guard, docs — queued (also: CHANGELOG, issue #31, `.OpenAI/`)
+  - 2c plan and price screens — **built** `30f08cd`, `c853f76` (unreviewed; 7390/7390; real MySQL 8.0 and MariaDB 10.6)
+  - 2d public pricing page, preview page, no-hard-coded-prices guard (include `99.00`), docs, CHANGELOG, `.OpenAI/` — **in progress**
   - then Opus review, Codex review, push.
 - If a slice's agent is gone after a restart: `git status` shows its uncommitted files; finish or re-brief that slice only.
 
