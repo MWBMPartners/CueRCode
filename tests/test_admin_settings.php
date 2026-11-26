@@ -474,7 +474,9 @@ foreach (['', 'INCLUSIVE', 'unknown', ' none', 'exclusive '] as $asUnknown) {
 $asPricingSource = (string) file_get_contents($asSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'pricing' . DIRECTORY_SEPARATOR . 'index.php');
 assertContains("getConfig('billing_vat_mode'", $asPricingSource, 'the pricing page reads billing_vat_mode');
 assertContains('pricingVatNote(', $asPricingSource, 'the pricing page uses pricingVatNote()');
-assertContains('htmlspecialchars($pricingVatNote', $asPricingSource, 'the pricing page escapes the VAT note');
+$asGridSource = (string) file_get_contents($asSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'pricing_grid.php');
+assertContains("'pricing_grid.php'", $asPricingSource, 'the pricing page draws its cards with pricing_grid.php');
+assertContains('htmlspecialchars($pricingVatNote', $asGridSource, 'the pricing cards escape the VAT note');
 
 // ==============================================================================
 // ✅ Section 7: the rendered HTML never holds a secret (CHILD process)

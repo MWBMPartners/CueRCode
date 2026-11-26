@@ -49,7 +49,6 @@ $fnCeiling = [
     'public_html/developers/reference/index.php' => 15,
     'public_html/index.php'                      => 5,
     'public_html/login/index.php'                => 5,
-    'public_html/pricing/index.php'              => 1,
     'public_html/register/index.php'             => 4,
 ];
 

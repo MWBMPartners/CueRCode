@@ -7,8 +7,12 @@
  * Path: public_html/pricing/index.php
  *
  * A plain, server-rendered plan-comparison page - one card per publicly
- * offered subscription tier, sourced entirely from tblSubscriptionPlans via
+ * offered ordinary plan, sourced entirely from tblSubscriptionPlans via
  * fn_pricing.php's listPublicPlansForDisplay()/pricingDisplayRowsFromPlans().
+ * The cards themselves are drawn by _includes/pricing_grid.php, which the
+ * Global Admin preview (/admin/pricing-preview/) uses too. Price figures are
+ * hidden when the pricing_show_prices setting is off; a "Contact us" plan gets
+ * a contact link instead of a buy button.
  * This is the page fn_features.php's resolveUpgradeUrl() points a denied
  * caller at by default (the 'billing_upgrade_url' setting seeds '/pricing').
  *
@@ -36,7 +40,7 @@
  * @package     CueRCode
  * @subpackage  Pages / Pricing
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.1.0
+ * @version     1.2.0
  * @since       Phase 3 (Epic E4, #56); feature/limit allow-list + "Coming
  *              soon" badges added Phase 4 (#125, 2026-09-25)
  * @see         _functions/fn_pricing.php  - listPublicPlansForDisplay(), pricingDisplayRowsFromPlans(), pricingAllowedDisplayKeys()
@@ -105,9 +109,24 @@ if (function_exists('pricingVatNote')) {
     $pricingVatNote = pricingVatNote($pricingVatMode);
 }
 
+// 👁️ Whether price figures are shown (admin setting; on when it cannot be read).
+$pricingShowPrices = true;
+if (function_exists('getConfig') && function_exists('pricingShowPrices')) {
+    $pricingShowPrices = pricingShowPrices(getConfig('pricing_show_prices', true));
+}
+
+// ✉️ Where "Contact us" goes when a plan has no address of its own.
+$pricingSiteEmail = '';
+if (function_exists('getConfig')) {
+    $pricingSiteEmail = getConfig('site_email', 'hello@cuercode.net');
+}
+
+// 🌍 The public page shows each plan's own currency (no preview).
+$pricingPreviewCurrency = '';
+
 $pageTitle       = 'Pricing';
 $pageDescription = 'Compare ' . $siteName . '\'s QR code generation plans - '
-    . 'what is included free, and what Pro and Business will add.';
+    . 'what is included free, and what the paid plans will add.';
 $bodyClass       = 'page-pricing';
 $pageCSS         = [];
 $pageJS          = [];
@@ -160,164 +179,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                 </div>
             </div>
             <?php } else { ?>
-            <?php /* ============================================================
-                 💷 Introductory-pricing disclaimer (shown above the grid)
-                 ============================================================ */ ?>
-            <div class="row justify-content-center">
-                <div class="col-lg-8 text-center mb-4">
-                    <p class="text-body-secondary small mb-0">
-                        <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
-                        Prices shown are introductory pricing and may change - we will always
-                        honour your price for any subscription already in progress.
-                    </p>
-                    <?php if ($pricingVatNote !== '') { ?>
-                    <p class="text-body-secondary small mt-2 mb-0" id="pricing-vat-note">
-                        <?php echo htmlspecialchars($pricingVatNote, ENT_QUOTES, 'UTF-8'); ?>
-                    </p>
-                    <?php } ?>
-                </div>
-            </div>
-
-            <?php /* ============================================================
-                 🃏 Plan comparison card grid (CSS grid via Bootstrap's
-                 flexbox row/col utilities - never a &lt;table&gt; for layout)
-                 ============================================================ */ ?>
-            <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 justify-content-center">
-                <?php foreach ($pricingDisplayPlans as $pricingPlan) { ?>
-                <div class="col">
-                    <div class="card h-100 shadow-sm">
-                        <div class="card-body d-flex flex-column">
-                            <h2 class="h4 card-title mb-1">
-                                <?php echo htmlspecialchars($pricingPlan['planName'], ENT_QUOTES, 'UTF-8'); ?>
-                            </h2>
-
-                            <?php if ($pricingPlan['description'] !== '') { ?>
-                            <p class="text-body-secondary small mb-3">
-                                <?php echo htmlspecialchars($pricingPlan['description'], ENT_QUOTES, 'UTF-8'); ?>
-                            </p>
-                            <?php } ?>
-
-                            <p class="display-6 fw-bold mb-0">
-                                <?php echo htmlspecialchars($pricingPlan['priceMonthlyFormatted'], ENT_QUOTES, 'UTF-8'); ?>
-                                <?php if (!$pricingPlan['isZeroPrice']) { ?>
-                                <span class="fs-6 fw-normal text-body-secondary">/month</span>
-                                <?php } ?>
-                            </p>
-                            <?php if (!$pricingPlan['isZeroPrice']) { ?>
-                            <p class="text-body-secondary small mb-3">
-                                or
-                                <?php echo htmlspecialchars($pricingPlan['priceYearlyFormatted'], ENT_QUOTES, 'UTF-8'); ?>
-                                billed yearly
-                            </p>
-                            <?php } else { ?>
-                            <?php // 🆓 A real line in the slot the "billed yearly" text uses on paid plans, so the cards line up without a blank spacer ?>
-                            <p class="text-body-secondary small mb-3">No payment details needed</p>
-                            <?php } ?>
-
-                            <?php /* ================================================
-                                 🚩 Feature rows - included/excluded/coming-soon
-                                 is NEVER conveyed by colour alone: a
-                                 differently-shaped icon (or the "Coming soon"
-                                 badge's own visible TEXT, #125) PLUS a
-                                 screen-reader-only prefix both carry the
-                                 meaning independently of colour, in both dark
-                                 mode and every colourblind-mode palette (the
-                                 badge reuses the site's standard Bootstrap
-                                 text-bg-*-subtle tokens, which are already
-                                 re-themed for both by cuercode.css/Bootstrap
-                                 itself - no feature-specific colour is used).
-                                 ================================================ */ ?>
-                            <?php if (!empty($pricingPlan['features'])) { ?>
-                            <ul class="list-unstyled mb-3">
-                                <?php foreach ($pricingPlan['features'] as $pricingFeature) { ?>
-                                <?php
-                                    // 🚦 #125: a feature the plan has switched
-                                    // on but that is not yet BUILT (owner's
-                                    // hand-maintained 'coming_soon' status,
-                                    // see fn_pricing.php's
-                                    // pricingAllowedDisplayKeys()) must never
-                                    // read as "Included" - it gets its own
-                                    // distinct "Coming soon" treatment instead
-                                    // of the usual check/cross icon pairing.
-                                    $pricingFeatureIsComingSoon = ($pricingFeature['status'] === 'coming_soon')
-                                        && $pricingFeature['enabled'];
-                                ?>
-                                <li class="mb-2 d-flex align-items-baseline <?php echo ($pricingFeature['enabled'] && !$pricingFeatureIsComingSoon) ? '' : 'text-body-secondary'; ?>">
-                                    <?php if ($pricingFeatureIsComingSoon) { ?>
-                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle me-2 flex-shrink-0">
-                                        <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
-                                        Coming soon
-                                    </span>
-                                    <span class="visually-hidden">- not yet available: </span>
-                                    <?php } elseif ($pricingFeature['enabled']) { ?>
-                                    <i class="fa-solid fa-check text-success me-2" aria-hidden="true"></i>
-                                    <span class="visually-hidden">Included: </span>
-                                    <?php } else { ?>
-                                    <i class="fa-solid fa-xmark me-2" aria-hidden="true"></i>
-                                    <span class="visually-hidden">Not included: </span>
-                                    <?php } ?>
-                                    <?php /* ↔️ Label in its own flex item so a long name wraps in its own
-                                             column instead of under the badge or icon (#137). */ ?>
-                                    <span><?php echo htmlspecialchars($pricingFeature['label'], ENT_QUOTES, 'UTF-8'); ?></span>
-                                </li>
-                                <?php } ?>
-                            </ul>
-                            <?php } ?>
-
-                            <?php /* ================================================
-                                 🔢 Limit rows (saved codes, bulk batch size, ...)
-                                 - a limit whose underlying feature is not yet
-                                 built (#125 'coming_soon') shows the SAME
-                                 "Coming soon" badge instead of a numeric value
-                                 that nobody can actually use yet, regardless
-                                 of what the plan's own limitsJSON says.
-                                 ================================================ */ ?>
-                            <?php if (!empty($pricingPlan['limits'])) { ?>
-                            <ul class="list-unstyled mb-3 small text-body-secondary">
-                                <?php foreach ($pricingPlan['limits'] as $pricingLimit) { ?>
-                                <li class="mb-1">
-                                    <i class="fa-solid fa-gauge-high me-2" aria-hidden="true"></i>
-                                    <?php echo htmlspecialchars($pricingLimit['label'], ENT_QUOTES, 'UTF-8'); ?>:
-                                    <?php if ($pricingLimit['status'] === 'coming_soon') { ?>
-                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
-                                        <i class="fa-solid fa-clock me-1" aria-hidden="true"></i>
-                                        Coming soon
-                                    </span>
-                                    <?php } else { ?>
-                                    <strong><?php echo htmlspecialchars($pricingLimit['value'], ENT_QUOTES, 'UTF-8'); ?></strong>
-                                    <?php } ?>
-                                </li>
-                                <?php } ?>
-                            </ul>
-                            <?php } ?>
-
-                            <div class="mt-auto">
-                                <?php if ($pricingPlan['isZeroPrice']) { ?>
-                                <?php /* 🆓 Zero-price plan: a real, working CTA to
-                                     account registration. */ ?>
-                                <a href="/register/" class="btn btn-primary w-100">
-                                    <i class="fa-solid fa-user-plus me-1" aria-hidden="true"></i>
-                                    Create free account
-                                </a>
-                                <p class="small text-body-secondary mt-2 mb-0">
-                                    No account needed to generate a QR code right now -
-                                    <a href="/">use the generator</a>. A free account adds
-                                    saved codes and an API key.
-                                </p>
-                                <?php } else { ?>
-                                <?php /* 💳 Paid plan: checkout is owner-gated and not
-                                     yet built (Epic E4 payments stage) - a
-                                     disabled control, never an invented flow. */ ?>
-                                <button type="button" class="btn btn-outline-secondary w-100" disabled aria-disabled="true">
-                                    Coming soon
-                                </button>
-                                <?php } ?>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <?php } ?>
-            </div>
+            <?php require_once CUERCODE_INCLUDES_DIR . 'pricing_grid.php'; ?>
             <?php } ?>
         </div>
     </section>

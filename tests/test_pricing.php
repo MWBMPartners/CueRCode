@@ -57,14 +57,20 @@ requireFn('fn_pricing.php');
 // 💷 Section 1: pricingFormatPrice()
 // ==============================================================================
 
-assertEquals('Free', pricingFormatPrice(0.0, 'GBP'), 'pricingFormatPrice: zero GBP renders as "Free"');
-assertEquals('Free', pricingFormatPrice(0, 'GBP'), 'pricingFormatPrice: int zero renders as "Free"');
-assertEquals('Free', pricingFormatPrice(-5, 'GBP'), 'pricingFormatPrice: a negative amount fails safe to "Free"');
-assertEquals('£4.99', pricingFormatPrice(4.99, 'GBP'), 'pricingFormatPrice: GBP gets a "£" prefix + 2dp');
-assertEquals('£19.99', pricingFormatPrice(19.99, 'GBP'), 'pricingFormatPrice: another seeded GBP price formats correctly');
-assertEquals('£49.99', pricingFormatPrice('49.99', 'gbp'), 'pricingFormatPrice: a numeric-string amount + lowercase currency code both normalise correctly');
-assertEquals('USD 9.90', pricingFormatPrice(9.9, 'USD'), 'pricingFormatPrice: an unknown/unsupported currency code prefixes its uppercased ISO code, not a guessed symbol');
-assertEquals('? 9.90', pricingFormatPrice(9.9, ''), 'pricingFormatPrice: an empty currency code fails safe to a neutral "?" prefix rather than assuming GBP');
+// 📌 Task 7n Phase 2 (#31): prices are the database's decimal TEXT and are
+//    formatted by fn_money.php, never as floats.
+assertEquals('Free', pricingFormatPrice('0.00', 'GBP'), 'pricingFormatPrice: zero GBP renders as "Free"');
+assertEquals('Free', pricingFormatPrice('0', 'GBP'), 'pricingFormatPrice: a bare zero renders as "Free"');
+assertEquals('', pricingFormatPrice('-5', 'GBP'), 'pricingFormatPrice: a negative amount is unreadable - never "Free"');
+assertEquals('', pricingFormatPrice('', 'GBP'), 'pricingFormatPrice: a missing amount is never "Free"');
+assertEquals('', pricingFormatPrice('6,99', 'GBP'), 'pricingFormatPrice: text that is not a stored amount gives nothing');
+assertEquals('£4.99', pricingFormatPrice('4.99', 'GBP'), 'pricingFormatPrice: GBP gets a "£" prefix + 2dp');
+assertEquals('£1,234.50', pricingFormatPrice('1234.50', 'GBP'), 'pricingFormatPrice: thousands are grouped');
+assertEquals('£49.99', pricingFormatPrice('49.99', 'gbp'), 'pricingFormatPrice: a lowercase currency code normalises');
+assertEquals('$9.90', pricingFormatPrice('9.90', 'USD'), 'pricingFormatPrice: dollars use fn_money.php\'s symbol');
+assertEquals('€9.90', pricingFormatPrice('9.9', 'EUR'), 'pricingFormatPrice: euros use fn_money.php\'s symbol');
+assertEquals('CHF 9.90', pricingFormatPrice('9.9', 'CHF'), 'pricingFormatPrice: a currency fn_money.php does not know shows its code, not a guessed symbol');
+assertEquals('? 9.90', pricingFormatPrice('9.9', ''), 'pricingFormatPrice: an empty currency code fails safe to a neutral "?" prefix rather than assuming GBP');
 
 // ==============================================================================
 // 🔢 Section 2: pricingFormatLimit()
@@ -420,9 +426,14 @@ assertTrue(
     'regression guard: fn_pricing.php source was readable for static inspection'
 );
 
-foreach (['anonymous', 'free', 'pro', 'business'] as $seededPlanKey) {
+$pricingGridSource = (string) file_get_contents(CUERCODE_INCLUDES_DIR . 'pricing_grid.php');
+foreach (['anonymous', 'free', 'pro', 'business', 'enterprise', 'payg', 'pro_lifetime_founders'] as $seededPlanKey) {
     assertFalse(
-        str_contains($pricingEngineSource, "'" . $seededPlanKey . "'"),
+        str_contains($pricingGridSource, "'" . $seededPlanKey . "'") || str_contains($pricingGridSource, '"' . $seededPlanKey . '"'),
+        'regression guard: pricing_grid.php never quotes the seeded plan-key literal \'' . $seededPlanKey . '\''
+    );
+    assertFalse(
+        str_contains($pricingEngineSource, "'" . $seededPlanKey . "'") || str_contains($pricingEngineSource, '"' . $seededPlanKey . '"'),
         'regression guard: fn_pricing.php never quotes the seeded plan-key literal \''
             . $seededPlanKey . '\' - every plan/feature/limit is discovered generically from decoded JSON'
     );
@@ -457,6 +468,10 @@ assertTrue(
 assertFalse(
     (bool) stripos($pricingPageSource, '<table'),
     'regression guard: pricing/index.php never uses a <table> tag for layout (house rule)'
+);
+assertFalse(
+    (bool) stripos($pricingGridSource, '<table'),
+    'regression guard: pricing_grid.php never uses a <table> tag for layout (house rule)'
 );
 
 $accessibilityPagePath = CUERCODE_SITE_ROOT . 'public_html' . DIRECTORY_SEPARATOR

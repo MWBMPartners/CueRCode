@@ -70,6 +70,10 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 💷 Whole-pence money helpers: every price shown here is read from the
+//    database's decimal TEXT and formatted without ever becoming a float.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_money.php';
+
 // ==============================================================================
 // 📋 listPublicPlansForDisplay() - Fetch the plans the pricing page shows
 // ==============================================================================
@@ -81,7 +85,15 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * both `isActive = 1` (selectable/resolvable at all - the same flag
  * fn_features.php's planByKey() honours implicitly via its lookups) AND
  * `sortOrder > 0` (this file's own generic, non-tier-literal convention for
- * "shown on the public pricing grid" - see this file's header comment).
+ * "shown on the public pricing grid" - see this file's header comment), and
+ * pricingPlanIsOnGrid() accepts it (an ordinary plan, inside its sale dates -
+ * task 7n Phase 2: lifetime deals and credit packs are never on this grid).
+ *
+ * Every column is read (`SELECT *`) on purpose: the plan-editor columns come
+ * from database upgrade 0004, and naming them would break the public page on a
+ * database where that upgrade has not been applied yet. Without them every
+ * plan is an ordinary "buy it" plan, exactly as before.
+ *
  * Ordered deterministically by `sortOrder` then `planID` so the grid's
  * left-to-right order never depends on undefined row ordering.
  *
@@ -92,9 +104,10 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * calling page can render its own "temporarily unavailable" panel instead of
  * fataling.
  *
- * @return array Raw plan rows (planID, planKey, planName, description,
- *               priceMonthly, priceYearly, currency, featuresJSON (raw JSON
- *               string), limitsJSON (raw JSON string)) - JSON columns are
+ * @return array Raw plan rows (every tblSubscriptionPlans column, plus
+ *               'pricePoints' and 'hasPricePoint' - true when the plan has at
+ *               least one price that is not retired, so a plan with prices is
+ *               never called "Free") - JSON columns are
  *               decoded downstream by pricingDisplayRowsFromPlans(), NOT
  *               here, so this function stays a thin, purely-DB concern.
  *               Empty array when the DB is unavailable or no plan qualifies.
@@ -118,9 +131,7 @@ function listPublicPlansForDisplay(): array
         // other query in this codebase (house rule: MySQLi, prepared
         // statements for ALL queries).
         $stmt = dbQuery(
-            'SELECT `planID`, `planKey`, `planName`, `description`, `priceMonthly`, '
-            . '`priceYearly`, `currency`, `featuresJSON`, `limitsJSON` '
-            . 'FROM `tblSubscriptionPlans` '
+            'SELECT * FROM `tblSubscriptionPlans` '
             . 'WHERE `isActive` = 1 AND `sortOrder` > 0 '
             . 'ORDER BY `sortOrder` ASC, `planID` ASC'
         );
@@ -128,7 +139,13 @@ function listPublicPlansForDisplay(): array
         $result = $stmt->get_result();
 
         $planRows = [];
+        $nowUtc   = gmdate('Y-m-d H:i:s');
         while (($row = $result->fetch_assoc()) !== null) {
+            // 🚪 Ordinary plans inside their sale dates only.
+            if (!pricingPlanIsOnGrid($row, $nowUtc)) {
+                continue;
+            }
+
             // 📌 Every plan starts with an EMPTY price-point list - the
             // additive query below (#70, Table 22 tblPlanPricePoints) fills
             // this in ONLY when billing_price_points_enabled=1 AND at least
@@ -137,7 +154,8 @@ function listPublicPlansForDisplay(): array
             // whenever a plan's 'pricePoints' stays empty - so a fresh
             // install (kill-switch off, table empty) renders BYTE-IDENTICAL
             // to before this key existed.
-            $row['pricePoints'] = [];
+            $row['pricePoints']   = [];
+            $row['hasPricePoint'] = false;
             $planRows[] = $row;
         }
 
@@ -147,6 +165,35 @@ function listPublicPlansForDisplay(): array
             logError('error', 'Public pricing plan list failed', $e->getMessage());
         }
         return [];
+    }
+
+    // ==========================================================================
+    // 🏷️ Which of these plans have a price at all? (task 7n Phase 2)
+    // ==========================================================================
+    // The older single-price columns can read 0.00 for a plan that DOES have a
+    // price (for example one priced only in another currency than the main
+    // one). Such a plan must never be shown as "Free".
+    // ==========================================================================
+    if (!empty($planRows)) {
+        try {
+            $pricedStmt   = dbQuery('SELECT DISTINCT `planID` FROM `tblPlanPricePoints` WHERE `isActive` = 1');
+            $pricedResult = $pricedStmt->get_result();
+            $pricedPlans  = [];
+            while (($pricedRow = $pricedResult->fetch_assoc()) !== null) {
+                $pricedPlans[(int) $pricedRow['planID']] = true;
+            }
+            $pricedStmt->close();
+
+            foreach ($planRows as $planIndex => $planRow) {
+                if (isset($pricedPlans[(int) $planRow['planID']])) {
+                    $planRows[$planIndex]['hasPricePoint'] = true;
+                }
+            }
+        } catch (\Throwable $e) {
+            if (function_exists('logError')) {
+                logError('error', 'Public pricing priced-plan list failed', $e->getMessage());
+            }
+        }
     }
 
     // ==========================================================================
@@ -212,6 +259,289 @@ function listPublicPlansForDisplay(): array
     }
 
     return $planRows;
+}
+
+// ==============================================================================
+// 🚪 pricingPlanIsOnGrid() - which plans the public grid may show (task 7n Phase 2)
+// ==============================================================================
+
+/**
+ * 🚪 May this plan appear on the public pricing grid? PURE.
+ *
+ * Only an ordinary ("standard") plan, and only inside its sale dates (both
+ * ends included, stored and compared in UTC). Lifetime deals and credit packs
+ * have their own screens later. A row without these columns (database upgrade
+ * 0004 not applied yet) counts as an ordinary plan with no sale dates. Whether
+ * the plan is on sale and has a display order above 0 is decided by the query
+ * in listPublicPlansForDisplay().
+ *
+ * @param array<string, mixed> $planRow A tblSubscriptionPlans row
+ * @param string               $nowUtc  "Y-m-d H:i:s" in UTC
+ * @return bool
+ */
+function pricingPlanIsOnGrid(array $planRow, string $nowUtc): bool
+{
+    if (array_key_exists('planKind', $planRow) && $planRow['planKind'] !== 'standard') {
+        return false;
+    }
+
+    if (isset($planRow['availableFrom']) && strcmp((string) $planRow['availableFrom'], $nowUtc) > 0) {
+        return false;
+    }
+
+    if (isset($planRow['availableUntil']) && strcmp((string) $planRow['availableUntil'], $nowUtc) < 0) {
+        return false;
+    }
+
+    return true;
+}
+
+// ==============================================================================
+// 👁️ pricingShowPrices() - the pricing_show_prices setting
+// ==============================================================================
+
+/**
+ * 👁️ Should price figures be shown? PURE. Off only when the setting clearly
+ *    says off; anything else (including a missing setting, whose default is
+ *    on) shows them.
+ *
+ * @param mixed $value The setting as getConfig() returned it
+ * @return bool
+ */
+function pricingShowPrices(mixed $value): bool
+{
+    if ($value === false || $value === 0) {
+        return false;
+    }
+
+    if (is_string($value) && in_array(strtolower(trim($value)), ['0', 'false', 'off', 'no'], true)) {
+        return false;
+    }
+
+    return true;
+}
+
+// ==============================================================================
+// ✉️ pricingContactLink() - where a "Contact us" button goes
+// ==============================================================================
+
+/**
+ * ✉️ The link for a "Contact us" plan. PURE.
+ *
+ * The plan's own contactUrl when it is a plain https address or a
+ * "mailto:" email address; otherwise an email to the site_email setting.
+ * Checked again here although the editor checks it on saving, because a
+ * value typed straight into the database must never become a script link.
+ *
+ * @param mixed $contactUrl The plan's contactUrl column (may be null)
+ * @param mixed $siteEmail  The site_email setting
+ * @return string A https: or mailto: link (not yet HTML-escaped)
+ */
+function pricingContactLink(mixed $contactUrl, mixed $siteEmail): string
+{
+    if (is_string($contactUrl) && preg_match('/[\x00-\x20\x7F<>"\'\\\\]/', $contactUrl) !== 1) {
+        if (stripos($contactUrl, 'https://') === 0) {
+            $host = parse_url($contactUrl, PHP_URL_HOST);
+            if (is_string($host) && $host !== '') {
+                return $contactUrl;
+            }
+        }
+
+        if (stripos($contactUrl, 'mailto:') === 0) {
+            $address = substr($contactUrl, strlen('mailto:'));
+            if (pricingEmailIsPlain($address)) {
+                return 'mailto:' . $address;
+            }
+        }
+    }
+
+    if (is_string($siteEmail) && pricingEmailIsPlain(trim($siteEmail))) {
+        return 'mailto:' . trim($siteEmail);
+    }
+
+    // 📌 The same last-resort address the page's own error panel uses.
+    return 'mailto:hello@cuercode.net';
+}
+
+/**
+ * ✉️ One ordinary email address, with nothing that would add extra parts to a
+ *    mailto: link (? & #). PURE.
+ *
+ * @param string $address Candidate address
+ * @return bool
+ */
+function pricingEmailIsPlain(string $address): bool
+{
+    if (preg_match('/[\s?&#]/', $address) === 1) {
+        return false;
+    }
+
+    return filter_var($address, FILTER_VALIDATE_EMAIL) !== false;
+}
+
+// ==============================================================================
+// 🧾 pricingPriceBlock() - the price wording on one card (task 7n Phase 2)
+// ==============================================================================
+
+/**
+ * 🧾 What one card says about money. PURE.
+ *
+ * The cases:
+ *   - free plan: "Free" (not a price figure, so it stays when prices are hidden);
+ *   - "Contact us" plan: "From <monthly price>/month", never "Free";
+ *   - ordinary paid plan: the monthly price, with the yearly one underneath;
+ *     whichever is missing is left out (a missing price is never "Free");
+ *   - prices hidden: words only, no figures;
+ *   - preview ($previewCurrency not empty): a missing price says so.
+ *
+ * @param array<string, mixed> $plan            One row from pricingDisplayRowsFromPlans()
+ * @param bool                 $showPrices      pricing_show_prices
+ * @param string               $previewCurrency '' on the public page; the chosen
+ *                                              currency code on the admin preview
+ * @return array{prefix: string, headline: string, suffix: string, subline: string, isFigure: bool}
+ */
+function pricingPriceBlock(array $plan, bool $showPrices, string $previewCurrency = ''): array
+{
+    $words = static function (string $headline, string $subline): array {
+        return ['prefix' => '', 'headline' => $headline, 'suffix' => '', 'subline' => $subline, 'isFigure' => false];
+    };
+
+    $isContact = ($plan['ctaMode'] === 'contact');
+
+    if (!$isContact && $plan['isZeroPrice']) {
+        $block = $words('Free', 'No payment details needed');
+        $block['isFigure'] = true;
+        return $block;
+    }
+
+    if (!$showPrices) {
+        if ($isContact) {
+            return $words('Price on request', 'Contact us and we will agree it with you');
+        }
+        return $words('Price to be announced', '');
+    }
+
+    $monthly = $plan['priceMonthlyFormatted'];
+    $yearly  = $plan['priceYearlyFormatted'];
+    $hasMonthly = ($monthly !== '' && $monthly !== 'Free');
+    $hasYearly  = ($yearly !== '' && $yearly !== 'Free');
+
+    if ($isContact) {
+        // ✂️ A "from" figure in whole units reads "From £x", without ".00".
+        if (str_ends_with($monthly, '.00')) {
+            $monthly = substr($monthly, 0, -3);
+        }
+        if (str_ends_with($yearly, '.00')) {
+            $yearly = substr($yearly, 0, -3);
+        }
+
+        if ($hasMonthly) {
+            $subline = 'Agreed with you to suit your organisation';
+            if ($hasYearly) {
+                $subline = 'or from ' . $yearly . ' billed yearly';
+            }
+            return ['prefix' => 'From', 'headline' => $monthly, 'suffix' => '/month', 'subline' => $subline, 'isFigure' => true];
+        }
+
+        if ($previewCurrency !== '') {
+            $subline = '';
+            if ($hasYearly) {
+                $subline = 'From ' . $yearly . ' billed yearly';
+            }
+            return $words('No monthly price in ' . $previewCurrency . ' yet', $subline);
+        }
+
+        if ($hasYearly) {
+            return ['prefix' => 'From', 'headline' => $yearly, 'suffix' => '/year', 'subline' => 'Billed yearly', 'isFigure' => true];
+        }
+
+        return $words('Price on request', 'Contact us and we will agree it with you');
+    }
+
+    if ($hasMonthly) {
+        $subline = 'Billed monthly';
+        if ($hasYearly) {
+            $subline = 'or ' . $yearly . ' billed yearly';
+        } elseif ($previewCurrency !== '') {
+            $subline = 'No yearly price in ' . $previewCurrency . ' yet';
+        }
+        return ['prefix' => '', 'headline' => $monthly, 'suffix' => '/month', 'subline' => $subline, 'isFigure' => true];
+    }
+
+    if ($previewCurrency !== '') {
+        if ($hasYearly) {
+            return $words('No monthly price in ' . $previewCurrency . ' yet', $yearly . ' billed yearly');
+        }
+        return $words('No price in ' . $previewCurrency . ' yet', '');
+    }
+
+    if ($hasYearly) {
+        return ['prefix' => '', 'headline' => $yearly, 'suffix' => '/year', 'subline' => 'Billed yearly', 'isFigure' => true];
+    }
+
+    return $words('Price to be announced', '');
+}
+
+// ==============================================================================
+// 🔭 pricingPreviewRows() - plan rows as price points would show them
+// ==============================================================================
+
+/**
+ * 🔭 For the Global Admin preview: replace each plan's single-price columns
+ *    with its current price points in ONE currency. PURE.
+ *
+ * A price that does not exist in that currency becomes empty - never the old
+ * column's figure, and never zero - so the preview shows the gap honestly. A
+ * plan with no price of any kind (no price points and nothing in the old
+ * columns) stays free.
+ *
+ * @param array<int, array<string, mixed>>   $planRows   From listPublicPlansForDisplay()
+ * @param array<int, array<string, ?string>> $selections planID => ['monthly' => text|null, 'yearly' => text|null]
+ *                                                       (adminMirrorSelection())
+ * @param string                             $currency   The currency being previewed
+ * @return array<int, array<string, mixed>> Rows ready for pricingDisplayRowsFromPlans()
+ */
+function pricingPreviewRows(array $planRows, array $selections, string $currency): array
+{
+    $rows = [];
+
+    foreach ($planRows as $planRow) {
+        $storedCurrency = '';
+        if (isset($planRow['currency'])) {
+            $storedCurrency = (string) $planRow['currency'];
+        }
+        $storedMonthly = '';
+        if (isset($planRow['priceMonthly'])) {
+            $storedMonthly = (string) $planRow['priceMonthly'];
+        }
+        $storedYearly = '';
+        if (isset($planRow['priceYearly'])) {
+            $storedYearly = (string) $planRow['priceYearly'];
+        }
+
+        $isFree = (empty($planRow['hasPricePoint'])
+            && pricingFormatPrice($storedMonthly, $storedCurrency) === 'Free'
+            && pricingFormatPrice($storedYearly, $storedCurrency) === 'Free');
+
+        $planID = (int) $planRow['planID'];
+        $planRow['pricePoints']   = [];
+        $planRow['currency']      = $currency;
+        $planRow['hasPricePoint'] = !$isFree;
+
+        foreach (['monthly' => 'priceMonthly', 'yearly' => 'priceYearly'] as $group => $column) {
+            if ($isFree) {
+                $planRow[$column] = '0';
+            } elseif (isset($selections[$planID][$group])) {
+                $planRow[$column] = (string) $selections[$planID][$group];
+            } else {
+                $planRow[$column] = '';
+            }
+        }
+
+        $rows[] = $planRow;
+    }
+
+    return $rows;
 }
 
 // ==============================================================================
@@ -511,54 +841,60 @@ function pricingVatNote(string $mode): string
 // ==============================================================================
 
 /**
- * 💷 Format a monetary amount for the pricing grid.
+ * 💷 Format a stored price for the pricing grid. PURE; no floats.
  *
- * Zero (or negative, which should never occur but is handled the same,
- * fail-safe way) reads as the plain word "Free" - clearer at a glance on a
- * comparison grid than "£0.00" repeated across every zero-price plan. A
- * positive GBP amount gets the "£" symbol prefix; any OTHER currency code
- * (this codebase seeds GBP exclusively today, but tblSubscriptionPlans.currency
- * is a free CHAR(3) column an admin could change) falls back to its
- * uppercased ISO 4217 code as a prefix instead of guessing a symbol.
+ * Zero reads as the plain word "Free" - clearer at a glance on a comparison
+ * grid than "£0.00". Currencies fn_money.php knows are shown with their symbol
+ * ("£6.99", "$6.99"); any other code is printed as it is ("CHF 9.90") rather
+ * than guessing a symbol. Anything that is not a plain stored amount (empty, a
+ * negative number, words) gives '' - never "Free", because an unreadable price
+ * is not a free one.
  *
- * @param float|int|string $amount   The raw price (e.g. tblSubscriptionPlans.priceMonthly).
- * @param string            $currency The ISO 4217 currency code (e.g. 'GBP').
+ * Whether a plan whose figure is zero really is free is decided elsewhere (see
+ * pricingDisplayRowsFromPlans()): a "Contact us" plan never says "Free".
  *
- * @return string The formatted price string (e.g. 'Free', '£4.99', 'USD 9.99').
+ * @param string $amount   The decimal TEXT from the database (e.g. a DECIMAL(10,2) column).
+ * @param string $currency The ISO 4217 currency code (e.g. 'GBP').
  *
- * @see https://www.php.net/manual/en/function.number-format.php
+ * @return string The formatted price, 'Free', or ''.
+ *
+ * @see fn_money.php - moneyStoredDecimalToMinor(), moneyFormat()
  */
-function pricingFormatPrice(float|int|string $amount, string $currency): string
+function pricingFormatPrice(string $amount, string $currency): string
 {
-    // 🔢 Normalise to float regardless of the caller's numeric-ish input type
-    // (tblSubscriptionPlans.priceMonthly arrives as a numeric string from
-    // mysqli in some driver configurations, or already-float when the caller
-    // has cast it).
-    $amountFloat = (float) $amount;
+    $parts = [];
+    if (preg_match('/^([0-9]{1,8})(?:\.([0-9]{1,2}))?$/D', trim($amount), $parts) !== 1) {
+        return '';
+    }
 
-    // 🆓 Zero (or below, defensively) reads as "Free" rather than a currency
-    // amount - this is the ONLY special-casing in this function, and it is
-    // driven purely by the numeric VALUE, never a plan name/key.
-    if ($amountFloat <= 0.0) {
+    $fraction = '';
+    if (isset($parts[2])) {
+        $fraction = $parts[2];
+    }
+
+    // 🆓 Zero reads as "Free" - driven purely by the VALUE, never a plan name.
+    if (trim($parts[1] . $fraction, '0') === '') {
         return 'Free';
     }
 
     $currencyUpper = strtoupper(trim($currency));
 
-    if ($currencyUpper === 'GBP') {
-        // 💷 The one currency this codebase seeds today.
-        $pricePrefix = '£';
-    } elseif ($currencyUpper === '') {
-        // 📌 Defensive: an empty/missing currency column - fail safe to a
-        // neutral, unambiguous prefix rather than silently assuming GBP.
+    if (moneyCurrencyKnown($currencyUpper)) {
+        $minor = moneyStoredDecimalToMinor(trim($amount), $currencyUpper);
+        if ($minor === null) {
+            return '';
+        }
+        return moneyFormat($minor, $currencyUpper);
+    }
+
+    if ($currencyUpper === '') {
+        // 📌 An empty currency column: a neutral prefix, never assume pounds.
         $pricePrefix = '? ';
     } else {
-        // 🌍 Any other ISO 4217 code - print it explicitly rather than guess
-        // a symbol that might be wrong (e.g. '$' is ambiguous across USD/CAD/AUD).
         $pricePrefix = $currencyUpper . ' ';
     }
 
-    return $pricePrefix . number_format($amountFloat, 2);
+    return $pricePrefix . $parts[1] . '.' . str_pad($fraction, 2, '0', STR_PAD_RIGHT);
 }
 
 // ==============================================================================
@@ -770,7 +1106,9 @@ function pricingFindPricePointByInterval(array $pricePoints, string $billingInte
  *       'planKey'               => string,
  *       'planName'              => string,
  *       'description'           => string,
- *       'priceMonthly'          => float,
+ *       'ctaMode'               => 'checkout'|'contact',
+ *       'contactUrl'            => string|null,
+ *       'priceMonthly'          => string,  // decimal text, never a float
  *       'priceMonthlyFormatted' => string,
  *       'priceYearlyFormatted'  => string,
  *       'currency'              => string,
@@ -866,7 +1204,7 @@ function pricingDisplayRowsFromPlans(array $plans): array
                 'priceKey'        => isset($pricePointRow['priceKey']) ? (string) $pricePointRow['priceKey'] : '',
                 'billingInterval' => isset($pricePointRow['billingInterval']) ? (string) $pricePointRow['billingInterval'] : '',
                 'intervalCount'   => isset($pricePointRow['intervalCount']) ? (int) $pricePointRow['intervalCount'] : 1,
-                'amount'          => isset($pricePointRow['amount']) ? (float) $pricePointRow['amount'] : 0.0,
+                'amount'          => isset($pricePointRow['amount']) ? (string) $pricePointRow['amount'] : '',
                 'currency'        => (isset($pricePointRow['currency']) && $pricePointRow['currency'] !== '')
                     ? (string) $pricePointRow['currency']
                     : 'GBP',
@@ -875,12 +1213,26 @@ function pricingDisplayRowsFromPlans(array $plans): array
             ];
         }
 
+        // 🔘 Task 7n Phase 2: what the button does. Absent (before database
+        // upgrade 0004) means the ordinary "buy it" button.
+        $ctaMode = 'checkout';
+        if (isset($planRow['ctaMode']) && $planRow['ctaMode'] === 'contact') {
+            $ctaMode = 'contact';
+        }
+        $contactUrl = null;
+        if (isset($planRow['contactUrl'])) {
+            $contactUrl = (string) $planRow['contactUrl'];
+        }
+
         $decodedPlans[] = [
+            'ctaMode'      => $ctaMode,
+            'contactUrl'   => $contactUrl,
+            'hasPricePoint' => !empty($planRow['hasPricePoint']),
             'planKey'      => isset($planRow['planKey']) ? (string) $planRow['planKey'] : '',
             'planName'     => isset($planRow['planName']) ? (string) $planRow['planName'] : '',
             'description'  => isset($planRow['description']) ? (string) $planRow['description'] : '',
-            'priceMonthly' => isset($planRow['priceMonthly']) ? (float) $planRow['priceMonthly'] : 0.0,
-            'priceYearly'  => isset($planRow['priceYearly']) ? (float) $planRow['priceYearly'] : 0.0,
+            'priceMonthly' => isset($planRow['priceMonthly']) ? (string) $planRow['priceMonthly'] : '0',
+            'priceYearly'  => isset($planRow['priceYearly']) ? (string) $planRow['priceYearly'] : '0',
             'currency'     => (isset($planRow['currency']) && $planRow['currency'] !== '')
                 ? (string) $planRow['currency']
                 : 'GBP',
@@ -980,8 +1332,16 @@ function pricingDisplayRowsFromPlans(array $plans): array
         // case until an admin populates Table 22 AND flips
         // billing_price_points_enabled=1).
         // ------------------------------------------------------------
-        $monthlyPricePoint = pricingFindPricePointByInterval($decodedPlan['pricePoints'], 'monthly');
-        $yearlyPricePoint  = pricingFindPricePointByInterval($decodedPlan['pricePoints'], 'yearly');
+        // 💱 Only price points in the plan's own currency compete for the
+        // headline figures (the same offer exists in several currencies).
+        $ownCurrencyPoints = [];
+        foreach ($decodedPlan['pricePoints'] as $pricePoint) {
+            if ($pricePoint['currency'] === $decodedPlan['currency']) {
+                $ownCurrencyPoints[] = $pricePoint;
+            }
+        }
+        $monthlyPricePoint = pricingFindPricePointByInterval($ownCurrencyPoints, 'monthly');
+        $yearlyPricePoint  = pricingFindPricePointByInterval($ownCurrencyPoints, 'yearly');
 
         if ($monthlyPricePoint !== null) {
             $priceMonthlyFormatted = pricingFormatPrice($monthlyPricePoint['amount'], $monthlyPricePoint['currency']);
@@ -1012,7 +1372,17 @@ function pricingDisplayRowsFromPlans(array $plans): array
             ];
         }
 
+        // 🆓 Really free = a "buy it" plan with nothing to pay in either of
+        // the single-price columns AND no price of its own. A "Contact us"
+        // plan (whose yearly column is 0.00) is never free.
+        $isFree = ($decodedPlan['ctaMode'] !== 'contact'
+            && !$decodedPlan['hasPricePoint']
+            && pricingFormatPrice($decodedPlan['priceMonthly'], $decodedPlan['currency']) === 'Free'
+            && in_array(pricingFormatPrice($decodedPlan['priceYearly'], $decodedPlan['currency']), ['Free', ''], true));
+
         $displayRows[] = [
+            'ctaMode'               => $decodedPlan['ctaMode'],
+            'contactUrl'            => $decodedPlan['contactUrl'],
             'planKey'               => $decodedPlan['planKey'],
             'planName'              => $decodedPlan['planName'],
             'description'           => $decodedPlan['description'],
@@ -1020,7 +1390,7 @@ function pricingDisplayRowsFromPlans(array $plans): array
             'priceMonthlyFormatted' => $priceMonthlyFormatted,
             'priceYearlyFormatted'  => $priceYearlyFormatted,
             'currency'              => $decodedPlan['currency'],
-            'isZeroPrice'           => ($decodedPlan['priceMonthly'] <= 0.0),
+            'isZeroPrice'           => $isFree,
             'features'              => $featureRows,
             'limits'                => $limitRows,
             'pricePoints'           => $pricePointRows,
