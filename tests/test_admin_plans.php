@@ -488,9 +488,9 @@ function apLiteralTokens(string $apSource): array
 }
 
 /**
- * 🏷️ Seeded paid-plan keys and seeded prices written into code (plan §9
- *    Phase 2 literal guard, for the files of this slice; slice 2d widens it
- *    to the whole site). Returns what was found.
+ * 🏷️ Seeded paid-plan keys and seeded prices written into code, for the
+ *    plan editor's own files (tests/test_commercial_literals.php applies the
+ *    same rule to the whole site). Returns what was found.
  *
  * @return array<int, string>
  */
