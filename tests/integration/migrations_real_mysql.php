@@ -85,6 +85,25 @@
  *      naming hCaptcha whichever runs first, the installer or the upgrade
  *      tool.
  *
+ * Added 2026-11-26 (task 7n Phase 2, migration 0004 - plans, prices, currencies):
+ *
+ *   Scenario A and B (extended). 0004 applies on the fresh path and on the
+ *      old-install.sql path; the fresh path has the Enterprise plan (a copy
+ *      of Business), the five draft GBP price points, the two placeholder
+ *      prices moved, the five new settings (pricing_show_prices = 1), and the
+ *      three charging switches still 0.
+ *   Scenario N. A database already at migration 0003 upgrades to 0004 and
+ *      ends up identical (structure AND plan/price data) to a fresh install;
+ *      on a second database at 0003 the owner's own changes - a changed
+ *      placeholder price, their own price point, their own hand-made
+ *      Enterprise plan, an existing setting - are all kept, and so are changes
+ *      made after 0004 when 0004 is forced to run again.
+ *   Scenario J (extended). On the empty-database path 0004 leaves the plans
+ *      and price-point tables EMPTY (review finding F1 still holds), and the
+ *      installer's replay (migrationDbReplayDataSteps()) then gives the same
+ *      plans and prices as a fresh install; a second replay changes nothing;
+ *      the replay waits its turn behind the upgrade lock.
+ *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
  *
@@ -376,6 +395,89 @@ function itSchemaSnapshot(\mysqli $itDb): array
 }
 
 /**
+ * 💷 The plan, price-point and setting data migration 0004 is about, without
+ *    anything that legitimately differs between two databases (IDs, times),
+ *    so two databases can be compared exactly (task 7n Phase 2).
+ *
+ * @return array{plans: array, pricePoints: array, settings: array}
+ */
+function itPhase2Data(\mysqli $itDb): array
+{
+    $itPlans = $itDb->query(
+        'SELECT `planKey`, `planKind`, `ctaMode`, `contactUrl`, `planName`, `description`, `priceMonthly`, `priceYearly`, `currency`,'
+        . ' `featuresJSON`, `limitsJSON`, `isActive`, `sortOrder`, `availableFrom`, `availableUntil`, `maxSales`, `basedOnPlanID`,'
+        . ' `pricePromiseMode`, `pricePromiseMonths` FROM `tblSubscriptionPlans` ORDER BY `planKey`'
+    )->fetch_all(MYSQLI_ASSOC);
+    $itPricePoints = $itDb->query(
+        'SELECT `p`.`planKey`, `pp`.`priceKey`, `pp`.`priceGroupKey`, `pp`.`billingInterval`, `pp`.`intervalCount`, `pp`.`amount`,'
+        . ' `pp`.`currency`, `pp`.`isDefault`, `pp`.`isActive`, `pp`.`sortOrder`, `pp`.`grantsJSON`, `pp`.`validFrom`, `pp`.`validUntil`'
+        . ' FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID`'
+        . ' ORDER BY `p`.`planKey`, `pp`.`priceKey`'
+    )->fetch_all(MYSQLI_ASSOC);
+    $itSettings = $itDb->query(
+        "SELECT `settingKey`, `settingGroup`, `settingValue`, `settingType`, `isSensitive`, `isEditable` FROM `tblSettings`"
+        . " WHERE `settingKey` IN ('billing_currencies', 'billing_default_currency', 'billing_price_promise_default_mode',"
+        . " 'billing_price_promise_default_months', 'pricing_show_prices', 'billing_price_points_enabled', 'billing_discounts_enabled',"
+        . " 'billing_payg_enabled') ORDER BY `settingKey`"
+    )->fetch_all(MYSQLI_ASSOC);
+
+    return ['plans' => $itPlans, 'pricePoints' => $itPricePoints, 'settings' => $itSettings];
+}
+
+/**
+ * 🔢 One number from a query (COUNT(*) and the like).
+ */
+function itNumber(\mysqli $itDb, string $itSql): int
+{
+    return (int) $itDb->query($itSql)->fetch_row()[0];
+}
+
+/**
+ * 🔤 One value from a query, as text ('' when there is no row).
+ */
+function itValue(\mysqli $itDb, string $itSql): string
+{
+    $itRow = $itDb->query($itSql)->fetch_row();
+
+    if (!is_array($itRow) || $itRow[0] === null) {
+        return '';
+    }
+
+    return (string) $itRow[0];
+}
+
+/**
+ * ✂️ Take migration 0004's new columns, indexes and foreign key out of a
+ *    schema snapshot, and drop line-end commas (removing the last line of a
+ *    table would otherwise leave a comma behind), so it can be compared with
+ *    a database that never had 0004.
+ */
+function itWithoutPhase2Pieces(array $itSnapshot): array
+{
+    $itPieces = [
+        'tblSubscriptionPlans' => ['planKind', 'ctaMode', 'contactUrl', 'availableFrom', 'availableUntil', 'maxSales', 'basedOnPlanID',
+            'pricePromiseMode', 'pricePromiseMonths', 'idx_plan_based_on', 'idx_plan_kind_active', 'fk_plan_based_on'],
+        'tblPlanPricePoints'   => ['priceGroupKey', 'idx_pricepoint_plan_group'],
+        'tblSubscriptions'     => ['pricePromiseMode', 'priceLockedUntil'],
+    ];
+
+    foreach ($itPieces as $itTable => $itNames) {
+        if (!isset($itSnapshot[$itTable])) {
+            continue;
+        }
+        foreach ($itNames as $itName) {
+            $itSnapshot[$itTable] = (string) preg_replace('/^\s*(?:KEY |CONSTRAINT )?`' . $itName . '` [^\n]*\n/m', '', $itSnapshot[$itTable]);
+        }
+    }
+
+    foreach ($itSnapshot as $itTable => $itCreate) {
+        $itSnapshot[$itTable] = (string) preg_replace('/,\n/', "\n", $itCreate);
+    }
+
+    return $itSnapshot;
+}
+
+/**
  * 💻 Run the REAL _includes/cli/migrate.php, as a genuine separate process,
  *    against one test database, by re-invoking THIS file with its internal
  *    --run-migrate-cli= option (see the self-invoked CHILD mode above). The
@@ -509,6 +611,8 @@ $itDbK2 = $itBaseName . '_k2';
 $itDbL  = $itBaseName . '_l';
 $itDbL2 = $itBaseName . '_l2';
 $itDbM  = $itBaseName . '_m';
+$itDbN  = $itBaseName . '_n';
+$itDbN2 = $itBaseName . '_n2';
 
 // ==============================================================================
 // 🅰️ Scenario A: fresh database - install.sql + seed + migrations; install.sql
@@ -532,6 +636,7 @@ itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: --apply exit 
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0001_subscription_price_snapshot_columns'), 'real CLI: output says 0001 applied');
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0002_admin_audit_log_and_settings'), 'real CLI: output says 0002 applied');
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0003_sessions_valid_from'), 'real CLI: output says 0003 applied (review finding 1)');
+itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0004_plans_prices_currencies'), 'real CLI: output says 0004 applied (task 7n Phase 2)');
 
 $itCliResult = itCli($itDbA, 'apply');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: a SECOND --apply exit 0');
@@ -541,10 +646,11 @@ $itCliResult = itCli($itDbA, 'status');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: --status exit 0 once up to date');
 
 $itLedgerRows = $itA->query('SELECT `migrationKey`, `appliedBy` FROM `tblSchemaMigrations` ORDER BY `migrationKey`')->fetch_all(MYSQLI_ASSOC);
-itCheck('A fresh database', count($itLedgerRows) === 3, 'tblSchemaMigrations lists all three migrations (' . count($itLedgerRows) . ')');
+itCheck('A fresh database', count($itLedgerRows) === 4, 'tblSchemaMigrations lists all four migrations (' . count($itLedgerRows) . ')');
 itCheck('A fresh database', isset($itLedgerRows[0]['migrationKey']) && $itLedgerRows[0]['migrationKey'] === '0001_subscription_price_snapshot_columns', 'ledger: first row is 0001');
 itCheck('A fresh database', isset($itLedgerRows[1]['migrationKey']) && $itLedgerRows[1]['migrationKey'] === '0002_admin_audit_log_and_settings', 'ledger: second row is 0002');
 itCheck('A fresh database', isset($itLedgerRows[2]['migrationKey']) && $itLedgerRows[2]['migrationKey'] === '0003_sessions_valid_from', 'ledger: third row is 0003');
+itCheck('A fresh database', isset($itLedgerRows[3]['migrationKey']) && $itLedgerRows[3]['migrationKey'] === '0004_plans_prices_currencies', 'ledger: fourth row is 0004');
 $itNewColumns = $itA->query("SELECT `TABLE_NAME`, `COLUMN_NAME`, `COLUMN_TYPE`, `IS_NULLABLE` FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `COLUMN_NAME` IN ('sessionsValidFrom', 'sessionsValidFromSeen') ORDER BY `COLUMN_NAME`")->fetch_all(MYSQLI_ASSOC);
 itCheck('A fresh database', $itNewColumns === [
     ['TABLE_NAME' => 'tblUsers', 'COLUMN_NAME' => 'sessionsValidFrom', 'COLUMN_TYPE' => 'datetime(6)', 'IS_NULLABLE' => 'YES'],
@@ -559,6 +665,59 @@ itCheck('A fresh database', str_starts_with($itLedgerAppliedByA, 'cli:'), 'ledge
 itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'billing_vat_mode' AND `settingValue` = 'inclusive'")->num_rows === 1, '0002 seeded billing_vat_mode = inclusive');
 // 📝 Codex round 2 finding R1-3: installer order (seed first, then the upgrades).
 itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'installer order (seed, then upgrades): the bot-protection description names hCaptcha (R1-3)');
+
+
+// 💷 Task 7n Phase 2 (migration 0004) on the fresh path.
+$itDataA = itPhase2Data($itA);
+$itPlansA = [];
+foreach ($itDataA['plans'] as $itPlanRow) {
+    $itPlansA[$itPlanRow['planKey']] = $itPlanRow;
+}
+itCheck('A fresh database', array_keys($itPlansA) === ['anonymous', 'business', 'enterprise', 'free', 'pro'], '0004: five plans - the four starting ones plus Enterprise: ' . implode(', ', array_keys($itPlansA)));
+itCheck(
+    'A fresh database',
+    isset($itPlansA['enterprise'])
+        && [$itPlansA['enterprise']['planKind'], $itPlansA['enterprise']['ctaMode'], $itPlansA['enterprise']['contactUrl'], $itPlansA['enterprise']['planName'], $itPlansA['enterprise']['priceMonthly'], $itPlansA['enterprise']['priceYearly'], $itPlansA['enterprise']['currency'], (int) $itPlansA['enterprise']['isActive'], (int) $itPlansA['enterprise']['sortOrder']]
+            === ['standard', 'contact', null, 'Enterprise', '99.00', '0.00', 'GBP', 1, 4],
+    '0004: Enterprise is an ordinary plan with a Contact us button (address = site_email), from £99.00 a month, on sale, fifth on the grid'
+);
+itCheck('A fresh database', $itPlansA['enterprise']['featuresJSON'] === $itPlansA['business']['featuresJSON'] && $itPlansA['enterprise']['limitsJSON'] === $itPlansA['business']['limitsJSON'], '0004: Enterprise has exactly Business\'s features and limits');
+itCheck('A fresh database', [$itPlansA['pro']['priceMonthly'], $itPlansA['pro']['priceYearly'], $itPlansA['business']['priceMonthly'], $itPlansA['business']['priceYearly']] === ['6.99', '49.99', '24.99', '199.99'], '0004: the placeholder monthly prices moved (Pro £6.99 / £49.99, Business £24.99 / £199.99)');
+itCheck('A fresh database', [$itPlansA['free']['planKind'], $itPlansA['free']['ctaMode'], $itPlansA['free']['pricePromiseMode'], $itPlansA['free']['maxSales']] === ['standard', 'checkout', null, null], '0004: existing plans get the defaults (standard, checkout button, site-wide promise, no cap)');
+$itPointsA = [];
+foreach ($itDataA['pricePoints'] as $itPointRow) {
+    $itPointsA[] = $itPointRow['planKey'] . ' ' . $itPointRow['priceKey'] . ' ' . $itPointRow['priceGroupKey'] . ' ' . $itPointRow['billingInterval'] . ' ' . $itPointRow['amount'] . ' ' . $itPointRow['currency'] . ' default=' . $itPointRow['isDefault'];
+}
+itCheck(
+    'A fresh database',
+    $itPointsA === [
+        'business monthly_gbp monthly monthly 24.99 GBP default=0',
+        'business yearly_gbp yearly yearly 199.99 GBP default=1',
+        'enterprise monthly_gbp monthly monthly 99.00 GBP default=0',
+        'pro monthly_gbp monthly monthly 6.99 GBP default=0',
+        'pro yearly_gbp yearly yearly 49.99 GBP default=1',
+    ],
+    '0004: the five draft GBP price points, yearly ones recommended: ' . json_encode($itPointsA)
+);
+$itSettingsA = [];
+foreach ($itDataA['settings'] as $itSettingRow) {
+    $itSettingsA[$itSettingRow['settingKey']] = $itSettingRow['settingValue'];
+}
+itCheck(
+    'A fresh database',
+    $itSettingsA === [
+        'billing_currencies' => 'GBP,USD,EUR',
+        'billing_default_currency' => 'GBP',
+        'billing_discounts_enabled' => '0',
+        'billing_payg_enabled' => '0',
+        'billing_price_points_enabled' => '0',
+        'billing_price_promise_default_mode' => 'while_subscribed',
+        'billing_price_promise_default_months' => '12',
+        'pricing_show_prices' => '1',
+    ],
+    '0004: the five new settings (pricing_show_prices = 1, owner answer Q2 = A) and the three charging switches still 0: ' . json_encode($itSettingsA)
+);
+itCheck('A fresh database', migrationDbSeedDataState($itA)['state'] === 'complete', '0004 leaves the installer\'s starting-data check reading "complete"');
 
 $itSchemaA = itSchemaSnapshot($itA);
 
@@ -598,6 +757,12 @@ itCheck(
     isset($itUpgradeResult['migrations'][2]) && $itUpgradeResult['migrations'][2]['key'] === '0003_sessions_valid_from' && $itUpgradeResult['migrations'][2]['outcome'] === 'applied',
     '0003 applies normally'
 );
+itCheck(
+    'B old install.sql upgrades',
+    isset($itUpgradeResult['migrations'][3]) && $itUpgradeResult['migrations'][3]['key'] === '0004_plans_prices_currencies' && $itUpgradeResult['migrations'][3]['outcome'] === 'applied',
+    '0004 applies normally'
+);
+itCheck('B old install.sql upgrades', itPhase2Data($itB) === $itDataA, '0004 gives the old-install.sql database exactly the same plans, price points and settings as the fresh path');
 
 $itSchemaB = itSchemaSnapshot($itB);
 itCheck('B old install.sql upgrades', $itSchemaA === $itSchemaB, 'the fresh path (A) and the old-database upgrade path (B) give byte-for-byte identical finished schemas');
@@ -608,7 +773,9 @@ unset($itSchemaAWithoutNewTables['tblSchemaMigrations'], $itSchemaAWithoutNewTab
 foreach (['tblUsers', 'tblUserSessions'] as $itTableWithNewColumn) {
     $itSchemaAWithoutNewTables[$itTableWithNewColumn] = (string) preg_replace('/^\s*`sessionsValidFrom(Seen)?` [^\n]*\n/m', '', $itSchemaAWithoutNewTables[$itTableWithNewColumn]);
 }
-itCheck('B old install.sql upgrades', $itSchemaAWithoutNewTables === $itOldSchema, 'apart from the two brand-new tables and 0003\'s two new columns, the finished schema matches exactly what the OLD install.sql produced (nothing else moved or changed)');
+// 💷 ...and 0004's columns, indexes and foreign key (task 7n Phase 2).
+$itSchemaAWithoutNewTables = itWithoutPhase2Pieces($itSchemaAWithoutNewTables);
+itCheck('B old install.sql upgrades', $itSchemaAWithoutNewTables === itWithoutPhase2Pieces($itOldSchema), 'apart from the two brand-new tables, 0003\'s two new columns and 0004\'s new pieces, the finished schema matches exactly what the OLD install.sql produced (nothing else moved or changed)');
 
 // ==============================================================================
 // 🅲 Scenario C: owner-edited setting values are never overwritten by a re-run
@@ -868,6 +1035,10 @@ itCheck(
     'the CLI prints a clear note that starting data (QR types, logos, plans) still needs the web installer'
 );
 itCheck('J empty db then seed check', (int) $itJ->query("SELECT COUNT(*) FROM `tblSettings`")->fetch_row()[0] > 0, 'migration 0002 DID insert rows into tblSettings (this is exactly why tblSettings cannot be a seed-protection table)');
+// 💷 Task 7n Phase 2: 0004 writes to tblSubscriptionPlans, but only by copying
+//    rows already there, so on an empty database it adds nothing (F1 holds).
+itCheck('J empty db then seed check', itNumber($itJ, "SELECT COUNT(*) FROM `tblSchemaMigrations` WHERE `migrationKey` = '0004_plans_prices_currencies'") === 1, '0004 ran (and was recorded) on the empty database');
+itCheck('J empty db then seed check', itNumber($itJ, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`') === 0 && itNumber($itJ, 'SELECT COUNT(*) FROM `tblPlanPricePoints`') === 0, '0004 left the plans and price-point tables EMPTY on the empty database (review finding F1 still holds)');
 
 $itSeedCheckJ = migrationDbSeedDataAlreadyPresent($itJ);
 itCheck(
@@ -884,11 +1055,108 @@ $itSeedAfterCliJ = migrationDbRunSeedSql($itJ, $itSeedSql);
 itCheck('J empty db then seed check', $itSeedAfterCliJ['ok'] === true, 'the web installer\'s seed load then SUCCEEDS on top of the CLI-created settings: ' . $itSeedAfterCliJ['error']);
 $itSeedStateJ = migrationDbSeedDataState($itJ);
 itCheck('J empty db then seed check', $itSeedStateJ['ok'] === true && $itSeedStateJ['state'] === 'complete', 'and the starting data is then complete');
+
+// 🔁 Task 7n Phase 2: without the installer's replay, this database would
+//    never get the Enterprise plan or the draft prices (0004 is recorded, its
+//    data steps found no plans). Prove the gap, then the fix.
+itCheck('J empty db then seed check', itNumber($itJ, "SELECT COUNT(*) FROM `tblSubscriptionPlans` WHERE `planKey` = 'enterprise'") === 0 && itValue($itJ, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '4.99', 'reproduction: after upgrades-then-seed, there is no Enterprise plan and Pro is still at the placeholder price');
+$itLockHolderJ = itServerConnect($itEnv, $itPort);
+$itLockHolderJ->select_db(itSafeDbName($itDbJ));
+$itLockNameJ = itLockNameFor($itLockHolderJ);
+$itLockStatementJ = $itLockHolderJ->prepare('SELECT GET_LOCK(?, 0)');
+$itLockStatementJ->bind_param('s', $itLockNameJ);
+$itLockStatementJ->execute();
+$itLockStatementJ->close();
+$itReplayBusyJ = migrationDbReplayDataSteps($itJ, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itReplayBusyJ['ok'] === false && $itReplayBusyJ['status'] === 'busy' && $itReplayBusyJ['stepsRun'] === 0, 'the replay waits its turn: while an upgrade holds the lock it is refused ("busy") and runs nothing');
+$itLockHolderJ->close();
+$itReplayJ = migrationDbReplayDataSteps($itJ, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itReplayJ['ok'] === true && $itReplayJ['skipped'] === [] && in_array('0004_plans_prices_currencies', $itReplayJ['migrations'], true) && in_array('0002_admin_audit_log_and_settings', $itReplayJ['migrations'], true), 'the installer\'s replay of the applied upgrades\' data steps succeeds (0002 and 0004 included, nothing skipped): ' . json_encode($itReplayJ));
+itCheck('J empty db then seed check', itPhase2Data($itJ) === $itDataA, 'after the replay, the plans, price points and settings are EXACTLY those of a fresh install (scenario A)');
+$itReplayJ2 = migrationDbReplayDataSteps($itJ, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itReplayJ2['ok'] === true && itPhase2Data($itJ) === $itDataA && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === itNumber($itA, 'SELECT COUNT(*) FROM `tblSettings`'), 'a second replay changes nothing (same data, no extra rows; same settings count as a fresh install)');
+itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'complete', 'and the starting data still reads as complete');
 // 📝 Codex round 2 finding R1-3: upgrade-tool order (0002 ran before the row
 //    existed, then the seed). Before the fix this kept the OLD wording for ever.
 itCheck('J empty db then seed check', $itJ->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'upgrade-tool order (upgrades, then seed): the bot-protection description ALSO names hCaptcha (R1-3)');
 $itCliResultJ2 = itCli($itDbJ, 'status');
 itCheck('J empty db then seed check', $itCliResultJ2['exit'] === 0 && !str_contains($itCliResultJ2['out'] . $itCliResultJ2['err'], 'changed after it was applied'), 'and the upgrade tool reports up to date with no "changed after it was applied" warning (migration 0002 was not edited)');
+
+// ==============================================================================
+// 🅽 Scenario N (task 7n Phase 2): a database already at migration 0003
+//    upgrades to 0004 - identical to a fresh install, and never overwriting
+//    the owner's changes
+// ==============================================================================
+echo PHP_EOL . 'Scenario N: a database at migration 0003 upgrades to 0004; owner changes are kept' . PHP_EOL;
+
+// 📁 A folder holding ONLY 0001-0003 (exact copies, so their fingerprints match
+//    the real files and the real folder later sees them as already applied).
+$itDir0003 = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_it_mig0003_' . bin2hex(random_bytes(6)) . DIRECTORY_SEPARATOR;
+mkdir($itDir0003, 0700);
+foreach (['0001_subscription_price_snapshot_columns', '0002_admin_audit_log_and_settings', '0003_sessions_valid_from'] as $itKey0003) {
+    copy(migrationDefaultDirectory() . $itKey0003 . '.php', $itDir0003 . $itKey0003 . '.php');
+}
+
+// N1. No owner changes: the result must equal the fresh path exactly.
+$itN = itFreshDb($itEnv, $itPort, $itDbN);
+itRunSqlFile($itN, $itInstallSql);
+itRunSqlFile($itN, $itSeedSql);
+$itTo0003 = migrationRun($itN, 'apply', 'test', $itDir0003, migrationDefaultInstallSqlPath());
+itCheck('N upgrade from 0003', $itTo0003['status'] === 'ok' && count($itTo0003['migrations']) === 3, 'setup: the database is brought to migration 0003 (three applied)');
+itCheck('N upgrade from 0003', $itN->query("SHOW COLUMNS FROM `tblSubscriptionPlans` LIKE 'planKind'")->num_rows === 0 && itValue($itN, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '4.99', 'setup: at 0003 there is no planKind column and Pro is at the placeholder £4.99');
+$itStatusN = migrationRun($itN, 'status', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('N upgrade from 0003', $itStatusN['pending'] === ['0004_plans_prices_currencies'] && migrationExitCodeForResult('status', $itStatusN) === 3, 'the status check shows exactly 0004 waiting (exit code 3)');
+$itUpN = migrationRun($itN, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck(
+    'N upgrade from 0003',
+    $itUpN['status'] === 'ok' && count($itUpN['migrations']) === 1 && $itUpN['migrations'][0]['key'] === '0004_plans_prices_currencies'
+        && $itUpN['migrations'][0]['outcome'] === 'applied' && $itUpN['migrations'][0]['stepsRun'] === 29 && $itUpN['migrations'][0]['stepsSkipped'] === 0,
+    'the upgrade applies 0004 alone, all 29 steps: ' . json_encode($itUpN['migrations'])
+);
+itCheck('N upgrade from 0003', itSchemaSnapshot($itN) === $itSchemaA, 'the upgraded database\'s structure is byte-for-byte the fresh install\'s');
+itCheck('N upgrade from 0003', itPhase2Data($itN) === $itDataA, 'and its plans, price points and settings are exactly the fresh install\'s');
+itCheck('N upgrade from 0003', migrationDbSeedDataState($itN)['state'] === 'complete', 'the installer\'s starting-data check still reads "complete"');
+$itAgainN = migrationRun($itN, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('N upgrade from 0003', $itAgainN['status'] === 'ok' && $itAgainN['migrations'] === [] && itPhase2Data($itN) === $itDataA, 'a second upgrade run changes nothing');
+
+// N2. The owner had already changed things before 0004 arrived.
+$itN2 = itFreshDb($itEnv, $itPort, $itDbN2);
+itRunSqlFile($itN2, $itInstallSql);
+itRunSqlFile($itN2, $itSeedSql);
+migrationRun($itN2, 'apply', 'test', $itDir0003, migrationDefaultInstallSqlPath());
+$itN2->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 5.49 WHERE `planKey` = 'pro'");
+$itN2->query("INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `billingInterval`, `amount`, `currency`) SELECT `planID`, 'yearly_gbp', 'yearly', 45.00, 'GBP' FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'");
+$itN2->query("INSERT INTO `tblSubscriptionPlans` (`planKey`, `planName`, `priceMonthly`, `priceYearly`, `currency`, `featuresJSON`, `limitsJSON`, `sortOrder`) VALUES ('enterprise', 'Our Enterprise', 150.00, 1500.00, 'GBP', '{}', '{}', 9)");
+$itN2->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('billing', 'billing_currencies', 'GBP', 'string', 0, 1, 'Owner wording')");
+$itPlanCountBeforeN2 = itNumber($itN2, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`');
+$itUpN2 = migrationRun($itN2, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('N owner changes kept', $itUpN2['status'] === 'ok', '0004 applies on a database the owner had already changed: ' . $itUpN2['error']);
+itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '5.49', 'the owner\'s own Pro monthly price (£5.49, no longer the placeholder) is NOT moved to £6.99');
+itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'") === '24.99', 'Business, still at the placeholder, IS moved to £24.99');
+itCheck('N owner changes kept', itValue($itN2, "SELECT CONCAT(`pp`.`amount`, '|', COALESCE(`pp`.`priceGroupKey`, 'NULL'), '|', `pp`.`isDefault`) FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'pro' AND `pp`.`priceKey` = 'yearly_gbp'") === '45.00|NULL|0', 'the owner\'s own Pro yearly price point (£45.00) is kept exactly, not replaced by the draft £49.99');
+itCheck('N owner changes kept', itValue($itN2, "SELECT `pp`.`amount` FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'pro' AND `pp`.`priceKey` = 'monthly_gbp'") === '6.99', 'the missing Pro monthly price point is still added (£6.99)');
+itCheck('N owner changes kept', itValue($itN2, "SELECT CONCAT(`planName`, '|', `priceMonthly`, '|', `ctaMode`, '|', `sortOrder`) FROM `tblSubscriptionPlans` WHERE `planKey` = 'enterprise'") === 'Our Enterprise|150.00|checkout|9', 'the owner\'s hand-made Enterprise plan is kept exactly (name, price, button, position)');
+itCheck('N owner changes kept', itNumber($itN2, "SELECT COUNT(*) FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'enterprise'") === 0, '...and is NOT given the draft £99 price (only a Contact us plan 0004 made gets it)');
+itCheck('N owner changes kept', itNumber($itN2, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`') === $itPlanCountBeforeN2, 'no second Enterprise plan was made');
+itCheck('N owner changes kept', itValue($itN2, "SELECT CONCAT(`settingValue`, '|', `description`) FROM `tblSettings` WHERE `settingKey` = 'billing_currencies'") === 'GBP|Owner wording', 'an existing billing_currencies setting is kept exactly');
+itCheck('N owner changes kept', itValue($itN2, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'pricing_show_prices'") === '1', 'the missing pricing_show_prices setting is added (1)');
+
+// N3. Changes made AFTER 0004, then 0004 forced to run again.
+$itN2->query("UPDATE `tblSettings` SET `settingValue` = '0' WHERE `settingKey` = 'pricing_show_prices'");
+$itN2->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 23.00 WHERE `planKey` = 'business'");
+$itN2->query("UPDATE `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` SET `pp`.`amount` = 26.00 WHERE `p`.`planKey` = 'business' AND `pp`.`priceKey` = 'monthly_gbp'");
+$itDataBeforeRerunN2 = itPhase2Data($itN2);
+$itSettingCountN2 = itNumber($itN2, 'SELECT COUNT(*) FROM `tblSettings`');
+$itN2->query("DELETE FROM `tblSchemaMigrations` WHERE `migrationKey` = '0004_plans_prices_currencies'");
+$itRerunN2 = migrationRun($itN2, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('N owner changes kept', $itRerunN2['status'] === 'ok' && isset($itRerunN2['migrations'][0]) && $itRerunN2['migrations'][0]['stepsSkipped'] === 16, '0004 forced to run again: every structure step is skipped (16), the data steps run: ' . json_encode($itRerunN2['migrations']));
+itCheck('N owner changes kept', itPhase2Data($itN2) === $itDataBeforeRerunN2 && itNumber($itN2, 'SELECT COUNT(*) FROM `tblSettings`') === $itSettingCountN2, 'running 0004 again overwrites NOTHING (prices shown switched off, Business £23.00 and its £26.00 price point all kept) and adds no rows');
+itCheck('N owner changes kept', itValue($itN2, "SELECT GROUP_CONCAT(`settingValue` ORDER BY `settingKey`) FROM `tblSettings` WHERE `settingKey` IN ('billing_price_points_enabled', 'billing_discounts_enabled', 'billing_payg_enabled')") === '0,0,0', 'charging stays off: the three charging switches are still 0');
+
+foreach ((array) glob($itDir0003 . '*') as $itTempFile) {
+    @unlink((string) $itTempFile);
+}
+@rmdir($itDir0003);
 
 // ==============================================================================
 // 🅺 Scenario K: the upgrade lock name includes the database (review finding
@@ -1155,7 +1423,7 @@ itCheck('M non-InnoDB refused', $itSeedRunM['ok'] === false && str_contains($itS
 // ==============================================================================
 // 🧹 Clean up and report
 // ==============================================================================
-foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2, $itDbM] as $itDbToRemove) {
+foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2, $itDbM, $itDbN, $itDbN2] as $itDbToRemove) {
     itDropDb($itEnv, $itPort, $itDbToRemove);
 }
 

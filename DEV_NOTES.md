@@ -817,10 +817,25 @@ tables that already existed earlier in the same file. That meant:
    `tblSettings` non-empty, which then made the web installer wrongly believe
    `seed_data.sql` had already run - it would skip it **forever**, and the QR
    code types, predefined logos and subscription plans would never be
-   loaded. The check now only ever looks at tables `seed_data.sql` fills and
-   no migration file is allowed to touch (`migrationSeedProtectionTables()` -
-   `tests/test_migrations.php` has a standing regression guard that checks
-   every real migration file against this).
+   loaded. The check now only ever looks at tables `seed_data.sql` fills
+   (`migrationSeedProtectionTables()`). **Made precise 2026-11-26 (task 7n
+   Phase 2, migration `0004`):** a migration MAY now write to those tables,
+   but only in a way that can never put a row into an EMPTY one - by copying
+   a row already in the same table (`INSERT INTO t (...) SELECT ... FROM
+   (SELECT ... FROM t WHERE ...) AS x ON DUPLICATE KEY UPDATE ...`; the inner
+   query is needed because MySQL 8.0 and MariaDB 10.6 both reject the plain
+   form as ambiguous) or by an `update_if_unchanged` step. The runner's
+   validator refuses anything else (`migrationStepCouldFillEmptySeedTable()`),
+   and `tests/test_migrations.php` checks every real migration file against
+   it. So `migrate.php --apply` on a brand-new database still leaves those
+   tables empty. **The other half:** in that order the upgrades' starting-data
+   steps found no plans to work on (for example `0004` copies Business into
+   Enterprise), and they are already recorded as applied. So straight after
+   the web installer loads `seed_data.sql` it runs the `insert_if_missing` and
+   `update_if_unchanged` steps of every migration already recorded, once more
+   (`migrationDbReplayDataSteps()`), which gives exactly the result of a
+   normal install. Write every data step so that running it again is
+   harmless - the rules below already require that.
 3. **Every later change is a migration file**, one file per change, at
    `_includes/sql/migrations/NNNN_short_name.php` (four digits, then an
    underscore, then lower-case words - e.g.

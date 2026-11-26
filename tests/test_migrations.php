@@ -852,22 +852,110 @@ assertEquals(
     'seed protection (F1): checks tblQRCodeTypes, tblPredefinedLogos and tblSubscriptionPlans, in that order - deliberately NOT tblSettings, which migration 0002 (and any later settings migration) also inserts into'
 );
 
-// 🌱 F1 regression guard: if ANY real migration file ever inserted into one
-// of migrationSeedProtectionTables()'s tables, the exact bug review finding
-// F1 describes would come back - running `migrate.php --apply` on a brand
-// new database would make that table non-empty, so the installer would then
-// believe seed_data.sql had already run and would skip it forever. This
-// checks EVERY migration file in the real folder (not just 0001/0002), so a
-// migration added later that breaks this rule fails a test immediately,
-// rather than only being found by reading the real-database check by eye.
+// 🌱 F1 regression guard: if ANY real migration file could ever put a row
+// into an EMPTY one of migrationSeedProtectionTables()'s tables, the exact bug
+// review finding F1 describes would come back - running `migrate.php --apply`
+// on a brand new database would make that table non-empty, so the installer
+// would then believe seed_data.sql had already run and would skip it forever.
+// Until task 7n Phase 2 the rule was "never write to them at all"; Phase 2
+// must add the Enterprise plan and move two placeholder prices, so the rule
+// is now the precise property F1 needs (migrationStepCouldFillEmptySeedTable(),
+// also enforced by migrationValidateStep()). This checks EVERY migration file
+// in the real folder, so a later one that breaks the rule fails a test
+// immediately; tests/integration/migrations_real_mysql.php scenario J proves
+// it on real servers.
+$migSeedGuardWrites = 0;
 foreach ($migLoaded['migrations'] as $migSeedGuardKey => $migSeedGuardMigration) {
     foreach ($migSeedGuardMigration['definition']['steps'] as $migSeedGuardStep) {
+        if (!in_array($migSeedGuardStep['table'], migrationSeedProtectionTables(), true)) {
+            continue;
+        }
+        $migSeedGuardWrites++;
         assertFalse(
-            in_array($migSeedGuardStep['table'], migrationSeedProtectionTables(), true),
-            'F1 regression guard: migration ' . $migSeedGuardKey . ' must never write to a seed-protection table (found: ' . $migSeedGuardStep['table'] . ')'
+            migrationStepCouldFillEmptySeedTable($migSeedGuardStep),
+            'F1 regression guard: migration ' . $migSeedGuardKey . ' (' . migrationDescribeStep($migSeedGuardStep) . ') can never put a row into an EMPTY seed-protection table'
         );
     }
 }
+assertTrue($migSeedGuardWrites >= 3, 'F1 regression guard: the check really saw the Phase 2 writes to tblSubscriptionPlans (' . $migSeedGuardWrites . ')');
+
+// 🌱 The rule itself, on made-up steps (task 7n Phase 2).
+$migF1Copy = [
+    'type'  => 'insert_if_missing',
+    'table' => 'tblSubscriptionPlans',
+    'sql'   => 'INSERT INTO `tblSubscriptionPlans` (`planKey`, `featuresJSON`) SELECT \'x\', `b`.`featuresJSON` FROM (SELECT `featuresJSON` FROM `tblSubscriptionPlans` WHERE `planKey` = \'business\') AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+];
+assertFalse(migrationStepCouldFillEmptySeedTable($migF1Copy), 'F1 rule: a copy of a row already in the same table (through an inner query) cannot fill an empty table');
+assertEquals([], migrationValidateStep($migF1Copy, 1), 'F1 rule: ...and the validator accepts it');
+$migF1Direct = $migF1Copy;
+$migF1Direct['sql'] = 'INSERT INTO `tblSubscriptionPlans` (`planKey`, `featuresJSON`) SELECT \'x\', `featuresJSON` FROM `tblSubscriptionPlans` WHERE `planKey` = \'business\' ON DUPLICATE KEY UPDATE `planKey` = `planKey`';
+assertFalse(migrationStepCouldFillEmptySeedTable($migF1Direct), 'F1 rule: a direct copy from the same table also cannot fill it (the engines reject it as ambiguous, but it is not an F1 risk)');
+$migF1Bad = [
+    'VALUES'               => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) VALUES (\'x\') ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'VALUE'                => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) VALUE (\'x\') ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'a SELECT with no FROM' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'an inner query with no FROM' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT `b`.`k` FROM (SELECT \'x\' AS `k`) AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'another table'        => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT `settingKey` FROM `tblSettings` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'an inner query on another table' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT `b`.`k` FROM (SELECT `settingKey` AS `k` FROM `tblSettings`) AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'DUAL'                 => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' FROM DUAL ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'UNION'                => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT `planKey` FROM `tblSubscriptionPlans` UNION SELECT \'x\' FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'a JOIN'               => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT `p`.`planKey` FROM `tblSubscriptionPlans` AS `p` JOIN `tblSettings` AS `s` ON 1 = 1 ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'INSERT ... SET'       => 'INSERT INTO `tblSubscriptionPlans` SET `planKey` = \'x\' ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'WITH'                 => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) WITH `c` AS (SELECT \'x\' AS `k`) SELECT `k` FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'a sub-query on another table' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' FROM `tblSubscriptionPlans` WHERE EXISTS (SELECT 1 FROM `tblSettings`) ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+];
+foreach ($migF1Bad as $migF1Label => $migF1Sql) {
+    $migF1Step = ['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans', 'sql' => $migF1Sql];
+    assertTrue(migrationStepCouldFillEmptySeedTable($migF1Step), 'F1 rule: an insert using ' . $migF1Label . ' could fill an empty table');
+}
+$migF1Refused = migrationValidateStep(['type' => 'insert_if_missing', 'table' => 'tblQRCodeTypes', 'sql' => 'INSERT INTO `tblQRCodeTypes` (`typeName`) VALUES (\'x\') ON DUPLICATE KEY UPDATE `typeName` = `typeName`'], 1);
+assertTrue($migF1Refused !== [] && str_contains(implode(' ', $migF1Refused), 'must only copy rows that are already in it'), 'F1 rule: the validator refuses a VALUES insert into a seed-protection table, before anything runs: ' . implode(' | ', $migF1Refused));
+$migF1Other = migrationValidateStep(['type' => 'insert_if_missing', 'table' => 'tblSettings', 'sql' => 'INSERT INTO `tblSettings` (`settingKey`) VALUES (\'x\') ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`'], 1);
+assertEquals([], $migF1Other, 'F1 rule: a VALUES insert into tblSettings (not a seed-protection table) is still fine');
+assertFalse(migrationStepCouldFillEmptySeedTable(['type' => 'update_if_unchanged', 'table' => 'tblSubscriptionPlans', 'sql' => 'UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 1.00 WHERE `planKey` = \'x\'']), 'F1 rule: an UPDATE only changes rows that exist, so it cannot fill an empty table');
+assertFalse(migrationStepCouldFillEmptySeedTable(['type' => 'add_column', 'table' => 'tblSubscriptionPlans', 'name' => 'x', 'sql' => 'ALTER TABLE `tblSubscriptionPlans` ADD COLUMN `x` INT NULL']), 'F1 rule: a structure step adds no row');
+assertTrue(migrationStepCouldFillEmptySeedTable(['type' => 'mystery', 'table' => 'tblSubscriptionPlans', 'sql' => 'x']), 'F1 rule: an unknown step type is assumed to be able to fill it');
+$migF1Names = ['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans', 'sql' => 'INSERT INTO `tblSubscriptionPlans` (`values`, `joinedAt`) SELECT `b`.`values`, `b`.`joinedAt` FROM (SELECT `values`, `joinedAt` FROM `tblSubscriptionPlans`) AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`'];
+assertFalse(migrationStepCouldFillEmptySeedTable($migF1Names), 'F1 rule: back-quoted names such as `values` are never read as keywords');
+$migF1Quoted = ['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans', 'sql' => 'INSERT INTO `tblSubscriptionPlans` (`description`) SELECT \'select from values union\' FROM (SELECT `planKey` FROM `tblSubscriptionPlans`) AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`'];
+assertFalse(migrationStepCouldFillEmptySeedTable($migF1Quoted), 'F1 rule: words inside quoted text are never read as keywords');
+
+// 🔁 migrationReplayPlan() (task 7n Phase 2): which data steps the installer
+//    repeats straight after loading seed_data.sql on a database whose upgrades
+//    ran first. Pure, so it is tested with made-up loaded migrations.
+$migReplayDataStep   = ['type' => 'insert_if_missing', 'table' => 'tblSettings', 'label' => 'r', 'sql' => 'INSERT INTO `tblSettings` (`settingKey`) VALUES (\'r\') ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`'];
+$migReplayUpdateStep = ['type' => 'update_if_unchanged', 'table' => 'tblSettings', 'sql' => 'UPDATE `tblSettings` SET `settingValue` = \'2\' WHERE `settingKey` = \'r\' AND `settingValue` = \'1\''];
+$migReplayDdlStep    = ['type' => 'add_column', 'table' => 'tblSettings', 'name' => 'zz', 'sql' => 'ALTER TABLE `tblSettings` ADD COLUMN `zz` INT NULL'];
+$migReplayMigrations = [
+    '0002_b' => ['path' => '', 'checksum' => 'bb', 'loadError' => '', 'definition' => ['key' => '0002_b', 'description' => 'b', 'steps' => [$migReplayDdlStep, $migReplayUpdateStep]]],
+    '0001_a' => ['path' => '', 'checksum' => 'aa', 'loadError' => '', 'definition' => ['key' => '0001_a', 'description' => 'a', 'steps' => [$migReplayDdlStep, $migReplayDataStep, $migReplayUpdateStep]]],
+    '0003_c' => ['path' => '', 'checksum' => 'cc', 'loadError' => '', 'definition' => ['key' => '0003_c', 'description' => 'c', 'steps' => [$migReplayDataStep]]],
+    '0004_d' => ['path' => '', 'checksum' => 'dd', 'loadError' => '', 'definition' => ['key' => '0004_d', 'description' => 'd', 'steps' => [$migReplayDataStep]]],
+    '0005_e' => ['path' => '', 'checksum' => 'ee', 'loadError' => 'could not be loaded (ParseError)', 'definition' => null],
+];
+$migReplay = migrationReplayPlan($migReplayMigrations, ['0001_a' => 'aa', '0002_b' => 'bb', '0003_c' => 'CHANGED', '0005_e' => 'ee', '0009_gone' => 'gg']);
+$migReplaySummary = [];
+foreach ($migReplay['steps'] as $migReplayEntry) {
+    $migReplaySummary[] = $migReplayEntry['key'] . '#' . $migReplayEntry['position'] . ':' . $migReplayEntry['step']['type'];
+}
+assertEquals(
+    ['0001_a#2:insert_if_missing', '0001_a#3:update_if_unchanged', '0002_b#2:update_if_unchanged'],
+    $migReplaySummary,
+    'replay: only the DATA steps of APPLIED, unchanged migrations, in number order, keeping each step\'s own position (structure steps are not repeated; 0004 is still waiting, so the normal run applies it in full)'
+);
+assertEquals(['0003_c', '0005_e', '0009_gone'], $migReplay['skipped'], 'replay: a migration changed since it was applied, one that cannot be loaded and one whose file is gone are skipped and reported');
+assertEquals(['steps' => [], 'skipped' => []], migrationReplayPlan($migReplayMigrations, []), 'replay: nothing recorded yet (the normal fresh install) means nothing to repeat');
+$migReplayInvalid = $migReplayMigrations;
+$migReplayInvalid['0001_a']['definition']['steps'][] = ['type' => 'insert_if_missing', 'table' => 'tblSettings', 'sql' => 'DROP TABLE `tblSettings`'];
+$migReplayInvalidPlan = migrationReplayPlan($migReplayInvalid, ['0001_a' => 'aa']);
+assertEquals([[], ['0001_a']], [$migReplayInvalidPlan['steps'], $migReplayInvalidPlan['skipped']], 'replay: a migration that no longer passes the checks is skipped as a whole, never partly run');
+$migReplayReal = migrationReplayPlan($migLoaded['migrations'], ['0004_plans_prices_currencies' => $migLoaded['migrations']['0004_plans_prices_currencies']['checksum']]);
+$migReplayRealTypes = [];
+foreach ($migReplayReal['steps'] as $migReplayEntry) {
+    $migReplayRealTypes[$migReplayEntry['step']['type']] = true;
+}
+assertEquals(['insert_if_missing', 'update_if_unchanged'], array_keys($migReplayRealTypes), 'replay of the real 0004: only its insert-if-missing and update-if-unchanged steps');
+assertEquals(13, count($migReplayReal['steps']), 'replay of the real 0004: its 13 data steps (5 settings, 1 plan, 5 price points, 2 price moves)');
 
 // 🌱 Independent review (Codex C1 finding 1, 2026-11-25): seed_data.sql is
 // loaded inside ONE transaction (migrationDbRunSeedSql()), which only makes it

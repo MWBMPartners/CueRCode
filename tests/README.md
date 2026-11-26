@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-26, task 7n Phase 2 slice 2a added `test_money.php`; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-26, task 7n Phase 2 slices 2a and 2b added `test_money.php` and `test_plans_prices_migration.php`; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -75,7 +75,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 442 |
+| `test_migrations.php` | 459 |
 | `test_money.php` | 161 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
@@ -86,15 +86,20 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_php_runtime_guards.php` | 24 |
 | `test_predefined_logo_png.php` | 264 |
 | `test_pricing.php` | 107 |
+| `test_plans_prices_migration.php` | 146 |
 | `test_pricing_flex.php` | 51 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **6567** |
+| **Total** | **6730** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+### Real-database runs for task 7n Phase 2 slice 2b (2026-11-26, migration 0004)
+
+Passed on throwaway Docker **MySQL 8.0.46** and **MariaDB 10.6.28**, one after the other: `migrations_real_mysql.php` 165 checks on each (A and B extended for 0004; J extended: 0004 leaves the plans tables empty on an empty database, then the installer's replay gives exactly a fresh install's plans, prices and settings, a second replay changes nothing, and the replay is refused while the upgrade lock is held; new N: a database at 0003 upgrades to 0004 identical to a fresh install, and the owner's own prices, price point, hand-made Enterprise plan and settings are kept, also when 0004 is forced to run again), `admin_access_real_mysql.php` 167, `admin_settings_real_mysql.php` 232 and `account_recovery_real_mysql.php` 192 on each (unchanged counts; re-run because they apply every migration). `email_queue_real_mysql.php` and `resend_verification_real_mysql.php` were not re-run (they do not use the migrations).
 
 ### Real-database runs after Codex round 3 (2026-11-25)
 
@@ -197,7 +202,7 @@ only picks up `tests/test_*.php`), but CI still syntax-checks it.
 - `CUERCODE_IT_DB_NAME` is a **base name** here, not a single database: the
   script derives and manages several of its own (`<base>_a`, `<base>_b`,
   `<base>_f`, `<base>_g`, `<base>_h`, `<base>_i`, `<base>_j`, `<base>_k1`,
-  `<base>_k2`) because several checks need independent databases (an "old"
+  `<base>_k2`, `<base>_l`, `<base>_l2`, `<base>_m`, `<base>_n`, `<base>_n2`) because several checks need independent databases (an "old"
   database, a "two runs at once" database, a latin1-default database, a
   database with its own throwaway migrations folder...). Every database name -
   base and derived - **must start with `cuercode_it_`**, or the script refuses

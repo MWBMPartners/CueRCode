@@ -102,6 +102,11 @@ $installRequested = false;
  *            tables from install.sql exist and the upgrade tool succeeded) */
 $seedStepFailed = false;
 
+/** @var bool Whether seed_data.sql was loaded by THIS request (task 7n Phase 2:
+ *            if so, the data steps of any upgrades that already ran before the
+ *            starting data existed are repeated - see Step 5a2 below) */
+$seedLoadedNow = false;
+
 // ==============================================================================
 // 🔍 Check for credential files
 // ==============================================================================
@@ -485,6 +490,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                         $seedRun = migrationDbRunSeedSql($mysqli, $seedSQL);
 
                         if ($seedRun['ok'] === true) {
+                            $seedLoadedNow = true;
                             $results[] = [
                                 'status' => 'success',
                                 'message' => 'Seed data loaded successfully (seed_data.sql)'
@@ -532,6 +538,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                 // ----------------------------------------------------------------
                 $mysqli->set_charset($dbCharset);
                 $mysqli->query("SET SQL_MODE = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
+
+                // ----------------------------------------------------------------
+                // 📌 Step 5a2: Repeat the starting-data parts of upgrades that ran
+                //    BEFORE the starting data existed (task 7n Phase 2)
+                // ----------------------------------------------------------------
+                // If the upgrade tool (_includes/cli/migrate.php) was run on this
+                // database before this installer, its upgrades are already
+                // recorded, but their data steps found no plans to work on (for
+                // example migration 0004 copies the Business plan into a new
+                // Enterprise plan). seed_data.sql has only just been loaded, so
+                // those steps are run once more now - each is safe to repeat and
+                // never overwrites anything - and the result is the same as a
+                // normal install. On a normal fresh install nothing has been
+                // recorded yet, so this does nothing.
+                // ----------------------------------------------------------------
+                if ($seedLoadedNow) {
+                    $replayResult = migrationDbReplayDataSteps($mysqli, migrationDefaultDirectory());
+
+                    if ($replayResult['ok'] !== true) {
+                        // 🔒 F3: the full detail (which can include raw database
+                        //    error text) goes only to the server's error log.
+                        error_log('CueRCode Installer: repeating the starting-data steps of earlier database upgrades failed: ' . $replayResult['error']);
+                        $results[] = [
+                            'status' => 'error',
+                            'message' => 'The starting data loaded, but the matching parts of database upgrades that had already '
+                                . 'been applied could not be repeated, so the installer will NOT lock itself in. Check the '
+                                . 'server error log, then reload this page - every step is safe to repeat.'
+                        ];
+                        $seedStepFailed = true;
+                    } elseif ($replayResult['stepsRun'] > 0) {
+                        $results[] = [
+                            'status' => 'info',
+                            'message' => 'Database upgrades had already been applied before the starting data was loaded, so '
+                                . 'their starting-data parts were repeated now (' . count($replayResult['migrations'])
+                                . ' upgrade(s), ' . $replayResult['stepsRun'] . ' step(s)). Nothing you had changed was overwritten.'
+                        ];
+                    }
+
+                    if ($replayResult['ok'] === true && $replayResult['skipped'] !== []) {
+                        $results[] = [
+                            'status' => 'warning',
+                            'message' => 'Some upgrades recorded as applied were not repeated because their files are missing '
+                                . 'or have changed since they were applied: ' . implode(', ', $replayResult['skipped'])
+                        ];
+                    }
+                }
 
                 // ----------------------------------------------------------------
                 // 📌 Step 5b: Apply database upgrades ("migrations")

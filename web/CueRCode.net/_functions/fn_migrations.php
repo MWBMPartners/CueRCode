@@ -54,12 +54,22 @@
  *   - migrationStatus(mysqli $db): array
  *   - migrationExitCodeForResult(string $mode, array $result): int
  *   - migrationFormatReport(string $mode, array $result): array (lines)
+ *   - migrationDbReplayDataSteps(mysqli $db, string $migrationsDir): array -
+ *     the web installer only, straight after it loads seed_data.sql (task 7n
+ *     Phase 2: repeats the data steps of upgrades that ran BEFORE the starting
+ *     data existed; see migrationReplayPlan())
  *   - the command line: _includes/cli/migrate.php (--status/--dry-run/--apply)
+ *
+ * SEED-PROTECTION RULE (review finding F1, made precise in task 7n Phase 2):
+ * a migration may write to the tables only seed_data.sql fills
+ * (migrationSeedProtectionTables()) only in a way that can never put a row
+ * into an EMPTY one - see migrationStepCouldFillEmptySeedTable(). The
+ * validator refuses anything else before a single step runs.
  *
  * @package     CueRCode
  * @subpackage  Database
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       2026-11-23 (task 7n Phase 1A, #113 item 5, #70)
  * @see         .claude/plans/7n-admin-commerce-plan.md §5.1 (the specification)
  * @see         _includes/cli/migrate.php - the command-line wrapper
@@ -593,7 +603,98 @@ function migrationValidateStep(mixed $step, int $index): array
         }
     }
 
+    // 🌱 Review finding F1, kept true from task 7n Phase 2 onwards: a step that
+    //    writes to one of the tables ONLY seed_data.sql fills must never be able
+    //    to put a row into an EMPTY one (see migrationStepCouldFillEmptySeedTable()).
+    if (in_array($table, migrationSeedProtectionTables(), true) && migrationStepCouldFillEmptySeedTable($step)) {
+        $errors[] = $label . ': a step that writes to `' . $table . '` must only copy rows that are already in it'
+            . ' (INSERT INTO `' . $table . '` (...) SELECT ... FROM (SELECT ... FROM `' . $table . '` WHERE ...) AS `x`'
+            . ' ON DUPLICATE KEY UPDATE ...), so running the upgrade tool before the starting data is loaded leaves that table empty';
+    }
+
     return $errors;
+}
+
+/**
+ * 🌱 Could this step put a row into one of the seed-protection tables while
+ *    that table is still EMPTY? Pure - looks only at the text.
+ *    (Task 7n Phase 2, keeping review finding F1 fixed.)
+ *
+ * WHY: migrationDbSeedDataState() decides whether seed_data.sql has run by
+ * looking at the tables only seed_data.sql fills
+ * (migrationSeedProtectionTables()). Until Phase 2 no migration wrote to them
+ * at all, and a test enforced that. Phase 2 has to add a starting plan
+ * (Enterprise, a copy of Business) and move two placeholder prices, so the
+ * rule is now the precise property F1 needs: running `migrate.php --apply`
+ * on a brand-new database must leave these tables EMPTY, so the installer
+ * still loads seed_data.sql afterwards.
+ *
+ * Steps that can never add a row are fine: the four structure steps and
+ * update_if_unchanged (an UPDATE only changes rows that exist). An
+ * insert_if_missing step is fine only when EVERY row it inserts is read from
+ * the same table: each SELECT in it must read FROM that table or FROM a
+ * bracketed inner query, and nothing may supply rows from elsewhere (VALUES,
+ * SET, UNION, JOIN, DUAL, WITH, LATERAL, JSON_TABLE are all refused). An
+ * empty table then gives the SELECT nothing to copy, so nothing is inserted.
+ * (The inner query is needed because MySQL 8.0 and MariaDB 10.6 both reject
+ * a plain "INSERT INTO t ... SELECT ... FROM t ... ON DUPLICATE KEY UPDATE"
+ * as ambiguous - measured on both, 2026-11-26.)
+ *
+ * Deliberately strict and simple: when in doubt it answers "could" (true),
+ * and the migration is refused before anything runs.
+ *
+ * @param array $step A step whose type, table and sql fields are present
+ * @return bool True when the step could fill an empty table
+ */
+function migrationStepCouldFillEmptySeedTable(array $step): bool
+{
+    $type = (string) $step['type'];
+
+    if (in_array($type, ['create_table', 'add_column', 'add_index', 'add_foreign_key', 'update_if_unchanged'], true)) {
+        return false;
+    }
+
+    if ($type !== 'insert_if_missing') {
+        return true;
+    }
+
+    $blankResult = migrationBlankQuotedText((string) $step['sql']);
+    if ($blankResult['ok'] !== true) {
+        return true;
+    }
+
+    $squashed = preg_replace('/\s+/', ' ', trim($blankResult['text']));
+    if (!is_string($squashed)) {
+        return true;
+    }
+
+    // 🙈 Hide back-quoted names, so a column called `values` or `joinedAt`
+    //    can never be mistaken for a keyword below.
+    $namesHidden = preg_replace('/`[^`]*`/', '`n`', $squashed);
+    if (!is_string($namesHidden)) {
+        return true;
+    }
+
+    if (preg_match('/\b(VALUES|VALUE|SET|UNION|JOIN|DUAL|WITH|LATERAL|JSON_TABLE)\b/i', $namesHidden) === 1) {
+        return true;
+    }
+
+    $selectCount = preg_match_all('/\bSELECT\b/i', $namesHidden);
+    $fromCount   = preg_match_all('/\bFROM\b/i', $namesHidden);
+    $fromOwn     = preg_match_all('/\bFROM ?' . preg_quote('`' . (string) $step['table'] . '`', '/') . '/i', $squashed);
+    $fromInner   = preg_match_all('/\bFROM ?\(/i', $squashed);
+
+    // Every SELECT has exactly one FROM, each FROM is the table itself or an
+    // inner query, and at least one of them really is the table itself.
+    if ($selectCount < 1 || $fromOwn < 1) {
+        return true;
+    }
+
+    if ($fromCount !== $selectCount || ($fromOwn + $fromInner) !== $fromCount) {
+        return true;
+    }
+
+    return false;
 }
 
 /**
@@ -788,6 +889,85 @@ function migrationDecideStep(array $step, callable $existsChecker): string
     }
 
     return 'run';
+}
+
+/**
+ * 🔁 Which DATA steps of already-applied migrations must run again because
+ *    seed_data.sql has only just been loaded? Pure. (Task 7n Phase 2.)
+ *
+ * THE SITUATION: someone runs `migrate.php --apply` on a brand-new database
+ * BEFORE the web installer. The upgrades are recorded as applied, but their
+ * starting-data steps found nothing to work on: migration 0004 copies the
+ * Business plan into a new Enterprise plan and moves two placeholder prices,
+ * and with no plans loaded yet those steps change nothing (on purpose - see
+ * migrationStepCouldFillEmptySeedTable()). The installer then loads
+ * seed_data.sql, and because every upgrade is already recorded nothing would
+ * ever run those steps again: the site would silently end up different from
+ * a normal install (no Enterprise plan, old placeholder prices).
+ *
+ * THE FIX: straight after the installer loads seed_data.sql, it runs the
+ * insert_if_missing and update_if_unchanged steps of every migration already
+ * recorded, in number order. Every such step is written to be safe to run
+ * again (an insert skips a row that exists; an update only matches a row
+ * still at its old seeded value), so the result is exactly what a normal
+ * install (seed first, then upgrades) gives, and nothing the owner changed
+ * is overwritten. Structure steps are not repeated (they are already done).
+ *
+ * Skipped (and reported): a recorded migration whose file is missing,
+ * cannot be loaded, has changed since it was applied (its new text never
+ * ran anywhere, so it must not run now either), or no longer passes the
+ * checks. Migrations that are still WAITING are not included: the normal
+ * upgrade run straight afterwards applies them in full.
+ *
+ * @param array<string, array{path: string, checksum: string, definition: mixed, loadError: string}> $migrations From migrationLoadAll()
+ * @param array<string, string> $appliedChecksums Key => checksum recorded in tblSchemaMigrations
+ * @return array{steps: array<int, array{key: string, position: int, step: array}>, skipped: array<int, string>}
+ */
+function migrationReplayPlan(array $migrations, array $appliedChecksums): array
+{
+    $keys = array_keys($migrations);
+    sort($keys, SORT_STRING);
+
+    $steps   = [];
+    $skipped = [];
+
+    foreach ($keys as $key) {
+        $key = (string) $key;
+
+        if (!array_key_exists($key, $appliedChecksums)) {
+            continue;
+        }
+
+        $migration = $migrations[$key];
+
+        if ($migration['loadError'] !== '' || !hash_equals((string) $appliedChecksums[$key], (string) $migration['checksum'])) {
+            $skipped[] = $key;
+            continue;
+        }
+
+        if (migrationValidateDefinition($migration['definition'], $key) !== []) {
+            $skipped[] = $key;
+            continue;
+        }
+
+        $position = 0;
+        foreach ($migration['definition']['steps'] as $step) {
+            $position++;
+
+            if ($step['type'] === 'insert_if_missing' || $step['type'] === 'update_if_unchanged') {
+                $steps[] = ['key' => $key, 'position' => $position, 'step' => $step];
+            }
+        }
+    }
+
+    // 📁 Recorded as applied, but there is no file for it any more.
+    foreach (array_keys($appliedChecksums) as $appliedKey) {
+        if (!array_key_exists((string) $appliedKey, $migrations) && !in_array((string) $appliedKey, $skipped, true)) {
+            $skipped[] = (string) $appliedKey;
+        }
+    }
+
+    return ['steps' => $steps, 'skipped' => $skipped];
 }
 
 // ==============================================================================
@@ -1363,11 +1543,15 @@ function migrationReportLineSeverity(string $line): string
  *    tblSettings were on this list, the web installer would then wrongly
  *    believe seed_data.sql had already run and would skip it forever - the
  *    QR code types, predefined logos and subscription plans would never be
- *    loaded. The three tables below are ONLY ever filled by seed_data.sql: no
- *    migration file writes to any of them (tests/test_migrations.php checks
- *    this stays true for every migration, and the real-database check in
+ *    loaded. The three tables below are ONLY ever FILLED by seed_data.sql.
+ *    From task 7n Phase 2 a migration may write to them, but only in a way
+ *    that can never put a row into an EMPTY one (copying a row already there,
+ *    as the Enterprise plan is copied from Business, or updating one) -
+ *    migrationValidateStep() refuses anything else, using
+ *    migrationStepCouldFillEmptySeedTable(). tests/test_migrations.php checks
+ *    every real migration against that rule, and the real-database check in
  *    tests/integration/migrations_real_mysql.php proves the empty-database
- *    scenario this function exists to protect against).
+ *    scenario this function exists to protect against.
  *
  * Kept as its own function (rather than inline) so a caller can see the exact
  * list without reading the database function below, and so a test can check
@@ -2936,4 +3120,106 @@ function migrationApplyPending(\mysqli $db, string $appliedBy, bool $dryRun): ar
 function migrationStatus(\mysqli $db): array
 {
     return migrationRun($db, 'status', 'status', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+}
+
+/**
+ * 🔁 Run again the data steps of every already-applied migration, straight
+ *    after the web installer has loaded seed_data.sql (task 7n Phase 2).
+ *
+ * See migrationReplayPlan() for why. The installer calls this ONLY when it
+ * has just loaded seed_data.sql in the same request; on a normal fresh
+ * install no migration has been recorded yet, so there is nothing to run
+ * and this returns at once.
+ *
+ * Holds the same upgrade lock as migrationRun(), so it never overlaps an
+ * upgrade. Each step goes through migrationDbRunStepSql() (a prepared
+ * statement with no parameters), exactly like a normal upgrade step. On the
+ * first failure it stops; every step is safe to repeat, so reloading the
+ * installer page tries again safely.
+ *
+ * ⚠️ 'error' may contain raw database error text. Callers that show anything
+ *    to the public (the web installer) must log it and show a plain message
+ *    instead (review finding F3).
+ *
+ * @param \mysqli $db            Connection with the site database selected
+ * @param string  $migrationsDir Folder of migration files
+ * @return array{ok: bool, status: string, stepsRun: int, migrations: array<int, string>, skipped: array<int, string>, error: string}
+ *         status: 'ok', 'busy' or 'failed'; migrations: keys whose steps ran
+ */
+function migrationDbReplayDataSteps(\mysqli $db, string $migrationsDir): array
+{
+    $result = [
+        'ok'         => false,
+        'status'     => 'failed',
+        'stepsRun'   => 0,
+        'migrations' => [],
+        'skipped'    => [],
+        'error'      => '',
+    ];
+
+    $lockResult = migrationDbAcquireLock($db);
+    if ($lockResult === 'busy') {
+        $result['status'] = 'busy';
+        $result['error']  = 'another upgrade is running';
+        return $result;
+    }
+    if ($lockResult !== 'got') {
+        $result['error'] = 'Could not take the upgrade lock.';
+        return $result;
+    }
+
+    try {
+        $loaded = migrationLoadAll($migrationsDir);
+        if ($loaded['errors'] !== []) {
+            $result['error'] = 'The migrations folder has problems: ' . implode('; ', $loaded['errors']);
+            return $result;
+        }
+
+        // 🈳 Nothing recorded yet (the normal fresh install): nothing to repeat.
+        if (!migrationDbLedgerExists($db)) {
+            $result['ok']     = true;
+            $result['status'] = 'ok';
+            return $result;
+        }
+
+        $readApplied = migrationDbReadApplied($db);
+        if ($readApplied['ok'] !== true) {
+            $result['error'] = 'Could not read tblSchemaMigrations (' . $readApplied['error'] . ')';
+            return $result;
+        }
+
+        $appliedChecksums = [];
+        foreach ($readApplied['rows'] as $appliedKey => $appliedRow) {
+            $appliedChecksums[$appliedKey] = $appliedRow['checksum'];
+        }
+
+        $plan              = migrationReplayPlan($loaded['migrations'], $appliedChecksums);
+        $result['skipped'] = $plan['skipped'];
+
+        foreach ($plan['steps'] as $planned) {
+            $ran = migrationDbRunStepSql($db, $planned['step']['sql']);
+
+            if ($ran['ok'] !== true) {
+                $result['error'] = $planned['key'] . ' step ' . $planned['position'] . ' ('
+                    . migrationDescribeStep($planned['step']) . ') failed: ' . $ran['error'];
+                return $result;
+            }
+
+            $result['stepsRun']++;
+            if (!in_array($planned['key'], $result['migrations'], true)) {
+                $result['migrations'][] = $planned['key'];
+            }
+        }
+
+        $result['ok']     = true;
+        $result['status'] = 'ok';
+    } catch (\Throwable $unexpected) {
+        $result['ok']     = false;
+        $result['status'] = 'failed';
+        $result['error']  = 'Stopped by an unexpected error (' . get_class($unexpected) . ': ' . $unexpected->getMessage() . ')';
+    } finally {
+        migrationDbReleaseLock($db);
+    }
+
+    return $result;
 }
