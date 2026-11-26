@@ -5,6 +5,10 @@
 
 # CueRCode — Launch Pricing & Packaging Strategy
 
+> **Update 2026-11-26 (#31):** the owner decided that **prices include VAT** (2026-10-05), so the
+> "ex-VAT" wording below is out of date: £6.99 is what the customer pays. The numbers now live in the
+> admin screens (`/admin/plans/`), not in this document, which is a record of the 2026-07 research.
+
 > ## ⚠️ DRAFT — indicative pricing, owner sign-off required
 > All prices in this document are **recommendations only**. Nothing here is final until the owner
 > signs off (see Section 7). Competitor prices were researched on **2026-07-22** and drift

@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-26, task 7n Phase 2 slices 2a and 2b added `test_money.php` and `test_plans_prices_migration.php`; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -50,8 +50,9 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 612 |
-| `test_admin_settings.php` | 1211 |
+| `test_admin_access.php` | 661 |
+| `test_admin_plans.php` | 566 |
+| `test_admin_settings.php` | 1266 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -59,6 +60,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
 | `test_client_ip.php` | 246 |
+| `test_commercial_literals.php` | 8 |
 | `test_core.php` | 146 |
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
@@ -69,7 +71,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 137 |
 | `test_features.php` | 91 |
-| `test_full_notation.php` | 41 |
+| `test_full_notation.php` | 40 |
 | `test_install_checks.php` | 101 |
 | `test_installer_load_order.php` | 9 |
 | `test_library_updates.php` | 177 |
@@ -84,20 +86,27 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_php86_compat_scan.php` | 76 |
 | `test_php_lint_script.php` | 6 |
 | `test_php_runtime_guards.php` | 24 |
-| `test_predefined_logo_png.php` | 264 |
-| `test_pricing.php` | 107 |
 | `test_plans_prices_migration.php` | 146 |
+| `test_predefined_logo_png.php` | 264 |
+| `test_pricing.php` | 122 |
 | `test_pricing_flex.php` | 51 |
+| `test_pricing_page.php` | 91 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **6730** |
+| **Total** | **7513** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
-**Task 7n Phase 2 slice 2c (2026-11-26)** added `test_admin_plans.php` (566 assertions: the plan-key rule, UK-time dates, every freezing rule P1/P4/P5/P6 shown to refuse and to allow, new-version and price keys, fingerprints, the price-group form, the mirror, the five new settings, and static guards each proved against a bad sample first) and 54 assertions in `test_admin_settings.php`. The whole suite is then **7390** on PHP 8.5.12; the table above is from before slice 2c.
+**Task 7n Phase 2 slice 2c (2026-11-26)** added `test_admin_plans.php` (566 assertions: the plan-key rule, UK-time dates, every freezing rule P1/P4/P5/P6 shown to refuse and to allow, new-version and price keys, fingerprints, the price-group form, the mirror, the five new settings, and static guards each proved against a bad sample first) and 54 assertions in `test_admin_settings.php`. The whole suite was then **7390** on PHP 8.5.12.
+
+**Task 7n Phase 2 slice 2d (2026-11-26)** added `test_pricing_page.php` (the kind filter and sale dates, a stand-in database in a child process including one without upgrade 0004, the "Contact us" card and its link, hidden prices, the rendered cards, the preview and its access rules) and `test_commercial_literals.php` (the whole-site guard against hard-coded plan keys and prices). Each new rule was broken on purpose (28 changes) and the tests failed every time. The whole suite is then **7513** on PHP 8.5.12.
+
+### Real HTTP and browser run for task 7n Phase 2 slice 2d (2026-11-26)
+
+PHP's built-in web server on a throwaway copy of the site, MySQL 8.0.36 in Docker (`cuercode_it_2d`): the web installer on an empty database (all four upgrades applied); `/pricing/` with the £ drafts and the "From £99/month" card; a contact address of the plan's own; prices hidden; the preview signed out (sign-in page), as an ordinary user (404) and as a Global Admin in each currency and with an unknown one; a database with only `install.sql` and `seed_data.sql` (old prices, no Enterprise, no error); the preview while an upgrade was waiting. Headless Microsoft Edge: `/pricing/` and the preview at 320, 375, 768, 1024, 1366 and 1920 px, no sideways scrolling, light (and dark on a second pass), very long names and prices. Not checked: colourblind palettes, keyboard-only use, a real phone, Apache `.htaccess`, MariaDB or MySQL 8.4 for these pages.
 
 ### Real-database and HTTP runs for task 7n Phase 2 slice 2c (2026-11-26, plans and prices screens)
 

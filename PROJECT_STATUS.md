@@ -1,6 +1,6 @@
 # 📊 CueRCode - Project Status
 
-**📅 Last Updated:** 2026-11-25 (admin settings editor, task 7n Phase 1C, #31; earlier admin area: Global Admin access, task 7n Phase 1B, #31; database upgrades, Phase 1A, #113; earlier: PHP 8.6 readiness guard rails, #151)
+**📅 Last Updated:** 2026-11-26 (plans, prices and currencies, task 7n Phase 2, #31; admin settings editor, task 7n Phase 1C, #31; earlier admin area: Global Admin access, task 7n Phase 1B, #31; database upgrades, Phase 1A, #113; earlier: PHP 8.6 readiness guard rails, #151)
 **🔄 Current Phase:** Phase 1.5 - Live Server Testing & Verification (Phase 2 stage 1 code-complete, pending live-server verification)
 **📈 Overall Status:** In Development
 **🌿 Branch cadence:** `work-in-progress → alpha → beta → release-candidate → main` (four-tier; scanning + Dependabot + security-fix propagation cover all four branches, #64)
@@ -8,6 +8,8 @@
 ---
 
 ## 🧭 Current position at a glance (2026-09-23; polish update 2026-10-05; admin update 2026-11-24)
+
+**2026-11-26 (task 7n Phase 2, #31):** plans, prices and currencies are built (database upgrade 0004, admin plan and price screens, the new pricing page cards and the private preview). Committed locally; independent reviews owed; not run on the live server. Next: Phase 3 (feature placement). Charging stays off.
 
 **2026-11-24 (task 7n, #31, #113):** the admin & commerce build has started. **Phase 1A** (database upgrades): numbered migrations, `install.sql` now safe to run twice, `migrate.php` command-line tool. **Phase 1B** (this update, committed locally, not yet reviewed or pushed): a private `/admin/` area for Global Admins (overview, confirm password, database upgrades), password re-confirmation before any change, a permanent change log, the `admin_access.php` command-line tool to make the first Global Admin, and Global Admins can no longer erase their own account. **Phase 1C** (2026-11-25, committed locally, not yet reviewed or pushed): the settings screen where the owner types in the email, sign-in, bot-protection and PayPal keys (secrets never shown), with a Microsoft connection check and a test email. Whole suite 3739/3739 on PHP 8.5.12.
 

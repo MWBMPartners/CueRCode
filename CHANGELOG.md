@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Plans, prices and currencies (task 7n Phase 2, 2026-11-26, #31) - built, independent review owed
+
+**Apply database upgrade 0004 straight after deploying** (`/admin/upgrades/` or `migrate.php --apply`). Charging stays switched off.
+
+- **Money in whole pence** (`_functions/fn_money.php`): prices are never handled as floating-point numbers. Commit 87cbaf1.
+- **Database upgrade 0004:** plan kind, "Contact us" button, sale dates, sales cap and price promise; price-point groups; currency, price-promise and "show prices" settings; the Enterprise plan; draft GBP prices (Pro £6.99 / £49.99, Business £24.99 / £199.99, Enterprise from £99). Only untouched placeholder prices are moved. Commit 97cbaf0.
+- **Admin screens** at `/admin/plans/`: make, change, retire, restore, delete and version plans, and set £, $ and € prices; a bought price cannot be changed. Commits 30f08cd, c853f76.
+- **Pricing page:** shows only ordinary plans inside their sale dates; a "Contact us" card ("From £99/month"); prices can be hidden with one setting; a plan with a price is never wrongly shown as "Free". Works before upgrade 0004 too (old prices, no Enterprise). Commit 7bf5603.
+- **Preview** at `/admin/pricing-preview/` (Global Admins only): the pricing page using the prices set per currency, with missing prices said to be missing. Commit 7bf5603.
+- **Guard test:** no starting plan key or price may be written into the code. Commit 61df78b.
+
 ### Security and fixes - Codex re-check of the review fixes, round 3 (2026-11-25, queue F2, #113)
 
 Codex re-read the round-2 fixes (read-only, no PHP or MySQL) and raised four leads. All four were reproduced or shown on the real code first (MySQL 8.0.36 and MariaDB 10.6.28 in Docker) and are fixed with tests.

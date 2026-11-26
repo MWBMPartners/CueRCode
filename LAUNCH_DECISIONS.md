@@ -36,6 +36,7 @@
 > - Accessibility extras (Braille caption, tactile frame, Avery labels): **switches built now, everything stays free until charging starts**; on launch day the owner moves the extras to paid plans in the feature grid.
 > - Combining discounts: **allowed, chosen per discount when it is created** (default: does not combine). A discount that does not allow combining takes priority: no combining in that purchase and the **biggest saving wins**.
 > - Changing a plan people already pay for: changes that **give more** apply to everyone; changes that **take away** are blocked unless confirmed with a reason, or released as a **new version** for new customers.
+> - Built 2026-11-26 (task 7n Phase 2, #31): the prices, currencies, VAT wording, price promise and "show prices" are now edited in the admin screens (`/admin/plans/`, `/admin/settings/`); apply database upgrade 0004 after deploying. The $ and € amounts are still to be entered.
 > - Live database to keep: **none — start fresh**.
 > - ✅ Answered 2026-11-24 (decision 0007): the £20 pay-as-you-go cap = most spent on credit packs per calendar month, per currency.
 
@@ -97,7 +98,7 @@
 - [x] **A way to enter encrypted credentials** — either the admin screen (#31) or, as a stop-gap before that exists, a one-off `setConfig()` script run by hand on the live server. Needed to switch on email (#29), SSO (#55), bot protection and PayPal (#26). Follow-up #115.
       → **Answered 2026-10-05: the admin settings screen (part of #31), built FIRST (task 7n).**
 - [ ] **Add the DreamHost cron job for the email queue runner** (#112, built 2026-09-25) — without it no sign-up or reset email is sent. Steps: DEV_NOTES.md → 'Email queue runner'. Then do a live test send.
-- [ ] **`install.sql` re-run safety and an upgrade script** (#70/#11; follow-up #113) — running `install.sql` a second time currently fails with a "duplicate column" error partway through (the flexible-pricing `ALTER TABLE ADD COLUMN` statements have no existence guard), and there is no upgrade script for a database installed before recent schema changes. Needed before the first real database test.
+- [x] **`install.sql` re-run safety and an upgrade script** (#70/#11; follow-up #113) — fixed 2026-11-23 (numbered upgrades). As first reported: running `install.sql` a second time currently fails with a "duplicate column" error partway through (the flexible-pricing `ALTER TABLE ADD COLUMN` statements have no existence guard), and there is no upgrade script for a database installed before recent schema changes. Needed before the first real database test.
 - [x] **#48 — contrast warning vs block**: should the Accessible-QR contrast check only warn (as now) between 3:1 and 4.5:1, or refuse to generate?
       → **Answered 2026-10-05: keep warning only between 3:1 and 4.5:1 (below 3:1 is refused).**
 - [x] **#40 — JPEG XL**: needs another host/VPS capable of writing it, or a decision to drop the format for good.

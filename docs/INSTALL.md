@@ -116,6 +116,8 @@ php ~/CueRCode.net/_includes/cli/migrate.php --status
 
 On an **existing site that has just received new code**, apply upgrades **immediately after the deploy**, either with `php .../migrate.php --apply` or as a Global Admin at `/admin/upgrades/` (it asks for your password and a tick for "I have a recent backup").
 
+The upgrades so far are `0001` (price snapshot columns), `0002` (admin change log and settings), `0003` (sessions) and `0004_plans_prices_currencies` (plans and prices: until it is applied the pricing page shows the old prices without the Enterprise card, and the plan screens and preview ask for the upgrade).
+
 **Why straight away, with `0003_sessions_valid_from` as the example:** that upgrade adds two empty columns that let a password reset cancel sign-ins that were part-way through. Until it is applied the new code still lets people sign in normally (so the admin can still reach `/admin/upgrades/`), but that protection is **switched off**. So there is a window where the site is less safe than it looks. The same principle applies to every later upgrade: deploy, then upgrade, without leaving it for later. Admin pages that save changes also refuse to save while any upgrade is waiting.
 
 ---
@@ -285,7 +287,7 @@ Do not promise any of these to anyone. This install is "ready to try", not "read
 
 - **Taking payments.** PayPal fields exist on the settings page but charging is locked off.
 - **Dynamic QR codes** (codes you can change after printing). Locked off (`dynamic_qr_enabled`).
-- **Plans and prices admin screens.** Plans, prices, discounts, lifetime deals and pay-as-you-go screens are later phases (7n Phases 2 to 7). Today's plan data is just the starting data.
+- **Discounts, lifetime deals, pay-as-you-go and feature screens** are later phases (7n Phases 3 to 7). Plans and prices can already be edited at `/admin/plans/` (database upgrade 0004).
 - **Legal pages.** Terms and Privacy are still templates (#38, owner plus legal advice).
 - **Not yet tested on a live DreamHost server:** this whole guide (B9, #13, #17, #18, #22), the cron job, Microsoft 365 sending against a real mailbox, MariaDB 10.6 for a full fresh install, and the deploy workflow.
 - **Bot protection** keys are not decided (see step 10).

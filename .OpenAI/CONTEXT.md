@@ -6,6 +6,7 @@ Copyright (c) 2025-2026 MWBM Partners Ltd — last updated 2026-09-23 (#108)
 1. `.claude/HANDOFF.md` §0 — current position, task queue, cold-start steps.
 2. `.claude/CLAUDE.md` — code standards, file layout, libraries, and the
    **Standing Rules** (they apply to Codex exactly as they apply to Claude).
+3. Plans and prices (7n Phase 2, #31): `DEV_NOTES.md` "Plans and prices runbook"; plan `.claude/plans/7n-admin-commerce-plan.md`.
 
 ## Project in one paragraph
 CueRCode is a QR-code (and barcode) generator website plus REST API, written in

@@ -645,7 +645,26 @@ UPDATE `tblSubscriptionPlans`
 
 **Fail-safe branch:** `listPublicPlansForDisplay()` returns `[]` (not a warning/exception) when `dbQuery()` is unavailable or the query throws, mirroring `fn_features.php::planByKey()`'s own availability check. The page detects an empty plan list and renders an accessible "Pricing is temporarily unavailable" panel instead of the card grid - still a valid `200` response, zero PHP warnings. Verified live via `php -S` against a deliberately-unreachable database host (a temporary, gitignored `_auth_keys/auth_creds.php` pointing at `127.0.0.1:1` so `getDB()` throws its documented `RuntimeException` rather than bootstrap.php's separate "credentials file entirely missing" 503 hard-fail): `HTTP 200`, the fail-safe panel rendered, zero PHP warnings/notices/fatals in the output, no `<table>` tag.
 
-**No checkout flow.** CTA logic is purely price-driven (zero-price plans link to `/register/`; any paid plan shows a disabled "Coming soon" control) - checkout is owner-gated behind the deferred PayPal webhook above, so this page never invents one.
+**No checkout flow.** Since task 7n Phase 2: a "Contact us" plan links to its contact address; a free plan (nothing to pay and no price of its own) links to `/register/`; any other plan shows a disabled "Coming soon" control - checkout is owner-gated behind the deferred PayPal webhook above, so this page never invents one.
+
+### Plans and prices runbook (task 7n Phase 2, 2026-11-26, #31)
+
+This replaces editing plan rows by hand in SQL (above), which is now a last resort.
+
+**After deploying this code, apply database upgrade `0004_plans_prices_currencies`** (`/admin/upgrades/`, or `php _includes/cli/migrate.php --apply`). Until then the pricing page shows the old single-price columns (no Enterprise card) and the plan screens and preview say an upgrade is needed.
+
+| Task | Where |
+| --- | --- |
+| Change a price | `/admin/plans/` → Prices. If somebody has bought it, press Retire and add the new one. |
+| Add a plan | `/admin/plans/new/` (it starts off sale: add prices, then put it on sale). A plan on sale with no price at all is shown as "Free". |
+| Take a plan off sale | Its Details page. People already on it keep it. |
+| Change a plan people pay for | "Make a new version". |
+| Offered and main currency, price promise, show or hide prices | `/admin/settings/`, "Prices, VAT & refunds". |
+| See $ and € before they are public | `/admin/pricing-preview/`. |
+
+**What the public page shows while charging is off:** plans that are on sale, ordinary, inside their sale dates and with a display order above 0. Figures come from `priceMonthly` / `priceYearly` / `currency`, which every price save copies from the main currency's current monthly and yearly prices (`adminMirrorLegacyPlanPrices()`). A "Contact us" plan shows "From <monthly>/month" and links to its contact address, or to the `site_email` setting. Cards are drawn by `_includes/pricing_grid.php`, shared with the preview.
+
+**No commercial values in code:** `tests/test_commercial_literals.php` fails on a starting paid-plan key or starting price in any PHP file outside `_libraries/` and the migrations (one named exception: the installer's list of starting rows).
 
 ### Flexible pricing (#70, 2026-07-22) - BUILT BUT DISABLED
 
@@ -1456,6 +1475,8 @@ Exits 0 if all assertions pass (or if there are no tests), 1 if any fail. Colour
 | `tests/test_openapi_render.php` | Developer-portal OpenAPI render helpers (#50) - proves the helpers behind the live "Endpoint Reference" page are correct AND that the real `openapi.json` still has the shape the page depends on (30 documented paths) |
 | `tests/test_pricing.php` | Public pricing page display helpers (#56) - price/limit formatting, key humanising, and the pure JSON-decode transform that turns plan rows into display rows |
 | `tests/test_pricing_flex.php` | Flexible-pricing schema delta (#70, built but disabled) - proves multiple price points, discounts, lifetime tiers, and PAYG credits are representable by data alone, with every kill-switch off by default |
+| `tests/test_pricing_page.php` | Pricing page and admin preview (#31) - kind filter and sale dates, "Contact us" card, hidden prices, rendered cards, preview access |
+| `tests/test_commercial_literals.php` | Whole-site guard: no starting plan key or price written into the code (#31) |
 | `tests/test_qr_logo.php` | SVG logo screener (F-024, #52) - the shared `screenSvgLogoContent()` active-content screener used by both the base64 and multipart logo-upload paths, plus the Issue #65 predefined-logo path resolver against the real asset tree |
 
 **Deployment boundary:** `tests/` is repo-root only and is excluded from all SFTP deploy workflows. It never reaches the Dreamhost server.
