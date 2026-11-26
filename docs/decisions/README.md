@@ -29,3 +29,6 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0017](0017-codex-round-1-fix-choices-by-the-lead.md) | 2026-11-25 | Lead (owner may overrule): seven small design choices made while fixing the Codex round-1 findings | Current |
 | [0018](0018-seed-marker-present-means-skip-seeding.md) | 2026-11-25 | Lead (owner may overrule): a present seed marker means the installer skips seeding, even if the tables were emptied | Current |
 | [0019](0019-start-later-build-order-before-live-proof.md) | 2026-11-26 | Owner: start the later build order (admin and commerce Phase 2 onwards) now, before the install is proven live | Current |
+| [0020](0020-pricing-page-price-promise-follows-each-plan.md) | 2026-11-26 | Owner: the pricing page states each plan's own price promise | Current |
+| [0021](0021-paid-plan-with-no-price-shows-price-coming-soon.md) | 2026-11-26 | Owner: a paid plan with no price shows "Price coming soon" and no sign-up button | Current |
+| [0022](0022-unbuilt-features-in-plan-descriptions-marked-coming-soon.md) | 2026-11-26 | Owner: starting plan descriptions mark unbuilt features as coming soon | Current |

@@ -18,7 +18,7 @@
   - 2c plan and price screens — **built** `30f08cd`, `c853f76` (unreviewed; 7390/7390; real MySQL 8.0 and MariaDB 10.6)
   - 2d public pricing page, preview, no-hard-coded-prices guard, docs — **built** `7bf5603`, `61df78b`, `4d5de13`, `07a6f55` (unreviewed). CHANGELOG, README, install guide and `.OpenAI/` pointers done in `4d5de13`.
   - **Independent Opus review of `c487dab..07a6f55` — started 2026-11-26 about 21:59 UTC in the VS Code session; report not yet in.** It changes nothing in the repository. If that session closes first, the report is lost: start the review again with the same range. It must check the two upgrade-tool/installer rule changes from 2b. Then fixes, Codex review, push `work-in-progress`, comment on #31.
-  - Filed from the build, owner choice wanted: #159 (pricing page promises to honour prices for ever, but the promise is configurable), #160 (paid plan with no price shows as Free), #161 (starting plan descriptions advertise unbuilt features).
+  - **Owner answered (2026-11-26), to build with the review fixes:** #159 each plan card states its own price promise (decision 0020); #160 paid plan with no price shows "Price coming soon", no sign-up button (0021); #161 unbuilt features in starting plan descriptions marked coming soon, never overwriting admin edits (0022).
 - If a slice's agent is gone after a restart: `git status` shows its uncommitted files; finish or re-brief that slice only.
 
 ### Next (order)
