@@ -7,7 +7,7 @@
 
 ### Where the work is
 - **Owner (2026-11-26, decision 0019):** build the later order now, keep this note current (the session may stop).
-- **Branch `work-in-progress`:** GitHub is at `e849928`. New work is committed locally and pushed to this branch only after each reviewed phase (decision 0008).
+- **Branch `work-in-progress`:** GitHub is at `e849928`. Local is 11+ commits ahead (all of 7n Phase 2, up to `07a6f55`), NOT pushed because it is unreviewed (decision 0008). Working tree was clean at 2026-11-26 close. Tests: `php tests/run.php` 7513/7513.
 - **New-install work is finished** (queue file; Codex loop closed, round 5 clean). Tests then: `php tests/run.php` 6405/6405 on PHP 8.5.12.
 - **Not verified anywhere:** a real browser pass on new or changed pages; DreamHost; real Microsoft mail; HTTPS/HSTS; MySQL 8.4 for the newest scenarios; PHP 8.4 + Imagick since round 2.
 
@@ -16,8 +16,8 @@
   - 2a money rules — **built** `87cbaf1` (unreviewed)
   - 2b migration `0004` (plan/price columns, settings, starting prices) — **built** `97cbaf0` (unreviewed). It changed two upgrade-tool/installer rules (plans-table writes; installer repeats data steps): reviewers must check those. `/pricing` shows Enterprise wrongly until 2d.
   - 2c plan and price screens — **built** `30f08cd`, `c853f76` (unreviewed; 7390/7390; real MySQL 8.0 and MariaDB 10.6)
-  - 2d public pricing page, preview page, no-hard-coded-prices guard (include `99.00`), docs, CHANGELOG, `.OpenAI/` — **in progress**
-  - then Opus review, Codex review, push.
+  - 2d public pricing page, preview, no-hard-coded-prices guard, docs — **built** `7bf5603`, `61df78b`, `4d5de13`, `07a6f55` (unreviewed). Not yet confirmed done: CHANGELOG and `.OpenAI/` updates for Phase 2 (check `git show --stat 4d5de13`).
+  - **NEXT: Opus review of slices 2a-2d (reviewers must check the two upgrade-tool/installer rule changes from 2b), then Codex review, fix loop, then push `work-in-progress`.** Nothing is running in the background.
 - If a slice's agent is gone after a restart: `git status` shows its uncommitted files; finish or re-brief that slice only.
 
 ### Next (order)
