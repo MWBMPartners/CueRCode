@@ -626,7 +626,17 @@ foreach (['adminPlansCreate', 'adminPlansUpdate', 'adminPlansSetOnSale', 'adminP
 foreach (['adminPricesSaveGroup', 'adminPricesRetire', 'adminPricesDelete'] as $apSaver) {
     assertContains('adminPricesLockAndCheck(', apFunctionBody($apFunctions, $apSaver), $apSaver . ' locks the plan and its prices and checks the fingerprint first');
     assertContains('adminMirrorLegacyPlanPrices(', apFunctionBody($apFunctions, $apSaver), $apSaver . ' runs the mirror in the same transaction');
+    // 🔒 7n Phase 2 review race (proven on a real database in
+    //    tests/integration/admin_plans_real_mysql.php, scenario M): the main
+    //    currency is read inside the transaction, with a shared lock, before
+    //    the plan is locked.
+    $apSaverBody = apFunctionBody($apFunctions, $apSaver);
+    $apCurrencyAt = strpos($apSaverBody, 'adminPlansCurrencySettings(true)');
+    $apTransactionAt = strpos($apSaverBody, 'adminPlansInTransaction(');
+    $apLockAt = strpos($apSaverBody, 'adminPricesLockAndCheck(');
+    assertTrue(is_int($apCurrencyAt) && is_int($apTransactionAt) && is_int($apLockAt) && $apTransactionAt < $apCurrencyAt && $apCurrencyAt < $apLockAt, $apSaver . ' reads the currencies inside its transaction with a lock, before locking the plan');
 }
+assertContains('LOCK IN SHARE MODE', apFunctionBody($apFunctions, 'adminPlansCurrencySettings'), 'the currencies can be read with a shared lock');
 assertContains('adminPlansPriceIsFrozen(', apFunctionBody($apFunctions, 'adminPricesDelete'), 'P1: deleting checks the price is not bought');
 assertContains('adminPlansDeleteDecision(', apFunctionBody($apFunctions, 'adminPlansDelete'), 'P4: deleting a plan uses the decision');
 assertContains('adminPlansProtectedReason(', apFunctionBody($apFunctions, 'adminPlansSetOnSale'), 'P5: taking off sale checks protection');

@@ -142,13 +142,37 @@ if (isset($ipArguments[0]) && $ipArguments[0] === '--save-group') {
     restore_exception_handler();
 
     $ipChildAdmin = ['userID' => (int) $ipRequest['userID'], 'email' => (string) $ipRequest['email'], 'displayName' => 'IT admin', 'sessionHash' => '', 'hasPassword' => true];
-    // 🧾 "@current" = use the price list's fingerprint as it is now (used by
-    //    tests/integration/migrations_real_mysql.php, which cannot work it out).
-    $ipChildFingerprint = (string) $ipRequest['fp'];
-    if ($ipChildFingerprint === '@current') {
-        $ipChildFingerprint = adminPlansPricesFingerprint((array) adminPlansLoadPrices((int) $ipRequest['planID'], false));
+
+    // 🧭 What to do (scenario M, the two races of the 7n Phase 2 review, adds
+    //    three more; the default is the price-group save of scenario D).
+    $ipChildAction = 'save-group';
+    if (isset($ipRequest['action']) && is_string($ipRequest['action'])) {
+        $ipChildAction = $ipRequest['action'];
     }
-    $ipChildResult = adminPricesSaveGroup($ipChildAdmin, (int) $ipRequest['planID'], (string) $ipRequest['group'], $ipChildFingerprint, $ipRequest['post']);
+
+    if ($ipChildAction === 'setting') {
+        // ⚙️ Save one setting through its settings section, as the settings
+        //    page does (checked first outside the transaction, then saved).
+        $ipChildSection = (string) $ipRequest['section'];
+        $ipChildKeys = array_keys(adminSettingsFieldsForSection($ipChildSection));
+        $ipChildStates = (array) adminSettingsLoadRows($ipChildKeys);
+        $ipChildProcessed = adminSettingsProcessSection($ipChildSection, ['f' => [(string) $ipRequest['key'] => (string) $ipRequest['value']]], $ipChildStates, ['planKeys' => (array) adminSettingsTrialPlanKeys()]);
+        $ipChildResult = ['ok' => false, 'message' => 'refused before saving', 'errors' => $ipChildProcessed['errors']];
+        if ($ipChildProcessed['errors'] === []) {
+            $ipChildResult = adminSettingsSaveSection($ipChildAdmin, $ipChildSection, adminSettingsSectionFingerprint($ipChildSection, $ipChildStates), $ipChildProcessed['changes']);
+        }
+    } elseif ($ipChildAction === 'delete-plan') {
+        $ipChildLoaded = adminPlansLoadPlan((int) $ipRequest['planID'], false);
+        $ipChildResult = adminPlansDelete($ipChildAdmin, (int) $ipRequest['planID'], adminPlansFormFingerprint((array) $ipChildLoaded['row']), true);
+    } else {
+        // 🧾 "@current" = use the price list's fingerprint as it is now (used by
+        //    tests/integration/migrations_real_mysql.php, which cannot work it out).
+        $ipChildFingerprint = (string) $ipRequest['fp'];
+        if ($ipChildFingerprint === '@current') {
+            $ipChildFingerprint = adminPlansPricesFingerprint((array) adminPlansLoadPrices((int) $ipRequest['planID'], false));
+        }
+        $ipChildResult = adminPricesSaveGroup($ipChildAdmin, (int) $ipRequest['planID'], (string) $ipRequest['group'], $ipChildFingerprint, $ipRequest['post']);
+    }
     echo '@@RESULT@@' . json_encode($ipChildResult) . PHP_EOL;
     exit(0);
 }
@@ -713,6 +737,131 @@ $ipCards = ipPublicCards();
 ipCheck('L', $ipSoloDeleted['ok'] === true && $ipCards['solo_it']['text'] === 'Price coming soon | ' && $ipCards['solo_it']['free'] === false, 'F6: after its only price is deleted the card says "Price coming soon", not the deleted £5.00 (and not Free): ' . json_encode($ipCards['solo_it']));
 $ipSoloOff = adminPlansSetOnSale($ipAdmin, $ipSoloID, ipPlanFp($ipSoloID), false, true);
 ipCheck('L', $ipSoloOff['ok'] === true, 'tidy up: the test plan is taken off sale');
+
+// ==============================================================================
+// M. Two races the 7n Phase 2 review found by reading the code
+// ==============================================================================
+echo PHP_EOL . 'M. Races: price save against a main-currency change; trial plan against a delete' . PHP_EOL;
+
+/**
+ * 👶 Start this script as a child doing one action on the test database.
+ *
+ * @return array{process: resource, pipes: array<int, resource>}
+ */
+function ipChildStart(string $ipDb, array $ipRequest): array
+{
+    $ipCommand = [PHP_BINARY, __FILE__, '--save-group', $ipDb, base64_encode((string) json_encode($ipRequest))];
+    $ipProcess = proc_open($ipCommand, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $ipPipes, null, ['CUERCODE_IT_ENCRYPTION_KEY' => ENCRYPTION_KEY] + getenv());
+    fclose($ipPipes[0]);
+    return ['process' => $ipProcess, 'pipes' => $ipPipes];
+}
+
+/**
+ * 👶 Is the child still running (that is, waiting for a lock)?
+ */
+function ipChildRunning(array $ipChild): bool
+{
+    return proc_get_status($ipChild['process'])['running'] === true;
+}
+
+/**
+ * 👶 Wait for the child and return its result (null when it printed none).
+ */
+function ipChildFinish(array $ipChild): ?array
+{
+    $ipOut = (string) stream_get_contents($ipChild['pipes'][1]);
+    fclose($ipChild['pipes'][1]);
+    $ipErr = (string) stream_get_contents($ipChild['pipes'][2]);
+    fclose($ipChild['pipes'][2]);
+    proc_close($ipChild['process']);
+    $ipMarker = strrpos($ipOut, '@@RESULT@@');
+    if ($ipMarker === false) {
+        echo '    (child said: ' . trim($ipOut . ' ' . $ipErr) . ')' . PHP_EOL;
+        return null;
+    }
+    return json_decode(trim(substr($ipOut, $ipMarker + strlen('@@RESULT@@'))), true);
+}
+
+$ipAdminChild = ['userID' => $ipAdminID, 'email' => $ipAdminEmail];
+$ipProID = (int) ipPlan($ipServer, 'pro')['planID'];
+
+// M1. A price save and a main-currency change at the same moment. The other
+//     connection holds Pro's row so both have to queue: first the currency
+//     change (which copies every plan's prices in the NEW currency), then the
+//     price save. Before the fix the save had read the main currency before
+//     its transaction, so it copied Pro back into the OLD currency.
+$ipUsdForPro = adminPricesSaveGroup($ipAdmin, $ipProID, 'monthly', ipPricesFp($ipProID), ['amount' => ['GBP' => '6.99', 'USD' => '8.99', 'EUR' => '']]);
+ipCheck('M', $ipUsdForPro['ok'] === true && ipPrice($ipServer, 'pro', 'monthly_usd')['amount'] === '8.99', 'setup: Pro gets a USD monthly price (8.99)');
+$ipOther->begin_transaction();
+$ipHold = $ipOther->query('SELECT `planID` FROM `tblSubscriptionPlans` WHERE `planID` = ' . $ipProID . ' FOR UPDATE');
+$ipHold->free();
+$ipCurrencyChild = ipChildStart($ipDbName, $ipAdminChild + ['action' => 'setting', 'section' => 'prices', 'key' => 'billing_default_currency', 'value' => 'USD']);
+usleep(1500000);
+$ipPriceChild = ipChildStart($ipDbName, $ipAdminChild + ['planID' => $ipProID, 'group' => 'monthly', 'fp' => '@current', 'post' => ['amount' => ['GBP' => '7.49', 'USD' => '8.99', 'EUR' => '']]]);
+usleep(1500000);
+ipCheck('M', ipChildRunning($ipCurrencyChild) && ipChildRunning($ipPriceChild), 'race: the currency change and the price save are both waiting');
+$ipOther->commit();
+$ipCurrencyResult = ipChildFinish($ipCurrencyChild);
+$ipPriceResult = ipChildFinish($ipPriceChild);
+ipCheck('M', is_array($ipCurrencyResult) && $ipCurrencyResult['ok'] === true && is_array($ipPriceResult) && $ipPriceResult['ok'] === true, 'race: both saved: ' . json_encode([$ipCurrencyResult, $ipPriceResult]));
+$ipProAfter = ipPlan($ipServer, 'pro');
+$ipMainAfter = ipRow($ipServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'billing_default_currency'");
+ipCheck('M', $ipMainAfter['settingValue'] === 'USD' && $ipProAfter['currency'] === 'USD' && $ipProAfter['priceMonthly'] === '8.99', 'race: Pro\'s older price columns are in the NEW main currency (USD 8.99), not copied back into GBP: ' . json_encode([$ipMainAfter['settingValue'], $ipProAfter['currency'], $ipProAfter['priceMonthly']]));
+ipCheck('M', ipPrice($ipServer, 'pro', 'monthly_gbp')['amount'] === '7.49', 'race: the price change itself was saved (GBP 7.49)');
+// ↩️ Back to GBP and Pro's draft price for what follows.
+$ipStates = adminSettingsLoadRows($ipPricesKeys);
+$ipBack = adminSettingsProcessSection('prices', ['f' => ['billing_default_currency' => 'GBP']], (array) $ipStates);
+adminSettingsSaveSection($ipAdmin, 'prices', adminSettingsSectionFingerprint('prices', (array) $ipStates), $ipBack['changes']);
+adminPricesSaveGroup($ipAdmin, $ipProID, 'monthly', ipPricesFp($ipProID), ['amount' => ['GBP' => '6.99', 'USD' => '8.99', 'EUR' => '']]);
+ipCheck('M', ipPlan($ipServer, 'pro')['currency'] === 'GBP' && ipPlan($ipServer, 'pro')['priceMonthly'] === '6.99', 'tidy up: main currency GBP, Pro at 6.99 again');
+
+// M2. The trial-plan setting saved at the same moment the plan it names is
+//     deleted. The other connection pauses whichever runs first just before
+//     its change-log row (a lock at the end of tblAdminAuditLog), so the
+//     second really overlaps it. Both orders must end with no setting naming
+//     a deleted plan.
+$ipLatestAudit = (int) ipRow($ipServer, 'SELECT COALESCE(MAX(`auditID`), 0) AS `m` FROM `tblAdminAuditLog`')['m'];
+foreach (['delete first' => ['delete-plan', 'setting'], 'setting first' => ['setting', 'delete-plan']] as $ipOrderName => $ipOrder) {
+    $ipRaceKey = 'race_trial_' . substr(md5($ipOrderName), 0, 6);
+    $ipRaceMade = adminPlansCreate($ipAdmin, ['plan_key' => $ipRaceKey, 'plan_kind' => 'standard', 'plan_name' => 'Race ' . $ipOrderName, 'sort_order' => '9', 'cta_mode' => 'checkout']);
+    $ipRaceID = (int) $ipRaceMade['planID'];
+    adminPricesSaveGroup($ipAdmin, $ipRaceID, 'monthly', ipPricesFp($ipRaceID), ['amount' => ['GBP' => '3.00']]);
+    adminPlansSetOnSale($ipAdmin, $ipRaceID, ipPlanFp($ipRaceID), true, false);
+    ipCheck('M', in_array($ipRaceKey, (array) adminSettingsTrialPlanKeys(), true), $ipOrderName . ': setup: ' . $ipRaceKey . ' may be chosen as the trial plan');
+
+    $ipLatestAudit = (int) ipRow($ipServer, 'SELECT COALESCE(MAX(`auditID`), 0) AS `m` FROM `tblAdminAuditLog`')['m'];
+    $ipOther->begin_transaction();
+    $ipGap = $ipOther->query('SELECT `auditID` FROM `tblAdminAuditLog` WHERE `auditID` > ' . $ipLatestAudit . ' FOR UPDATE');
+    $ipGap->free();
+    $ipChildren = [];
+    foreach ($ipOrder as $ipAction) {
+        if ($ipAction === 'setting') {
+            $ipChildren[$ipAction] = ipChildStart($ipDbName, $ipAdminChild + ['action' => 'setting', 'section' => 'trials', 'key' => 'billing_trial_plan_key', 'value' => $ipRaceKey]);
+        } else {
+            $ipChildren[$ipAction] = ipChildStart($ipDbName, $ipAdminChild + ['action' => 'delete-plan', 'planID' => $ipRaceID]);
+        }
+        usleep(1500000);
+    }
+    ipCheck('M', ipChildRunning($ipChildren['setting']) && ipChildRunning($ipChildren['delete-plan']), $ipOrderName . ': both are in progress at the same moment');
+    $ipOther->commit();
+    $ipSettingResult = ipChildFinish($ipChildren['setting']);
+    $ipDeleteResult = ipChildFinish($ipChildren['delete-plan']);
+    $ipTrialNow = (string) ipRow($ipServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'billing_trial_plan_key'")['settingValue'];
+    $ipPlanNow = ipPlan($ipServer, $ipRaceKey);
+    ipCheck('M', ($ipTrialNow === $ipRaceKey && $ipPlanNow !== null) || ($ipTrialNow !== $ipRaceKey && $ipPlanNow === null), $ipOrderName . ': never a trial setting naming a deleted plan (setting: ' . $ipTrialNow . ', plan ' . ($ipPlanNow === null ? 'deleted' : 'kept') . '): ' . json_encode([$ipSettingResult['ok'] ?? null, $ipDeleteResult['ok'] ?? null]));
+    ipCheck('M', is_array($ipSettingResult) && is_array($ipDeleteResult) && ($ipSettingResult['ok'] === true) !== ($ipDeleteResult['ok'] === true), $ipOrderName . ': exactly one of the two went ahead and the other was refused');
+
+    // ↩️ The trial plan back to Pro, and the test plan off sale.
+    if ($ipTrialNow === $ipRaceKey) {
+        $ipTrialStates = adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection('trials')));
+        $ipTrialBack = adminSettingsProcessSection('trials', ['f' => ['billing_trial_plan_key' => 'pro']], (array) $ipTrialStates, ['planKeys' => (array) adminSettingsTrialPlanKeys()]);
+        adminSettingsSaveSection($ipAdmin, 'trials', adminSettingsSectionFingerprint('trials', (array) $ipTrialStates), $ipTrialBack['changes']);
+    }
+    if (ipPlan($ipServer, $ipRaceKey) !== null) {
+        adminPlansSetOnSale($ipAdmin, $ipRaceID, ipPlanFp($ipRaceID), false, true);
+    }
+}
+ipCheck('M', (string) ipRow($ipServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'billing_trial_plan_key'")['settingValue'] === 'pro', 'tidy up: the trial plan is Pro again');
 
 // ==============================================================================
 // K. Charging stays off

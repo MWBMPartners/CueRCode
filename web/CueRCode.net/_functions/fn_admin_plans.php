@@ -1786,10 +1786,22 @@ function adminPlansSettingPlanKeys(bool $lock): ?array
  * main currency falls back to the first offered one - never to a made-up
  * currency, and never fails open to "every currency".
  *
+ * 🔒 $lock (review of 7n Phase 2, race found by reading and reproduced on
+ *    MySQL 8.0.36 and MariaDB 10.6): a price save used to read the main
+ *    currency BEFORE its transaction, so a change of main currency committed
+ *    in between (whose own copy had just put every plan into the new
+ *    currency) was undone for that plan - it was copied back into the old
+ *    one. The price saves now read these two rows FIRST inside their
+ *    transaction with a shared lock: a currency change in progress makes the
+ *    save wait and then read the new value, and the change waits for a save
+ *    in progress. Both take the settings before the plans, so they cannot
+ *    deadlock.
+ *
+ * @param bool $lock True inside a transaction: read with LOCK IN SHARE MODE
  * @return array{ok: bool, offered: array<int, string>, default: string}
  *         ok false = the settings could not be read (offered/default are then a safe guess)
  */
-function adminPlansCurrencySettings(): array
+function adminPlansCurrencySettings(bool $lock = false): array
 {
     $outcome = ['ok' => false, 'offered' => [], 'default' => ''];
 
@@ -1797,10 +1809,15 @@ function adminPlansCurrencySettings(): array
         return $outcome;
     }
 
+    $lockClause = '';
+    if ($lock) {
+        $lockClause = ' LOCK IN SHARE MODE';
+    }
+
     $stored = [];
     try {
         $stmt = dbQuery(
-            'SELECT `settingKey`, `settingValue` FROM `tblSettings` WHERE `settingKey` IN (?, ?)',
+            'SELECT `settingKey`, `settingValue` FROM `tblSettings` WHERE `settingKey` IN (?, ?)' . $lockClause,
             'ss',
             ['billing_currencies', 'billing_default_currency']
         );
@@ -2535,13 +2552,16 @@ function adminPricesEntityKey(array $plan, string $priceKey): string
  */
 function adminPricesSaveGroup(array $admin, int $planID, string $groupKey, string $fingerprint, array $post): array
 {
-    $currencies = adminPlansCurrencySettings();
-    if (!$currencies['ok']) {
-        return adminPlansResult(false, 'The currency settings could not be read, so nothing was saved. Please try again.');
-    }
     $timezone = adminDisplayTimezone();
 
-    return adminPlansInTransaction(function () use ($admin, $planID, $groupKey, $fingerprint, $post, $currencies, $timezone): array {
+    return adminPlansInTransaction(function () use ($admin, $planID, $groupKey, $fingerprint, $post, $timezone): array {
+        // 🔒 The currencies FIRST, inside the transaction, with a shared lock
+        //    (see adminPlansCurrencySettings() for the race this closes).
+        $currencies = adminPlansCurrencySettings(true);
+        if (!$currencies['ok']) {
+            return adminPlansResult(false, 'The currency settings could not be read, so nothing was saved. Please try again.');
+        }
+
         $locked = adminPricesLockAndCheck($planID, $fingerprint);
         if ($locked['result'] !== null) {
             return $locked['result'];
@@ -2694,12 +2714,14 @@ function adminPricesSaveGroup(array $admin, int $planID, string $groupKey, strin
  */
 function adminPricesRetire(array $admin, int $planID, int $pricePointID, string $fingerprint, bool $confirmed): array
 {
-    $currencies = adminPlansCurrencySettings();
-    if (!$currencies['ok']) {
-        return adminPlansResult(false, 'The currency settings could not be read, so nothing was saved. Please try again.');
-    }
+    return adminPlansInTransaction(function () use ($admin, $planID, $pricePointID, $fingerprint, $confirmed): array {
+        // 🔒 The currencies FIRST, inside the transaction, with a shared lock
+        //    (see adminPlansCurrencySettings()).
+        $currencies = adminPlansCurrencySettings(true);
+        if (!$currencies['ok']) {
+            return adminPlansResult(false, 'The currency settings could not be read, so nothing was saved. Please try again.');
+        }
 
-    return adminPlansInTransaction(function () use ($admin, $planID, $pricePointID, $fingerprint, $confirmed, $currencies): array {
         $locked = adminPricesLockAndCheck($planID, $fingerprint);
         if ($locked['result'] !== null) {
             return $locked['result'];
@@ -2756,12 +2778,14 @@ function adminPricesRetire(array $admin, int $planID, int $pricePointID, string 
  */
 function adminPricesDelete(array $admin, int $planID, int $pricePointID, string $fingerprint, bool $confirmed): array
 {
-    $currencies = adminPlansCurrencySettings();
-    if (!$currencies['ok']) {
-        return adminPlansResult(false, 'The currency settings could not be read, so nothing was saved. Please try again.');
-    }
+    return adminPlansInTransaction(function () use ($admin, $planID, $pricePointID, $fingerprint, $confirmed): array {
+        // 🔒 The currencies FIRST, inside the transaction, with a shared lock
+        //    (see adminPlansCurrencySettings()).
+        $currencies = adminPlansCurrencySettings(true);
+        if (!$currencies['ok']) {
+            return adminPlansResult(false, 'The currency settings could not be read, so nothing was saved. Please try again.');
+        }
 
-    return adminPlansInTransaction(function () use ($admin, $planID, $pricePointID, $fingerprint, $confirmed, $currencies): array {
         $locked = adminPricesLockAndCheck($planID, $fingerprint);
         if ($locked['result'] !== null) {
             return $locked['result'];
