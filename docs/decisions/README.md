@@ -32,3 +32,7 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0020](0020-pricing-page-price-promise-follows-each-plan.md) | 2026-11-26 | Owner: the pricing page states each plan's own price promise | Current |
 | [0021](0021-paid-plan-with-no-price-shows-price-coming-soon.md) | 2026-11-26 | Owner: a paid plan with no price shows "Price coming soon" and no sign-up button | Current |
 | [0022](0022-unbuilt-features-in-plan-descriptions-marked-coming-soon.md) | 2026-11-26 | Owner: starting plan descriptions mark unbuilt features as coming soon | Current |
+| [0023](0023-first-version-is-free-service-plus-dynamic-qr.md) | 2026-11-27 | Owner: the first version is the free service plus dynamic QR codes; nobody is charged | Current (changes the order in 0019) |
+| [0024](0024-bot-check-supports-three-providers-at-first-launch.md) | 2026-11-27 | Owner: the first launch has a human check supporting Turnstile, reCAPTCHA and hCaptcha | Current |
+| [0025](0025-full-test-suite-must-pass-before-deploy.md) | 2026-11-27 | Owner: the full test suite must pass before anything is uploaded | Current |
+| [0026](0026-ask-before-opening-the-alpha-pull-request.md) | 2026-11-27 | Owner: ask before opening the pull request into `alpha` | Current |
