@@ -139,25 +139,25 @@ Lead choices made by this plan (record as one lead decision file when WP4 starts
 - **L4** Leave `tblQRScans` and `tblResolveNonces` untouched and unused; decide with #33 and #71.
 - **L5** CueRCode's `tblQRRedirects` holds the owner and a copy of the destination; Go2My.Link holds the live link. A daily check compares the two and reports differences.
 
-**WP4a — Database upgrade `0005`** (new numbered migration plus `install.sql`, same pattern as `0003`/`0004`). Add to `tblQRRedirects`: Go2My.Link short code (unique), sync state (pending, active, failed), last sync error, suspended-at, suspended-by, suspension note. New table for abuse reports (code, category, details, reporter email encrypted with the existing AES-256-GCM helper, a hashed reporter address for counting different people, status, handled by, timestamps). New settings: Go2My.Link API address, API key (sensitive, encrypted), timeout; link-safety provider and key (sensitive); auto-suspend count (default 3) and window (default 24 hours) per O-4; takedown-promise wording; abuse mailbox address. Build: Sonnet; check: Opus (schema and migration safety rules from the Codex rounds apply). Done when: fresh install, upgrade and re-run all work on MySQL 8.0.13+ and MariaDB 10.6+ (decision 0012) with tests.
+**WP4a (#164) — Database upgrade `0005`** (new numbered migration plus `install.sql`, same pattern as `0003`/`0004`). Add to `tblQRRedirects`: Go2My.Link short code (unique), sync state (pending, active, failed), last sync error, suspended-at, suspended-by, suspension note. New table for abuse reports (code, category, details, reporter email encrypted with the existing AES-256-GCM helper, a hashed reporter address for counting different people, status, handled by, timestamps). New settings: Go2My.Link API address, API key (sensitive, encrypted), timeout; link-safety provider and key (sensitive); auto-suspend count (default 3) and window (default 24 hours) per O-4; takedown-promise wording; abuse mailbox address. Build: Sonnet; check: Opus (schema and migration safety rules from the Codex rounds apply). Done when: fresh install, upgrade and re-run all work on MySQL 8.0.13+ and MariaDB 10.6+ (decision 0012) with tests.
 
-**WP4b — Go2My.Link connection code** (new `_functions/fn_go2mylink.php`): create, change destination, look up one link, read scan totals; key sent as `Authorization: Bearer`; TLS checked; redirects not followed; short timeouts; every Go2My.Link error mapped to a plain CueRCode error; the key never logged. Admin "Test connection" button on `/admin/settings/` (like the email test). Build: **Opus** (outbound calls and a secret). Check: Opus, Codex. Done when: tests with a stand-in server cover success, 403, 409, 422, 429, timeout, bad certificate, unexpected reply shape.
+**WP4b (#165) — Go2My.Link connection code** (new `_functions/fn_go2mylink.php`): create, change destination, look up one link, read scan totals; key sent as `Authorization: Bearer`; TLS checked; redirects not followed; short timeouts; every Go2My.Link error mapped to a plain CueRCode error; the key never logged. Admin "Test connection" button on `/admin/settings/` (like the email test). Build: **Opus** (outbound calls and a secret). Check: Opus, Codex. Done when: tests with a stand-in server cover success, 403, 409, 422, 429, timeout, bad certificate, unexpected reply shape.
 
-**WP4c — Create, edit and switch-off flows.** Wire `createDynamicRedirectForOwner()` into `handleGenerate()` for the `dynamic_url` type: owner signed in with a confirmed email (no anonymous dynamic codes), feature `dynamic_qr` and limit `dynamic_codes` under the existing lock, destination checked (WP4e), row saved as pending, Go2My.Link create called, row marked active, QR drawn from `buildPayload_dynamic_url()` (changed to `{base}/{shortCode}`). PATCH destination calls Go2My.Link first. Owner switch-off and switch-on use the L2 mechanism with reason "owner". Unlock `dynamic_qr_enabled` in the admin screen, allowed only when the connection test passes. Go2My.Link unreachable: creation and edits refuse with "try again later", nothing half-made is counted for ever (a tidy step retries or removes stale pending rows); scans are unaffected because Go2My.Link serves them. OpenAPI updated. Build: **Opus** (ownership, limits, the lock). Check: Opus, Codex. Done when: tests cover the paths above, other people's codes answer 404 (not 403), and the #27 acceptance points are met (destination changeable without regenerating; graceful when Go2My.Link is down; scan totals per Q7).
+**WP4c (#166) — Create, edit and switch-off flows.** Wire `createDynamicRedirectForOwner()` into `handleGenerate()` for the `dynamic_url` type: owner signed in with a confirmed email (no anonymous dynamic codes), feature `dynamic_qr` and limit `dynamic_codes` under the existing lock, destination checked (WP4e), row saved as pending, Go2My.Link create called, row marked active, QR drawn from `buildPayload_dynamic_url()` (changed to `{base}/{shortCode}`). PATCH destination calls Go2My.Link first. Owner switch-off and switch-on use the L2 mechanism with reason "owner". Unlock `dynamic_qr_enabled` in the admin screen, allowed only when the connection test passes. Go2My.Link unreachable: creation and edits refuse with "try again later", nothing half-made is counted for ever (a tidy step retries or removes stale pending rows); scans are unaffected because Go2My.Link serves them. OpenAPI updated. Build: **Opus** (ownership, limits, the lock). Check: Opus, Codex. Done when: tests cover the paths above, other people's codes answer 404 (not 403), and the #27 acceptance points are met (destination changeable without regenerating; graceful when Go2My.Link is down; scan totals per Q7).
 
-**WP4d — Web screens.** Generator: a "Dynamic (editable) link" option for signed-in users. A "My dynamic codes" page in the account area: list, change destination, switch off or on, scan total (Q7), suspended state shown plainly. Works without JavaScript; WCAG 2.1 AA; light and dark mode. Build: Sonnet; check: Opus; real-browser pass at the six sizes (#137 rule).
+**WP4d (#167) — Web screens.** Generator: a "Dynamic (editable) link" option for signed-in users. A "My dynamic codes" page in the account area: list, change destination, switch off or on, scan total (Q7), suspended state shown plainly. Works without JavaScript; WCAG 2.1 AA; light and dark mode. Build: Sonnet; check: Opus; real-browser pass at the six sizes (#137 rule).
 
-**WP4e — Link-safety check** (new `_functions/fn_url_reputation.php`, a list of providers so more can be added). Provider per Q3 (recommended: Google Web Risk only). Checked at create and every destination change: "unsafe" refuses with 422; provider unreachable lets it through and logs it (design 2.3, "fail-open"). A daily re-check of every active destination through a new cron script beside `_includes/cron/process_email_queue.php`; an "unsafe" result suspends the code (L2) and tells the owner and the abuse mailbox. Build: **Opus**. Check: Opus, Codex. Done when: tests cover safe, unsafe, unreachable, no key, quota exceeded.
+**WP4e (#168) — Link-safety check** (new `_functions/fn_url_reputation.php`, a list of providers so more can be added). Provider per Q3 (recommended: Google Web Risk only). Checked at create and every destination change: "unsafe" refuses with 422; provider unreachable lets it through and logs it (design 2.3, "fail-open"). A daily re-check of every active destination through a new cron script beside `_includes/cron/process_email_queue.php`; an "unsafe" result suspends the code (L2) and tells the owner and the abuse mailbox. Build: **Opus**. Check: Opus, Codex. Done when: tests cover safe, unsafe, unreachable, no key, quota exceeded.
 
-**WP4f — Abuse report and takedown.** Public `/report/` page (linked from the suspended page, the site footer and the terms), with the human check (WP3), plain categories, optional email, rate limited per visitor. Reports stored (WP4a), emailed to the abuse mailbox and the code's owner through the email queue. **3 reports from different people within 24 hours suspend the code automatically** (O-4; "different people" counted by hashed visitor address, the design's method). Admin screen `/admin/abuse/`: list reports, suspend, restore with a written reason, every action in the admin audit log; an owner cannot edit or switch on a code suspended for abuse. Suspended page on cuercode.net: neutral wording, never shows the destination, shows the takedown promise (Q9) and the report link. Build: **Opus**. Check: Opus, Codex, real-browser pass.
+**WP4f (#169) — Abuse report and takedown.** Public `/report/` page (linked from the suspended page, the site footer and the terms), with the human check (WP3), plain categories, optional email, rate limited per visitor. Reports stored (WP4a), emailed to the abuse mailbox and the code's owner through the email queue. **3 reports from different people within 24 hours suspend the code automatically** (O-4; "different people" counted by hashed visitor address, the design's method). Admin screen `/admin/abuse/`: list reports, suspend, restore with a written reason, every action in the admin audit log; an owner cannot edit or switch on a code suspended for abuse. Suspended page on cuercode.net: neutral wording, never shows the destination, shows the takedown promise (Q9) and the report link. Build: **Opus**. Check: Opus, Codex, real-browser pass.
 
-**WP4g — Daily monitoring email.** Cron script: new and changed destinations in the last 24 hours, codes with the most scans (from Go2My.Link totals), link-safety hits, new reports, differences between CueRCode and Go2My.Link (L5). Sent to the Global Admin and the abuse mailbox. Build: Sonnet; check: Opus.
+**WP4g (#170) — Daily monitoring email.** Cron script: new and changed destinations in the last 24 hours, codes with the most scans (from Go2My.Link totals), link-safety hits, new reports, differences between CueRCode and Go2My.Link (L5). Sent to the Global Admin and the abuse mailbox. Build: Sonnet; check: Opus.
 
 **WP4h — Scan totals (#33, only if Q7 answer is A).** Show each code's total scans, read from Go2My.Link's `click_count` and cached for a short time so pages do not call Go2My.Link on every view. Build: Sonnet; check: Opus.
 
-**WP4i — Documents and wording.** Terms (redirect misuse, takedown, the promise from Q9), privacy (Go2My.Link records scans; Google receives destination addresses if Web Risk is used; Cloudflare, see the open owner item), in-app help, developer portal, OpenAPI, `docs/INSTALL.md` (Go2My.Link key, cron jobs), `DEV_NOTES.md`, `CHANGELOG.md`, `README.md`, `PROJECT_STATUS.md`, `.OpenAI/` pointers. Pricing page: `dynamic_qr` status moves from "coming soon" to available only once the feature is switched on (decisions 0022, #125). Mark the July design file with a terminal line ("redirect route superseded by the Go2My.Link approach, see this plan") and move it to a history folder. Build: Sonnet or Haiku; check: Opus. Legal wording goes to the owner's legal review (#38).
+**WP4i (#171) — Documents and wording.** Terms (redirect misuse, takedown, the promise from Q9), privacy (Go2My.Link records scans; Google receives destination addresses if Web Risk is used; Cloudflare, see the open owner item), in-app help, developer portal, OpenAPI, `docs/INSTALL.md` (Go2My.Link key, cron jobs), `DEV_NOTES.md`, `CHANGELOG.md`, `README.md`, `PROJECT_STATUS.md`, `.OpenAI/` pointers. Pricing page: `dynamic_qr` status moves from "coming soon" to available only once the feature is switched on (decisions 0022, #125). Mark the July design file with a terminal line ("redirect route superseded by the Go2My.Link approach, see this plan") and move it to a history folder. Build: Sonnet or Haiku; check: Opus. Legal wording goes to the owner's legal review (#38).
 
-**WP4j — Whole-feature review.** Opus review of all of WP4 together against design section 2.6 as translated in the "Must-list table" below, then Codex until clean.
+**WP4j (#172) — Whole-feature review.** Opus review of all of WP4 together against design section 2.6 as translated in the "Must-list table" below, then Codex until clean.
 
 Depends on: WP4a first; WP4b before WP4c; WP3 before WP4f; Q1, Q3, Q5, Q7 answers before the parts they name. **Real end-to-end use needs G1-G5 (Go2My.Link side and owner).** Everything in WP4 can be built and tested before then.
 
@@ -214,67 +214,21 @@ Can follow launch (not needed for it): #157 shorthand rewrite, #156 hardening le
 
 ---
 
-## 4. Open owner questions
-Searched first: `docs/decisions/` 0001-0026 and `LAUNCH_DECISIONS.md` (section H, O-1 to O-11). Nothing there answers these. Q3 is a re-ask of a recorded answer, because of a fact measured today.
+## 4. Owner answers (2026-11-27)
+The nine questions this plan raised are answered; the records are the truth, and where the text above says "per Q…" read the record.
 
-**Q1. Where should QRmy.Link's links live?**
-Background: the new Go2My.Link is written but has never been installed on the web host (0.2). An "install" here means a copy of the Go2My.Link software running on DreamHost with its own database.
-- **A (recommended): in Go2My.Link's main live install**, as a short domain of a "CueRCode" organisation inside it. Why: one link system, one database, one set of rules, exactly as you asked on 2026-09-25; nothing to merge later. Cost: CueRCode's dynamic QR cannot go live until Go2My.Link's own install is live, and that install also has to move the old MWlink links and accounts first (Go2My.Link D-002).
-- B: a separate, second Go2My.Link install used only for QRmy.Link (same software, its own database). Why consider it: it does not wait for the MWlink data move. Cost: two installs to update, back up and watch; joining them later is a data move.
-Blocks: the order of Go2My.Link work, owner steps 5-6, and any real use of WP4.
+| Q | Answer | Record |
+|---|---|---|
+| Q1 | QRmy.Link links live in the main Go2My.Link | 0027 |
+| Q2 | If Go2My.Link is late, the free service launches first; dynamic QR follows | 0028 |
+| Q3 | Web Risk **plus a second paid provider** (provider not yet chosen) | 0029 |
+| Q4 | Alpha codes use `alpha.QRmy.Link` | 0030 |
+| Q5 | 3 codes each; a Global Admin can raise it per person or for everyone. **New work:** per-person limit in WP4a/4c and an admin control | 0031 |
+| Q6 | Dual-function QR is not in the first version | 0032 |
+| Q7 | Total scans only (WP4h is in) | 0033 |
+| Q8, Q9 | `abuse@cuercode.net` (QRmy.Link forwards), one working day | 0034 |
 
-**Q2. If Go2My.Link is not live when the rest of CueRCode's first version is ready, what should happen?**
-- **A (recommended): launch the free service first and add dynamic QR as soon as Go2My.Link is live.** Why: the free service would not wait on another project; no codes have been printed yet, so nothing breaks; dynamic QR stays marked "coming soon". This would change decision 0023 only for that case.
-- B: hold the whole launch until Go2My.Link is live. Why consider it: it keeps decision 0023 exactly. Cost: the free service waits too.
-- C: build CueRCode's own redirect service on QRmy.Link as a stopgap (the July design). Not recommended: it goes against your 2026-09-25 requirement, and every code printed in that time would need the CueRCode service kept running for ever or forwarded later.
-Blocks: the launch date if Go2My.Link slips.
-
-**Q3 (re-ask of O-3). Which link-safety check should be used?**
-Recorded answer (O-3, 2026-09-25): "Google Web Risk first, Google Safe Browsing as fallback, and a pluggable provider list ... Planning must confirm Safe Browsing's terms allow a paid service."
-Fact checked today on Google's own pages (Safe Browsing overview and its "Appropriate usage" page): **"The Safe Browsing API is for non-commercial use only (meaning 'not for sale or revenue generating purposes'). If you need a solution for commercial purposes, please refer to Web Risk."** Version 4 is also marked deprecated. CueRCode is a business's product, so Safe Browsing cannot be the fallback. Web Risk's address check is free up to 100,000 checks a month, then US$0.50 per 1,000, and needs a Google Cloud account with billing.
-Does the decision still stand, given that?
-- **A (recommended): Web Risk only, built so another provider can be added later.** If Web Risk cannot be reached, the change is allowed and logged (as already agreed). Why: the only Google option allowed for a business; reports and automatic suspension still cover what it misses.
-- B: Web Risk plus a second paid provider that you name. Cost: a second account, key and privacy-page entry; research to find one with a clear commercial licence.
-- C: no automatic check at first launch, only reports and the daily email. Why consider it: no Google account or billing. Cost: known phishing pages are not caught before someone reports them.
-Blocks: WP4e and owner step 7.
-
-**Q4. Should codes made during the alpha test use a separate address?**
-Background: codes made by testers would be real QRmy.Link links. When the public version starts with a fresh database, CueRCode would forget them but Go2My.Link would keep forwarding them.
-- **A (recommended): yes, `alpha.QRmy.Link`**, as a second short domain of a separate "CueRCode alpha" organisation in Go2My.Link. Why: test codes can be switched off together at launch and can never be confused with real printed codes.
-- B: use QRmy.Link itself and switch the test codes off one by one at launch. Cost: test codes share the real address; missing one leaves an unowned link forwarding people.
-Blocks: alpha test set-up (owner steps 5-6).
-
-**Q5. How many dynamic codes may each person make at first launch?**
-Background: everyone is on the free plan, because nothing can be bought. The free plan's limit is set to 3 (`dynamic_codes` in the plan editor; a Global Admin can change it at any time). Only signed-in people with a confirmed email address can make them.
-- **A (recommended): keep 3 per person.** Why: enough to try it; keeps each account's possible misuse small (design 2.5).
-- B: a different number you choose (for example 1 or 10).
-- C: only people a Global Admin has approved, for the first weeks. Cost: a manual approval step to build and run.
-Blocks: nothing to build for A or B (it is data); C adds work to WP4c.
-
-**Q6. Should dual-function QR codes (#71) be in the first version?**
-Background: a dual-function code opens a web page for most people, but lets an approved app (ProjectEPass) check someone in. You put it on the Business and Enterprise plans (O-8), and it needs an agreement with the ProjectEPass team (ProjectEPass#18).
-- **A (recommended): not in the first version.** Why: nobody can be on Business or Enterprise while nothing is for sale; it adds a signing system and an app register; codes printed now can gain it later without reprinting, because the address stays the same.
-- B: include it. Cost: blocks launch on the ProjectEPass agreement and a large extra security package.
-Blocks: whether `tblResolveNonces` and the app register are built now.
-
-**Q7. How much scan information should the first version show (#33)?**
-Background: Go2My.Link counts each scan. CueRCode can show what it counts.
-- **A (recommended): the total number of scans per dynamic code, and nothing else yet.** Why: it is needed anyway for the daily abuse email; the free plan is already set to "totals only"; very little to build.
-- B: none at first launch. Cost: owners cannot see whether their codes are used.
-- C: full figures (by day, device, country). Cost: more screens, and the privacy page must explain more of what Go2My.Link records; better after launch.
-Blocks: WP4h.
-
-**Q8. Which address should the abuse mailbox use?**
-- **A (recommended): `abuse@cuercode.net`, with `abuse@qrmy.link` forwarding to it.** Why: people who find a bad code see QRmy.Link and often try that address; one mailbox to watch.
-- B: only `abuse@cuercode.net`.
-- C: a shared MWBM Partners abuse mailbox for every product, including Go2My.Link.
-Blocks: WP4a setting default, terms wording, owner step 4.
-
-**Q9. What should the takedown promise say? (You agreed to a promise in O-4; the time was not set.)**
-- **A (recommended): "We act on reports within one working day."** Why: realistic for a small team; the automatic suspension after 3 reports covers nights and weekends.
-- B: "within 24 hours, every day of the year." Cost: someone must check the mailbox at weekends.
-- C: "within 4 hours." Cost: needs cover around the clock.
-Blocks: the suspended page and terms wording (WP4f, WP4i); legal review.
+Because of 0028, CueRCode's own work is ordered so the free service can reach launch without waiting for WP4's live use: WP1, WP2, WP3, WP5, WP6 do not depend on Go2My.Link.
 
 ---
 
