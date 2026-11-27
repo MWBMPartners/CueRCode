@@ -104,6 +104,10 @@ Run `php tests/run.php` at any time to reproduce this table live.
 
 **Task 7n Phase 2 slice 2d (2026-11-26)** added `test_pricing_page.php` (the kind filter and sale dates, a stand-in database in a child process including one without upgrade 0004, the "Contact us" card and its link, hidden prices, the rendered cards, the preview and its access rules) and `test_commercial_literals.php` (the whole-site guard against hard-coded plan keys and prices). Each new rule was broken on purpose (28 changes) and the tests failed every time. The whole suite is then **7513** on PHP 8.5.12.
 
+### Real-database and HTTP runs for the 7n Phase 2 review fixes (2026-11-27)
+
+Every fix was first shown failing on the old code. Passed on throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other: `migrations_real_mysql.php` 174 checks on each (J: the installer's load is refused with nothing written while an upgrade holds the lock, a repeated step that fails rolls the starting data back too, and the retry gives a fresh install's data; N2: the owner's own Pro price is the price-list price and a save of the yearly price leaves the monthly one alone; N: the two starting descriptions say "coming soon", an owner's own wording is kept); `admin_plans_real_mysql.php` 124 checks on each (F: protected plans cannot be given sale dates; L: the pricing page follows sale dates when it loads and a deleted last price is not shown; M: a price save and a main-currency change at the same moment, and the trial-plan setting against a plan delete in both orders); `admin_settings_real_mysql.php` 232 and `admin_access_real_mysql.php` 167 on each, unchanged. Over real HTTP (PHP's built-in server, MySQL 8.0.36): the F1 case (upgrade lock held during the install, then a reload) was reproduced on the old code (installer locked itself, no Enterprise, 0 price points) and after the fix ends with Enterprise and 5 price points; `/pricing/`, `/admin/plans/prices/` and `/admin/pricing-preview/` load with no PHP warnings, the per-plan price promise lines and "Price coming soon" for an ended price. No real browser was used (screen sizes, dark mode and keyboard not checked).
+
 ### Real HTTP and browser run for task 7n Phase 2 slice 2d (2026-11-26)
 
 PHP's built-in web server on a throwaway copy of the site, MySQL 8.0.36 in Docker (`cuercode_it_2d`): the web installer on an empty database (all four upgrades applied); `/pricing/` with the £ drafts and the "From £99/month" card; a contact address of the plan's own; prices hidden; the preview signed out (sign-in page), as an ordinary user (404) and as a Global Admin in each currency and with an unknown one; a database with only `install.sql` and `seed_data.sql` (old prices, no Enterprise, no error); the preview while an upgrade was waiting. Headless Microsoft Edge: `/pricing/` and the preview at 320, 375, 768, 1024, 1366 and 1920 px, no sideways scrolling, light (and dark on a second pass), very long names and prices. Not checked: colourblind palettes, keyboard-only use, a real phone, Apache `.htaccess`, MariaDB or MySQL 8.4 for these pages.
@@ -304,14 +308,15 @@ Run 2026-11-25 (after the final review: test buttons record each press before co
 ## Optional real-database check (admin plans and prices)
 
 `tests/test_admin_plans.php` proves the plans editor's decisions. `tests/integration/admin_plans_real_mysql.php`
-(96 checks, scenarios A-K) proves the rest on a throwaway database: the 0004 starting data; making a plan
+(124 checks, scenarios A-M) proves the rest on a throwaway database: the 0004 starting data; making a plan
 (off sale, features copied, audited, duplicate key refused); prices saved exactly as text and mirrored by
 price group; P1 a bought price cannot change or be deleted even when bought after the form was opened, but
 can be retired and replaced (`monthly_gbp_2`); a REAL race - a second process saving while another
 connection holds an uncommitted purchase waits, then is refused (commit) or goes ahead (rollback); two
 admins at once (the second save refused, nothing written); P4/P5/P6; new version; a price of another plan
 refused; one transaction (a trigger refusing the audit row undoes the whole save); changing the main
-currency re-runs the mirror; the charging switches stay 0.
+currency re-runs the mirror; the pricing page follows sale dates when it loads (L); a price save racing a
+main-currency change, and the trial-plan setting racing a plan delete (M); the charging switches stay 0.
 
 ```bash
 docker run -d --rm --name cuercode-it-plans -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \

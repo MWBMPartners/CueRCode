@@ -36,6 +36,13 @@
  *   J. Settings: changing the main currency re-runs the mirror for every plan
  *      (audited); a plan with no price in it keeps its old figures.
  *   K. Charging stays off: the three billing_*_enabled switches are still 0.
+ *   L. (7n Phase 2 review, F6) The pricing page follows each price's sale
+ *      dates when it loads: an ended price disappears, a scheduled one appears,
+ *      nothing on sale gives "Price coming soon", a deleted last price is gone.
+ *   M. (7n Phase 2 review, the two races found by reading) A price save and a
+ *      main-currency change at the same moment end in the new currency; the
+ *      trial-plan setting saved while that plan is deleted, in both orders,
+ *      never leaves the setting naming a deleted plan.
  *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php), as
  * it needs a database. How to run it (Docker example):
