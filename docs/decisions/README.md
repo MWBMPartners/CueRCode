@@ -45,3 +45,4 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0033](0033-first-version-shows-total-scans-only.md) | 2026-11-27 | Owner: first version shows total scans only | Current |
 | [0034](0034-abuse-mailbox-and-one-working-day-promise.md) | 2026-11-27 | Owner: abuse@cuercode.net, one-working-day takedown promise | Current |
 | [0035](0035-web-risk-at-launch-second-provider-later.md) | 2026-11-27 | Owner: launch with Web Risk only; second provider later | Current (defers part of 0029) |
+| [0036](0036-upgrade-0004-corrected-in-place.md) | 2026-11-27 | Lead (owner may overrule): upgrade 0004 corrected in place, once, because it never ran on a live database | Current (unapproved) |
