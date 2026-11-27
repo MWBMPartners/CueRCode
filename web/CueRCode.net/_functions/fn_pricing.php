@@ -116,9 +116,11 @@ if (!defined('CUERCODE_PLAN_KEY_FREE') || !defined('CUERCODE_PLAN_KEY_ANONYMOUS'
  * fataling.
  *
  * @return array Raw plan rows (every tblSubscriptionPlans column, plus
- *               'pricePoints' and 'hasPricePoint' - true when the plan has at
- *               least one price that is not retired, so a plan with prices is
- *               never called "Free") - JSON columns are
+ *               'pricePoints' and 'hasPricePoint' - true when the plan has a
+ *               price on sale now or starting later, so a plan with prices is
+ *               never called "Free"; priceMonthly / priceYearly / currency are
+ *               the figures on sale NOW from the plan's price list, see
+ *               pricingApplyPriceList() - review finding F6) - JSON columns are
  *               decoded downstream by pricingDisplayRowsFromPlans(), NOT
  *               here, so this function stays a thin, purely-DB concern.
  *               Empty array when the DB is unavailable or no plan qualifies.
@@ -179,30 +181,58 @@ function listPublicPlansForDisplay(): array
     }
 
     // ==========================================================================
-    // 🏷️ Which of these plans have a price at all? (task 7n Phase 2)
+    // 🗓️ Each plan's price list, read LIVE (task 7n Phase 2; review finding F6)
     // ==========================================================================
-    // The older single-price columns can read 0.00 for a plan that DOES have a
-    // price (for example one priced only in another currency than the main
-    // one). Such a plan must never be shown as "Free".
+    // Every price row of every plan (one static query, bucketed in PHP - the
+    // page shows only a handful of plans). Two things come from it:
+    //   - hasPricePoint: the plan has a price on sale now or starting later,
+    //     so even 0.00 in the older columns never makes it "Free";
+    //   - the shown monthly / yearly figures, worked out from the price list
+    //     NOW (pricingApplyPriceList()), so a price whose sale dates have
+    //     ended or started is followed without anyone saving again. A plan
+    //     without grouped price rows keeps its older columns.
+    // `SELECT *` on purpose, like the plans query above: the priceGroupKey
+    // column comes from database upgrade 0004. Fail-safe: if this query fails
+    // the plans keep their older columns (the page never breaks).
     // ==========================================================================
+    $mainCurrency = '';
+    if (function_exists('getConfig')) {
+        $configuredCurrency = getConfig('billing_default_currency', 'GBP');
+        if (is_string($configuredCurrency)) {
+            $mainCurrency = strtoupper(trim($configuredCurrency));
+        }
+    }
+
     if (!empty($planRows)) {
         try {
-            $pricedStmt   = dbQuery('SELECT DISTINCT `planID` FROM `tblPlanPricePoints` WHERE `isActive` = 1');
+            $pricedStmt   = dbQuery('SELECT * FROM `tblPlanPricePoints` ORDER BY `planID` ASC, `sortOrder` ASC, `pricePointID` ASC');
             $pricedResult = $pricedStmt->get_result();
-            $pricedPlans  = [];
+            $pricesByPlan = [];
             while (($pricedRow = $pricedResult->fetch_assoc()) !== null) {
-                $pricedPlans[(int) $pricedRow['planID']] = true;
+                $pricesByPlan[(int) $pricedRow['planID']][] = $pricedRow;
             }
             $pricedStmt->close();
 
             foreach ($planRows as $planIndex => $planRow) {
-                if (isset($pricedPlans[(int) $planRow['planID']])) {
-                    $planRows[$planIndex]['hasPricePoint'] = true;
+                $planPrices = [];
+                if (isset($pricesByPlan[(int) $planRow['planID']])) {
+                    $planPrices = $pricesByPlan[(int) $planRow['planID']];
+                }
+
+                foreach ($planPrices as $planPrice) {
+                    $priceStatus = pricingPriceRowStatus($planPrice, $nowUtc);
+                    if ($priceStatus === 'on_sale' || $priceStatus === 'scheduled') {
+                        $planRows[$planIndex]['hasPricePoint'] = true;
+                    }
+                }
+
+                if (moneyCurrencyKnown($mainCurrency)) {
+                    $planRows[$planIndex] = pricingApplyPriceList($planRows[$planIndex], $planPrices, $mainCurrency, $nowUtc);
                 }
             }
         } catch (\Throwable $e) {
             if (function_exists('logError')) {
-                logError('error', 'Public pricing priced-plan list failed', $e->getMessage());
+                logError('error', 'Public pricing price list failed', $e->getMessage());
             }
         }
     }
@@ -305,6 +335,180 @@ function pricingPlanIsOnGrid(array $planRow, string $nowUtc): bool
     }
 
     return true;
+}
+
+// ==============================================================================
+// 🗓️ The price list, read live (review finding F6 of the 7n Phase 2 review)
+// ==============================================================================
+
+/**
+ * 🚦 Where one price stands right now. PURE.
+ *
+ * Shared by the public page and the admin editor (adminPlansPriceStatus()),
+ * so the two can never disagree about whether a price is on sale.
+ *
+ * @param array<string, mixed> $row    A tblPlanPricePoints row
+ * @param string               $nowUtc "Y-m-d H:i:s" in UTC
+ * @return string 'retired' | 'scheduled' (starts later) | 'ended' (its end date passed) | 'on_sale'
+ */
+function pricingPriceRowStatus(array $row, string $nowUtc): string
+{
+    if (!isset($row['isActive']) || (int) $row['isActive'] !== 1) {
+        return 'retired';
+    }
+
+    if (isset($row['validFrom']) && $row['validFrom'] !== null && strcmp((string) $row['validFrom'], $nowUtc) > 0) {
+        return 'scheduled';
+    }
+
+    if (isset($row['validUntil']) && $row['validUntil'] !== null && strcmp((string) $row['validUntil'], $nowUtc) < 0) {
+        return 'ended';
+    }
+
+    return 'on_sale';
+}
+
+/**
+ * 🪞 A plan's monthly and yearly prices on sale RIGHT NOW in one currency. PURE.
+ *
+ * Chooses by price GROUP ("monthly", "yearly"), never by the recommended flag:
+ * the price whose group is monthly and that is on sale now (not retired, and
+ * today inside its sale dates), and the same for yearly. If two match (older
+ * data), the lowest display order, then the lowest ID, wins. Used live by the
+ * public page (pricingApplyPriceList()), by the admin preview, and by the
+ * copy into the older price columns (adminMirrorSelection()).
+ *
+ * @param array<int, array<string, mixed>> $rows     The plan's price rows (any status)
+ * @param string                           $currency ISO 4217 code
+ * @param string                           $nowUtc   "Y-m-d H:i:s" in UTC
+ * @return array{monthly: string|null, yearly: string|null, hasAnyPrice: bool, managed: array{monthly: bool, yearly: bool}}
+ *         amounts as DECIMAL text; hasAnyPrice = any price on sale now in any
+ *         currency; managed = the group has at least one price row of any
+ *         currency or status (so its figure comes from the price list)
+ */
+function pricingCurrentGroupPrices(array $rows, string $currency, string $nowUtc): array
+{
+    $selection = ['monthly' => null, 'yearly' => null, 'hasAnyPrice' => false, 'managed' => ['monthly' => false, 'yearly' => false]];
+    $chosen = ['monthly' => null, 'yearly' => null];
+
+    foreach ($rows as $row) {
+        $group = '';
+        if (isset($row['priceGroupKey']) && $row['priceGroupKey'] !== null) {
+            $group = (string) $row['priceGroupKey'];
+        }
+        if ($group === 'monthly' || $group === 'yearly') {
+            $selection['managed'][$group] = true;
+        }
+
+        if (pricingPriceRowStatus($row, $nowUtc) !== 'on_sale') {
+            continue;
+        }
+        $selection['hasAnyPrice'] = true;
+
+        if (!isset($row['currency']) || (string) $row['currency'] !== $currency) {
+            continue;
+        }
+        if ($group !== 'monthly' && $group !== 'yearly') {
+            continue;
+        }
+
+        if ($chosen[$group] === null) {
+            $chosen[$group] = $row;
+            continue;
+        }
+
+        $best = $chosen[$group];
+        $rowOrder = [(int) $row['sortOrder'], (int) $row['pricePointID']];
+        $bestOrder = [(int) $best['sortOrder'], (int) $best['pricePointID']];
+        if ($rowOrder < $bestOrder) {
+            $chosen[$group] = $row;
+        }
+    }
+
+    foreach (['monthly', 'yearly'] as $group) {
+        if ($chosen[$group] === null || !moneyCurrencyKnown($currency)) {
+            continue;
+        }
+        $minor = moneyStoredDecimalToMinor((string) $chosen[$group]['amount'], $currency);
+        if ($minor !== null) {
+            $selection[$group] = moneyMinorToDecimalString($minor, $currency);
+        }
+    }
+
+    return $selection;
+}
+
+/**
+ * 🗓️ One plan row with its monthly and yearly figures taken LIVE from its
+ *    price list. PURE. (Review finding F6 of the 7n Phase 2 review.)
+ *
+ * WHY: the older single-price columns are a copy made when a price is saved,
+ * so a price whose "on sale until" date passed kept its place on the page, and
+ * one scheduled to start never appeared, until somebody saved again. The page
+ * now works the figures out from the price list every time it loads:
+ *   - a group (monthly / yearly) that has price rows shows the price on sale
+ *     NOW, or nothing (decision 0021: a paid plan with nothing on sale then
+ *     says "Price coming soon");
+ *   - a group with no price rows at all keeps the older column (a plan priced
+ *     only the old way, for example before database upgrade 0004);
+ *   - the currency is the main one (billing_default_currency) - unless the
+ *     plan has no monthly price on sale in it, when the plan's own older
+ *     currency is used instead (the same rule as the copy into the older
+ *     columns, adminMirrorDecision(), so a change of main currency never
+ *     blanks a plan priced only in the old one).
+ * A plan with no grouped price rows at all is returned unchanged.
+ *
+ * @param array<string, mixed>             $planRow      A tblSubscriptionPlans row
+ * @param array<int, array<string, mixed>> $priceRows    That plan's tblPlanPricePoints rows (any status)
+ * @param string                           $mainCurrency billing_default_currency
+ * @param string                           $nowUtc       "Y-m-d H:i:s" in UTC
+ * @return array<string, mixed> The row, with priceMonthly / priceYearly / currency
+ *                              as the page should show them ('0' = nothing on sale
+ *                              in that group, '' = none in the currency shown)
+ */
+function pricingApplyPriceList(array $planRow, array $priceRows, string $mainCurrency, string $nowUtc): array
+{
+    $selection = pricingCurrentGroupPrices($priceRows, $mainCurrency, $nowUtc);
+
+    if ($selection['managed']['monthly'] !== true && $selection['managed']['yearly'] !== true) {
+        return $planRow;
+    }
+
+    $storedCurrency = '';
+    if (isset($planRow['currency'])) {
+        $storedCurrency = (string) $planRow['currency'];
+    }
+
+    $shownCurrency = $mainCurrency;
+    if ($storedCurrency !== '' && $storedCurrency !== $mainCurrency && $selection['monthly'] === null) {
+        $shownCurrency = $storedCurrency;
+        $selection = pricingCurrentGroupPrices($priceRows, $storedCurrency, $nowUtc);
+    }
+
+    foreach (['monthly' => 'priceMonthly', 'yearly' => 'priceYearly'] as $group => $column) {
+        if ($selection['managed'][$group] === true) {
+            // 0 = nothing on sale in this group right now. Zero is never shown
+            // as a figure, and only a plan given without payment can read
+            // "Free" (pricingDisplayRowsFromPlans()); any other says "Price
+            // coming soon" when neither group has a price (decision 0021).
+            $value = '0';
+            if ($selection[$group] !== null) {
+                $value = (string) $selection[$group];
+            }
+            $planRow[$column] = $value;
+            continue;
+        }
+
+        // 📜 Priced the old way: keep the older column, if it is in the
+        //    currency being shown (never mix two currencies on one card).
+        if ($storedCurrency !== $shownCurrency) {
+            $planRow[$column] = '';
+        }
+    }
+
+    $planRow['currency'] = $shownCurrency;
+
+    return $planRow;
 }
 
 // ==============================================================================

@@ -656,13 +656,13 @@ This replaces editing plan rows by hand in SQL (above), which is now a last reso
 | Task | Where |
 | --- | --- |
 | Change a price | `/admin/plans/` → Prices. If somebody has bought it, press Retire and add the new one. |
-| Add a plan | `/admin/plans/new/` (it starts off sale: add prices, then put it on sale). A plan on sale with no price at all is shown as "Free". |
+| Add a plan | `/admin/plans/new/` (it starts off sale: add prices, then put it on sale). A plan on sale with no price on sale shows "Price coming soon" and no sign-up button (decision 0021); only the visitors' plan and the free plan new accounts get can read "Free". |
 | Take a plan off sale | Its Details page. People already on it keep it. |
 | Change a plan people pay for | "Make a new version". |
 | Offered and main currency, price promise, show or hide prices | `/admin/settings/`, "Prices, VAT & refunds". |
 | See $ and € before they are public | `/admin/pricing-preview/`. |
 
-**What the public page shows while charging is off:** plans that are on sale, ordinary, inside their sale dates and with a display order above 0. Figures come from `priceMonthly` / `priceYearly` / `currency`, which every price save copies from the main currency's current monthly and yearly prices (`adminMirrorLegacyPlanPrices()`). A "Contact us" plan shows "From <monthly>/month" and links to its contact address, or to the `site_email` setting. Cards are drawn by `_includes/pricing_grid.php`, shared with the preview.
+**What the public page shows while charging is off:** plans that are on sale, ordinary, inside their sale dates and with a display order above 0. Since finding F6 of the Phase 2 review (2026-11-27) the figures are worked out **from the price list every time the page loads** (`pricingApplyPriceList()` in `fn_pricing.php`): for each group (monthly, yearly) that has price rows, the price on sale at that moment in the main currency (or, if the plan has no monthly price in the main currency, in its own older currency), so "on sale from" and "on sale until" dates are followed without anyone saving again. A group with no price rows at all falls back to the older `priceMonthly` / `priceYearly` columns (a plan priced the old way). Every price save still copies the current prices into those columns (`adminMirrorLegacyPlanPrices()`, used by older code such as the free-trial plan list), and deleting a group's last price clears its column. After upgrade 0004, change prices in the editor, not by editing those columns in SQL. A "Contact us" plan shows "From <monthly>/month" and links to its contact address, or to the `site_email` setting. Cards are drawn by `_includes/pricing_grid.php`, shared with the preview.
 
 **No commercial values in code:** `tests/test_commercial_literals.php` fails on a starting paid-plan key or starting price in any PHP file outside `_libraries/` and the migrations (one named exception: the installer's list of starting rows).
 

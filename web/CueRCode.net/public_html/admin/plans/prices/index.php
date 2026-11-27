@@ -19,8 +19,10 @@
  *    floats.
  *
  * 🪞 After every save the plan's monthly and yearly prices in the main
- *    currency are copied to the columns the pricing page reads while
- *    charging is off (adminMirrorLegacyPlanPrices()).
+ *    currency are copied to the plan's older price columns
+ *    (adminMirrorLegacyPlanPrices()). The pricing page itself works its
+ *    figures out from the price list when it loads (pricingApplyPriceList(),
+ *    review finding F6), so sale dates are followed.
  *
  * 🔒 Every POST: CSRF token, same-site check, fresh password confirmation,
  *    database ready, then ONE transaction (lock plan and prices, check the
@@ -259,7 +261,21 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     $pricesFp = adminPlansPricesFingerprint($pricesRows);
                     $pricesGroups = adminPlansPriceGroups((string) $pricesPlan['planKind']);
                     $pricesNowUtc = adminPlansNowUtc();
-                    $pricesShownCurrency = (string) $pricesPlan['currency'];
+                    // 🗓️ Review finding F6: what visitors see is worked out from
+                    //    the price list when the page loads - the same function
+                    //    the public pricing page uses.
+                    $pricesPublicRow = pricingApplyPriceList($pricesPlan, $pricesRows, $pricesCurrencies['default'], $pricesNowUtc);
+                    $pricesShownCurrency = (string) $pricesPublicRow['currency'];
+                    $pricesPublicWords = static function (string $stored) use ($pricesAmountWords, $pricesShownCurrency): string {
+                        $minor = null;
+                        if (moneyCurrencyKnown($pricesShownCurrency)) {
+                            $minor = moneyStoredDecimalToMinor($stored, $pricesShownCurrency);
+                        }
+                        if ($stored === '' || $minor === 0) {
+                            return 'none on sale now';
+                        }
+                        return $pricesAmountWords($stored, $pricesShownCurrency);
+                    };
                     ?>
                     <h1 class="h2 fw-bold mb-1 text-break">Prices: <?php echo adminEscape($pricesPlan['planName']); ?></h1>
                     <p class="mb-3"><a class="small" href="/admin/plans/edit/?id=<?php echo (int) $pricesPlanID; ?>">Details of this plan</a></p>
@@ -288,13 +304,14 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <div class="card-body">
                             <p class="mb-1 fw-bold">What the pricing page shows now (charging is off)</p>
                             <p class="mb-1">
-                                Monthly: <?php echo adminEscape($pricesAmountWords((string) $pricesPlan['priceMonthly'], $pricesShownCurrency)); ?>,
-                                yearly: <?php echo adminEscape($pricesAmountWords((string) $pricesPlan['priceYearly'], $pricesShownCurrency)); ?>
-                                (0 is shown as "Free" only on the two plans people get without paying - the visitors' plan and the free plan new accounts get; any other plan with no price shows "Price coming soon").
+                                Monthly: <?php echo adminEscape($pricesPublicWords((string) $pricesPublicRow['priceMonthly'])); ?>,
+                                yearly: <?php echo adminEscape($pricesPublicWords((string) $pricesPublicRow['priceYearly'])); ?>
+                                (with neither, the card says "Free" only on the two plans people get without paying - the visitors' plan and the free plan new accounts get; any other plan says "Price coming soon").
                             </p>
                             <p class="small text-body-secondary mb-0">
-                                These are copied from the current monthly and yearly prices in the main currency (<?php echo adminEscape($pricesCurrencies['default']); ?>)
-                                each time a price is saved here. Customers are not charged while charging is off.
+                                Worked out each time the pricing page loads: the price in each group that is on sale at that moment, in the main currency
+                                (<?php echo adminEscape($pricesCurrencies['default']); ?>), so the sale dates you set here are followed without saving again.
+                                A group with no prices here at all shows the plan's older figure. Customers are not charged while charging is off.
                             </p>
                         </div>
                     </div>

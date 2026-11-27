@@ -342,6 +342,8 @@ function ipBuy(\mysqli $ipDb, int $ipUserID, int $ipPricePointID): void
 ipDefineDatabase($ipDbName);
 require_once $ipSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
 require_once $ipSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin_plans.php';
+// 🃏 The public pricing page's own functions (scenario L reads what it shows).
+require_once $ipSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_pricing.php';
 restore_error_handler();
 restore_exception_handler();
 ini_set('display_errors', 'stderr');
@@ -643,6 +645,67 @@ $ipStates = adminSettingsLoadRows($ipPricesKeys);
 $ipBack = adminSettingsProcessSection('prices', ['f' => ['billing_default_currency' => 'GBP']], (array) $ipStates);
 $ipBackSaved = adminSettingsSaveSection($ipAdmin, 'prices', adminSettingsSectionFingerprint('prices', (array) $ipStates), $ipBack['changes']);
 ipCheck('J', $ipBackSaved['ok'] === true && ipPlan($ipServer, 'team_plus_v2')['currency'] === 'GBP' && ipPlan($ipServer, 'team_plus_v2')['priceMonthly'] === '8.49', 'back to GBP: the GBP prices are shown again');
+
+// ==============================================================================
+// L. The pricing page follows each price's sale dates when it loads
+//    (7n Phase 2 review, finding F6; decision 0021 for "nothing on sale")
+// ==============================================================================
+echo PHP_EOL . 'L. Pricing page follows sale dates (F6)' . PHP_EOL;
+
+/**
+ * 🃏 What the public pricing page would show right now, per plan key:
+ *    the card's price words (pricingPriceBlock()) and whether it is "Free".
+ */
+function ipPublicCards(): array
+{
+    $ipCards = [];
+    foreach (pricingDisplayRowsFromPlans(listPublicPlansForDisplay()) as $ipRow) {
+        $ipBlock = pricingPriceBlock($ipRow, true);
+        $ipCards[$ipRow['planKey']] = [
+            'text' => trim($ipBlock['prefix'] . ' ' . $ipBlock['headline'] . ' ' . $ipBlock['suffix']) . ' | ' . $ipBlock['subline'],
+            'free' => $ipRow['isZeroPrice'],
+        ];
+    }
+    return $ipCards;
+}
+
+$ipBusinessID = (int) ipPlan($ipServer, 'business')['planID'];
+$ipCards = ipPublicCards();
+ipCheck('L', isset($ipCards['business']) && $ipCards['business']['text'] === '£24.99 /month | or £199.99 billed yearly', 'before: Business shows £24.99 a month or £199.99 a year: ' . json_encode($ipCards['business'] ?? null));
+
+// L1. The monthly price's end date passes (nobody saves anything).
+$ipServer->query("UPDATE `tblPlanPricePoints` SET `validUntil` = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE `planID` = " . $ipBusinessID . " AND `priceKey` = 'monthly_gbp'");
+$ipCards = ipPublicCards();
+ipCheck('L', $ipCards['business']['text'] === '£199.99 /year | Billed yearly', 'F6: once its end date has passed, the monthly price is no longer shown (only the yearly one): ' . json_encode($ipCards['business']));
+
+// L2. A scheduled price: not shown before its start, shown once it starts.
+$ipServer->query("INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `validFrom`, `isDefault`, `isActive`, `sortOrder`) VALUES (" . $ipBusinessID . ", 'monthly_gbp_2', 'monthly', 'monthly', 1, 26.99, 'GBP', UTC_TIMESTAMP() + INTERVAL 1 HOUR, 0, 1, 1)");
+ipCheck('L', ipPublicCards()['business']['text'] === '£199.99 /year | Billed yearly', 'F6: a price that starts later is not shown yet');
+$ipServer->query("UPDATE `tblPlanPricePoints` SET `validFrom` = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE `planID` = " . $ipBusinessID . " AND `priceKey` = 'monthly_gbp_2'");
+ipCheck('L', ipPublicCards()['business']['text'] === '£26.99 /month | or £199.99 billed yearly', 'F6: once its start has passed it IS shown, without anyone saving');
+
+// L3. Nothing on sale any more for a paid plan: "Price coming soon" (decision 0021).
+$ipServer->query("UPDATE `tblPlanPricePoints` SET `validUntil` = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE `planID` = " . $ipBusinessID);
+$ipCards = ipPublicCards();
+ipCheck('L', $ipCards['business']['text'] === 'Price coming soon | ' && $ipCards['business']['free'] === false, 'F6: every price ended - "Price coming soon", never Free and never the old figure: ' . json_encode($ipCards['business']));
+
+// ↩️ Put Business back as it was for the scenarios after this one.
+$ipServer->query("DELETE FROM `tblPlanPricePoints` WHERE `planID` = " . $ipBusinessID . " AND `priceKey` = 'monthly_gbp_2'");
+$ipServer->query("UPDATE `tblPlanPricePoints` SET `validUntil` = NULL WHERE `planID` = " . $ipBusinessID);
+ipCheck('L', ipPublicCards()['business']['text'] === '£24.99 /month | or £199.99 billed yearly', 'Business is back to £24.99 / £199.99');
+
+// L4. The only price of an on-sale plan is DELETED through the editor.
+$ipSoloMade = adminPlansCreate($ipAdmin, ['plan_key' => 'solo_it', 'plan_kind' => 'standard', 'plan_name' => 'Solo', 'sort_order' => '6', 'cta_mode' => 'checkout']);
+$ipSoloID = (int) $ipSoloMade['planID'];
+$ipSoloSaved = adminPricesSaveGroup($ipAdmin, $ipSoloID, 'monthly', ipPricesFp($ipSoloID), ['amount' => ['GBP' => '5.00']]);
+$ipSoloOnSale = adminPlansSetOnSale($ipAdmin, $ipSoloID, ipPlanFp($ipSoloID), true, false);
+ipCheck('L', $ipSoloMade['ok'] && $ipSoloSaved['ok'] && $ipSoloOnSale['ok'] && ipPublicCards()['solo_it']['text'] === '£5.00 /month | Billed monthly', 'setup: a new plan on sale at £5.00 a month');
+$ipSoloPrice = ipPrice($ipServer, 'solo_it', 'monthly_gbp');
+$ipSoloDeleted = adminPricesDelete($ipAdmin, $ipSoloID, (int) $ipSoloPrice['pricePointID'], ipPricesFp($ipSoloID), true);
+$ipCards = ipPublicCards();
+ipCheck('L', $ipSoloDeleted['ok'] === true && $ipCards['solo_it']['text'] === 'Price coming soon | ' && $ipCards['solo_it']['free'] === false, 'F6: after its only price is deleted the card says "Price coming soon", not the deleted £5.00 (and not Free): ' . json_encode($ipCards['solo_it']));
+$ipSoloOff = adminPlansSetOnSale($ipAdmin, $ipSoloID, ipPlanFp($ipSoloID), false, true);
+ipCheck('L', $ipSoloOff['ok'] === true, 'tidy up: the test plan is taken off sale');
 
 // ==============================================================================
 // K. Charging stays off

@@ -99,6 +99,8 @@ if (basename($adminPlansScriptFilename) === basename(__FILE__)) {
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin.php';
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin_settings.php';
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_money.php';
+// 🗓️ The live price-list rules shared with the public page (review finding F6).
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_pricing.php';
 if (!defined('CUERCODE_PLAN_KEY_FREE')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_features.php';
 }
@@ -980,19 +982,8 @@ function adminPlansValidatePlanForm(array $post, ?array $current, array $context
  */
 function adminPlansPriceStatus(array $row, string $nowUtc): string
 {
-    if (!isset($row['isActive']) || (int) $row['isActive'] !== 1) {
-        return 'retired';
-    }
-
-    if (isset($row['validFrom']) && $row['validFrom'] !== null && strcmp((string) $row['validFrom'], $nowUtc) > 0) {
-        return 'scheduled';
-    }
-
-    if (isset($row['validUntil']) && $row['validUntil'] !== null && strcmp((string) $row['validUntil'], $nowUtc) < 0) {
-        return 'ended';
-    }
-
-    return 'on_sale';
+    // 🗓️ One rule for the editor and the public page (fn_pricing.php).
+    return pricingPriceRowStatus($row, $nowUtc);
 }
 
 /**
@@ -1228,74 +1219,38 @@ function adminPlansMissingCurrencyWarnings(array $rows, string $kind, array $off
 // ==============================================================================
 
 /**
- * 🪞 Which prices the public page should show while charging is off. PURE.
+ * 🪞 A plan's monthly and yearly prices on sale now in one currency, chosen by
+ *    GROUP, never by the recommended flag. PURE.
  *
- * Chooses by GROUP, never by the recommended flag (only yearly prices are
- * flagged recommended, so the flag says nothing about which price is the
- * monthly one): the CURRENT price in the main currency whose group is
- * "monthly", and the one whose group is "yearly". A price counts as current
- * when it is not retired and today is inside its sale dates. If two match
- * (older data), the lowest display order, then the lowest ID, wins.
+ * Since review finding F6 this is the shared pricingCurrentGroupPrices()
+ * (fn_pricing.php), which the public page also uses live when it loads, so
+ * the copy into the older columns and the page always choose the same price.
  *
  * @param array<int, array<string, mixed>> $rows     The plan's price rows
  * @param string                           $currency The main currency (billing_default_currency)
  * @param string                           $nowUtc   "Y-m-d H:i:s" in UTC
- * @return array{monthly: string|null, yearly: string|null, hasAnyPrice: bool}
- *         amounts as DECIMAL text; hasAnyPrice = the plan has any current price in any currency
+ * @return array{monthly: string|null, yearly: string|null, hasAnyPrice: bool, managed: array{monthly: bool, yearly: bool}}
+ *         amounts as DECIMAL text; hasAnyPrice = the plan has any current price in any currency;
+ *         managed = the group has price rows (so the page takes its figure from the price list)
  */
 function adminMirrorSelection(array $rows, string $currency, string $nowUtc): array
 {
-    $selection = ['monthly' => null, 'yearly' => null, 'hasAnyPrice' => false];
-    $chosen = ['monthly' => null, 'yearly' => null];
-
-    foreach ($rows as $row) {
-        if (adminPlansPriceStatus($row, $nowUtc) !== 'on_sale') {
-            continue;
-        }
-        $selection['hasAnyPrice'] = true;
-
-        if ((string) $row['currency'] !== $currency || !isset($row['priceGroupKey'])) {
-            continue;
-        }
-        $group = (string) $row['priceGroupKey'];
-        if ($group !== 'monthly' && $group !== 'yearly') {
-            continue;
-        }
-
-        if ($chosen[$group] === null) {
-            $chosen[$group] = $row;
-            continue;
-        }
-
-        $best = $chosen[$group];
-        $rowOrder = [(int) $row['sortOrder'], (int) $row['pricePointID']];
-        $bestOrder = [(int) $best['sortOrder'], (int) $best['pricePointID']];
-        if ($rowOrder < $bestOrder) {
-            $chosen[$group] = $row;
-        }
-    }
-
-    foreach (['monthly', 'yearly'] as $group) {
-        if ($chosen[$group] === null) {
-            continue;
-        }
-        $minor = moneyStoredDecimalToMinor((string) $chosen[$group]['amount'], $currency);
-        if ($minor !== null) {
-            $selection[$group] = moneyMinorToDecimalString($minor, $currency);
-        }
-    }
-
-    return $selection;
+    return pricingCurrentGroupPrices($rows, $currency, $nowUtc);
 }
 
 /**
  * 🪞 What the mirror should write to one plan's older columns. PURE.
  *
- * Rules (chosen so the public page never wrongly says "Free"):
+ * Since review finding F6 the public page works its figures out from the
+ * price list live (pricingApplyPriceList()); these older columns are what it
+ * falls back to for a price group with no price rows at all, and what older
+ * code reads (for example the free-trial plan list).
+ *
+ * Rules:
  *   - a plan with no current price at all (the free plans) is left alone;
  *   - the plan already uses the main currency: each of monthly / yearly that
  *     has a current price is copied; one that has none is LEFT AS IT IS, with
- *     a warning (writing 0.00 would make the page say "Free");
+ *     a warning saying what the page shows instead;
  *   - the plan uses another currency (the main currency was changed): the
  *     monthly price must exist, then the currency and monthly price are
  *     copied and the yearly price is copied or set to 0.00 (no yearly price);
@@ -1331,8 +1286,14 @@ function adminMirrorDecision(array $plan, array $selection, string $currency): a
             if ($selection[$group] === null) {
                 // 🤫 Nothing stored (0.00, for example Enterprise has no yearly
                 //    price) and nothing to copy: nothing to warn about.
+                // 🗓️ Review finding F6: the page now reads the price list live,
+                //    so the words say what visitors really see.
                 if ($storedMinor !== null && $storedMinor > 0) {
-                    $decision['warnings'][] = 'No current ' . $group . ' price in ' . $currency . ', so the pricing page keeps showing the last one (' . moneyFormat($storedMinor, $currency) . ').';
+                    if (isset($selection['managed'][$group]) && $selection['managed'][$group] === true) {
+                        $decision['warnings'][] = 'No ' . $group . ' price in ' . $currency . ' is on sale right now, so the pricing page shows no ' . $group . ' price for this plan.';
+                    } else {
+                        $decision['warnings'][] = 'No ' . $group . ' price in ' . $currency . ' in the price list yet, so the pricing page keeps showing the older one (' . moneyFormat($storedMinor, $currency) . ').';
+                    }
                 }
                 continue;
             }
@@ -2802,7 +2763,11 @@ function adminPricesDelete(array $admin, int $planID, int $pricePointID, string 
             []
         ));
 
-        $mirror = adminMirrorLegacyPlanPrices($admin, $planID, $currencies['default']);
+        $deletedGroup = '';
+        if ($price['priceGroupKey'] !== null) {
+            $deletedGroup = (string) $price['priceGroupKey'];
+        }
+        $mirror = adminMirrorLegacyPlanPrices($admin, $planID, $currencies['default'], [$deletedGroup]);
 
         return adminPlansResult(true, 'The price was deleted.', ['planID' => $planID, 'changed' => true, 'warnings' => $mirror['warnings']]);
     });
@@ -2844,13 +2809,16 @@ function adminPricesFindOwn(array $prices, int $pricePointID): ?array
  * ⚠️ Runs INSIDE the caller's transaction (it does not start or end one) and
  *    throws on a database problem, so the caller's whole save is undone.
  *
- * @param array<string, mixed> $admin    From requireGlobalAdminPage()
- * @param int                  $planID   Plan ID
- * @param string               $currency The main currency (billing_default_currency)
+ * @param array<string, mixed> $admin         From requireGlobalAdminPage()
+ * @param int                  $planID        Plan ID
+ * @param string               $currency      The main currency (billing_default_currency)
+ * @param array<int, string>   $emptiedGroups Groups ('monthly', 'yearly') whose price was just
+ *                                            DELETED: if no price row of that group is left,
+ *                                            its older column is cleared to 0.00 (review F6)
  * @return array{changed: bool, warnings: array<int, string>}
  * @throws \RuntimeException When the plan or its prices could not be read, or the audit row written
  */
-function adminMirrorLegacyPlanPrices(array $admin, int $planID, string $currency): array
+function adminMirrorLegacyPlanPrices(array $admin, int $planID, string $currency, array $emptiedGroups = []): array
 {
     if (!moneyCurrencyKnown($currency)) {
         throw new \RuntimeException('The main currency is not one this site knows.');
@@ -2867,7 +2835,24 @@ function adminMirrorLegacyPlanPrices(array $admin, int $planID, string $currency
         throw new \RuntimeException('The prices could not be read for the mirror.');
     }
 
-    $decision = adminMirrorDecision($plan, adminMirrorSelection($prices, $currency, adminPlansNowUtc()), $currency);
+    $selection = adminMirrorSelection($prices, $currency, adminPlansNowUtc());
+    $decision = adminMirrorDecision($plan, $selection, $currency);
+
+    // 🗑️ Review finding F6: a group whose LAST price was just deleted has no
+    //    price rows any more, so the public page falls back to its older
+    //    column - which still held the deleted price. It is cleared to 0.00:
+    //    a paid plan then says "Price coming soon" (decision 0021), and only a
+    //    plan given without payment reads "Free".
+    foreach (['monthly' => 'priceMonthly', 'yearly' => 'priceYearly'] as $group => $column) {
+        if (!in_array($group, $emptiedGroups, true) || $selection['managed'][$group] === true) {
+            continue;
+        }
+        $storedMinor = moneyStoredDecimalToMinor((string) $decision['values'][$column], (string) $decision['values']['currency']);
+        if ($storedMinor === null || $storedMinor !== 0) {
+            $decision['values'][$column] = '0.00';
+            $decision['change'] = true;
+        }
+    }
 
     if (!$decision['change']) {
         return ['changed' => false, 'warnings' => $decision['warnings']];

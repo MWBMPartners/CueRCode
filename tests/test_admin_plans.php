@@ -384,7 +384,8 @@ $apMixed = [
 $apSelection = adminMirrorSelection($apMixed, 'GBP', $apNow);
 assertEquals('7.50', $apSelection['monthly'], 'mirror: retired, other-currency, ended, scheduled, lifetime and ungrouped prices are skipped; the lowest display order wins');
 assertEquals(null, $apSelection['yearly'], 'mirror: no yearly price found');
-assertEquals(['monthly' => null, 'yearly' => null, 'hasAnyPrice' => false], adminMirrorSelection([], 'GBP', $apNow), 'mirror: a plan with no prices');
+assertEquals(['monthly' => null, 'yearly' => null, 'hasAnyPrice' => false, 'managed' => ['monthly' => false, 'yearly' => false]], adminMirrorSelection([], 'GBP', $apNow), 'mirror: a plan with no prices');
+assertEquals(['monthly' => true, 'yearly' => false], $apSelection['managed'], 'mirror: the monthly group has price rows (even retired or ended ones), the yearly group none');
 
 $apLegacy = ['priceMonthly' => '4.99', 'priceYearly' => '49.99', 'currency' => 'GBP'];
 $apDecision = adminMirrorDecision($apLegacy, ['monthly' => '6.99', 'yearly' => '49.99', 'hasAnyPrice' => true], 'GBP');
@@ -394,7 +395,9 @@ assertTrue(is_string($apDecision['values']['priceMonthly']) && is_string($apDeci
 assertFalse(adminMirrorDecision(['priceMonthly' => '6.99', 'priceYearly' => '49.99', 'currency' => 'GBP'], ['monthly' => '6.99', 'yearly' => '49.99', 'hasAnyPrice' => true], 'GBP')['change'], 'mirror: nothing to change');
 $apDecision = adminMirrorDecision($apLegacy, ['monthly' => null, 'yearly' => '59.99', 'hasAnyPrice' => true], 'GBP');
 assertEquals('4.99', $apDecision['values']['priceMonthly'], 'mirror: NO current monthly price leaves the old one (never 0.00, which would read "Free")');
-assertContains('keeps showing the last one (£4.99)', implode(' ', $apDecision['warnings']), 'mirror: ...and says so');
+assertContains('keeps showing the older one (£4.99)', implode(' ', $apDecision['warnings']), 'mirror: ...and says so (no monthly price rows: the page keeps the older column)');
+$apManagedDecision = adminMirrorDecision($apLegacy, ['monthly' => null, 'yearly' => '59.99', 'hasAnyPrice' => true, 'managed' => ['monthly' => true, 'yearly' => true]], 'GBP');
+assertContains('shows no monthly price for this plan', implode(' ', $apManagedDecision['warnings']), 'F6: with monthly price rows but none on sale, the warning says the page shows no monthly price (it reads the list live)');
 assertEquals('59.99', $apDecision['values']['priceYearly'], 'mirror: ...while the yearly price is still copied');
 assertFalse(adminMirrorDecision(['priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP'], ['monthly' => null, 'yearly' => null, 'hasAnyPrice' => false], 'GBP')['change'], 'mirror: a free plan (no prices) is left alone');
 assertEquals([], adminMirrorDecision(['priceMonthly' => '99.00', 'priceYearly' => '0.00', 'currency' => 'GBP'], ['monthly' => '99.00', 'yearly' => null, 'hasAnyPrice' => true], 'GBP')['warnings'], 'mirror: a monthly-only plan (0.00 yearly) gives no warning');

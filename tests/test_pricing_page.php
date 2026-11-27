@@ -246,6 +246,33 @@ assertFalse(str_contains(ppRenderGrid($ppEur, true, 'EUR'), '£'), 'preview: no 
 $ppYearOnlyPreview = pricingDisplayRowsFromPlans(pricingPreviewRows($ppPreviewSource, [2 => ['monthly' => null, 'yearly' => '40.00']], 'EUR'));
 assertEquals('€40.00 billed yearly', pricingPriceBlock($ppYearOnlyPreview[1], true, 'EUR')['subline'], 'preview: a yearly price alone is shown under the missing monthly one');
 
+// ==============================================================================
+// 🗓️ Section 6: the page reads the price list LIVE (review finding F6)
+// ==============================================================================
+$ppListNow = '2026-11-27 12:00:00';
+$ppListPrice = static function (array $ppOver): array {
+    return array_merge(['pricePointID' => 1, 'planID' => 7, 'priceGroupKey' => 'monthly', 'currency' => 'GBP', 'amount' => '24.99', 'isActive' => 1, 'validFrom' => null, 'validUntil' => null, 'sortOrder' => 1], $ppOver);
+};
+$ppStale = $ppPlanRow(['planKey' => 'business_like', 'priceMonthly' => '24.99', 'priceYearly' => '199.99']);
+$ppLive = pricingApplyPriceList($ppStale, [
+    $ppListPrice(['validUntil' => '2026-11-27 11:59:59']),
+    $ppListPrice(['pricePointID' => 2, 'priceGroupKey' => 'yearly', 'amount' => '199.99', 'sortOrder' => 2]),
+], 'GBP', $ppListNow);
+assertEquals(['0', '199.99', 'GBP'], [$ppLive['priceMonthly'], $ppLive['priceYearly'], $ppLive['currency']], 'F6: an ended monthly price is no longer shown although the older column still says 24.99');
+assertEquals('£199.99', pricingPriceBlock(pricingDisplayRowsFromPlans([$ppLive])[0], true)['headline'], 'F6: ...so the card shows the yearly price only');
+$ppStarted = pricingApplyPriceList($ppStale, [$ppListPrice(['amount' => '26.99', 'validFrom' => '2026-11-27 11:00:00']), $ppListPrice(['pricePointID' => 3, 'amount' => '28.00', 'validFrom' => '2026-11-28 00:00:00'])], 'GBP', $ppListNow);
+assertEquals('26.99', $ppStarted['priceMonthly'], 'F6: a price whose start has passed is shown; one starting tomorrow is not');
+assertEquals('199.99', $ppStarted['priceYearly'], 'F6: a group with no price rows keeps the older column');
+$ppEnded = pricingDisplayRowsFromPlans([pricingApplyPriceList($ppStale, [$ppListPrice(['isActive' => 0]), $ppListPrice(['pricePointID' => 2, 'priceGroupKey' => 'yearly', 'validUntil' => '2026-01-01 00:00:00'])], 'GBP', $ppListNow)])[0];
+assertEquals('Price coming soon', pricingPriceBlock($ppEnded, true)['headline'], 'F6 + decision 0021: nothing on sale for a paid plan - "Price coming soon", never the old figures');
+assertEquals($ppStale, pricingApplyPriceList($ppStale, [$ppListPrice(['priceGroupKey' => null])], 'GBP', $ppListNow), 'F6: a plan priced only the old way (no grouped price rows) is left exactly as it is');
+$ppOtherCurrency = pricingApplyPriceList($ppStale, [$ppListPrice([])], 'USD', $ppListNow);
+assertEquals(['24.99', '199.99', 'GBP'], [$ppOtherCurrency['priceMonthly'], $ppOtherCurrency['priceYearly'], $ppOtherCurrency['currency']], 'F6: main currency USD but no USD monthly price - the plan keeps showing its own GBP prices (as the copy into the older columns does)');
+$ppSwitched = pricingApplyPriceList($ppStale, [$ppListPrice([]), $ppListPrice(['pricePointID' => 4, 'currency' => 'USD', 'amount' => '29.00'])], 'USD', $ppListNow);
+assertEquals(['29.00', '', 'USD'], [$ppSwitched['priceMonthly'], $ppSwitched['priceYearly'], $ppSwitched['currency']], 'F6: with a USD monthly price the card switches to USD, and the GBP-only yearly figure is not mixed in');
+$ppFreeRetired = pricingDisplayRowsFromPlans([pricingApplyPriceList($ppPlanRow(['planKey' => CUERCODE_PLAN_KEY_FREE]), [$ppListPrice(['isActive' => 0, 'amount' => '1.00'])], 'GBP', $ppListNow)])[0];
+assertTrue($ppFreeRetired['isZeroPrice'], 'F6: the free plan whose only price was retired is Free again');
+
 // 💱 Price points in several currencies: only the plan's own currency is used.
 $ppMixed = $ppDisplay(['priceMonthly' => '3.50', 'pricePoints' => [
     ['priceKey' => 'monthly_usd', 'billingInterval' => 'monthly', 'amount' => '4.25', 'currency' => 'USD', 'isDefault' => 1],
