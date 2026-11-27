@@ -238,3 +238,13 @@ foreach ($gateWeakenings as $gateLabel => $gateWeaken) {
     assertTrue($gateWeakened !== $deployText, 'recheck F3 mutation applied: ' . $gateLabel);
     assertTrue(deployGateProblems($gateWeakened) !== [], 'recheck F3: the gate test catches ' . $gateLabel);
 }
+
+// 🚦 Recheck finding 8: two pushes to the same branch must never upload at
+//    the same time, and an upload must never be stopped part-way. The whole
+//    workflow is in one concurrency group per branch that queues runs and
+//    never cancels one in progress.
+assertEquals(
+    1,
+    preg_match('/^concurrency:\n  group: deploy-\$\{\{ github\.ref \}\}\n  cancel-in-progress: false$/m', $deployText),
+    'recheck F8: deploy.yml queues deploys per branch and never cancels one part-way'
+);

@@ -52,6 +52,18 @@ on:
       - beta
       - alpha
 
+# 🚦 One deploy per branch at a time (recheck finding 8 of the 7n Phase 2
+#    review). A second push to the same branch waits for the running deploy
+#    to finish instead of uploading over it at the same moment, and a deploy
+#    is never cancelled part-way (a half-finished upload could leave the
+#    site with a mix of old and new files). GitHub keeps one run waiting per
+#    group: if a third push arrives, the newest replaces the one still
+#    WAITING (it has not started, and the newest has every change in it).
+#    Different branches (alpha, beta, main) never wait for each other.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # ===========================================================================
   # ✅ Gate: PHP checks on every supported version BEFORE anything is uploaded
