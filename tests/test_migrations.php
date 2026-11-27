@@ -911,6 +911,11 @@ $migF1Bad = [
     'SUM ( with a space' => 'INSERT INTO `tblSubscriptionPlans` (`sortOrder`) SELECT SUM (`sortOrder`) FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
     'GROUP_CONCAT()'       => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT GROUP_CONCAT(`planKey`) FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
     'JSON_ARRAYAGG()'      => 'INSERT INTO `tblSubscriptionPlans` (`featuresJSON`) SELECT JSON_ARRAYAGG(`planKey`) FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    // 🔎 Recheck finding 6: MySQL 8.0.24+ also has the spatial aggregate
+    //    ST_Collect(), which gives one row from an empty table too (measured
+    //    on MySQL 8.0.36 by the recheck).
+    'ST_Collect()'         => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT COALESCE(ST_AsText(ST_Collect(`location`)), \'x\') FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'st_collect ( lower case, with a space' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' FROM (SELECT st_collect (`location`) AS `c` FROM `tblSubscriptionPlans`) AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
     'HAVING'               => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' FROM `tblSubscriptionPlans` HAVING 1 = 1 ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
     'GROUP BY'             => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT `planKey` FROM `tblSubscriptionPlans` GROUP BY `planKey` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
 ];
@@ -1248,3 +1253,10 @@ assertTrue(
     'recheck F1: ...under the installer lock, and before install.sql, the starting data and the upgrades run'
 );
 assertContains("migrationChangedUpgradesRefusal(\$upgradeFileCheck['changed'])", $migInstallerSource, 'recheck F1: the installer shows the plain refusal');
+
+// 📝 Recheck finding 7: a comment said seed_data.sql sets its own SQL mode.
+//    It does not (only the character set); the comments now say so, and this
+//    pins the fact they rely on.
+assertEquals(0, preg_match('/^\s*SET\s+(SESSION\s+)?SQL_MODE\b/im', $migSeedSqlText), 'recheck F7: seed_data.sql sets no SQL mode (only the character set)');
+$migRunnerAndInstaller = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_migrations.php') . $migInstallerSource;
+assertFalse(str_contains($migRunnerAndInstaller, 'seed_data.sql sets its own SQL mode') || str_contains($migRunnerAndInstaller, 'changes both for itself'), 'recheck F7: no comment claims seed_data.sql sets its own SQL mode');

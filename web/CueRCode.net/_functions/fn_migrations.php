@@ -699,9 +699,11 @@ function migrationStepCouldFillEmptySeedTable(array $step): bool
     //    (a space before the bracket is allowed by both engines), and GROUP BY
     //    or HAVING, are refused; no real migration needs them in such a step.
     //    Names are back-quoted and already hidden above, so a column called
-    //    `maxSales` or `count` is never mistaken for one.
+    //    `maxSales` or `count` is never mistaken for one. Recheck finding 6
+    //    added ST_COLLECT, MySQL 8.0.24's spatial aggregate (it also gives one
+    //    row from an empty table, measured on MySQL 8.0.36).
     $aggregateNames = 'COUNT|SUM|MIN|MAX|AVG|GROUP_CONCAT|JSON_ARRAYAGG|JSON_OBJECTAGG|BIT_AND|BIT_OR|BIT_XOR'
-        . '|STD|STDDEV|STDDEV_POP|STDDEV_SAMP|VARIANCE|VAR_POP|VAR_SAMP|ANY_VALUE';
+        . '|STD|STDDEV|STDDEV_POP|STDDEV_SAMP|VARIANCE|VAR_POP|VAR_SAMP|ANY_VALUE|ST_COLLECT';
     if (preg_match('/\b(' . $aggregateNames . ')\s*\(/i', $namesHidden) === 1) {
         return true;
     }
@@ -2235,8 +2237,11 @@ function migrationDbSeedTablesTransactional(\mysqli $db, array $tables = []): ar
  *    Every repeated step is an INSERT or UPDATE (never a structure change, so
  *    nothing commits on its own), and the tables those steps write to are
  *    checked to be InnoDB as well, before anything is written. The steps run
- *    with the connection's own SQL mode and character set (seed_data.sql
- *    changes both for itself; they are put back first).
+ *    with the connection's own SQL mode and character set: both are saved
+ *    and put back first. (seed_data.sql changes the character set for itself
+ *    with SET NAMES / SET CHARACTER SET. It sets no SQL mode today; the mode
+ *    is put back too so that a later edit of the file could not leak into
+ *    the repeated steps - recheck finding 7 corrected this comment.)
  *
  * @param \mysqli $db        Connection with the site database selected
  * @param string  $seedSql   Text of seed_data.sql
@@ -2309,7 +2314,8 @@ function migrationDbRunSeedSql(\mysqli $db, string $seedSql, string $replayDir =
         }
 
         // 💾 The connection's own settings, put back before the repeated
-        //    steps run (seed_data.sql sets its own SQL mode and character set).
+        //    steps run (seed_data.sql sets its own character set; it sets no
+        //    SQL mode today, but the mode is saved too in case it ever does).
         $savedSettings = migrationDbFetchAll($db, 'SELECT @@SESSION.sql_mode AS `sqlMode`');
         if ($savedSettings['ok'] !== true || $savedSettings['rows'] === []) {
             $outcome['error']   = 'seed_data.sql was not run: could not read the connection settings (' . $savedSettings['error'] . ')';

@@ -562,8 +562,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                 //    (review findings F2/F4)
                 // ----------------------------------------------------------------
                 // install.sql and seed_data.sql each contain their own
-                // "SET CHARACTER SET utf8mb4" and the baseline's own SQL-mode
-                // line (NO_AUTO_VALUE_ON_ZERO) - both of which this page's own
+                // "SET CHARACTER SET utf8mb4", and install.sql also has its own
+                // SQL-mode line (NO_AUTO_VALUE_ON_ZERO; seed_data.sql sets no SQL
+                // mode - recheck finding 7 corrected this) - both of which this page's own
                 // multi_query() calls above have just run directly, bypassing
                 // migrationDbRunInstallSql()'s own save/restore (that function is
                 // only used when the UPGRADE TOOL itself has to re-run

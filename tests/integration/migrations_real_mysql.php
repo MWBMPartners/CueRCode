@@ -1144,7 +1144,7 @@ itCheck('J empty db then seed check', $itSeedAfterCliJ['ok'] === true && $itSeed
 itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'complete', 'and the starting data is then complete');
 itCheck('J empty db then seed check', itPhase2Data($itJ) === $itDataA && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === itNumber($itA, 'SELECT COUNT(*) FROM `tblSettings`'), 'the plans, price points and settings are EXACTLY those of a fresh install (scenario A), with the same settings count');
 itCheck('J empty db then seed check', itNumber($itJ, "SELECT COUNT(*) FROM `tblSubscriptionPlans` WHERE `planKey` = 'enterprise'") === 1, 'the Enterprise plan exists (the repeat ran)');
-itCheck('J empty db then seed check', itValue($itJ, 'SELECT @@SESSION.sql_mode') === $itModeBeforeJ, 'the connection\'s own SQL mode is back after the load (seed_data.sql\'s own SQL mode does not leak into the repeated steps or what follows): ' . $itModeBeforeJ);
+itCheck('J empty db then seed check', itValue($itJ, 'SELECT @@SESSION.sql_mode') === $itModeBeforeJ, 'the connection\'s own SQL mode is back after the load (nothing seed_data.sql sets for itself leaks into the repeated steps or what follows): ' . $itModeBeforeJ);
 // 📝 Codex round 2 finding R1-3: upgrade-tool order (0002 ran before the row
 //    existed, then the seed). Before the fix this kept the OLD wording for ever.
 itCheck('J empty db then seed check', $itJ->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'upgrade-tool order (upgrades, then seed): the bot-protection description ALSO names hCaptcha (R1-3)');
