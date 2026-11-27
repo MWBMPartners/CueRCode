@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - A deploy now waits for the full test suite (#155, decision 0025)
+
+Nothing is uploaded unless the test suite passes on PHP 8.4 and 8.5 (8.6 is report-only). The suite is run by one shared script, `tools/ci/run-tests.sh`. Not yet seen running on GitHub.
+
 ### Added - Plans, prices and currencies (task 7n Phase 2, 2026-11-26, #31) - built, independent review owed
 
 **Apply database upgrade 0004 straight after deploying** (`/admin/upgrades/` or `migrate.php --apply`). Charging stays switched off.

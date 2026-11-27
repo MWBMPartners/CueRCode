@@ -60,9 +60,8 @@ jobs:
   # three are checked before deploy. A failure on 8.4, 8.5 or the 8.6
   # compatibility scan blocks the deploy. The 8.6 job is allowed to fail for
   # now (continue-on-error), a provisional choice (decision 0002); see ci.yml for
-  # the rule on making it blocking. The full test suite is NOT run here (it
-  # needs library downloads; making tests a required check is an open owner
-  # item, LAUNCH_DECISIONS.md section A).
+  # the rule on making it blocking. The full test suite runs in the `tests` job
+  # below.
   php-checks:
     name: PHP checks (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
@@ -103,11 +102,48 @@ jobs:
       - name: PHP 8.6 compatibility scan
         run: php tools/php86-compat-scan.php
 
+  # ===========================================================================
+  # 🧪 Gate: the full test suite must pass BEFORE anything is uploaded
+  # ===========================================================================
+  # (#155, decision 0025) Runs the same script as ci.yml. 8.4 and 8.5 block the
+  # deploy; 8.6 is report-only for now (decision 0005). This job is repeated
+  # here instead of calling ci.yml, because ci.yml cancels an earlier run of the
+  # same branch and a called copy would collide with the one the push starts.
+  tests:
+    name: Test suite (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    if: ${{ vars.SFTP_ENABLED == 'true' }}
+    # ⏱️ A hung job must not hold the queue for the 6-hour default.
+    timeout-minutes: 20
+    continue-on-error: ${{ matrix.php == '8.6' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.4'
+          - '8.5'
+          - '8.6'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: gd, mbstring, zip, fileinfo, bcmath
+          coverage: none
+          ini-values: error_reporting=-1, display_errors=On, log_errors=Off
+
+      # A missing script must fail the deploy, never skip silently.
+      - name: Run test suite
+        run: bash tools/ci/run-tests.sh
+
   deploy:
     runs-on: ubuntu-latest
-    # 🚦 Nothing is uploaded unless the PHP checks passed. A failure on the 8.6
-    #    job alone does not block (it is continue-on-error), 8.4/8.5 do.
-    needs: php-checks
+    # 🚦 Nothing is uploaded unless the PHP checks AND the test suite passed. A
+    #    failure on the 8.6 jobs alone does not block (continue-on-error).
+    needs: [php-checks, tests]
 
     # =========================================================================
     # 🔒 Only run if SFTP deployment is explicitly enabled

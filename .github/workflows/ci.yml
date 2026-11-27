@@ -165,29 +165,14 @@ jobs:
           # print deprecations (#151).
           ini-values: error_reporting=-1, display_errors=On, log_errors=Off
 
-      # Decision 0011 (#113): the QR/PDF/barcode libraries are COMMITTED in
-      # web/CueRCode.net/_libraries/, so the checkout already has them. This
-      # step proves the committed copies are exactly the pinned versions
-      # (PINNED_VERSIONS.json) instead of downloading anything. To upgrade a
-      # library deliberately, replace the files, run
-      # `php tools/check_vendored_libraries.php --update`, review the diff.
-      - name: Check committed libraries match the pinned versions
-        if: steps.suite.outputs.present == 'true'
-        run: php tools/check_vendored_libraries.php
-
-      # The runner exits 1 on a deprecation it catches itself, and the test
-      # helpers that spawn child PHP processes fail on a deprecation in the
-      # child (STDERR marker + exit 255, see tests/bootstrap.php). The grep
-      # below is a backstop for deprecation text that still reaches the log.
+      # One shared script (also used by deploy.yml, #155) so the two cannot
+      # drift. It first proves the committed libraries are the pinned versions
+      # (decision 0011; to upgrade one deliberately, replace the files, run
+      # `php tools/check_vendored_libraries.php --update` and review the diff),
+      # then runs the suite and fails on any PHP deprecation text.
       - name: Run test suite
         if: steps.suite.outputs.present == 'true'
-        run: |
-          set -o pipefail
-          php tests/run.php 2>&1 | tee test-output.txt
-          if grep -nE '(^|PHP )Deprecated:' test-output.txt; then
-            echo "::error::PHP deprecation text found in the test output."
-            exit 1
-          fi
+        run: bash tools/ci/run-tests.sh
 
   # ---------------------------------------------------------------------------
   # 🔍 Site polish check (#137) — BLOCKING. Source-only checks for the small
