@@ -903,6 +903,16 @@ $migF1Bad = [
     'INSERT ... SET'       => 'INSERT INTO `tblSubscriptionPlans` SET `planKey` = \'x\' ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
     'WITH'                 => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) WITH `c` AS (SELECT \'x\' AS `k`) SELECT `k` FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
     'a sub-query on another table' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' FROM `tblSubscriptionPlans` WHERE EXISTS (SELECT 1 FROM `tblSettings`) ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    // 🔎 Review finding F2 (7n Phase 2 review): an aggregate with no GROUP BY
+    //    returns ONE row even from an empty table (measured on MySQL 8.0.36 and
+    //    MariaDB 10.6.28: rows 0 -> 1). These two are the reviewer's samples.
+    'MAX() with no GROUP BY' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`, `planName`, `featuresJSON`) SELECT \'enterprise\', \'Enterprise\', COALESCE(MAX(`featuresJSON`), \'{}\') FROM `tblSubscriptionPlans` WHERE `planKey` = \'business\' ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'COUNT() in an inner query' => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' FROM (SELECT COUNT(*) FROM `tblSubscriptionPlans`) AS `x` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'SUM ( with a space' => 'INSERT INTO `tblSubscriptionPlans` (`sortOrder`) SELECT SUM (`sortOrder`) FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'GROUP_CONCAT()'       => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT GROUP_CONCAT(`planKey`) FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'JSON_ARRAYAGG()'      => 'INSERT INTO `tblSubscriptionPlans` (`featuresJSON`) SELECT JSON_ARRAYAGG(`planKey`) FROM `tblSubscriptionPlans` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'HAVING'               => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT \'x\' FROM `tblSubscriptionPlans` HAVING 1 = 1 ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
+    'GROUP BY'             => 'INSERT INTO `tblSubscriptionPlans` (`planKey`) SELECT `planKey` FROM `tblSubscriptionPlans` GROUP BY `planKey` ON DUPLICATE KEY UPDATE `planKey` = `planKey`',
 ];
 foreach ($migF1Bad as $migF1Label => $migF1Sql) {
     $migF1Step = ['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans', 'sql' => $migF1Sql];
@@ -919,6 +929,10 @@ $migF1Names = ['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans',
 assertFalse(migrationStepCouldFillEmptySeedTable($migF1Names), 'F1 rule: back-quoted names such as `values` are never read as keywords');
 $migF1Quoted = ['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans', 'sql' => 'INSERT INTO `tblSubscriptionPlans` (`description`) SELECT \'select from values union\' FROM (SELECT `planKey` FROM `tblSubscriptionPlans`) AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`'];
 assertFalse(migrationStepCouldFillEmptySeedTable($migF1Quoted), 'F1 rule: words inside quoted text are never read as keywords');
+$migF1MaxNamed = ['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans', 'sql' => 'INSERT INTO `tblSubscriptionPlans` (`maxSales`, `count`) SELECT `b`.`maxSales`, `b`.`count` FROM (SELECT `maxSales`, `count` FROM `tblSubscriptionPlans`) AS `b` ON DUPLICATE KEY UPDATE `planKey` = `planKey`'];
+assertFalse(migrationStepCouldFillEmptySeedTable($migF1MaxNamed), 'F2: back-quoted names such as `maxSales` or `count` are not mistaken for MAX() or COUNT()');
+$migF2Refused = migrationValidateStep(['type' => 'insert_if_missing', 'table' => 'tblSubscriptionPlans', 'sql' => $migF1Bad['MAX() with no GROUP BY']], 1);
+assertTrue(str_contains(implode(' ', $migF2Refused), 'must only copy rows that are already in it'), 'F2: the validator refuses the reviewer\'s MAX() sample before anything runs');
 
 // 🔁 migrationReplayPlan() (task 7n Phase 2): which data steps the installer
 //    repeats straight after loading seed_data.sql on a database whose upgrades

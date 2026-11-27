@@ -839,12 +839,16 @@ tables that already existed earlier in the same file. That meant:
    loaded. The check now only ever looks at tables `seed_data.sql` fills
    (`migrationSeedProtectionTables()`). **Made precise 2026-11-26 (task 7n
    Phase 2, migration `0004`):** a migration MAY now write to those tables,
-   but only in a way that can never put a row into an EMPTY one - by copying
+   but only in a way that cannot put a row into an EMPTY one - by copying
    a row already in the same table (`INSERT INTO t (...) SELECT ... FROM
    (SELECT ... FROM t WHERE ...) AS x ON DUPLICATE KEY UPDATE ...`; the inner
    query is needed because MySQL 8.0 and MariaDB 10.6 both reject the plain
-   form as ambiguous) or by an `update_if_unchanged` step. The runner's
-   validator refuses anything else (`migrationStepCouldFillEmptySeedTable()`),
+   form as ambiguous) or by an `update_if_unchanged` step. **No aggregate
+   function, `GROUP BY` or `HAVING` in such a step** (review finding F2,
+   2026-11-27): `MAX()` or `COUNT()` with no `GROUP BY` returns one row even
+   from an empty table, so it would fill it. The runner's validator refuses
+   anything else (`migrationStepCouldFillEmptySeedTable()` - a careful text
+   check of the shapes found so far, not a full SQL parser),
    and `tests/test_migrations.php` checks every real migration file against
    it. So `migrate.php --apply` on a brand-new database still leaves those
    tables empty. **The other half:** in that order the upgrades' starting-data

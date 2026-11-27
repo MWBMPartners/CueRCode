@@ -63,9 +63,11 @@
  *
  * SEED-PROTECTION RULE (review finding F1, made precise in task 7n Phase 2):
  * a migration may write to the tables only seed_data.sql fills
- * (migrationSeedProtectionTables()) only in a way that can never put a row
- * into an EMPTY one - see migrationStepCouldFillEmptySeedTable(). The
- * validator refuses anything else before a single step runs.
+ * (migrationSeedProtectionTables()) only by copying rows already in the same
+ * table or updating them, so that it cannot put a row into an EMPTY one - see
+ * migrationStepCouldFillEmptySeedTable() (a careful text check, tightened by
+ * review finding F2 to refuse aggregate functions). The validator refuses
+ * anything else before a single step runs.
  *
  * @package     CueRCode
  * @subpackage  Database
@@ -635,8 +637,14 @@ function migrationValidateStep(mixed $step, int $index): array
  * insert_if_missing step is fine only when EVERY row it inserts is read from
  * the same table: each SELECT in it must read FROM that table or FROM a
  * bracketed inner query, and nothing may supply rows from elsewhere (VALUES,
- * SET, UNION, JOIN, DUAL, WITH, LATERAL, JSON_TABLE are all refused). An
+ * SET, UNION, JOIN, DUAL, WITH, LATERAL, JSON_TABLE are all refused), and no
+ * aggregate function, GROUP BY or HAVING may appear (review finding F2: MAX()
+ * or COUNT() with no GROUP BY gives one row even from an empty table). An
  * empty table then gives the SELECT nothing to copy, so nothing is inserted.
+ * This is a careful text check written to catch the ways found so far, not a
+ * full SQL parser: trusted developers write migrations, and the real-database
+ * test (tests/integration/migrations_real_mysql.php, scenario J) still proves
+ * on both engines that the real files leave an empty database empty.
  * (The inner query is needed because MySQL 8.0 and MariaDB 10.6 both reject
  * a plain "INSERT INTO t ... SELECT ... FROM t ... ON DUPLICATE KEY UPDATE"
  * as ambiguous - measured on both, 2026-11-26.)
@@ -677,6 +685,23 @@ function migrationStepCouldFillEmptySeedTable(array $step): bool
     }
 
     if (preg_match('/\b(VALUES|VALUE|SET|UNION|JOIN|DUAL|WITH|LATERAL|JSON_TABLE)\b/i', $namesHidden) === 1) {
+        return true;
+    }
+
+    // 🔎 Review finding F2 (7n Phase 2 review, 2026-11-27): an aggregate with
+    //    no GROUP BY - MAX(), COUNT(), COALESCE(MAX(...)) - returns ONE row
+    //    even from an EMPTY table (measured on MySQL 8.0.36 and MariaDB
+    //    10.6.28), so a step using one could fill it. Every aggregate function
+    //    (a space before the bracket is allowed by both engines), and GROUP BY
+    //    or HAVING, are refused; no real migration needs them in such a step.
+    //    Names are back-quoted and already hidden above, so a column called
+    //    `maxSales` or `count` is never mistaken for one.
+    $aggregateNames = 'COUNT|SUM|MIN|MAX|AVG|GROUP_CONCAT|JSON_ARRAYAGG|JSON_OBJECTAGG|BIT_AND|BIT_OR|BIT_XOR'
+        . '|STD|STDDEV|STDDEV_POP|STDDEV_SAMP|VARIANCE|VAR_POP|VAR_SAMP|ANY_VALUE';
+    if (preg_match('/\b(' . $aggregateNames . ')\s*\(/i', $namesHidden) === 1) {
+        return true;
+    }
+    if (preg_match('/\b(GROUP\s+BY|HAVING)\b/i', $namesHidden) === 1) {
         return true;
     }
 
@@ -1548,9 +1573,10 @@ function migrationReportLineSeverity(string $line): string
  *    believe seed_data.sql had already run and would skip it forever - the
  *    QR code types, predefined logos and subscription plans would never be
  *    loaded. The three tables below are ONLY ever FILLED by seed_data.sql.
- *    From task 7n Phase 2 a migration may write to them, but only in a way
- *    that can never put a row into an EMPTY one (copying a row already there,
- *    as the Enterprise plan is copied from Business, or updating one) -
+ *    From task 7n Phase 2 a migration may write to them, but only by copying
+ *    a row already there (as the Enterprise plan is copied from Business,
+ *    with no aggregate function - review finding F2) or updating one, so it
+ *    cannot put a row into an EMPTY one -
  *    migrationValidateStep() refuses anything else, using
  *    migrationStepCouldFillEmptySeedTable(). tests/test_migrations.php checks
  *    every real migration against that rule, and the real-database check in
