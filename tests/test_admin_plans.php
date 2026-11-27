@@ -207,6 +207,20 @@ assertTrue(isset(adminPlansValidatePlanForm(['plan_key' => ['team_plus']], $apPl
 assertTrue(isset(adminPlansValidatePlanForm(['plan_kind' => 'lifetime_deal'], $apPlan, ['timezone' => $apUk])['errors']['plan_kind']), 'P6: a hand-made request that changes the kind is refused');
 assertFalse(isset(adminPlansValidatePlanForm(['plan_kind' => 'standard'], $apPlan, ['timezone' => $apUk])['errors']['plan_kind']), 'P6: sending the same kind is fine');
 
+// 🛡️ Review finding F3 (7n Phase 2 review): a protected plan (P5 - the two
+//    fallback plans, and any plan a setting names) must always be on sale, so
+//    it can never be given sale dates through the details form either.
+$apProtectedContext = ['timezone' => $apUk, 'soldCount' => 0, 'protectedReason' => 'This is the plan everyone signed in falls back to.'];
+$apNoDates = array_merge($apPlan, ['availableUntil' => null]);
+$apEnded = adminPlansValidatePlanForm(['available_until_date' => '2026-01-01'], $apNoDates, $apProtectedContext);
+assertTrue(isset($apEnded['errors']['available_until_date']) && str_contains($apEnded['errors']['available_until_date'], 'falls back to'), 'F3: a protected plan cannot be given an end date (the reason is shown)');
+assertEquals([], $apEnded['values'], 'F3: ...and nothing is saved');
+$apLater = adminPlansValidatePlanForm(['available_from_date' => '2030-01-01'], $apNoDates, $apProtectedContext);
+assertTrue(isset($apLater['errors']['available_from_date']), 'F3: ...nor a start date in the future');
+assertEquals([], adminPlansValidatePlanForm(['plan_name' => 'Free plan'], $apNoDates, $apProtectedContext)['errors'], 'F3: other changes to a protected plan with no sale dates are fine');
+assertTrue(isset(adminPlansValidatePlanForm(['plan_name' => 'Free plan'], $apPlan, $apProtectedContext)['errors']['available_until_date']), 'F3: a protected plan that somehow already has dates is told to clear them before saving');
+assertEquals([], adminPlansValidatePlanForm(['available_until_date' => '2026-01-01'], $apNoDates, ['timezone' => $apUk, 'soldCount' => 0])['errors'], 'F3: an ordinary plan can still be given sale dates');
+
 // 🔢 Sales cap: never below what is sold (plan §4.5).
 assertTrue(isset(adminPlansValidatePlanForm(['max_sales' => '9'], $apPlan, ['timezone' => $apUk, 'soldCount' => 10])['errors']['max_sales']), 'cap below sold (9 < 10) is refused');
 assertEquals(10, adminPlansValidatePlanForm(['max_sales' => '10'], $apPlan, ['timezone' => $apUk, 'soldCount' => 10])['values']['maxSales'], 'cap equal to sold is fine');

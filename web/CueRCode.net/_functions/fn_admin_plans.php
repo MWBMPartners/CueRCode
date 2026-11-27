@@ -25,7 +25,8 @@
  *   - P5 The two fallback plans the code relies on (CUERCODE_PLAN_KEY_ANONYMOUS
  *        and CUERCODE_PLAN_KEY_FREE, fn_features.php) and any plan a setting
  *        names (the past-due downgrade plan, the trial plan) cannot be taken
- *        off sale or deleted.
+ *        off sale or deleted - nor given sale dates (review finding F3), which
+ *        would take them off the pricing page just the same.
  *   - P6 A plan's key cannot change after it is made (and neither can its kind).
  *   (P3 - taking features or limits away from paying customers - belongs to the
  *    features screen, Phase 3. Nothing here edits features or limits; "make a
@@ -745,7 +746,9 @@ function adminPlansStaleMessage(): string
  * @param array<string, mixed>      $post    The $_POST array
  * @param array<string, mixed>|null $current The stored plan row (null when creating)
  * @param array<string, mixed>      $context timezone (string), soldCount (int, editing),
- *                                           existingKeys (list, creating), sourcePlans (planID => row, creating)
+ *                                           existingKeys (list, creating), sourcePlans (planID => row, creating),
+ *                                           protectedReason (string, editing: adminPlansProtectedReason();
+ *                                           not empty = the plan may have no sale dates - review F3)
  * @return array{errors: array<string, string>, values: array<string, mixed>}
  *         values = column => value to store (only when errors is empty)
  */
@@ -917,6 +920,25 @@ function adminPlansValidatePlanForm(array $post, ?array $current, array $context
 
     if ($from['ok'] && $until['ok'] && $from['utc'] !== null && $until['utc'] !== null && strcmp($until['utc'], $from['utc']) <= 0) {
         $errors['available_until_date'] = 'The end must be after the start.';
+    }
+
+    // 🛡️ Review finding F3 (7n Phase 2 review): a protected plan (P5) must
+    //    always be on sale. Taking it off sale was already refused, but sale
+    //    dates did the same thing by another route (the Free card - the only
+    //    sign-up button - left the pricing page). So a protected plan can have
+    //    no sale dates at all; one that somehow has some is told to clear them.
+    $protectedReason = '';
+    if (isset($context['protectedReason']) && is_string($context['protectedReason'])) {
+        $protectedReason = $context['protectedReason'];
+    }
+    if ($protectedReason !== '' && $from['ok'] && $until['ok']) {
+        $datesWords = ' For the same reason it cannot have sale dates: leave both dates empty.';
+        if ($from['utc'] !== null) {
+            $errors['available_from_date'] = $protectedReason . $datesWords;
+        }
+        if ($until['utc'] !== null) {
+            $errors['available_until_date'] = $protectedReason . $datesWords;
+        }
     }
 
     // -------------------------------------------------------------- sales cap
@@ -2132,7 +2154,19 @@ function adminPlansUpdate(array $admin, int $planID, string $fingerprint, array 
             throw new \RuntimeException('Sales could not be counted.');
         }
 
-        $checked = adminPlansValidatePlanForm($post, $current, ['timezone' => $timezone, 'soldCount' => $sold]);
+        // 🛡️ Review finding F3: is this a protected plan (P5)? Read under the
+        //    same shared lock the off-sale action uses, so a setting cannot be
+        //    pointed at this plan while its dates are being saved.
+        $settingKeys = adminPlansSettingPlanKeys(true);
+        if ($settingKeys === null) {
+            throw new \RuntimeException('The plan settings could not be read.');
+        }
+
+        $checked = adminPlansValidatePlanForm($post, $current, [
+            'timezone'        => $timezone,
+            'soldCount'       => $sold,
+            'protectedReason' => adminPlansProtectedReason((string) $current['planKey'], $settingKeys),
+        ]);
         if ($checked['errors'] !== []) {
             return adminPlansResult(false, 'There is a problem. Nothing was saved.', ['errors' => $checked['errors']]);
         }

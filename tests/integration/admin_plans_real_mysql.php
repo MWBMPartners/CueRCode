@@ -566,7 +566,14 @@ foreach (['anonymous', 'free', 'pro'] as $ipProtectedKey) {
     ipCheck('F', $ipOff['ok'] === false && (int) ipPlan($ipServer, $ipProtectedKey)['isActive'] === 1, 'P5: ' . $ipProtectedKey . ' cannot be taken off sale (' . $ipProtectedKey . ' is a fallback or the trial plan)');
     $ipDelProtected = adminPlansDelete($ipAdmin, $ipProtectedID, ipPlanFp($ipProtectedID), true);
     ipCheck('F', $ipDelProtected['ok'] === false && ipPlan($ipServer, $ipProtectedKey) !== null, 'P5: ' . $ipProtectedKey . ' cannot be deleted');
+    // 🛡️ Review finding F3: nor hidden through the details form's sale dates.
+    $ipDated = adminPlansUpdate($ipAdmin, $ipProtectedID, ipPlanFp($ipProtectedID), ['available_until_date' => '2026-01-01']);
+    $ipDatedLater = adminPlansUpdate($ipAdmin, $ipProtectedID, ipPlanFp($ipProtectedID), ['available_from_date' => '2030-01-01']);
+    $ipDatedRow = ipPlan($ipServer, $ipProtectedKey);
+    ipCheck('F', $ipDated['ok'] === false && isset($ipDated['errors']['available_until_date']) && $ipDatedLater['ok'] === false && $ipDatedRow['availableUntil'] === null && $ipDatedRow['availableFrom'] === null, 'F3: ' . $ipProtectedKey . ' cannot be given an ended or a future sale date through the details form: ' . json_encode([$ipDated['errors'], $ipDatedLater['errors']]));
 }
+$ipGridKeys = array_column(pricingDisplayRowsFromPlans(listPublicPlansForDisplay()), 'planKey');
+ipCheck('F', in_array('free', $ipGridKeys, true) && in_array('pro', $ipGridKeys, true), 'F3: the free plan (the only sign-up button) and the trial plan are still on the pricing page: ' . implode(',', $ipGridKeys));
 $ipBusinessID = (int) $ipBusiness['planID'];
 $ipOffNoTick = adminPlansSetOnSale($ipAdmin, $ipBusinessID, ipPlanFp($ipBusinessID), false, false);
 ipCheck('F', $ipOffNoTick['ok'] === false && (int) ipPlan($ipServer, 'business')['isActive'] === 1, 'off sale needs the tick');
