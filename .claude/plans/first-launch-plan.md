@@ -221,7 +221,7 @@ The nine questions this plan raised are answered; the records are the truth, and
 |---|---|---|
 | Q1 | QRmy.Link links live in the main Go2My.Link | 0027 |
 | Q2 | If Go2My.Link is late, the free service launches first; dynamic QR follows | 0028 |
-| Q3 | Web Risk **plus a second paid provider** (provider not yet chosen) | 0029 |
+| Q3 | Web Risk at launch, with a slot for a second paid provider added later | 0029, 0035 |
 | Q4 | Alpha codes use `alpha.QRmy.Link` | 0030 |
 | Q5 | 3 codes each; a Global Admin can raise it per person or for everyone. **New work:** per-person limit in WP4a/4c and an admin control | 0031 |
 | Q6 | Dual-function QR is not in the first version | 0032 |
