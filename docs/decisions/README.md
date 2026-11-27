@@ -46,3 +46,6 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0034](0034-abuse-mailbox-and-one-working-day-promise.md) | 2026-11-27 | Owner: abuse@cuercode.net, one-working-day takedown promise | Current |
 | [0035](0035-web-risk-at-launch-second-provider-later.md) | 2026-11-27 | Owner: launch with Web Risk only; second provider later | Current (defers part of 0029) |
 | [0036](0036-upgrade-0004-corrected-in-place.md) | 2026-11-27 | Lead (owner may overrule): upgrade 0004 corrected in place, once, because it never ran on a live database | Current (unapproved) |
+| [0037](0037-human-check-outage-falls-back-to-other-providers-then-sign-in-only.md) | 2026-11-27 | Owner: human check outage tries other providers, then lets only sign-in through, and logs it | Current |
+| [0038](0038-no-javascript-visitors-get-an-email-confirmed-fallback.md) | 2026-11-27 | Owner: visitors without JavaScript get an email-confirmed fallback with strict limits | Current |
+| [0039](0039-correct-the-csp-sentence-in-project-instructions.md) | 2026-11-27 | Owner: correct the outside-scripts sentence in .claude/CLAUDE.md | Current |
