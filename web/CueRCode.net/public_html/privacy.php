@@ -100,6 +100,13 @@ if (function_exists('getConfig')) {
 // 📅 Dynamic copyright year for the footer notice on this page.
 $currentYear = date('Y');
 
+// 🤖 #163: the human-check provider in use right now (or null while the check
+//    is off), so section 5.1 always names the right company. Never a key.
+$privacyHumanCheck = null;
+if (function_exists('humanCheckActive')) {
+    $privacyHumanCheck = humanCheckActive();
+}
+
 $pageTitle       = 'Privacy & Data Protection Policy';
 $pageDescription = 'Privacy, Data Protection & Cookies Policy for ' . $siteName
     . ' - how we collect, use, protect and share data, and your rights under '
@@ -126,7 +133,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <h1 class="h2 fw-bold mb-4">Privacy &amp; Data Protection Policy</h1>
                     <p class="text-body-secondary mb-2">
                         <?php // 📅 Fixed on purpose: change this date ONLY when the wording of this page changes (it used to print today's date) ?>
-                        <strong>Last updated:</strong> 4 August 2026
+                        <strong>Last updated:</strong> 27 November 2026
                     </p>
                     <p class="text-body-secondary mb-4">
                         <strong>Applies to:</strong> the
@@ -146,7 +153,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <li><a href="#data-collected">2. Information we collect</a></li>
                                 <li><a href="#purposes">3. Purposes &amp; lawful bases</a></li>
                                 <li><a href="#cookies">4. Cookies, localStorage &amp; similar technologies</a></li>
-                                <li><a href="#sharing">5. How we share information</a></li>
+                                <li><a href="#sharing">5. How we share information</a> (including <a href="#human-check">5.1 the human check</a>)</li>
                                 <li><a href="#transfers">6. International data transfers</a></li>
                                 <li><a href="#retention">7. Data retention</a></li>
                                 <li><a href="#security">8. Data security</a></li>
@@ -345,6 +352,33 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 sale, subject to this policy.
                             </li>
                         </ul>
+
+                        <?php /* 🤖 5.1 Human check (#163) - names the provider in use, from the settings */ ?>
+                        <h3 id="human-check" class="h6 mt-3 mb-2">5.1 The Human Check on Our Account Forms</h3>
+                        <?php if ($privacyHumanCheck !== null) { ?>
+                        <p>
+                            To stop automated programs creating accounts, guessing passwords or sending
+                            unwanted emails, the forms to create an account, sign in, reset a password and
+                            ask for a new verification link include a short &ldquo;human check&rdquo;
+                            provided by <strong><?php echo htmlspecialchars($privacyHumanCheck['name'], ENT_QUOTES, 'UTF-8'); ?></strong>.
+                            When you open one of these forms, your browser loads the check from that
+                            company, which receives the technical information a browser normally sends (such
+                            as your IP address, browser type and the page address) and may set cookies or
+                            similar storage that are strictly necessary for the check. When you send the
+                            form, our server sends that company only the one-time answer from the check, so
+                            it can confirm it; we do not send it your email address or anything you typed.
+                            We use the check on the basis of our legitimate interest in keeping the Service
+                            secure. How that company handles the information is described in
+                            <a href="<?php echo htmlspecialchars($privacyHumanCheck['privacyUrl'], ENT_QUOTES, 'UTF-8'); ?>" rel="noopener">its privacy policy</a>.
+                        </p>
+                        <?php } else { ?>
+                        <p>
+                            Our account forms can use a short &ldquo;human check&rdquo; from an outside
+                            provider to stop automated programs abusing them. No such check is switched on
+                            at the moment, so no information is sent to a human-check provider. If we switch
+                            one on, this section will name the provider and link to its privacy policy.
+                        </p>
+                        <?php } ?>
 
                         <?php /* ============================================================
                              6. International transfers

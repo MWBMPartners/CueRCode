@@ -796,10 +796,24 @@ assertContains("script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;", $a
 $aaSiteHtaccess = (string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . '.htaccess');
 preg_match('/Header set Content-Security-Policy "([^"]+)"/', $aaSiteHtaccess, $aaSiteCsp);
 preg_match('/Header always set Content-Security-Policy "([^"]+)"/', $aaHtaccess, $aaAdminCsp);
+// 🤖 #163: the site policy also allows the three human-check providers; the
+//    admin area shows no human check, so its policy leaves them out. Every
+//    provider address is taken out of the site policy (and a directive left
+//    as only 'self' is dropped, as it was before), then the two must match.
+$aaSiteCspForAdmin = str_replace(
+    [
+        ' https://challenges.cloudflare.com', ' https://www.google.com/recaptcha/', ' https://www.gstatic.com/recaptcha/',
+        ' https://recaptcha.google.com/recaptcha/', ' https://hcaptcha.com', ' https://*.hcaptcha.com',
+        " frame-src 'self';",
+    ],
+    '',
+    (string) $aaSiteCsp[1]
+);
+assertFalse(str_contains((string) $aaAdminCsp[1], 'hcaptcha') || str_contains((string) $aaAdminCsp[1], 'recaptcha') || str_contains((string) $aaAdminCsp[1], 'challenges.cloudflare.com'), 'admin CSP: no human-check provider is allowed in the admin area (#163)');
 assertEquals(
-    str_replace("frame-ancestors 'self'", "frame-ancestors 'none'", (string) $aaSiteCsp[1]),
+    str_replace("frame-ancestors 'self'", "frame-ancestors 'none'", $aaSiteCspForAdmin),
     (string) $aaAdminCsp[1],
-    "admin CSP = the site CSP with frame-ancestors 'none' (the two stay in step)"
+    "admin CSP = the site CSP with frame-ancestors 'none' and without the human-check providers (the two stay in step)"
 );
 assertFalse(str_contains((string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'robots.txt'), 'admin'), 'robots.txt does not advertise /admin/');
 

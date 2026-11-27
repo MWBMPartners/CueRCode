@@ -202,6 +202,12 @@ if ($settingsSecondsLeft > 0) {
     $settingsUnlockedUntil = adminFormatClockTime(time() + $settingsSecondsLeft, $settingsTimezone);
 }
 
+// 🤖 #163: what the human check is doing now, in plain words (never a key).
+$settingsHumanCheckLines = [];
+if (function_exists('humanCheckStatusLines')) {
+    $settingsHumanCheckLines = humanCheckStatusLines(humanCheckReadSettings());
+}
+
 $settingsSsoCallbacks = [];
 if (function_exists('ssoRedirectUri')) {
     $settingsSsoCallbacks = [
@@ -289,6 +295,17 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </div>
                         <div class="card-body">
                             <p class="text-body-secondary"><?php echo adminEscape($settingsSection['intro']); ?></p>
+
+                            <?php if ($settingsSectionKey === 'bot' && $settingsHumanCheckLines !== []) { ?>
+                            <div class="mb-3" id="human-check-status">
+                                <p class="fw-bold mb-1">Right now</p>
+                                <ul class="mb-0">
+                                    <?php foreach ($settingsHumanCheckLines as $settingsHumanCheckLine) { ?>
+                                    <li><?php echo adminEscape($settingsHumanCheckLine); ?></li>
+                                    <?php } ?>
+                                </ul>
+                            </div>
+                            <?php } ?>
 
                             <?php if ($settingsSectionKey === 'signin' && $settingsSsoCallbacks !== []) { ?>
                             <div class="mb-3">

@@ -17,6 +17,12 @@
  * wrong, the account is locked, or it is not yet verified - this page never
  * adds any additional detail on top of that message.
  *
+ * 🤖 HUMAN CHECK (#163): humanCheckVerifyRequest() (fn_human_check.php) must
+ * pass before loginUser() tries the password - the same call the JSON route
+ * makes. Off until a Global Admin enters a provider's keys. If the provider
+ * cannot be reached and that locks out the only Global Admin, the check can
+ * be switched off on the server: php _includes/cli/human_check.php off
+ *
  * OPEN-REDIRECT PROTECTION: an optional `?next=` query parameter controls the
  * post-login destination. Only a same-site, root-relative path (starting with
  * exactly one '/', never '//' or a scheme) is honoured - anything else falls
@@ -29,6 +35,7 @@
  * @version     1.0.0
  * @since       Phase 2 (Epic E3 stage 2b, #52/#14)
  * @see         _functions/fn_auth.php - loginUser()
+ * @see         _functions/fn_human_check.php - humanCheckVerifyRequest(), humanCheckWidgetHtml()
  * @see         public_html/assets/js/cuercode-account.js
  */
 
@@ -136,7 +143,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
         $loginError = 'Your session has expired. Please reload the page and try again.';
     } elseif ($postedEmail === '' || $password === '') {
         $loginError = 'Email and password are both required.';
-    } elseif (function_exists('loginUser')) {
+    } else {
+        // 🤖 #163: the human check, before any password is tried.
+        $humanCheck = humanCheckVerifyRequest($_POST);
+        if (!$humanCheck['ok']) {
+            $loginError = $humanCheck['message'];
+        }
+    }
+
+    if ($loginError === null && function_exists('loginUser')) {
         // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
         //    every page by bootstrap.php.
         $clientIp = getClientIP();
@@ -180,7 +195,7 @@ $pageTitle       = 'Sign In';
 $pageDescription = 'Sign in to your CueRCode account to access your saved QR codes and account settings.';
 $bodyClass       = 'page-account page-login';
 $pageCSS         = [];
-$pageJS          = ['/assets/js/cuercode-account.js'];
+$pageJS          = ['/assets/js/cuercode-human-check.js', '/assets/js/cuercode-account.js'];
 
 // ==============================================================================
 // 📄 Render Page
@@ -236,6 +251,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <input type="password" class="form-control" id="login-password" name="password"
                                            autocomplete="current-password" required maxlength="256">
                                 </div>
+
+                                <?php /* 🤖 Human check (#163) - empty while it is off */ ?>
+                                <?php echo humanCheckWidgetHtml(); ?>
 
                                 <div class="mb-4 text-end">
                                     <a href="/forgot-password/" class="small">Forgot password?</a>

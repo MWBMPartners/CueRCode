@@ -21,6 +21,17 @@
  *   - POST /api/v1/auth/request-password-reset -> handleAuthRequestPasswordReset()
  *   - POST /api/v1/auth/reset-password         -> handleAuthResetPassword()
  *
+ * 🤖 HUMAN CHECK (#163, decision 0024): register, login and
+ * request-password-reset also call requireHumanCheckForApi() - the SAME
+ * humanCheckVerifyRequest() the web pages call - after the field checks and
+ * BEFORE the auth engine runs. An API key does NOT skip it, so there is no
+ * way round the check through the API. The other three routes are exempt on
+ * purpose: logout needs a signed-in session, and verify-email and
+ * reset-password need the secret link from an email (64 random hex
+ * characters - nothing to guess), so none of them can create accounts or
+ * send emails for a script. The check is off until a Global Admin enters a
+ * provider's keys.
+ *
  * CSRF / API-key model: the router's generic 'auth' route flag (which gates
  * on EITHER a valid CSRF token OR a valid API key, per fn_api_auth.php) is
  * intentionally NOT used for these six routes (they are registered with
@@ -40,6 +51,7 @@
  * @see         fn_validation.php - validateEmail()
  * @see         fn_api_auth.php  - validateAPIKey(); fn_client_ip.php - getClientIP()
  * @see         fn_csrf.php      - validateCSRFToken()
+ * @see         fn_human_check.php - humanCheckVerifyRequest()
  * @see         https://www.php.net/manual/en/function.json-decode.php
  */
 
@@ -139,6 +151,44 @@ function requireCsrfOrApiKey(): void
 }
 
 // ==============================================================================
+// 🤖 requireHumanCheckForApi() - The human check for the JSON routes (#163)
+// ==============================================================================
+
+/**
+ * 🤖 Require a passed human check (Turnstile, reCAPTCHA or hCaptcha), or
+ * nothing at all while the check is off.
+ *
+ * The token comes from the JSON body's "human_check_token" field (the
+ * website's own script sends it). Every caller is checked, including one
+ * with an API key: the routes that use this create accounts, sign people in
+ * or send emails, so an API key must not be a way round it.
+ *
+ * Refusals: 400 HUMAN_CHECK_REQUIRED (no token), 403 HUMAN_CHECK_FAILED
+ * (failed, expired, already used, or made on another website), 503
+ * HUMAN_CHECK_UNAVAILABLE (the provider could not be reached, unless a
+ * Global Admin chose to let people through, or our keys are wrong).
+ *
+ * @param array $requestBody The parsed JSON request body
+ *
+ * @return void (terminates via errorResponse() on refusal)
+ *
+ * @see fn_human_check.php - humanCheckVerifyRequest()
+ */
+function requireHumanCheckForApi(array $requestBody): void
+{
+    if (!function_exists('humanCheckVerifyRequest')) {
+        // 🛑 The check file is missing: refuse rather than silently skip it.
+        errorResponse('The human check could not be completed just now. Please try again in a few minutes.', 503, 'HUMAN_CHECK_UNAVAILABLE');
+    }
+
+    $check = humanCheckVerifyRequest($requestBody);
+
+    if (!$check['ok']) {
+        errorResponse($check['message'], $check['httpCode'], $check['errorCode']);
+    }
+}
+
+// ==============================================================================
 // 📥 requestString() - Safely extract a trimmed string field from the JSON body
 // ==============================================================================
 
@@ -211,6 +261,10 @@ function handleAuthRegister(array $requestBody): void
         errorResponse((string) $policy['error'], 422, 'WEAK_PASSWORD');
     }
 
+    // 🤖 #163: the human check, after the cheap field checks (a token works
+    //    only once) and before an account is made or an email is queued.
+    requireHumanCheckForApi($requestBody);
+
     $result = registerUser($email, $password, $displayName);
 
     successResponse($result['data'], $result['message'], $result['httpCode']);
@@ -257,6 +311,9 @@ function handleAuthLogin(array $requestBody): void
     } else {
         $userAgent = '';
     }
+
+    // 🤖 #163: the human check, before any password is tried.
+    requireHumanCheckForApi($requestBody);
 
     $result = loginUser($email, $password, $clientIP, $userAgent);
 
@@ -371,6 +428,9 @@ function handleAuthRequestPasswordReset(array $requestBody): void
     } else {
         $clientIP = 'unknown';
     }
+
+    // 🤖 #163: the human check, before any email is looked up or queued.
+    requireHumanCheckForApi($requestBody);
 
     $result = requestPasswordReset($email, $clientIP);
 

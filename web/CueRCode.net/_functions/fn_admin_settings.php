@@ -86,6 +86,12 @@ if (!function_exists('clientIpParseRangeList')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
 }
 
+// 🤖 The human-check waiting-time limits (#163) live in ONE place, so this
+//    editor and the code that uses them cannot disagree. Pure on loading.
+if (!defined('CUERCODE_HUMAN_CHECK_MIN_TIMEOUT')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_human_check.php';
+}
+
 // 💷 Currency facts and the currency-list reader (billing_currencies, task 7n
 //    Phase 2). Pure: loading it defines functions only.
 if (!function_exists('moneyParseCurrencyList')) {
@@ -248,10 +254,10 @@ function adminSettingsSections(): array
             'intro' => 'Lets people sign in with a Microsoft or Google account. Everything stays off until the main switch and the provider switch are both on and the client ID and secret are set.',
         ],
         'bot' => [
-            'saveLabel' => 'Save bot protection settings',
-            'title' => 'Bot protection',
+            'saveLabel' => 'Save human check settings',
+            'title' => 'Human check (bot protection)',
             'icon'  => 'fa-solid fa-robot',
-            'intro' => 'Stored now; the forms start using these keys with task #114.',
+            'intro' => 'A short check that a visitor is a person, on the forms to create an account, sign in, reset a password and ask for a new verification link (and the same JSON routes). It stays off until a provider\'s site key AND secret key are both entered. On "Automatic", the first provider with both keys is used, in the order Cloudflare Turnstile, Google reCAPTCHA, hCaptcha. Get the keys from the provider\'s own dashboard and add this site\'s address there. The privacy page names the provider in use. If the check ever locks everyone out (including you), run php _includes/cli/human_check.php off on the server.',
         ],
         'paypal' => [
             'saveLabel' => 'Save PayPal settings',
@@ -450,10 +456,33 @@ function adminSettingsRegistry(): array
     // ------------------------------------------------------- 4. Bot protection
     $fields[] = adminSettingsField([
         'key' => 'bot_protection_provider', 'section' => 'bot', 'kind' => 'choice', 'group' => 'security', 'type' => 'string',
-        'label' => 'Bot protection provider',
-        'help' => 'Stored now; forms start using it with task #114.',
-        'options' => ['none' => 'None', 'turnstile' => 'Cloudflare Turnstile', 'recaptcha' => 'Google reCAPTCHA', 'hcaptcha' => 'hCaptcha'],
-        'description' => 'Active bot protection provider',
+        'label' => 'Which provider to use',
+        'help' => 'Automatic is recommended. Choosing one provider uses only that one, and the check is off while its two keys are not both entered. Off switches the check off whatever keys are saved.',
+        'options' => [
+            'auto'      => 'Automatic (the first with both keys: Turnstile, then reCAPTCHA, then hCaptcha)',
+            'turnstile' => 'Cloudflare Turnstile only',
+            'recaptcha' => 'Google reCAPTCHA only (version 2, the "I\'m not a robot" box)',
+            'hcaptcha'  => 'hCaptcha only',
+            'none'      => 'Off (no human check)',
+        ],
+        'description' => 'Human check provider: auto (the first with both keys, in the order turnstile, recaptcha, hcaptcha), turnstile, recaptcha, hcaptcha, or none (off)',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'bot_protection_when_unreachable', 'section' => 'bot', 'kind' => 'choice', 'group' => 'security', 'type' => 'string',
+        'label' => 'If the provider cannot be reached',
+        'help' => 'Refuse is safer: while the provider is down, these forms (including sign in) say "try again in a few minutes". Let people through keeps the forms working but without the check while it is down. Either way it is written to the error log. Wrong keys are always refused.',
+        'options' => [
+            'refuse' => 'Refuse the form (recommended)',
+            'allow'  => 'Let people through without the check',
+        ],
+        'description' => 'Human check: what happens when the provider cannot be reached - refuse (forms say try again later) or allow (people are let through). Always logged.',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'bot_protection_timeout_seconds', 'section' => 'bot', 'kind' => 'int', 'group' => 'security', 'type' => 'integer',
+        'label' => 'How long to wait for the provider (seconds)',
+        'help' => 'Whole seconds, ' . CUERCODE_HUMAN_CHECK_MIN_TIMEOUT . ' to ' . CUERCODE_HUMAN_CHECK_MAX_TIMEOUT . '. The default is ' . CUERCODE_HUMAN_CHECK_DEFAULT_TIMEOUT . '. After this the provider counts as "cannot be reached".',
+        'min' => CUERCODE_HUMAN_CHECK_MIN_TIMEOUT, 'max' => CUERCODE_HUMAN_CHECK_MAX_TIMEOUT,
+        'description' => 'Human check: seconds to wait for the provider before treating it as unreachable. Whole number 2-15; anything else means the default of 5 is used.',
     ]);
     $botKeys = [
         'turnstile_site_key'   => 'Turnstile site key',
@@ -467,7 +496,7 @@ function adminSettingsRegistry(): array
         $fields[] = adminSettingsField([
             'key' => $botKey, 'section' => 'bot', 'kind' => 'secret', 'group' => 'security', 'type' => 'string',
             'label' => $botLabel,
-            'help' => 'Stored encrypted and never shown again.',
+            'help' => 'From the provider\'s dashboard. Stored encrypted and never shown again.',
             'description' => $botLabel,
         ]);
     }

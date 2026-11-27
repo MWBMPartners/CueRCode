@@ -131,10 +131,18 @@ foreach (['', 'Inclusive', 'include', 'inclusive ', "inclusive\n"] as $asBad) {
 }
 assertTrue($asValidate('paypal_mode', 'live')['ok'] && $asValidate('paypal_mode', 'sandbox')['ok'], 'PayPal mode: live and sandbox');
 assertFalse($asValidate('paypal_mode', 'test')['ok'], 'PayPal mode refuses anything else');
-foreach (['none', 'turnstile', 'recaptcha', 'hcaptcha'] as $asProvider) {
+foreach (['auto', 'none', 'turnstile', 'recaptcha', 'hcaptcha'] as $asProvider) {
     assertTrue($asValidate('bot_protection_provider', $asProvider)['ok'], 'bot protection provider ' . $asProvider);
 }
 assertFalse($asValidate('bot_protection_provider', 'friendlycaptcha')['ok'], 'bot protection provider refuses an unknown name');
+// 🤖 #163: "auto" comes first (the recommended choice) and "none" means off.
+assertEquals('auto', array_key_first($asRegistry['bot_protection_provider']['options']), 'human check: "Automatic" is the first choice shown');
+assertContains('Off', $asRegistry['bot_protection_provider']['options']['none'], 'human check: "none" is labelled as off');
+assertTrue($asValidate('bot_protection_when_unreachable', 'refuse')['ok'] && $asValidate('bot_protection_when_unreachable', 'allow')['ok'], 'human check: when unreachable, refuse or allow');
+assertFalse($asValidate('bot_protection_when_unreachable', 'maybe')['ok'], 'human check: when unreachable refuses anything else');
+assertTrue($asValidate('bot_protection_timeout_seconds', '2')['ok'] && $asValidate('bot_protection_timeout_seconds', '15')['ok'], 'human check: waiting time 2 to 15 seconds');
+assertFalse($asValidate('bot_protection_timeout_seconds', '1')['ok'] || $asValidate('bot_protection_timeout_seconds', '16')['ok'], 'human check: waiting time outside 2 to 15 is refused');
+assertEquals(['bot_protection_provider', 'bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key'], array_keys(adminSettingsFieldsForSection('bot')), 'human check: the section shows the choice, the two behaviour settings, then the keys in provider order');
 
 // 🔘 Switches.
 assertEquals('1', $asValidate('email_enabled', '1')['value'], 'a switch: 1 is on');

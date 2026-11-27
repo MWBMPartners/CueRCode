@@ -98,6 +98,15 @@
  *      placeholder price, their own price point, their own hand-made
  *      Enterprise plan, an existing setting - are all kept, and so are changes
  *      made after 0004 when 0004 is forced to run again.
+ * Added 2026-11-27 (#163, migration 0005 - human check settings):
+ *   Scenario A and J (extended). Both orders end with the provider setting
+ *   "auto" (untouched "none" moved on), the new description and the two new
+ *   settings. Scenario N (extended): 0004 and 0005 are both waiting at 0003.
+ *   Scenario O. A database at 0004: an untouched "none" becomes "auto"; a
+ *   "none" or "recaptcha" an admin or the command line chose (a row in the
+ *   admin change log) is kept; an owner's own waiting time is kept; running
+ *   0005 again changes nothing.
+ *
  *   Scenario J (extended). On the empty-database path 0004 leaves the plans
  *      and price-point tables EMPTY (review finding F1 still holds), and the
  *      installer's load (migrationDbRunSeedSql() with the migrations folder:
@@ -664,6 +673,7 @@ $itDbL2 = $itBaseName . '_l2';
 $itDbM  = $itBaseName . '_m';
 $itDbN  = $itBaseName . '_n';
 $itDbN2 = $itBaseName . '_n2';
+$itDbO  = $itBaseName . '_o';
 
 // ==============================================================================
 // 🅰️ Scenario A: fresh database - install.sql + seed + migrations; install.sql
@@ -688,6 +698,7 @@ itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0001_subs
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0002_admin_audit_log_and_settings'), 'real CLI: output says 0002 applied');
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0003_sessions_valid_from'), 'real CLI: output says 0003 applied (review finding 1)');
 itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0004_plans_prices_currencies'), 'real CLI: output says 0004 applied (task 7n Phase 2)');
+itCheck('A fresh database', str_contains($itCliResult['out'], 'Applied 0005_human_check_settings'), 'real CLI: output says 0005 applied (#163)');
 
 $itCliResult = itCli($itDbA, 'apply');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: a SECOND --apply exit 0');
@@ -697,11 +708,12 @@ $itCliResult = itCli($itDbA, 'status');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: --status exit 0 once up to date');
 
 $itLedgerRows = $itA->query('SELECT `migrationKey`, `appliedBy` FROM `tblSchemaMigrations` ORDER BY `migrationKey`')->fetch_all(MYSQLI_ASSOC);
-itCheck('A fresh database', count($itLedgerRows) === 4, 'tblSchemaMigrations lists all four migrations (' . count($itLedgerRows) . ')');
+itCheck('A fresh database', count($itLedgerRows) === 5, 'tblSchemaMigrations lists all five migrations (' . count($itLedgerRows) . ')');
 itCheck('A fresh database', isset($itLedgerRows[0]['migrationKey']) && $itLedgerRows[0]['migrationKey'] === '0001_subscription_price_snapshot_columns', 'ledger: first row is 0001');
 itCheck('A fresh database', isset($itLedgerRows[1]['migrationKey']) && $itLedgerRows[1]['migrationKey'] === '0002_admin_audit_log_and_settings', 'ledger: second row is 0002');
 itCheck('A fresh database', isset($itLedgerRows[2]['migrationKey']) && $itLedgerRows[2]['migrationKey'] === '0003_sessions_valid_from', 'ledger: third row is 0003');
 itCheck('A fresh database', isset($itLedgerRows[3]['migrationKey']) && $itLedgerRows[3]['migrationKey'] === '0004_plans_prices_currencies', 'ledger: fourth row is 0004');
+itCheck('A fresh database', isset($itLedgerRows[4]['migrationKey']) && $itLedgerRows[4]['migrationKey'] === '0005_human_check_settings', 'ledger: fifth row is 0005 (#163)');
 $itNewColumns = $itA->query("SELECT `TABLE_NAME`, `COLUMN_NAME`, `COLUMN_TYPE`, `IS_NULLABLE` FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `COLUMN_NAME` IN ('sessionsValidFrom', 'sessionsValidFromSeen') ORDER BY `COLUMN_NAME`")->fetch_all(MYSQLI_ASSOC);
 itCheck('A fresh database', $itNewColumns === [
     ['TABLE_NAME' => 'tblUsers', 'COLUMN_NAME' => 'sessionsValidFrom', 'COLUMN_TYPE' => 'datetime(6)', 'IS_NULLABLE' => 'YES'],
@@ -715,7 +727,11 @@ if (isset($itLedgerRows[0]['appliedBy'])) {
 itCheck('A fresh database', str_starts_with($itLedgerAppliedByA, 'cli:'), 'ledger: appliedBy records the real CLI label (cli:<os user>)');
 itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'billing_vat_mode' AND `settingValue` = 'inclusive'")->num_rows === 1, '0002 seeded billing_vat_mode = inclusive');
 // 📝 Codex round 2 finding R1-3: installer order (seed first, then the upgrades).
-itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'installer order (seed, then upgrades): the bot-protection description names hCaptcha (R1-3)');
+//    #163: 0005 then moves that starting wording on to its own, and the
+//    untouched "none" to "auto" (off until keys are entered).
+itCheck('A fresh database', $itA->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Human check provider: auto (the first with both keys, in the order turnstile, recaptcha, hcaptcha), turnstile, recaptcha, hcaptcha, or none (off)'")->num_rows === 1, 'installer order (seed, then upgrades): the provider description is 0005\'s (it names hCaptcha, R1-3, and "auto")');
+itCheck('A fresh database', itValue($itA, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'auto', '#163: installer order: the untouched provider "none" is now "auto"');
+itCheck('A fresh database', itValue($itA, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`, '|', `settingType`, '|', `isSensitive`, '|', `isEditable`) ORDER BY `settingKey`) FROM `tblSettings` WHERE `settingKey` IN ('bot_protection_when_unreachable', 'bot_protection_timeout_seconds')") === 'bot_protection_timeout_seconds=5|integer|0|1,bot_protection_when_unreachable=refuse|string|0|1', '#163: the two new human-check settings: refuse when unreachable, wait 5 seconds');
 
 
 // 💷 Task 7n Phase 2 (migration 0004) on the fresh path.
@@ -1147,7 +1163,8 @@ itCheck('J empty db then seed check', itNumber($itJ, "SELECT COUNT(*) FROM `tblS
 itCheck('J empty db then seed check', itValue($itJ, 'SELECT @@SESSION.sql_mode') === $itModeBeforeJ, 'the connection\'s own SQL mode is back after the load (nothing seed_data.sql sets for itself leaks into the repeated steps or what follows): ' . $itModeBeforeJ);
 // 📝 Codex round 2 finding R1-3: upgrade-tool order (0002 ran before the row
 //    existed, then the seed). Before the fix this kept the OLD wording for ever.
-itCheck('J empty db then seed check', $itJ->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'upgrade-tool order (upgrades, then seed): the bot-protection description ALSO names hCaptcha (R1-3)');
+itCheck('J empty db then seed check', $itJ->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Human check provider: auto (the first with both keys, in the order turnstile, recaptcha, hcaptcha), turnstile, recaptcha, hcaptcha, or none (off)'")->num_rows === 1, 'upgrade-tool order (upgrades, then seed): the provider description is ALSO 0005\'s (R1-3, #163)');
+itCheck('J empty db then seed check', itValue($itJ, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'auto', '#163: upgrade-tool order: the repeated 0005 step also moves the seeded "none" to "auto"');
 $itCliResultJ2 = itCli($itDbJ, 'status');
 itCheck('J empty db then seed check', $itCliResultJ2['exit'] === 0 && !str_contains($itCliResultJ2['out'] . $itCliResultJ2['err'], 'changed after it was applied'), 'and the upgrade tool reports up to date with no "changed after it was applied" warning (migration 0002 was not edited)');
 
@@ -1195,13 +1212,14 @@ $itTo0003 = migrationRun($itN, 'apply', 'test', $itDir0003, migrationDefaultInst
 itCheck('N upgrade from 0003', $itTo0003['status'] === 'ok' && count($itTo0003['migrations']) === 3, 'setup: the database is brought to migration 0003 (three applied)');
 itCheck('N upgrade from 0003', $itN->query("SHOW COLUMNS FROM `tblSubscriptionPlans` LIKE 'planKind'")->num_rows === 0 && itValue($itN, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '4.99', 'setup: at 0003 there is no planKind column and Pro is at the placeholder £4.99');
 $itStatusN = migrationRun($itN, 'status', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('N upgrade from 0003', $itStatusN['pending'] === ['0004_plans_prices_currencies'] && migrationExitCodeForResult('status', $itStatusN) === 3, 'the status check shows exactly 0004 waiting (exit code 3)');
+itCheck('N upgrade from 0003', $itStatusN['pending'] === ['0004_plans_prices_currencies', '0005_human_check_settings'] && migrationExitCodeForResult('status', $itStatusN) === 3, 'the status check shows exactly 0004 and 0005 waiting (exit code 3)');
 $itUpN = migrationRun($itN, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck(
     'N upgrade from 0003',
-    $itUpN['status'] === 'ok' && count($itUpN['migrations']) === 1 && $itUpN['migrations'][0]['key'] === '0004_plans_prices_currencies'
-        && $itUpN['migrations'][0]['outcome'] === 'applied' && $itUpN['migrations'][0]['stepsRun'] === 31 && $itUpN['migrations'][0]['stepsSkipped'] === 0,
-    'the upgrade applies 0004 alone, all 31 steps: ' . json_encode($itUpN['migrations'])
+    $itUpN['status'] === 'ok' && count($itUpN['migrations']) === 2 && $itUpN['migrations'][0]['key'] === '0004_plans_prices_currencies'
+        && $itUpN['migrations'][0]['outcome'] === 'applied' && $itUpN['migrations'][0]['stepsRun'] === 31 && $itUpN['migrations'][0]['stepsSkipped'] === 0
+        && $itUpN['migrations'][1]['key'] === '0005_human_check_settings' && $itUpN['migrations'][1]['outcome'] === 'applied' && $itUpN['migrations'][1]['stepsRun'] === 4,
+    'the upgrade applies 0004 (all 31 steps) then 0005 (all 4 steps): ' . json_encode($itUpN['migrations'])
 );
 // 📝 Decision 0022 (#161): the starting descriptions mark unbuilt features as coming soon.
 itCheck('N upgrade from 0003', itValue($itN, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === 'For individuals who need dynamic QR codes, analytics and automation (all coming soon).', '#161: the starting Pro description now marks the unbuilt features as coming soon');
@@ -1267,6 +1285,73 @@ foreach ((array) glob($itDir0003 . '*') as $itTempFile) {
     @unlink((string) $itTempFile);
 }
 @rmdir($itDir0003);
+
+// ==============================================================================
+// 🅾️ Scenario O (#163): a database at migration 0004 upgrades to 0005 - an
+//    untouched "none" becomes "auto"; an admin's or the command line's own
+//    choice is kept; running it again changes nothing
+// ==============================================================================
+echo PHP_EOL . 'Scenario O: migration 0005 (human check) on a database at 0004; owner choices are kept' . PHP_EOL;
+
+$itDir0004 = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_it_mig0004_' . bin2hex(random_bytes(6)) . DIRECTORY_SEPARATOR;
+mkdir($itDir0004, 0700);
+foreach (['0001_subscription_price_snapshot_columns', '0002_admin_audit_log_and_settings', '0003_sessions_valid_from', '0004_plans_prices_currencies'] as $itKey0004) {
+    copy(migrationDefaultDirectory() . $itKey0004 . '.php', $itDir0004 . $itKey0004 . '.php');
+}
+
+/**
+ * 🧱 A fresh database brought to migration 0004 (O scenarios).
+ */
+function itAt0004(array $itEnv, int $itPort, string $itDbName, string $itInstallSql, string $itSeedSql, string $itDir0004): \mysqli
+{
+    $itDb = itFreshDb($itEnv, $itPort, $itDbName);
+    itRunSqlFile($itDb, $itInstallSql);
+    itRunSqlFile($itDb, $itSeedSql);
+    migrationRun($itDb, 'apply', 'test', $itDir0004, migrationDefaultInstallSqlPath());
+    return $itDb;
+}
+
+$itProviderSql = "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'";
+$itAuditProviderSql = "INSERT INTO `tblAdminAuditLog` (`actorType`, `actorLabel`, `action`, `entityType`, `entityKey`, `outcome`) VALUES ('cli', 'cli:it', 'setting.update', 'setting', 'bot_protection_provider', 'success')";
+
+// O1. Untouched: "none" -> "auto".
+$itO = itAt0004($itEnv, $itPort, $itDbO, $itInstallSql, $itSeedSql, $itDir0004);
+itCheck('O 0005 human check', itValue($itO, $itProviderSql) === 'none' && itNumber($itO, "SELECT COUNT(*) FROM `tblSchemaMigrations`") === 4, 'setup: at 0004 the provider is the starting "none"');
+$itUpO = migrationRun($itO, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('O 0005 human check', $itUpO['status'] === 'ok' && count($itUpO['migrations']) === 1 && $itUpO['migrations'][0]['key'] === '0005_human_check_settings' && $itUpO['migrations'][0]['stepsRun'] === 4, '0005 applies alone, all 4 steps: ' . json_encode($itUpO['migrations']));
+itCheck('O 0005 human check', itValue($itO, $itProviderSql) === 'auto', 'untouched "none" becomes "auto" (off until keys are entered)');
+itCheck('O 0005 human check', migrationDbSeedDataState($itO)['state'] === 'complete', 'the installer\'s starting-data check still reads "complete"');
+$itSettingsAfterO = itValue($itO, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`, '|', `description`) ORDER BY `settingKey` SEPARATOR ';') FROM `tblSettings` WHERE `settingGroup` = 'security'");
+$itCountAfterO = itNumber($itO, 'SELECT COUNT(*) FROM `tblSettings`');
+
+// O2. Run 0005 again after the owner switched it off with the command line.
+$itO->query("UPDATE `tblSettings` SET `settingValue` = 'none' WHERE `settingKey` = 'bot_protection_provider'");
+$itO->query($itAuditProviderSql);
+$itO->query("UPDATE `tblSettings` SET `settingValue` = '9' WHERE `settingKey` = 'bot_protection_timeout_seconds'");
+$itO->query("DELETE FROM `tblSchemaMigrations` WHERE `migrationKey` = '0005_human_check_settings'");
+$itRerunO = migrationRun($itO, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('O 0005 human check', $itRerunO['status'] === 'ok' && isset($itRerunO['migrations'][0]) && $itRerunO['migrations'][0]['key'] === '0005_human_check_settings', '0005 forced to run again: ' . json_encode($itRerunO['migrations']));
+itCheck('O 0005 human check', itValue($itO, $itProviderSql) === 'none', 'a "none" chosen with the command line (a row in the admin change log) is KEPT - the check stays off');
+itCheck('O 0005 human check', itValue($itO, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_timeout_seconds'") === '9', 'the owner\'s own waiting time (9) is kept');
+itCheck('O 0005 human check', itNumber($itO, 'SELECT COUNT(*) FROM `tblSettings`') === $itCountAfterO, 'running 0005 again adds no rows');
+itDropDb($itEnv, $itPort, $itDbO);
+
+// O3. An admin had chosen a provider (or "none") on the screen BEFORE 0005 arrived.
+$itO = itAt0004($itEnv, $itPort, $itDbO, $itInstallSql, $itSeedSql, $itDir0004);
+$itO->query($itAuditProviderSql);
+migrationRun($itO, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('O 0005 human check', itValue($itO, $itProviderSql) === 'none', 'a "none" an admin had saved before 0005 (change-log row present) is KEPT');
+itDropDb($itEnv, $itPort, $itDbO);
+$itO = itAt0004($itEnv, $itPort, $itDbO, $itInstallSql, $itSeedSql, $itDir0004);
+$itO->query("UPDATE `tblSettings` SET `settingValue` = 'recaptcha', `description` = 'Owner wording' WHERE `settingKey` = 'bot_protection_provider'");
+migrationRun($itO, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('O 0005 human check', itValue($itO, "SELECT CONCAT(`settingValue`, '|', `description`) FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'recaptcha|Owner wording', 'an owner\'s own provider ("recaptcha") and own description are KEPT');
+itCheck('O 0005 human check', $itSettingsAfterO !== '' && str_contains($itSettingsAfterO, 'bot_protection_when_unreachable=refuse'), 'the new settings are in the security group');
+
+foreach ((array) glob($itDir0004 . '*') as $itTempFile) {
+    @unlink((string) $itTempFile);
+}
+@rmdir($itDir0004);
 
 // ==============================================================================
 // 🅺 Scenario K: the upgrade lock name includes the database (review finding
@@ -1533,7 +1618,7 @@ itCheck('M non-InnoDB refused', $itSeedRunM['ok'] === false && str_contains($itS
 // ==============================================================================
 // 🧹 Clean up and report
 // ==============================================================================
-foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2, $itDbM, $itDbN, $itDbN2] as $itDbToRemove) {
+foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2, $itDbM, $itDbN, $itDbN2, $itDbO] as $itDbToRemove) {
     itDropDb($itEnv, $itPort, $itDbToRemove);
 }
 

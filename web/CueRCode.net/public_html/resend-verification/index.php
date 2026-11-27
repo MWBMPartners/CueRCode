@@ -19,9 +19,11 @@
  * ⏱️ The limits (gap between sends, daily cap, per-IP cap) live in
  *    requestNewVerificationLink() (fn_auth.php) and are read from settings.
  * 🧩 Works with JavaScript off: a normal form POST to this same page.
- * 🤖 There is no bot-protection widget here because none of the sibling forms
- *    (sign in, register, forgot password) use one yet; the per-IP and
- *    per-account limits are the protection. Add it here when it is added to them.
+ * 🤖 Human check (#163): humanCheckVerifyRequest() (fn_human_check.php) must
+ *    pass before requestNewVerificationLink() runs, the same as on the sign
+ *    in, register and forgot-password forms. The per-IP and per-account
+ *    limits still apply as well. Off until a Global Admin enters a
+ *    provider's keys; with JavaScript off it is refused with a note.
  *
  * @package     CueRCode
  * @subpackage  Pages / Account
@@ -29,6 +31,7 @@
  * @version     1.0.0
  * @since       Phase 2 (#128)
  * @see         _functions/fn_auth.php - requestNewVerificationLink()
+ * @see         _functions/fn_human_check.php - humanCheckVerifyRequest(), humanCheckWidgetHtml()
  */
 
 // ==============================================================================
@@ -66,7 +69,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_submit'])) {
         $formError = 'Your session has expired. Please reload the page and try again.';
     } elseif ($postedEmail === '' || mb_strlen($postedEmail) > 254 || !function_exists('validateEmail') || !validateEmail($postedEmail)) {
         $formError = 'Please enter a valid email address.';
-    } elseif (function_exists('requestNewVerificationLink')) {
+    } else {
+        // 🤖 #163: the human check, before any email is looked up or queued.
+        $humanCheck = humanCheckVerifyRequest($_POST);
+        if (!$humanCheck['ok']) {
+            $formError = $humanCheck['message'];
+        }
+    }
+
+    if ($formError === null && function_exists('requestNewVerificationLink')) {
         // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
         //    every page by bootstrap.php, so this per-address limit counts the
         //    real visitor, not a forwarder and not a faked header.
@@ -93,7 +104,7 @@ $pageDescription = 'Ask for a new email verification link for your CueRCode acco
 $pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-account page-resend-verification';
 $pageCSS         = [];
-$pageJS          = [];
+$pageJS          = ['/assets/js/cuercode-human-check.js'];
 
 // ==============================================================================
 // 📄 Render Page
@@ -152,6 +163,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                            value="<?php echo htmlspecialchars($postedEmail, ENT_QUOTES, 'UTF-8'); ?>"
                                            autocomplete="email" required maxlength="254">
                                 </div>
+
+                                <?php /* 🤖 Human check (#163) - empty while it is off */ ?>
+                                <?php echo humanCheckWidgetHtml(); ?>
 
                                 <div class="d-grid">
                                     <button type="submit" class="btn btn-primary btn-lg" id="resend-submit-btn">

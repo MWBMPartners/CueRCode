@@ -22,12 +22,17 @@
  *    250 ms, so neither the answer nor its timing shows whether an address
  *    has an account. The answer below never changes.
  *
+ * 🤖 Human check (#163): humanCheckVerifyRequest() (fn_human_check.php) must
+ *    pass before requestPasswordReset() runs - the same call the JSON route
+ *    makes. Its refusal message is about the check only, never the account.
+ *
  * @package     CueRCode
  * @subpackage  Pages / Account
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       Phase 2 (Epic E3 stage 2b, #52/#14)
  * @see         _functions/fn_auth.php - requestPasswordReset()
+ * @see         _functions/fn_human_check.php - humanCheckVerifyRequest(), humanCheckWidgetHtml()
  * @see         public_html/assets/js/cuercode-account.js
  */
 
@@ -65,7 +70,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['forgot_submit'])) {
         $formError = 'Your session has expired. Please reload the page and try again.';
     } elseif ($postedEmail === '' || !function_exists('validateEmail') || !validateEmail($postedEmail)) {
         $formError = 'Please enter a valid email address.';
-    } elseif (function_exists('requestPasswordReset')) {
+    } else {
+        // 🤖 #163: the human check, before any email is looked up or queued.
+        $humanCheck = humanCheckVerifyRequest($_POST);
+        if (!$humanCheck['ok']) {
+            $formError = $humanCheck['message'];
+        }
+    }
+
+    if ($formError === null && function_exists('requestPasswordReset')) {
         // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
         //    every page by bootstrap.php.
         $clientIp = getClientIP();
@@ -84,7 +97,7 @@ $pageTitle       = 'Forgot Password';
 $pageDescription = 'Request a password reset link for your CueRCode account.';
 $bodyClass       = 'page-account page-forgot-password';
 $pageCSS         = [];
-$pageJS          = ['/assets/js/cuercode-account.js'];
+$pageJS          = ['/assets/js/cuercode-human-check.js', '/assets/js/cuercode-account.js'];
 
 // ==============================================================================
 // 📄 Render Page
@@ -145,6 +158,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                            value="<?php echo htmlspecialchars($postedEmail, ENT_QUOTES, 'UTF-8'); ?>"
                                            autocomplete="email" required maxlength="254">
                                 </div>
+
+                                <?php /* 🤖 Human check (#163) - empty while it is off */ ?>
+                                <?php echo humanCheckWidgetHtml(); ?>
 
                                 <div class="d-grid">
                                     <button type="submit" class="btn btn-primary btn-lg" id="forgot-submit-btn">

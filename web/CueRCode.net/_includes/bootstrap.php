@@ -243,6 +243,12 @@ $functionFiles = [
     // INERT by default (sso_enabled + sso_<provider>_enabled both seed 0),
     // so loading this file globally attempts zero outbound network calls.
     'fn_oauth.php',
+    // 🤖 #163 (decision 0024): the human check (Turnstile, reCAPTCHA or
+    // hCaptcha) for the sign-up, sign-in, forgot-password and new-link forms,
+    // and the privacy page's "which provider" wording. Loaded after
+    // fn_oauth.php (it reuses oauthApplyCurlSafety()). Off until a Global
+    // Admin enters a provider's keys, so loading it makes no outbound call.
+    'fn_human_check.php',
 ];
 
 foreach ($functionFiles as $functionFile) {

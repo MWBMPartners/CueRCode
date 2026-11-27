@@ -15,6 +15,12 @@
  * JSON API handler calls into - there is only ever one code path that
  * actually creates an account.
  *
+ * 🤖 HUMAN CHECK (#163): once the fields are fine, humanCheckVerifyRequest()
+ * (fn_human_check.php) must pass before registerUser() runs - the same call
+ * the JSON route makes. Off until a Global Admin enters a provider's keys.
+ * With JavaScript off the widget cannot be drawn, so the form is refused
+ * with a note saying the check needs JavaScript.
+ *
  * ANTI-ENUMERATION: registerUser() ALWAYS returns an identical generic
  * success shape regardless of whether the email was new or already
  * registered (see fn_auth.php) - this page renders that SAME generic message
@@ -29,6 +35,7 @@
  * @see         _functions/fn_auth.php         - registerUser()
  * @see         _functions/fn_password.php     - validatePasswordPolicy()
  * @see         _functions/fn_validation.php   - validateEmail()
+ * @see         _functions/fn_human_check.php  - humanCheckVerifyRequest(), humanCheckWidgetHtml()
  * @see         public_html/assets/js/cuercode-account.js
  */
 
@@ -100,6 +107,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_submit'])) {
         }
     }
 
+    // 🤖 #163: the human check, after the cheap checks (a token works once)
+    //    and before an account is made or an email is queued.
+    if (empty($formErrors)) {
+        $humanCheck = humanCheckVerifyRequest($_POST);
+        if (!$humanCheck['ok']) {
+            $formErrors[] = $humanCheck['message'];
+        }
+    }
+
     if (empty($formErrors) && function_exists('registerUser')) {
         $displayNameArg = $postedDisplay !== '' ? $postedDisplay : null;
         $registerResult = registerUser($postedEmail, $password, $displayNameArg);
@@ -134,7 +150,7 @@ $pageTitle       = 'Create an Account';
 $pageDescription = 'Create a free CueRCode account to save your QR codes and come back to download them any time.';
 $bodyClass       = 'page-account page-register';
 $pageCSS         = [];
-$pageJS          = ['/assets/js/cuercode-account.js'];
+$pageJS          = ['/assets/js/cuercode-human-check.js', '/assets/js/cuercode-account.js'];
 
 // ==============================================================================
 // 📄 Render Page
@@ -239,6 +255,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <input type="password" class="form-control" id="reg-password-confirm" name="password_confirm"
                                            autocomplete="new-password" required minlength="8" maxlength="256">
                                 </div>
+
+                                <?php /* 🤖 Human check (#163) - empty while it is off */ ?>
+                                <?php echo humanCheckWidgetHtml(); ?>
 
                                 <div class="d-grid">
                                     <button type="submit" class="btn btn-primary btn-lg" id="register-submit-btn">

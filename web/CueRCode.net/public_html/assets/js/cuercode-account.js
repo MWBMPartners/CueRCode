@@ -16,6 +16,12 @@
  *
  * Depends on cuercode-common.js (CueRCode.ajax/notify/escapeHtml/isValidEmail).
  *
+ * 🤖 Human check (#163): register, sign in and forgot password send the
+ * widget's token as "human_check_token" (cuercode-human-check.js, loaded
+ * first on those pages) and reset the widget after every answer, because a
+ * token works only once. While the check is off there is no widget and the
+ * token is simply empty.
+ *
  * @package     CueRCode
  * @subpackage  Frontend
  * @copyright   2025–2026 MWBM Partners Ltd
@@ -115,6 +121,34 @@
     }
 
     // ==========================================================================
+    // 🤖 Human check helpers (#163)
+    // ==========================================================================
+
+    /**
+     * 🎫 The human-check token for a form ('' when the check is off).
+     *
+     * @param {jQuery} $form
+     * @returns {string}
+     */
+    function humanCheckToken($form) {
+        if (window.CueRCodeHumanCheck && typeof window.CueRCodeHumanCheck.token === 'function') {
+            return window.CueRCodeHumanCheck.token($form);
+        }
+        return '';
+    }
+
+    /**
+     * 🔁 Reset a form's human-check widget after an answer (a token works once).
+     *
+     * @param {jQuery} $form
+     */
+    function humanCheckReset($form) {
+        if (window.CueRCodeHumanCheck && typeof window.CueRCodeHumanCheck.reset === 'function') {
+            window.CueRCodeHumanCheck.reset($form);
+        }
+    }
+
+    // ==========================================================================
     // 📊 Password strength hint (client-side UX ONLY - the server remains the
     //    single source of truth via validatePasswordPolicy()).
     // ==========================================================================
@@ -206,7 +240,8 @@
                 data: JSON.stringify({
                     email: email,
                     password: password,
-                    display_name: displayName || undefined
+                    display_name: displayName || undefined,
+                    human_check_token: humanCheckToken($form)
                 }),
                 success: function (response) {
                     $form.find('input, button').prop('disabled', true);
@@ -220,6 +255,7 @@
                 },
                 complete: function () {
                     setButtonBusy($btn, false, '');
+                    humanCheckReset($form);
                 }
             });
         });
@@ -255,7 +291,7 @@
                 url: CUERCODE_API_BASE + '/auth/login',
                 method: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({ email: email, password: password }),
+                data: JSON.stringify({ email: email, password: password, human_check_token: humanCheckToken($form) }),
                 success: function () {
                     /* ✅ Full navigation (not a fetch) - the server has
                        already rotated the session; a real page load ensures
@@ -270,6 +306,7 @@
                 },
                 complete: function () {
                     setButtonBusy($btn, false, '');
+                    humanCheckReset($form);
                 }
             });
         });
@@ -362,7 +399,7 @@
                 url: CUERCODE_API_BASE + '/auth/request-password-reset',
                 method: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({ email: email }),
+                data: JSON.stringify({ email: email, human_check_token: humanCheckToken($form) }),
                 success: function (response) {
                     $form.hide();
                     /* 🔐 Always the identical anti-enumeration message from
@@ -377,6 +414,7 @@
                 },
                 complete: function () {
                     setButtonBusy($btn, false, '');
+                    humanCheckReset($form);
                 }
             });
         });

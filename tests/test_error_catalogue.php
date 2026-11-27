@@ -77,7 +77,7 @@
  *            idioms 2-4 use). Regex over ALL 13 files.
  *
  * ------------------------------------------------------------------------------
- * 📂 Scanned-file allowlist (14) and rationale for the 2 exclusions
+ * 📂 Scanned-file allowlist (15, with fn_human_check.php since #163) and rationale for the 2 exclusions
  * ------------------------------------------------------------------------------
  * public_html/api/v1/index.php (the router) + the 13 fn_*.php files an API
  * request can actually reach: fn_api_generate.php, fn_api_bulk.php,
@@ -364,12 +364,16 @@ $scannedFiles = [
     'fn_features.php'      => [CUERCODE_FUNCTIONS_DIR . 'fn_features.php', false],
     'fn_response.php'      => [CUERCODE_FUNCTIONS_DIR . 'fn_response.php', false],
     'fn_api_redirects.php' => [CUERCODE_FUNCTIONS_DIR . 'fn_api_redirects.php', false],
+    // 🤖 #163: the human check's refusal codes (HUMAN_CHECK_REQUIRED, _FAILED,
+    //    _UNAVAILABLE) are built in humanCheckResult() and passed on by
+    //    requireHumanCheckForApi() in fn_api_accounts.php.
+    'fn_human_check.php'   => [CUERCODE_FUNCTIONS_DIR . 'fn_human_check.php', false],
 ];
 
 assertEquals(
-    14,
+    15,
     count($scannedFiles),
-    'the scanned-file allowlist has exactly the 14 files the plan specifies'
+    'the scanned-file allowlist has exactly the 15 files the plan specifies (14, plus fn_human_check.php for #163)'
 );
 
 foreach ($scannedFiles as $fileLabel => $fileInfo) {
@@ -494,9 +498,11 @@ assertEquals(
 );
 
 assertEquals(
-    96,
+    99,
     count($xErrorCodes),
-    'ErrorResponse.x-error-codes has exactly 96 entries (DATABASE_UPGRADE_NEEDED - '
+    'ErrorResponse.x-error-codes has exactly 99 entries (HUMAN_CHECK_REQUIRED, HUMAN_CHECK_FAILED, '
+    . 'HUMAN_CHECK_UNAVAILABLE - #163, fn_human_check.php humanCheckResult(): the human check on '
+    . 'register, login and request-password-reset - plus the 96 earlier codes: DATABASE_UPGRADE_NEEDED - '
     . 'independent review, Codex C3 finding 4, fn_auth.php authUpgradeNeededResult(): a '
     . 'password reset or change is refused until database upgrade 0003 is applied - plus '
     . 'the 95 earlier codes: PASSWORD_CHANGED_MEANWHILE - '
@@ -606,6 +612,14 @@ assertTrue(
     'REDIRECT_SUSPENDED is found in fn_api_redirects.php (abuse-suspended PATCH block, '
     . 'Epic E1a Stage S1, #27)'
 );
+
+foreach (['HUMAN_CHECK_REQUIRED', 'HUMAN_CHECK_FAILED', 'HUMAN_CHECK_UNAVAILABLE'] as $humanCheckCode) {
+    assertTrue(
+        isset($codesByFile['fn_human_check.php'][$humanCheckCode]),
+        $humanCheckCode . ' is found in fn_human_check.php (the human check on register, login and '
+        . 'request-password-reset, #163)'
+    );
+}
 
 // ==============================================================================
 // 📝 Step 8: Prose sync - every x-error-codes entry must also be named in the
