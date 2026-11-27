@@ -100,9 +100,13 @@
  *      made after 0004 when 0004 is forced to run again.
  *   Scenario J (extended). On the empty-database path 0004 leaves the plans
  *      and price-point tables EMPTY (review finding F1 still holds), and the
- *      installer's replay (migrationDbReplayDataSteps()) then gives the same
- *      plans and prices as a fresh install; a second replay changes nothing;
- *      the replay waits its turn behind the upgrade lock.
+ *      installer's load (migrationDbRunSeedSql() with the migrations folder:
+ *      the starting data plus the applied upgrades' data steps, in ONE
+ *      transaction) then gives the same plans and prices as a fresh install.
+ *      Added by finding F1 of the Phase 2 review (2026-11-27): while another
+ *      upgrade holds the lock the load is refused with nothing written, and a
+ *      repeated step that fails rolls the starting data back with it, so the
+ *      retry the installer asks for loads everything again.
  *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
@@ -1047,19 +1051,17 @@ itCheck(
     'the installer\'s seed-protection check correctly says "NOT seeded" (F1 fix) - so seed_data.sql would still be allowed to run if the web installer were used next'
 );
 
-// ➕ Independent review follow-up (2026-11-25): "allowed to run" is not enough -
-//    it must also SUCCEED. Migration 0002 inserts some of the same settings as
-//    seed_data.sql, so a plain INSERT of the settings stopped with a duplicate
-//    key here and the starting data could never be loaded.
-$itSeedAfterCliJ = migrationDbRunSeedSql($itJ, $itSeedSql);
-itCheck('J empty db then seed check', $itSeedAfterCliJ['ok'] === true, 'the web installer\'s seed load then SUCCEEDS on top of the CLI-created settings: ' . $itSeedAfterCliJ['error']);
-$itSeedStateJ = migrationDbSeedDataState($itJ);
-itCheck('J empty db then seed check', $itSeedStateJ['ok'] === true && $itSeedStateJ['state'] === 'complete', 'and the starting data is then complete');
+// 🔁 Task 7n Phase 2, made all-or-nothing by review finding F1 of the Phase 2
+//    review (2026-11-27). The installer loads the starting data AND repeats the
+//    applied upgrades' data steps (0004 found no plans to copy or move) in ONE
+//    transaction, under the upgrade lock. The bug this guards against: the
+//    repeat failed ("busy") after the starting data had been committed, the
+//    reload saw the data as complete, never repeated anything, and the
+//    installer locked itself with no Enterprise plan and the old prices.
+$itSettingsBeforeJ = itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`');
+$itModeBeforeJ     = itValue($itJ, 'SELECT @@SESSION.sql_mode');
 
-// 🔁 Task 7n Phase 2: without the installer's replay, this database would
-//    never get the Enterprise plan or the draft prices (0004 is recorded, its
-//    data steps found no plans). Prove the gap, then the fix.
-itCheck('J empty db then seed check', itNumber($itJ, "SELECT COUNT(*) FROM `tblSubscriptionPlans` WHERE `planKey` = 'enterprise'") === 0 && itValue($itJ, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '4.99', 'reproduction: after upgrades-then-seed, there is no Enterprise plan and Pro is still at the placeholder price');
+// J-a. Another upgrade holds the lock: NOTHING is loaded, so a retry starts clean.
 $itLockHolderJ = itServerConnect($itEnv, $itPort);
 $itLockHolderJ->select_db(itSafeDbName($itDbJ));
 $itLockNameJ = itLockNameFor($itLockHolderJ);
@@ -1067,15 +1069,28 @@ $itLockStatementJ = $itLockHolderJ->prepare('SELECT GET_LOCK(?, 0)');
 $itLockStatementJ->bind_param('s', $itLockNameJ);
 $itLockStatementJ->execute();
 $itLockStatementJ->close();
-$itReplayBusyJ = migrationDbReplayDataSteps($itJ, migrationDefaultDirectory());
-itCheck('J empty db then seed check', $itReplayBusyJ['ok'] === false && $itReplayBusyJ['status'] === 'busy' && $itReplayBusyJ['stepsRun'] === 0, 'the replay waits its turn: while an upgrade holds the lock it is refused ("busy") and runs nothing');
+$itSeedBusyJ = migrationDbRunSeedSql($itJ, $itSeedSql, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itSeedBusyJ['ok'] === false && $itSeedBusyJ['refusal'] !== '' && str_contains($itSeedBusyJ['refusal'], 'nothing was changed') && $itSeedBusyJ['stepsRun'] === 0, 'F1: while an upgrade holds the lock, the load is REFUSED before anything is written: ' . $itSeedBusyJ['refusal']);
+itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'none' && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`') === 0 && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === $itSettingsBeforeJ, 'F1: ...so the starting data still reads "none" (no plans, no marker, settings unchanged) and a reload loads it');
 $itLockHolderJ->close();
-$itReplayJ = migrationDbReplayDataSteps($itJ, migrationDefaultDirectory());
-itCheck('J empty db then seed check', $itReplayJ['ok'] === true && $itReplayJ['skipped'] === [] && in_array('0004_plans_prices_currencies', $itReplayJ['migrations'], true) && in_array('0002_admin_audit_log_and_settings', $itReplayJ['migrations'], true), 'the installer\'s replay of the applied upgrades\' data steps succeeds (0002 and 0004 included, nothing skipped): ' . json_encode($itReplayJ));
-itCheck('J empty db then seed check', itPhase2Data($itJ) === $itDataA, 'after the replay, the plans, price points and settings are EXACTLY those of a fresh install (scenario A)');
-$itReplayJ2 = migrationDbReplayDataSteps($itJ, migrationDefaultDirectory());
-itCheck('J empty db then seed check', $itReplayJ2['ok'] === true && itPhase2Data($itJ) === $itDataA && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === itNumber($itA, 'SELECT COUNT(*) FROM `tblSettings`'), 'a second replay changes nothing (same data, no extra rows; same settings count as a fresh install)');
-itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'complete', 'and the starting data still reads as complete');
+
+// J-b. A repeated step FAILS part-way: the starting data is rolled back with it.
+//      (A trigger refuses any new price point - the 0004 price steps then fail.)
+$itJ->query("CREATE TRIGGER `trg_it_j_refuse_price` BEFORE INSERT ON `tblPlanPricePoints` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'integration test: refused'");
+$itSeedFailJ = migrationDbRunSeedSql($itJ, $itSeedSql, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itSeedFailJ['ok'] === false && $itSeedFailJ['refusal'] === '' && str_contains($itSeedFailJ['error'], 'rolled back') && str_contains($itSeedFailJ['error'], '0004_plans_prices_currencies'), 'F1: a repeated 0004 step that fails makes the whole load fail: ' . substr($itSeedFailJ['error'], 0, 160));
+itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'none' && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`') === 0 && itNumber($itJ, 'SELECT COUNT(*) FROM `tblQRCodeTypes`') === 0 && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === $itSettingsBeforeJ, 'F1: ...and NOTHING of the starting data was kept (no plans, no QR types, no marker), so the reload the page asks for loads it all again');
+$itJ->query('DROP TRIGGER `trg_it_j_refuse_price`');
+
+// J-c. The retry: everything lands together, identical to a fresh install.
+//      ("Allowed to run" is not enough either - migration 0002 inserts some of
+//      the same settings as seed_data.sql, and the load must still SUCCEED.)
+$itSeedAfterCliJ = migrationDbRunSeedSql($itJ, $itSeedSql, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itSeedAfterCliJ['ok'] === true && $itSeedAfterCliJ['skipped'] === [] && in_array('0004_plans_prices_currencies', $itSeedAfterCliJ['migrations'], true) && in_array('0002_admin_audit_log_and_settings', $itSeedAfterCliJ['migrations'], true) && $itSeedAfterCliJ['stepsRun'] > 0, 'the retried load SUCCEEDS, with the applied upgrades\' data steps repeated (0002 and 0004 included, nothing skipped): ' . json_encode(['error' => $itSeedAfterCliJ['error'], 'stepsRun' => $itSeedAfterCliJ['stepsRun'], 'migrations' => $itSeedAfterCliJ['migrations']]));
+itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'complete', 'and the starting data is then complete');
+itCheck('J empty db then seed check', itPhase2Data($itJ) === $itDataA && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === itNumber($itA, 'SELECT COUNT(*) FROM `tblSettings`'), 'the plans, price points and settings are EXACTLY those of a fresh install (scenario A), with the same settings count');
+itCheck('J empty db then seed check', itNumber($itJ, "SELECT COUNT(*) FROM `tblSubscriptionPlans` WHERE `planKey` = 'enterprise'") === 1, 'the Enterprise plan exists (the repeat ran)');
+itCheck('J empty db then seed check', itValue($itJ, 'SELECT @@SESSION.sql_mode') === $itModeBeforeJ, 'the connection\'s own SQL mode is back after the load (seed_data.sql\'s own SQL mode does not leak into the repeated steps or what follows): ' . $itModeBeforeJ);
 // 📝 Codex round 2 finding R1-3: upgrade-tool order (0002 ran before the row
 //    existed, then the seed). Before the fix this kept the OLD wording for ever.
 itCheck('J empty db then seed check', $itJ->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'upgrade-tool order (upgrades, then seed): the bot-protection description ALSO names hCaptcha (R1-3)');

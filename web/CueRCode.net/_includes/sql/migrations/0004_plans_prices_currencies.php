@@ -40,8 +40,8 @@
  * to tblSubscriptionPlans is COPIED from a row already in it (Enterprise from
  * Business), and every price point is attached by looking its plan up by key.
  * On a brand-new database with no plans yet, these steps change nothing, so
- * the installer still loads seed_data.sql afterwards - and then repeats these
- * data steps itself (migrationDbReplayDataSteps(), fn_migrations.php).
+ * the installer still loads seed_data.sql afterwards - and repeats these data
+ * steps in the same transaction (migrationDbRunSeedSql(), fn_migrations.php).
  *
  * CHARGING STAYS OFF: this file never touches billing_price_points_enabled,
  * billing_discounts_enabled or billing_payg_enabled. The price points stay

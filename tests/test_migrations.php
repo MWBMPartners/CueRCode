@@ -1091,10 +1091,24 @@ assertTrue(is_int($migMarkerCallAt) && is_int($migNoneAt) && $migMarkerCallAt < 
 // 🧱 R1-2: the storage-type check runs BEFORE the transaction is opened, and a
 //    refusal is reported in plain words the installer shows.
 $migRunSeedSource = substr($migRunnerSource, (int) strpos($migRunnerSource, 'function migrationDbRunSeedSql('));
-$migEngineCheckAt = strpos($migRunSeedSource, 'migrationDbSeedTablesTransactional($db)');
+$migEngineCheckAt = strpos($migRunSeedSource, 'migrationDbSeedTablesTransactional($db, $tablesToCheck)');
 $migMultiQueryAt  = strpos($migRunSeedSource, '->multi_query(');
 assertTrue(is_int($migEngineCheckAt) && is_int($migMultiQueryAt) && $migEngineCheckAt < $migMultiQueryAt, 'R1-2: migrationDbRunSeedSql() checks the storage type of every table before loading anything');
 assertContains("strcasecmp(\$engineName, 'InnoDB') !== 0", $migRunnerSource, 'R1-2: only InnoDB tables are accepted');
+
+// 🔁 Review finding F1 (7n Phase 2 review): the starting data and the repeat of
+//    the applied upgrades' data steps land together - the upgrade lock is taken
+//    before anything is loaded, and the repeated steps run before the one commit.
+//    (Proven on a real database in tests/integration/migrations_real_mysql.php J.)
+$migSeedOnly       = substr($migRunSeedSource, 0, (int) strpos($migRunSeedSource, 'function migrationDbRunSeedTransaction('));
+$migLockAt         = strpos($migSeedOnly, 'migrationDbAcquireLock($db)');
+$migSeedTxAt       = strpos($migSeedOnly, 'migrationDbRunSeedTransaction($db, $seedSql)');
+$migReplayStepAt   = strpos($migSeedOnly, "migrationDbRunStepSql(\$db, \$plannedStep['step']['sql'])");
+$migCommitAt       = strpos($migSeedOnly, '$db->commit()');
+assertTrue(is_int($migLockAt) && is_int($migSeedTxAt) && $migLockAt < $migSeedTxAt, 'F1: migrationDbRunSeedSql() takes the upgrade lock BEFORE loading the starting data');
+assertTrue(is_int($migReplayStepAt) && is_int($migCommitAt) && $migSeedTxAt < $migReplayStepAt && $migReplayStepAt < $migCommitAt, 'F1: the repeated upgrade data steps run inside the same transaction, before its only commit');
+assertFalse(str_contains($migRunnerSource, 'function migrationDbReplayDataSteps('), 'F1: the separate after-the-commit repeat is gone');
+assertFalse(str_contains((string) file_get_contents(dirname(CUERCODE_FUNCTIONS_DIR) . DIRECTORY_SEPARATOR . 'public_html' . DIRECTORY_SEPARATOR . 'install' . DIRECTORY_SEPARATOR . 'index.php'), 'migrationDbReplayDataSteps('), 'F1: the installer no longer repeats the upgrade steps separately');
 assertTrue(strlen(CUERCODE_INSTALLER_LOCK_NAME) <= 23, 'installer lock prefix fits the 64-character MySQL lock-name limit (23 + 1 + 30 + 1 + 8 = 63)');
 assertTrue(CUERCODE_INSTALLER_LOCK_NAME !== CUERCODE_MIGRATION_LOCK_NAME, 'installer lock and upgrade lock have different names, so one connection can hold both');
 

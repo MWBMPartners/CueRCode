@@ -54,10 +54,11 @@
  *   - migrationStatus(mysqli $db): array
  *   - migrationExitCodeForResult(string $mode, array $result): int
  *   - migrationFormatReport(string $mode, array $result): array (lines)
- *   - migrationDbReplayDataSteps(mysqli $db, string $migrationsDir): array -
- *     the web installer only, straight after it loads seed_data.sql (task 7n
- *     Phase 2: repeats the data steps of upgrades that ran BEFORE the starting
- *     data existed; see migrationReplayPlan())
+ *   - migrationDbRunSeedSql(mysqli $db, string $seedSql, string $replayDir): array -
+ *     the web installer only: loads seed_data.sql and, in the SAME transaction
+ *     and under the upgrade lock, repeats the data steps of upgrades that ran
+ *     BEFORE the starting data existed (task 7n Phase 2, made all-or-nothing
+ *     by review finding F1 of the Phase 2 review; see migrationReplayPlan())
  *   - the command line: _includes/cli/migrate.php (--status/--dry-run/--apply)
  *
  * SEED-PROTECTION RULE (review finding F1, made precise in task 7n Phase 2):
@@ -905,9 +906,12 @@ function migrationDecideStep(array $step, callable $existsChecker): string
  * ever run those steps again: the site would silently end up different from
  * a normal install (no Enterprise plan, old placeholder prices).
  *
- * THE FIX: straight after the installer loads seed_data.sql, it runs the
+ * THE FIX: when the installer loads seed_data.sql, it runs the
  * insert_if_missing and update_if_unchanged steps of every migration already
- * recorded, in number order. Every such step is written to be safe to run
+ * recorded, in number order, in the SAME transaction and under the upgrade
+ * lock (migrationDbRunSeedSql(); review finding F1 of the Phase 2 review made
+ * this all-or-nothing, so a failed repeat can never leave the starting data
+ * committed without it). Every such step is written to be safe to run
  * again (an insert skips a row that exists; an update only matches a row
  * still at its old seeded value), so the result is exactly what a normal
  * install (seed first, then upgrades) gives, and nothing the owner changed
@@ -2061,14 +2065,23 @@ function migrationDbSeedMarkerPresent(\mysqli $db): array
  * checked first and the load is refused unless every table is InnoDB. A
  * missing table, or a view, is refused too (the load would fail anyway).
  *
- * @param \mysqli $db Connection with the site database selected
+ * 🔁 Review finding F1 (7n Phase 2 review, 2026-11-27): the same load now
+ *    also repeats the data steps of upgrades that ran before the starting
+ *    data existed, inside the SAME transaction, so the tables those steps
+ *    write to are passed in and checked here as well.
+ *
+ * @param \mysqli            $db     Connection with the site database selected
+ * @param array<int, string> $tables The tables to check (empty = migrationSeedTables())
  * @return array{ok: bool, problems: array<int, string>, error: string}
  *         ok = false with error: the check itself failed; problems: one plain
  *         sentence per table that is not usable (safe to show)
  */
-function migrationDbSeedTablesTransactional(\mysqli $db): array
+function migrationDbSeedTablesTransactional(\mysqli $db, array $tables = []): array
 {
-    $tables       = migrationSeedTables();
+    if ($tables === []) {
+        $tables = migrationSeedTables();
+    }
+    $tables       = array_values(array_unique($tables));
     $placeholders = implode(', ', array_fill(0, count($tables), '?'));
     $found        = migrationDbFetchAll(
         $db,
@@ -2144,38 +2157,193 @@ function migrationDbSeedTablesTransactional(\mysqli $db): array
  * transaction is rolled back here (and MySQL rolls it back anyway if the
  * connection drops).
  *
- * @param \mysqli $db      Connection with the site database selected
- * @param string  $seedSql Text of seed_data.sql
- * @return array{ok: bool, error: string, refusal: string}
+ * 🔁 THE REPEAT (review finding F1 of the 7n Phase 2 review, 2026-11-27).
+ *    When $replayDir is given (the web installer always gives it), the data
+ *    steps of every upgrade ALREADY recorded in tblSchemaMigrations are run
+ *    again straight after the starting data, INSIDE THE SAME TRANSACTION and
+ *    under the upgrade lock (see migrationReplayPlan() for why: someone may
+ *    have run `migrate.php --apply` before the installer, when those steps
+ *    found no plans to work on). Before this fix the repeat ran separately,
+ *    after the starting data had already been committed with its completion
+ *    marker: if the repeat failed (for example "busy" because migrate.php was
+ *    running), the reload the page asked for saw the starting data as
+ *    complete, never repeated anything, and locked the installer as
+ *    "successful" - with no Enterprise plan and the old placeholder prices.
+ *    Now the two land together or not at all:
+ *      - the upgrade lock is taken FIRST; if another upgrade holds it, nothing
+ *        is loaded (a plain refusal), so a reload starts from "no data";
+ *      - a failure of any repeated step rolls the starting data back too, so
+ *        a reload loads both again.
+ *    Every repeated step is an INSERT or UPDATE (never a structure change, so
+ *    nothing commits on its own), and the tables those steps write to are
+ *    checked to be InnoDB as well, before anything is written. The steps run
+ *    with the connection's own SQL mode and character set (seed_data.sql
+ *    changes both for itself; they are put back first).
+ *
+ * @param \mysqli $db        Connection with the site database selected
+ * @param string  $seedSql   Text of seed_data.sql
+ * @param string  $replayDir Migrations folder whose applied data steps are
+ *                           repeated in the same transaction ('' = none; the
+ *                           tests use this to load the starting data alone)
+ * @return array{ok: bool, error: string, refusal: string, stepsRun: int, migrations: array<int, string>, skipped: array<int, string>}
  *         error holds full MySQL detail - log it, never show it to a visitor;
  *         refusal is plain English, safe to show, and is set only when the
- *         load was refused before it started (nothing was written)
+ *         load was refused before it started (nothing was written);
+ *         stepsRun / migrations: the repeated data steps and the upgrades they
+ *         belong to; skipped: recorded upgrades whose files are missing or
+ *         changed (not repeated)
  */
-function migrationDbRunSeedSql(\mysqli $db, string $seedSql): array
+function migrationDbRunSeedSql(\mysqli $db, string $seedSql, string $replayDir = ''): array
 {
-    // 🧱 Codex round 2 finding R1-2: only load into tables that can undo it.
-    $engineCheck = migrationDbSeedTablesTransactional($db);
+    $outcome = ['ok' => false, 'error' => '', 'refusal' => '', 'stepsRun' => 0, 'migrations' => [], 'skipped' => []];
 
-    if ($engineCheck['ok'] !== true) {
-        return [
-            'ok'      => false,
-            'error'   => 'seed_data.sql was not run: ' . $engineCheck['error'],
-            'refusal' => 'The installer could not check the starting-data tables, so it did not load anything.',
-        ];
+    // 🔒 F1: one upgrade at a time - taken BEFORE anything is written.
+    $replaySteps = [];
+    $lockHeld    = false;
+    if ($replayDir !== '') {
+        $lockState = migrationDbAcquireLock($db);
+        if ($lockState === 'busy') {
+            $outcome['error']   = 'seed_data.sql was not run: another database upgrade holds the upgrade lock.';
+            $outcome['refusal'] = 'A database upgrade is running against this database at this moment, so the starting data '
+                . 'was not loaded and nothing was changed. Wait a minute, then reload this page.';
+            return $outcome;
+        }
+        if ($lockState !== 'got') {
+            $outcome['error']   = 'seed_data.sql was not run: the upgrade lock could not be taken (GET_LOCK returned an error).';
+            $outcome['refusal'] = 'The installer could not make sure no database upgrade is running, so it did not load anything.';
+            return $outcome;
+        }
+        $lockHeld = true;
     }
 
-    if ($engineCheck['problems'] !== []) {
-        return [
-            'ok'      => false,
-            'error'   => 'seed_data.sql was not run: ' . implode(' ', $engineCheck['problems']),
-            'refusal' => 'The starting data was not loaded, and nothing was written, because it can only be loaded '
-                . 'all-or-nothing into ordinary InnoDB tables: ' . implode(' ', $engineCheck['problems']),
-        ];
-    }
+    try {
+        // 🔁 Which upgrade data steps must be repeated (none on a normal
+        //    fresh install, where nothing has been recorded yet).
+        $tablesToCheck = migrationSeedTables();
+        if ($replayDir !== '') {
+            $planned = migrationDbReplayPlanForDatabase($db, $replayDir);
+            if ($planned['ok'] !== true) {
+                $outcome['error']   = 'seed_data.sql was not run: ' . $planned['error'];
+                $outcome['refusal'] = 'The installer could not read which database upgrades have already been applied, so it did not load anything.';
+                return $outcome;
+            }
+            $replaySteps          = $planned['steps'];
+            $outcome['skipped']   = $planned['skipped'];
+            foreach ($replaySteps as $plannedStep) {
+                $tablesToCheck[] = (string) $plannedStep['step']['table'];
+            }
+        }
 
-    // 🧱 Wrapped in one transaction. PHP_EOL before COMMIT matters: the file
-    //    ends in "--" comment lines, and a comment runs to the end of its line.
-    $wrappedSql = 'START TRANSACTION;' . PHP_EOL . $seedSql . PHP_EOL . 'COMMIT;' . PHP_EOL;
+        // 🧱 Codex round 2 finding R1-2: only load into tables that can undo it.
+        $engineCheck = migrationDbSeedTablesTransactional($db, $tablesToCheck);
+
+        if ($engineCheck['ok'] !== true) {
+            $outcome['error']   = 'seed_data.sql was not run: ' . $engineCheck['error'];
+            $outcome['refusal'] = 'The installer could not check the starting-data tables, so it did not load anything.';
+            return $outcome;
+        }
+
+        if ($engineCheck['problems'] !== []) {
+            $outcome['error']   = 'seed_data.sql was not run: ' . implode(' ', $engineCheck['problems']);
+            $outcome['refusal'] = 'The starting data was not loaded, and nothing was written, because it can only be loaded '
+                . 'all-or-nothing into ordinary InnoDB tables: ' . implode(' ', $engineCheck['problems']);
+            return $outcome;
+        }
+
+        // 💾 The connection's own settings, put back before the repeated
+        //    steps run (seed_data.sql sets its own SQL mode and character set).
+        $savedSettings = migrationDbFetchAll($db, 'SELECT @@SESSION.sql_mode AS `sqlMode`');
+        if ($savedSettings['ok'] !== true || $savedSettings['rows'] === []) {
+            $outcome['error']   = 'seed_data.sql was not run: could not read the connection settings (' . $savedSettings['error'] . ')';
+            $outcome['refusal'] = 'The installer could not read its own database connection settings, so it did not load anything.';
+            return $outcome;
+        }
+        $savedSqlMode = (string) $savedSettings['rows'][0]['sqlMode'];
+        $savedCharset = $db->character_set_name();
+
+        $error = migrationDbRunSeedTransaction($db, $seedSql);
+
+        if ($error === '') {
+            // ↩️ The connection's own SQL mode and character set again.
+            $restoredMode = migrationDbExecute($db, 'SET SESSION sql_mode = ?', 's', [$savedSqlMode]);
+            if ($restoredMode['ok'] === true) {
+                $restoredMode['stmt']->close();
+            } else {
+                $error = 'could not restore the SQL mode (' . $restoredMode['error'] . ')';
+            }
+            if ($error === '' && !@$db->set_charset($savedCharset)) {
+                $error = 'could not restore the character set (' . $db->error . ')';
+            }
+        }
+
+        // 🔁 The repeated upgrade data steps, still inside the transaction.
+        if ($error === '') {
+            foreach ($replaySteps as $plannedStep) {
+                $ran = migrationDbRunStepSql($db, $plannedStep['step']['sql']);
+                if ($ran['ok'] !== true) {
+                    $error = 'repeating ' . $plannedStep['key'] . ' step ' . $plannedStep['position'] . ' ('
+                        . migrationDescribeStep($plannedStep['step']) . ') failed: ' . $ran['error'];
+                    break;
+                }
+                $outcome['stepsRun']++;
+                if (!in_array($plannedStep['key'], $outcome['migrations'], true)) {
+                    $outcome['migrations'][] = $plannedStep['key'];
+                }
+            }
+        }
+
+        if ($error === '') {
+            try {
+                if (!$db->commit()) {
+                    $error = 'the commit failed: ' . $db->error;
+                }
+            } catch (\mysqli_sql_exception $commitError) {
+                $error = 'the commit failed: ' . $commitError->getMessage();
+            }
+        }
+
+        if ($error !== '') {
+            // ↩️ Undo the starting data AND every repeated step. A failure
+            //    here is reported too, but MySQL also discards an uncommitted
+            //    transaction when the connection closes.
+            try {
+                if (!$db->rollback()) {
+                    $error = $error . ' (and the rollback failed: ' . $db->error . ')';
+                }
+            } catch (\mysqli_sql_exception $rollbackError) {
+                $error = $error . ' (and the rollback failed: ' . $rollbackError->getMessage() . ')';
+            }
+
+            $outcome['stepsRun']   = 0;
+            $outcome['migrations'] = [];
+            $outcome['error']      = 'seed_data.sql failed and was rolled back: ' . $error;
+            return $outcome;
+        }
+
+        $outcome['ok'] = true;
+        return $outcome;
+    } finally {
+        if ($lockHeld) {
+            migrationDbReleaseLock($db);
+        }
+    }
+}
+
+/**
+ * 🌱 Open a transaction and run seed_data.sql inside it, leaving the
+ *    transaction OPEN (the caller commits or rolls back). Used only by
+ *    migrationDbRunSeedSql().
+ *
+ * @param \mysqli $db      Connection with the site database selected
+ * @param string  $seedSql Text of seed_data.sql
+ * @return string '' when every statement ran, otherwise the full MySQL error
+ *                (log it, never show it to a visitor)
+ */
+function migrationDbRunSeedTransaction(\mysqli $db, string $seedSql): string
+{
+    // 🧱 PHP_EOL after the file matters: it ends in "--" comment lines, and a
+    //    comment runs to the end of its line.
+    $wrappedSql = 'START TRANSACTION;' . PHP_EOL . $seedSql . PHP_EOL;
     $error      = '';
 
     try {
@@ -2212,22 +2380,8 @@ function migrationDbRunSeedSql(\mysqli $db, string $seedSql): array
         }
     }
 
-    if ($error !== '') {
-        // ↩️ Undo whatever part of the file did run. A failure here is
-        //    reported too, but MySQL also discards an uncommitted transaction
-        //    when the connection closes, so nothing half-loaded can survive.
-        try {
-            if (!$db->rollback()) {
-                $error = $error . ' (and the rollback failed: ' . $db->error . ')';
-            }
-        } catch (\mysqli_sql_exception $rollbackError) {
-            $error = $error . ' (and the rollback failed: ' . $rollbackError->getMessage() . ')';
-        }
-
-        return ['ok' => false, 'error' => 'seed_data.sql failed and was rolled back: ' . $error, 'refusal' => ''];
-    }
-
-    return ['ok' => true, 'error' => '', 'refusal' => ''];
+    // 🧷 The caller rolls back on any error (the transaction is left open).
+    return $error;
 }
 
 // ==============================================================================
@@ -3123,19 +3277,13 @@ function migrationStatus(\mysqli $db): array
 }
 
 /**
- * 🔁 Run again the data steps of every already-applied migration, straight
- *    after the web installer has loaded seed_data.sql (task 7n Phase 2).
+ * 🔁 Which data steps of the already-applied migrations the web installer
+ *    must repeat when it loads seed_data.sql (task 7n Phase 2; see
+ *    migrationReplayPlan() for why). Reads only - nothing is run here.
  *
- * See migrationReplayPlan() for why. The installer calls this ONLY when it
- * has just loaded seed_data.sql in the same request; on a normal fresh
- * install no migration has been recorded yet, so there is nothing to run
- * and this returns at once.
- *
- * Holds the same upgrade lock as migrationRun(), so it never overlaps an
- * upgrade. Each step goes through migrationDbRunStepSql() (a prepared
- * statement with no parameters), exactly like a normal upgrade step. On the
- * first failure it stops; every step is safe to repeat, so reloading the
- * installer page tries again safely.
+ * The caller (migrationDbRunSeedSql()) holds the upgrade lock, so the list
+ * cannot change before the steps run. On a normal fresh install nothing has
+ * been recorded yet, so the list is empty.
  *
  * ⚠️ 'error' may contain raw database error text. Callers that show anything
  *    to the public (the web installer) must log it and show a plain message
@@ -3143,30 +3291,11 @@ function migrationStatus(\mysqli $db): array
  *
  * @param \mysqli $db            Connection with the site database selected
  * @param string  $migrationsDir Folder of migration files
- * @return array{ok: bool, status: string, stepsRun: int, migrations: array<int, string>, skipped: array<int, string>, error: string}
- *         status: 'ok', 'busy' or 'failed'; migrations: keys whose steps ran
+ * @return array{ok: bool, steps: array<int, array{key: string, position: int, step: array}>, skipped: array<int, string>, error: string}
  */
-function migrationDbReplayDataSteps(\mysqli $db, string $migrationsDir): array
+function migrationDbReplayPlanForDatabase(\mysqli $db, string $migrationsDir): array
 {
-    $result = [
-        'ok'         => false,
-        'status'     => 'failed',
-        'stepsRun'   => 0,
-        'migrations' => [],
-        'skipped'    => [],
-        'error'      => '',
-    ];
-
-    $lockResult = migrationDbAcquireLock($db);
-    if ($lockResult === 'busy') {
-        $result['status'] = 'busy';
-        $result['error']  = 'another upgrade is running';
-        return $result;
-    }
-    if ($lockResult !== 'got') {
-        $result['error'] = 'Could not take the upgrade lock.';
-        return $result;
-    }
+    $result = ['ok' => false, 'steps' => [], 'skipped' => [], 'error' => ''];
 
     try {
         $loaded = migrationLoadAll($migrationsDir);
@@ -3177,8 +3306,7 @@ function migrationDbReplayDataSteps(\mysqli $db, string $migrationsDir): array
 
         // 🈳 Nothing recorded yet (the normal fresh install): nothing to repeat.
         if (!migrationDbLedgerExists($db)) {
-            $result['ok']     = true;
-            $result['status'] = 'ok';
+            $result['ok'] = true;
             return $result;
         }
 
@@ -3194,31 +3322,12 @@ function migrationDbReplayDataSteps(\mysqli $db, string $migrationsDir): array
         }
 
         $plan              = migrationReplayPlan($loaded['migrations'], $appliedChecksums);
+        $result['steps']   = $plan['steps'];
         $result['skipped'] = $plan['skipped'];
-
-        foreach ($plan['steps'] as $planned) {
-            $ran = migrationDbRunStepSql($db, $planned['step']['sql']);
-
-            if ($ran['ok'] !== true) {
-                $result['error'] = $planned['key'] . ' step ' . $planned['position'] . ' ('
-                    . migrationDescribeStep($planned['step']) . ') failed: ' . $ran['error'];
-                return $result;
-            }
-
-            $result['stepsRun']++;
-            if (!in_array($planned['key'], $result['migrations'], true)) {
-                $result['migrations'][] = $planned['key'];
-            }
-        }
-
-        $result['ok']     = true;
-        $result['status'] = 'ok';
+        $result['ok']      = true;
     } catch (\Throwable $unexpected) {
-        $result['ok']     = false;
-        $result['status'] = 'failed';
-        $result['error']  = 'Stopped by an unexpected error (' . get_class($unexpected) . ': ' . $unexpected->getMessage() . ')';
-    } finally {
-        migrationDbReleaseLock($db);
+        $result['ok']    = false;
+        $result['error'] = 'Stopped by an unexpected error (' . get_class($unexpected) . ': ' . $unexpected->getMessage() . ')';
     }
 
     return $result;

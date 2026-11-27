@@ -849,12 +849,20 @@ tables that already existed earlier in the same file. That meant:
    it. So `migrate.php --apply` on a brand-new database still leaves those
    tables empty. **The other half:** in that order the upgrades' starting-data
    steps found no plans to work on (for example `0004` copies Business into
-   Enterprise), and they are already recorded as applied. So straight after
-   the web installer loads `seed_data.sql` it runs the `insert_if_missing` and
-   `update_if_unchanged` steps of every migration already recorded, once more
-   (`migrationDbReplayDataSteps()`), which gives exactly the result of a
-   normal install. Write every data step so that running it again is
-   harmless - the rules below already require that.
+   Enterprise), and they are already recorded as applied. So when the web
+   installer loads `seed_data.sql` it also runs the `insert_if_missing` and
+   `update_if_unchanged` steps of every migration already recorded, once more,
+   which gives exactly the result of a normal install. Since finding F1 of the
+   Phase 2 review (2026-11-27) both happen in ONE transaction, under the
+   upgrade lock (`migrationDbRunSeedSql($db, $seedSql, $migrationsDir)`): if
+   another upgrade is running nothing is loaded, and if a repeated step fails
+   the starting data is rolled back too, so the reload the installer asks for
+   loads both again (before, a failed repeat left the starting data committed,
+   the reload skipped the repeat and the installer locked itself without the
+   Enterprise plan). Data steps must therefore stay plain `INSERT`/`UPDATE`
+   on InnoDB tables (checked before anything is written). Write every data
+   step so that running it again is harmless - the rules below already
+   require that.
 3. **Every later change is a migration file**, one file per change, at
    `_includes/sql/migrations/NNNN_short_name.php` (four digits, then an
    underscore, then lower-case words - e.g.

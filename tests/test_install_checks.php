@@ -196,7 +196,7 @@ $posLock      = strpos($installerSource, 'migrationDbAcquireInstallerLock($mysql
 $posRecheck   = strpos($installerSource, '} elseif (installIsLocked($lockPaths)) {');
 $posInstall   = strpos($installerSource, 'migrationDbRunInstallSql($mysqli, $installSQL)');
 $posSeedState = strpos($installerSource, '$seedState = migrationDbSeedDataState($mysqli);');
-$posSeedRun   = strpos($installerSource, 'migrationDbRunSeedSql($mysqli, $seedSQL)');
+$posSeedRun   = strpos($installerSource, 'migrationDbRunSeedSql($mysqli, $seedSQL, migrationDefaultDirectory())');
 $posFinal     = strpos($installerSource, '$finalSeedState = migrationDbSeedDataState($mysqli);');
 $posLockFile  = strpos($installerSource, '@file_put_contents($lockFile, $lockContent)');
 assertTrue($posLock !== false && $posInstall !== false && $posLock < $posInstall, 'C1-2: the installer takes its database lock before creating any table');

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixes - Independent review of plans, prices and currencies (task 7n Phase 2 review, 2026-11-27, #31)
+
+Each finding was first reproduced (a test failing on the old code), then fixed. Real-database checks ran on MySQL 8.0.36 and MariaDB 10.6.
+
+- **Installer: the starting data and the repeat of earlier upgrades now land together (F1).** If `migrate.php --apply` had been run before the web installer, the installer loads the starting data and repeats the upgrades' starting-data parts (the Enterprise plan, the draft prices) in one transaction, under the upgrade lock. Before, when the repeat failed (for example because an upgrade was running at that moment), the reload the page asked for skipped it and the installer locked itself as "successful" without Enterprise and with the old prices. Now a busy upgrade means nothing is loaded, and a failed repeat undoes the starting data too, so the reload loads everything.
+
 ### Changed - A deploy now waits for the full test suite (#155, decision 0025)
 
 Nothing is uploaded unless the test suite passes on PHP 8.4 and 8.5 (8.6 is report-only). The suite is run by one shared script, `tools/ci/run-tests.sh`. Not yet seen running on GitHub.
