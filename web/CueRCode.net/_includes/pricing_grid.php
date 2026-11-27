@@ -17,6 +17,9 @@
  *   $pricingVatNote         string from pricingVatNote() ('' = no wording)
  *   $pricingSiteEmail       the site_email setting (for "Contact us")
  *   $pricingPreviewCurrency '' on the public page; a currency code on the preview
+ *   $pricingPromiseDefaults ['mode' => ..., 'months' => ...] - the site-wide price
+ *                           promise settings (decision 0020; optional: when it is
+ *                           not set, only a plan's own promise is shown)
  *
  * Everything an admin typed (names, descriptions, contact addresses) is
  * escaped here: it is shown as plain text only.
@@ -46,6 +49,18 @@ if (basename($scriptFilename) === basename(__FILE__)) {
     exit('Access denied.');
 }
 
+// 🤝 Decision 0020 (#159): the site-wide price promise, for plans that set none.
+$pricingPromiseMode = null;
+$pricingPromiseMonths = null;
+if (isset($pricingPromiseDefaults) && is_array($pricingPromiseDefaults)) {
+    if (isset($pricingPromiseDefaults['mode'])) {
+        $pricingPromiseMode = $pricingPromiseDefaults['mode'];
+    }
+    if (isset($pricingPromiseDefaults['months'])) {
+        $pricingPromiseMonths = $pricingPromiseDefaults['months'];
+    }
+}
+
 // 🧱 Four cards sit in one row on wide screens; otherwise up to three.
 $pricingRowClass = 'row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 justify-content-center';
 if (count($pricingDisplayPlans) === 4) {
@@ -58,10 +73,12 @@ if (count($pricingDisplayPlans) === 4) {
             <?php if ($pricingShowPrices) { ?>
             <div class="row justify-content-center">
                 <div class="col-lg-8 text-center mb-4">
+                    <?php /* 🤝 Decision 0020 (#159): no site-wide promise here any more -
+                         each card below says what its own plan promises. */ ?>
                     <p class="text-body-secondary small mb-0">
                         <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
-                        Prices shown are introductory pricing and may change - we will always
-                        honour your price for any subscription already in progress.
+                        Prices shown are introductory pricing and may change. Each plan says
+                        how long you keep the price you sign up at.
                     </p>
                     <?php if ($pricingVatNote !== '') { ?>
                     <p class="text-body-secondary small mt-2 mb-0" id="pricing-vat-note">
@@ -113,10 +130,29 @@ if (count($pricingDisplayPlans) === 4) {
                             <?php } else { ?>
                             <p class="fs-4 fw-bold mb-0"><?php echo htmlspecialchars($pricingBlock['headline'], ENT_QUOTES, 'UTF-8'); ?></p>
                             <?php } ?>
+                            <?php
+                                // 🤝 Decision 0020 (#159): this plan's own price
+                                // promise, only beside a real price figure (never
+                                // on a free card, nor when prices are hidden).
+                                $pricingPromise = '';
+                                if ($pricingShowPrices && $pricingBlock['isFigure'] && !$pricingPlan['isZeroPrice']) {
+                                    $pricingPromise = pricingPromiseText($pricingPlan['pricePromiseMode'], $pricingPlan['pricePromiseMonths'], $pricingPromiseMode, $pricingPromiseMonths);
+                                }
+                                $pricingSublineClass = 'text-body-secondary small mb-3';
+                                if ($pricingPromise !== '') {
+                                    $pricingSublineClass = 'text-body-secondary small mb-1';
+                                }
+                            ?>
                             <?php if ($pricingBlock['subline'] !== '') { ?>
-                            <p class="text-body-secondary small mb-3"><?php echo htmlspecialchars($pricingBlock['subline'], ENT_QUOTES, 'UTF-8'); ?></p>
-                            <?php } else { ?>
+                            <p class="<?php echo htmlspecialchars($pricingSublineClass, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($pricingBlock['subline'], ENT_QUOTES, 'UTF-8'); ?></p>
+                            <?php } elseif ($pricingPromise === '') { ?>
                             <div class="mb-3"></div>
+                            <?php } ?>
+                            <?php if ($pricingPromise !== '') { ?>
+                            <p class="text-body-secondary small mb-3">
+                                <i class="fa-solid fa-handshake me-1" aria-hidden="true"></i>
+                                <?php echo htmlspecialchars($pricingPromise, ENT_QUOTES, 'UTF-8'); ?>
+                            </p>
                             <?php } ?>
 
                             <?php /* ================================================

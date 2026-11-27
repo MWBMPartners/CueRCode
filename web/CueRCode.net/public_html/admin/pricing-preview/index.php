@@ -94,6 +94,14 @@ $pricingVatNote         = pricingVatNote($pricingVatMode);
 $pricingSiteEmail       = getConfig('site_email', 'hello@cuercode.net');
 $pricingPreviewCurrency = $previewCurrency;
 
+// 🤝 Decision 0020 (#159): the site-wide price promise, for the plans that do
+//    not set their own (each card states its plan's promise).
+$pricingPromiseDefaults = ['mode' => null, 'months' => null];
+if (function_exists('getConfig')) {
+    $pricingPromiseDefaults['mode']   = getConfig('billing_price_promise_default_mode', null);
+    $pricingPromiseDefaults['months'] = getConfig('billing_price_promise_default_months', null);
+}
+
 // ==============================================================================
 // 📄 Page variables
 // ==============================================================================

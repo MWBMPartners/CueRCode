@@ -180,7 +180,7 @@ foreach ([true, 1, '1', null] as $ppOn) {
 /**
  * 🖨️ Render the shared cards exactly as the pages include them.
  */
-function ppRenderGrid(array $pricingDisplayPlans, bool $pricingShowPrices, string $pricingPreviewCurrency = '', string $pricingSiteEmail = 'team@example.com'): string
+function ppRenderGrid(array $pricingDisplayPlans, bool $pricingShowPrices, string $pricingPreviewCurrency = '', string $pricingSiteEmail = 'team@example.com', array $pricingPromiseDefaults = ['mode' => null, 'months' => null]): string
 {
     $pricingVatNote = 'Prices include VAT';
     ob_start();
@@ -272,6 +272,33 @@ $ppSwitched = pricingApplyPriceList($ppStale, [$ppListPrice([]), $ppListPrice(['
 assertEquals(['29.00', '', 'USD'], [$ppSwitched['priceMonthly'], $ppSwitched['priceYearly'], $ppSwitched['currency']], 'F6: with a USD monthly price the card switches to USD, and the GBP-only yearly figure is not mixed in');
 $ppFreeRetired = pricingDisplayRowsFromPlans([pricingApplyPriceList($ppPlanRow(['planKey' => CUERCODE_PLAN_KEY_FREE]), [$ppListPrice(['isActive' => 0, 'amount' => '1.00'])], 'GBP', $ppListNow)])[0];
 assertTrue($ppFreeRetired['isZeroPrice'], 'F6: the free plan whose only price was retired is Free again');
+
+// ==============================================================================
+// 🤝 Section 7: each card states its OWN price promise (decision 0020, #159)
+// ==============================================================================
+assertEquals('Your price stays the same for as long as you stay subscribed.', pricingPromiseText('while_subscribed', null, 'none', 12), '#159: a plan\'s own promise wins over the site-wide one');
+assertEquals('Your price stays the same for the first 6 months of your subscription.', pricingPromiseText('fixed_months', 6, 'while_subscribed', 12), '#159: a fixed number of months, from the plan');
+assertEquals('Your price stays the same for the first month of your subscription.', pricingPromiseText('fixed_months', '1', 'while_subscribed', 12), '#159: one month reads naturally');
+assertEquals('This price can change; a change would apply from your next payment.', pricingPromiseText('none', null, 'while_subscribed', 12), '#159: no promise is said plainly');
+assertEquals('Your price stays the same for the first 12 months of your subscription.', pricingPromiseText(null, null, 'fixed_months', '12'), '#159: a plan that sets nothing follows the site-wide promise and months');
+assertEquals('Your price stays the same for the first 24 months of your subscription.', pricingPromiseText('fixed_months', 24, 'fixed_months', 12), '#159: the plan\'s own months win');
+foreach ([[null, null, null, null], ['fixed_months', 0, 'none', 12], ['fixed_months', 'x', 'none', 12], [null, null, 'fixed_months', 121], ['made_up', null, 'also_made_up', 12]] as $ppBadPromise) {
+    assertEquals('', pricingPromiseText($ppBadPromise[0], $ppBadPromise[1], $ppBadPromise[2], $ppBadPromise[3]), '#159: an unknown or unreadable promise promises NOTHING (never more than is set): ' . json_encode($ppBadPromise));
+}
+$ppPromisePlans = pricingDisplayRowsFromPlans([
+    $ppPlanRow(['planID' => 1, 'planKey' => CUERCODE_PLAN_KEY_FREE, 'planName' => 'Starter']),
+    $ppPlanRow(['planID' => 2, 'planName' => 'Six', 'priceMonthly' => '3.50', 'pricePromiseMode' => 'fixed_months', 'pricePromiseMonths' => 6]),
+    $ppPlanRow(['planID' => 3, 'planName' => 'Loose', 'priceMonthly' => '4.50', 'pricePromiseMode' => 'none']),
+    $ppPlanRow(['planID' => 4, 'planName' => 'Default', 'priceMonthly' => '5.50']),
+    $ppPlanRow(['planID' => 5, 'planKey' => 'no_price_yet', 'planName' => 'Later']),
+]);
+$ppPromiseShown = ppRenderGrid($ppPromisePlans, true, '', 'team@example.com', ['mode' => 'while_subscribed', 'months' => 12]);
+assertFalse(str_contains($ppPromiseShown, 'always'), '#159: the old fixed sentence ("we will always honour your price") is gone');
+assertContains('for the first 6 months of your subscription', $ppPromiseShown, '#159: the six-month plan says six months');
+assertContains('This price can change', $ppPromiseShown, '#159: the plan with no promise says so');
+assertEquals(1, substr_count($ppPromiseShown, 'for as long as you stay subscribed'), '#159: only the plan using the site-wide promise says "for as long as you stay subscribed" (not the free plan, not the plan with no price yet)');
+assertFalse(str_contains(ppRenderGrid($ppPromisePlans, false, '', 'team@example.com', ['mode' => 'while_subscribed', 'months' => 12]), 'Your price stays'), '#159: with prices hidden there is no price to keep, so no promise is shown');
+assertEquals(1, substr_count(ppRenderGrid($ppPromisePlans, true), 'Your price stays the same for the first 6 months'), '#159: a page that passes no site-wide promise still shows a plan\'s own one');
 
 // 💱 Price points in several currencies: only the plan's own currency is used.
 $ppMixed = $ppDisplay(['priceMonthly' => '3.50', 'pricePoints' => [

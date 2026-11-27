@@ -537,6 +537,75 @@ function pricingIsNoPaymentPlan(string $planKey): bool
 }
 
 // ==============================================================================
+// 🤝 pricingPromiseText() - each plan's own price promise (decision 0020, #159)
+// ==============================================================================
+
+/**
+ * 🤝 The sentence a plan's card shows about how long a customer keeps the price
+ *    they sign up at. PURE.
+ *
+ * Owner decision 0020 (#159, 2026-11-26): the page used to say, for every
+ * plan, "we will always honour your price for any subscription already in
+ * progress", although each plan can promise a set number of months, or
+ * nothing. Each card now says what that plan promises, so the page never
+ * promises more than is configured:
+ *   - the plan's own promise (tblSubscriptionPlans.pricePromiseMode / Months),
+ *     or, when it sets none, the site-wide one (billing_price_promise_default_mode
+ *     / _months);
+ *   - anything that is not one of the three known choices, or a number of
+ *     months outside 1 to 120, promises NOTHING ('' - no sentence at all).
+ *
+ * @param mixed $planMode      The plan's pricePromiseMode (null = use the site-wide one)
+ * @param mixed $planMonths    The plan's pricePromiseMonths
+ * @param mixed $defaultMode   billing_price_promise_default_mode
+ * @param mixed $defaultMonths billing_price_promise_default_months
+ * @return string Plain English, or '' when nothing may be promised
+ */
+function pricingPromiseText(mixed $planMode, mixed $planMonths, mixed $defaultMode, mixed $defaultMonths): string
+{
+    $known = ['while_subscribed', 'fixed_months', 'none'];
+
+    $mode = '';
+    $months = null;
+    if (is_string($planMode) && $planMode !== '') {
+        $mode = $planMode;
+        $months = $planMonths;
+    } elseif (is_string($defaultMode)) {
+        $mode = $defaultMode;
+        $months = $defaultMonths;
+    }
+
+    if (!in_array($mode, $known, true)) {
+        return '';
+    }
+
+    if ($mode === 'while_subscribed') {
+        return 'Your price stays the same for as long as you stay subscribed.';
+    }
+
+    if ($mode === 'none') {
+        return 'This price can change; a change would apply from your next payment.';
+    }
+
+    // 🔢 fixed_months: a whole number from 1 to 120 (the editor's limits).
+    $count = 0;
+    if (is_int($months)) {
+        $count = $months;
+    } elseif (is_string($months) && preg_match('/^[1-9][0-9]{0,2}$/D', trim($months)) === 1) {
+        $count = (int) trim($months);
+    }
+    if ($count < 1 || $count > 120) {
+        return '';
+    }
+
+    if ($count === 1) {
+        return 'Your price stays the same for the first month of your subscription.';
+    }
+
+    return 'Your price stays the same for the first ' . $count . ' months of your subscription.';
+}
+
+// ==============================================================================
 // 👁️ pricingShowPrices() - the pricing_show_prices setting
 // ==============================================================================
 
@@ -1352,6 +1421,8 @@ function pricingFindPricePointByInterval(array $pricePoints, string $billingInte
  *       'description'           => string,
  *       'ctaMode'               => 'checkout'|'contact',
  *       'contactUrl'            => string|null,
+ *       'pricePromiseMode'      => string|null,  // decision 0020; null = site-wide
+ *       'pricePromiseMonths'    => int|null,
  *       'priceMonthly'          => string,  // decimal text, never a float
  *       'priceMonthlyFormatted' => string,
  *       'priceYearlyFormatted'  => string,
@@ -1468,9 +1539,22 @@ function pricingDisplayRowsFromPlans(array $plans): array
             $contactUrl = (string) $planRow['contactUrl'];
         }
 
+        // 🤝 Decision 0020 (#159): the plan's own price promise (absent before
+        //    database upgrade 0004; null = follow the site-wide setting).
+        $promiseMode = null;
+        if (isset($planRow['pricePromiseMode'])) {
+            $promiseMode = (string) $planRow['pricePromiseMode'];
+        }
+        $promiseMonths = null;
+        if (isset($planRow['pricePromiseMonths'])) {
+            $promiseMonths = (int) $planRow['pricePromiseMonths'];
+        }
+
         $decodedPlans[] = [
             'ctaMode'      => $ctaMode,
             'contactUrl'   => $contactUrl,
+            'pricePromiseMode'   => $promiseMode,
+            'pricePromiseMonths' => $promiseMonths,
             'hasPricePoint' => !empty($planRow['hasPricePoint']),
             'planKey'      => isset($planRow['planKey']) ? (string) $planRow['planKey'] : '',
             'planName'     => isset($planRow['planName']) ? (string) $planRow['planName'] : '',
@@ -1631,6 +1715,8 @@ function pricingDisplayRowsFromPlans(array $plans): array
         $displayRows[] = [
             'ctaMode'               => $decodedPlan['ctaMode'],
             'contactUrl'            => $decodedPlan['contactUrl'],
+            'pricePromiseMode'      => $decodedPlan['pricePromiseMode'],
+            'pricePromiseMonths'    => $decodedPlan['pricePromiseMonths'],
             'planKey'               => $decodedPlan['planKey'],
             'planName'              => $decodedPlan['planName'],
             'description'           => $decodedPlan['description'],
