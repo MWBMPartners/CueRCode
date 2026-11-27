@@ -36,3 +36,7 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0024](0024-bot-check-supports-three-providers-at-first-launch.md) | 2026-11-27 | Owner: the first launch has a human check supporting Turnstile, reCAPTCHA and hCaptcha | Current |
 | [0025](0025-full-test-suite-must-pass-before-deploy.md) | 2026-11-27 | Owner: the full test suite must pass before anything is uploaded | Current |
 | [0026](0026-ask-before-opening-the-alpha-pull-request.md) | 2026-11-27 | Owner: ask before opening the pull request into `alpha` | Current |
+| [0027](0027-qrmy-link-lives-in-the-main-go2my-link.md) | 2026-11-27 | Owner: QRmy.Link links live in the main Go2My.Link install | Current |
+| [0028](0028-launch-free-service-first-if-go2my-link-is-late.md) | 2026-11-27 | Owner: if Go2My.Link is late, the free service launches first | Current (limits 0023) |
+| [0029](0029-link-safety-uses-web-risk-plus-a-second-provider.md) | 2026-11-27 | Owner: link safety uses Web Risk plus a second paid provider | Current (replaces O-3) |
+| [0030](0030-alpha-test-codes-use-alpha-qrmy-link.md) | 2026-11-27 | Owner: alpha test codes use alpha.QRmy.Link | Current |

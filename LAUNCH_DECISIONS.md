@@ -160,6 +160,7 @@ work begins:
       sync-check **fail-open** stance (a third party being unreachable must
       never block an owner's own edit).
       → **Answered 2026-09-25: Google Web Risk first, Google Safe Browsing as fallback, and a pluggable provider list so others (e.g. Microsoft's equivalents) can be added. Planning must confirm Safe Browsing's terms allow a paid service. Privacy-policy disclosure still needed.**
+      → **Changed 2026-11-27 (decision 0029): Safe Browsing is non-commercial only; use Web Risk plus a second paid provider.**
 - [x] **O-4 — Abuse ops**: auto-suspend threshold (default proposed: 3
       distinct-IP reports within 24h), takedown SLA wording, an `abuse@`
       mailbox.
