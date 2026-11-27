@@ -82,16 +82,16 @@ assertEquals(
         'insert_if_missing:tblSettings (setting billing_price_promise_default_months)',
         'insert_if_missing:tblSettings (setting pricing_show_prices)',
         'insert_if_missing:tblSubscriptionPlans (plan enterprise (copy of business))',
+        'update_if_unchanged:tblSubscriptionPlans (pro monthly 4.99 to 6.99 (placeholder only))',
+        'update_if_unchanged:tblSubscriptionPlans (business monthly 19.99 to 24.99 (placeholder only))',
         'insert_if_missing:tblPlanPricePoints (price point pro monthly_gbp)',
         'insert_if_missing:tblPlanPricePoints (price point pro yearly_gbp)',
         'insert_if_missing:tblPlanPricePoints (price point business monthly_gbp)',
         'insert_if_missing:tblPlanPricePoints (price point business yearly_gbp)',
         'insert_if_missing:tblPlanPricePoints (price point enterprise monthly_gbp)',
-        'update_if_unchanged:tblSubscriptionPlans (pro monthly 4.99 to 6.99 (placeholder only))',
-        'update_if_unchanged:tblSubscriptionPlans (business monthly 19.99 to 24.99 (placeholder only))',
     ],
     $ppSummary,
-    'migration 0004: the 29 planned steps, one piece each, structure first, then settings, the plan, its prices and the price moves'
+    'migration 0004: the 29 planned steps, one piece each, structure first, then settings, the plan, the price moves, then the price points copied from the moved columns (review finding F5)'
 );
 
 /**
@@ -197,22 +197,28 @@ foreach ($ppSteps as $ppStep) {
 // ==============================================================================
 // 💷 Section 5: draft GBP price points and the legacy price moves (plan §5.5)
 // ==============================================================================
+// 💷 Review finding F5: each amount is COPIED from the plan's own column (after
+//    the placeholder moves), never written as a fixed draft figure, so an
+//    owner-changed price stays the owner's (proven on a real database in
+//    tests/integration/migrations_real_mysql.php, scenario N2).
 $ppPricePoints = [
-    ['pro monthly_gbp', 'pro', 'monthly', '6.99', '0', '1'],
-    ['pro yearly_gbp', 'pro', 'yearly', '49.99', '1', '2'],
-    ['business monthly_gbp', 'business', 'monthly', '24.99', '0', '1'],
-    ['business yearly_gbp', 'business', 'yearly', '199.99', '1', '2'],
-    ['enterprise monthly_gbp', 'enterprise', 'monthly', '99.00', '0', '1'],
+    ['pro monthly_gbp', 'pro', 'monthly', 'priceMonthly', '0', '1'],
+    ['pro yearly_gbp', 'pro', 'yearly', 'priceYearly', '1', '2'],
+    ['business monthly_gbp', 'business', 'monthly', 'priceMonthly', '0', '1'],
+    ['business yearly_gbp', 'business', 'yearly', 'priceYearly', '1', '2'],
+    ['enterprise monthly_gbp', 'enterprise', 'monthly', 'priceMonthly', '0', '1'],
 ];
 foreach ($ppPricePoints as $ppPoint) {
     $ppSql = ppStepSql($ppSteps, 'price point ' . $ppPoint[0]);
     // priceKey = group + _ + currency in lower case (plan §5.3 convention); the
     // group is also the billing interval here.
     assertContains(
-        'SELECT `planID`, \'' . $ppPoint[2] . '_gbp\', \'' . $ppPoint[2] . '\', \'' . $ppPoint[2] . '\', 1, ' . $ppPoint[3] . ', \'GBP\', ' . $ppPoint[4] . ', 1, ' . $ppPoint[5],
+        'SELECT `planID`, \'' . $ppPoint[2] . '_gbp\', \'' . $ppPoint[2] . '\', \'' . $ppPoint[2] . '\', 1, `' . $ppPoint[3] . '`, \'GBP\', ' . $ppPoint[4] . ', 1, ' . $ppPoint[5],
         $ppSql,
-        'price point ' . $ppPoint[0] . ': key ' . $ppPoint[2] . '_gbp, group ' . $ppPoint[2] . ', £' . $ppPoint[3] . ', recommended=' . $ppPoint[4]
+        'price point ' . $ppPoint[0] . ': key ' . $ppPoint[2] . '_gbp, group ' . $ppPoint[2] . ', amount copied from ' . $ppPoint[3] . ', recommended=' . $ppPoint[4]
     );
+    assertContains('AND `currency` = \'GBP\' AND `' . $ppPoint[3] . '` > 0', $ppSql, 'price point ' . $ppPoint[0] . ': only for a plan priced in GBP with an amount above zero');
+    assertFalse((bool) preg_match('/, [0-9]+\.[0-9]{2}, \'GBP\'/', $ppSql), 'price point ' . $ppPoint[0] . ': no fixed draft amount is written (F5)');
     assertContains('FROM `tblSubscriptionPlans` WHERE `planKey` = \'' . $ppPoint[1] . '\'', $ppSql, 'price point ' . $ppPoint[0] . ': attached by looking the plan up by key, never a fixed ID');
     assertTrue(str_ends_with($ppSql, 'ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`'), 'price point ' . $ppPoint[0] . ': an existing price point (perhaps edited by the owner) is left alone');
 }

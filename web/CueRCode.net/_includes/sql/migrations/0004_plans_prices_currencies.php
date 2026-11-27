@@ -26,7 +26,10 @@
  *      prices: Pro £6.99 a month / £49.99 a year, Business £24.99 / £199.99,
  *      Enterprise from £99 a month. The older single-price columns the public
  *      page reads (charging is off) move from the placeholder £4.99 and
- *      £19.99 ONLY while they still hold exactly those placeholders.
+ *      £19.99 ONLY while they still hold exactly those placeholders, and the
+ *      GBP price points are then COPIED from those columns (review finding
+ *      F5), so a price the owner had already changed stays the owner's price
+ *      in the price list too - never the draft.
  *
  * NEVER OVERWRITES THE OWNER'S CHANGES:
  *   - settings, plans and price points are "insert if missing" (ON DUPLICATE
@@ -285,65 +288,14 @@ return [
         ],
 
         // ======================================================================
-        // 💷 Draft GBP price points (plan §5.5) - looked up by plan key
-        // ======================================================================
-        // Each is attached by looking its plan up by key, never by a fixed ID.
-        // isDefault = 1 marks the recommended (yearly) price, as the plan says.
-        [
-            'type'  => 'insert_if_missing',
-            'table' => 'tblPlanPricePoints',
-            'label' => 'price point pro monthly_gbp',
-            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
-                . ' SELECT `planID`, \'monthly_gbp\', \'monthly\', \'monthly\', 1, 6.99, \'GBP\', 0, 1, 1'
-                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'pro\''
-                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
-        ],
-        [
-            'type'  => 'insert_if_missing',
-            'table' => 'tblPlanPricePoints',
-            'label' => 'price point pro yearly_gbp',
-            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
-                . ' SELECT `planID`, \'yearly_gbp\', \'yearly\', \'yearly\', 1, 49.99, \'GBP\', 1, 1, 2'
-                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'pro\''
-                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
-        ],
-        [
-            'type'  => 'insert_if_missing',
-            'table' => 'tblPlanPricePoints',
-            'label' => 'price point business monthly_gbp',
-            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
-                . ' SELECT `planID`, \'monthly_gbp\', \'monthly\', \'monthly\', 1, 24.99, \'GBP\', 0, 1, 1'
-                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'business\''
-                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
-        ],
-        [
-            'type'  => 'insert_if_missing',
-            'table' => 'tblPlanPricePoints',
-            'label' => 'price point business yearly_gbp',
-            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
-                . ' SELECT `planID`, \'yearly_gbp\', \'yearly\', \'yearly\', 1, 199.99, \'GBP\', 1, 1, 2'
-                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'business\''
-                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
-        ],
-        // 🏢 "From £99/month" - only on the Enterprise plan THIS migration made
-        //    (a Contact us plan); an Enterprise plan the owner made by hand
-        //    before this ran keeps its own prices.
-        [
-            'type'  => 'insert_if_missing',
-            'table' => 'tblPlanPricePoints',
-            'label' => 'price point enterprise monthly_gbp',
-            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
-                . ' SELECT `planID`, \'monthly_gbp\', \'monthly\', \'monthly\', 1, 99.00, \'GBP\', 0, 1, 1'
-                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'enterprise\' AND `ctaMode` = \'contact\''
-                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
-        ],
-
-        // ======================================================================
         // 🔁 Legacy single-price columns - ONLY while still at the placeholder
         // ======================================================================
         // The public page reads these while charging is off. Yearly prices
         // already match the drafts (£49.99, £199.99). An owner-changed price
         // (or a different currency) no longer matches, so it is left alone.
+        // ⚠️ These two steps run BEFORE the price points below (review finding
+        //    F5): the price points are copied FROM these columns, so the price
+        //    list always agrees with what the pricing page showed.
         [
             'type'  => 'update_if_unchanged',
             'table' => 'tblSubscriptionPlans',
@@ -357,6 +309,69 @@ return [
             'label' => 'business monthly 19.99 to 24.99 (placeholder only)',
             'sql'   => 'UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 24.99'
                 . ' WHERE `planKey` = \'business\' AND `priceMonthly` = 19.99 AND `currency` = \'GBP\'',
+        ],
+
+        // ======================================================================
+        // 💷 GBP price points (plan §5.5) - COPIED from the columns above
+        // ======================================================================
+        // Review finding F5 (7n Phase 2 review, 2026-11-27): each price point
+        // takes its amount FROM the plan's own single-price column, AFTER the
+        // placeholder move above - so an untouched plan gets the drafts
+        // (£6.99 / £49.99, £24.99 / £199.99) and a plan whose price the owner
+        // had already changed gets the OWNER's price. Before, the drafts were
+        // inserted whatever the column held, and the next save of any price of
+        // that plan copied the draft over the owner's price on the pricing
+        // page. Only a plan priced in GBP with an amount above zero gets one.
+        // Each is attached by looking its plan up by key, never by a fixed ID.
+        // isDefault = 1 marks the recommended (yearly) price, as the plan says.
+        [
+            'type'  => 'insert_if_missing',
+            'table' => 'tblPlanPricePoints',
+            'label' => 'price point pro monthly_gbp',
+            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
+                . ' SELECT `planID`, \'monthly_gbp\', \'monthly\', \'monthly\', 1, `priceMonthly`, \'GBP\', 0, 1, 1'
+                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'pro\' AND `currency` = \'GBP\' AND `priceMonthly` > 0'
+                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
+        ],
+        [
+            'type'  => 'insert_if_missing',
+            'table' => 'tblPlanPricePoints',
+            'label' => 'price point pro yearly_gbp',
+            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
+                . ' SELECT `planID`, \'yearly_gbp\', \'yearly\', \'yearly\', 1, `priceYearly`, \'GBP\', 1, 1, 2'
+                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'pro\' AND `currency` = \'GBP\' AND `priceYearly` > 0'
+                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
+        ],
+        [
+            'type'  => 'insert_if_missing',
+            'table' => 'tblPlanPricePoints',
+            'label' => 'price point business monthly_gbp',
+            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
+                . ' SELECT `planID`, \'monthly_gbp\', \'monthly\', \'monthly\', 1, `priceMonthly`, \'GBP\', 0, 1, 1'
+                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'business\' AND `currency` = \'GBP\' AND `priceMonthly` > 0'
+                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
+        ],
+        [
+            'type'  => 'insert_if_missing',
+            'table' => 'tblPlanPricePoints',
+            'label' => 'price point business yearly_gbp',
+            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
+                . ' SELECT `planID`, \'yearly_gbp\', \'yearly\', \'yearly\', 1, `priceYearly`, \'GBP\', 1, 1, 2'
+                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'business\' AND `currency` = \'GBP\' AND `priceYearly` > 0'
+                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
+        ],
+        // 🏢 "From £99/month" - only on the Enterprise plan THIS migration made
+        //    (a Contact us plan), again copied from its own monthly column; an
+        //    Enterprise plan the owner made by hand before this ran keeps its
+        //    own prices.
+        [
+            'type'  => 'insert_if_missing',
+            'table' => 'tblPlanPricePoints',
+            'label' => 'price point enterprise monthly_gbp',
+            'sql'   => 'INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`)'
+                . ' SELECT `planID`, \'monthly_gbp\', \'monthly\', \'monthly\', 1, `priceMonthly`, \'GBP\', 0, 1, 1'
+                . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'enterprise\' AND `ctaMode` = \'contact\' AND `currency` = \'GBP\' AND `priceMonthly` > 0'
+                . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
         ],
     ],
 ];

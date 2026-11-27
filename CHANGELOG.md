@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each finding was first reproduced (a test failing on the old code), then fixed. Real-database checks ran on MySQL 8.0.36 and MariaDB 10.6.
 
 - **Installer: the starting data and the repeat of earlier upgrades now land together (F1).** If `migrate.php --apply` had been run before the web installer, the installer loads the starting data and repeats the upgrades' starting-data parts (the Enterprise plan, the draft prices) in one transaction, under the upgrade lock. Before, when the repeat failed (for example because an upgrade was running at that moment), the reload the page asked for skipped it and the installer locked itself as "successful" without Enterprise and with the old prices. Now a busy upgrade means nothing is loaded, and a failed repeat undoes the starting data too, so the reload loads everything.
+- **Upgrade 0004 no longer puts a draft price in the price list over the owner's own price (F5).** The GBP price points are now copied from each plan's own price columns after the placeholder prices are moved, so a price the owner had already changed (for example Pro at £5.49) is the price in both places. Before, the list held the draft (£6.99) and the next save of any other price of that plan, such as the yearly one, copied the draft onto the pricing page without a warning.
 
 ### Changed - A deploy now waits for the full test suite (#155, decision 0025)
 

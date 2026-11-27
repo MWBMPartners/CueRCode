@@ -142,7 +142,13 @@ if (isset($ipArguments[0]) && $ipArguments[0] === '--save-group') {
     restore_exception_handler();
 
     $ipChildAdmin = ['userID' => (int) $ipRequest['userID'], 'email' => (string) $ipRequest['email'], 'displayName' => 'IT admin', 'sessionHash' => '', 'hasPassword' => true];
-    $ipChildResult = adminPricesSaveGroup($ipChildAdmin, (int) $ipRequest['planID'], (string) $ipRequest['group'], (string) $ipRequest['fp'], $ipRequest['post']);
+    // 🧾 "@current" = use the price list's fingerprint as it is now (used by
+    //    tests/integration/migrations_real_mysql.php, which cannot work it out).
+    $ipChildFingerprint = (string) $ipRequest['fp'];
+    if ($ipChildFingerprint === '@current') {
+        $ipChildFingerprint = adminPlansPricesFingerprint((array) adminPlansLoadPrices((int) $ipRequest['planID'], false));
+    }
+    $ipChildResult = adminPricesSaveGroup($ipChildAdmin, (int) $ipRequest['planID'], (string) $ipRequest['group'], $ipChildFingerprint, $ipRequest['post']);
     echo '@@RESULT@@' . json_encode($ipChildResult) . PHP_EOL;
     exit(0);
 }

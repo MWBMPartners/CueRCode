@@ -492,8 +492,50 @@ function itWithoutPhase2Pieces(array $itSnapshot): array
  */
 function itCli(string $itDbName, string $itMode): array
 {
-    $itCommand = [PHP_BINARY, __FILE__, '--run-migrate-cli=' . $itMode, '--db=' . $itDbName];
+    return itRunChild([PHP_BINARY, __FILE__, '--run-migrate-cli=' . $itMode, '--db=' . $itDbName]);
+}
 
+/**
+ * 💷 Save one price group with the REAL admin editor on a database of this
+ *    script (7n Phase 2 review, finding F5): runs
+ *    tests/integration/admin_plans_real_mysql.php in its child mode, which
+ *    starts the site against that database and calls adminPricesSaveGroup().
+ *    The child works out the current price-list fingerprint itself.
+ *
+ * @param string               $itDbName A cuercode_it_ database
+ * @param array<string, mixed> $itRequest userID, email, planID, group, post
+ * @return array<string, mixed>|null The save's result, or null when the child failed
+ */
+function itSaveGroupWithEditor(string $itDbName, array $itRequest): ?array
+{
+    $itRequest['fp'] = '@current';
+    $itChild = itRunChild([
+        PHP_BINARY,
+        __DIR__ . DIRECTORY_SEPARATOR . 'admin_plans_real_mysql.php',
+        '--save-group',
+        itSafeDbName($itDbName),
+        base64_encode((string) json_encode($itRequest)),
+    ]);
+    $itMatch = [];
+    if (preg_match('/@@RESULT@@(.+)$/m', $itChild['out'], $itMatch) !== 1) {
+        echo '    (child said: ' . trim($itChild['out'] . ' ' . $itChild['err']) . ')' . PHP_EOL;
+        return null;
+    }
+    $itDecoded = json_decode($itMatch[1], true);
+    if (!is_array($itDecoded)) {
+        return null;
+    }
+    return $itDecoded;
+}
+
+/**
+ * 👶 Run a child PHP process and collect its output.
+ *
+ * @param array<int, string> $itCommand The command and its arguments
+ * @return array{exit: int, out: string, err: string}
+ */
+function itRunChild(array $itCommand): array
+{
     $itDescriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
     $itProcess     = proc_open($itCommand, $itDescriptors, $itPipes);
 
@@ -1149,7 +1191,22 @@ itCheck('N owner changes kept', $itUpN2['status'] === 'ok', '0004 applies on a d
 itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '5.49', 'the owner\'s own Pro monthly price (£5.49, no longer the placeholder) is NOT moved to £6.99');
 itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'") === '24.99', 'Business, still at the placeholder, IS moved to £24.99');
 itCheck('N owner changes kept', itValue($itN2, "SELECT CONCAT(`pp`.`amount`, '|', COALESCE(`pp`.`priceGroupKey`, 'NULL'), '|', `pp`.`isDefault`) FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'pro' AND `pp`.`priceKey` = 'yearly_gbp'") === '45.00|NULL|0', 'the owner\'s own Pro yearly price point (£45.00) is kept exactly, not replaced by the draft £49.99');
-itCheck('N owner changes kept', itValue($itN2, "SELECT `pp`.`amount` FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'pro' AND `pp`.`priceKey` = 'monthly_gbp'") === '6.99', 'the missing Pro monthly price point is still added (£6.99)');
+// 💷 Review finding F5 (7n Phase 2 review): the price list must agree with the
+//    owner's own price, never hold the draft. Before the fix 0004 added the
+//    draft £6.99 here while the page kept £5.49, and the next save of ANY
+//    price of the plan copied £6.99 over the owner's figure.
+itCheck('N owner changes kept', itValue($itN2, "SELECT `pp`.`amount` FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'pro' AND `pp`.`priceKey` = 'monthly_gbp'") === '5.49', 'F5: the missing Pro monthly price point is added at the OWNER\'s price (£5.49), not the draft £6.99');
+itCheck('N owner changes kept', itValue($itN2, "SELECT `pp`.`amount` FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'business' AND `pp`.`priceKey` = 'monthly_gbp'") === '24.99', 'F5: Business (still at the placeholder, so moved) gets the matching £24.99 price point');
+
+// F5 follow-on: a save of a DIFFERENT price group of the same plan (yearly)
+// through the real editor must leave the owner's monthly price alone.
+$itN2->query("INSERT INTO `tblUsers` (`email`, `emailVerifiedAt`, `passwordHash`, `displayName`, `status`, `roleID`) VALUES ('admin@n2.cuercode.invalid', '2026-11-01 09:00:00', 'x', 'IT admin', 'active', 1)");
+$itN2AdminID = (int) $itN2->insert_id;
+$itN2ProID   = itNumber($itN2, "SELECT `planID` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'");
+$itN2Save    = itSaveGroupWithEditor($itDbN2, ['userID' => $itN2AdminID, 'email' => 'admin@n2.cuercode.invalid', 'planID' => $itN2ProID, 'group' => 'yearly', 'post' => ['amount' => ['GBP' => '49.99']]]);
+itCheck('N owner changes kept', is_array($itN2Save) && $itN2Save['ok'] === true && $itN2Save['changed'] === true, 'F5: the real editor saves Pro\'s YEARLY price: ' . json_encode($itN2Save));
+itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '5.49', 'F5: ...and the owner\'s Pro MONTHLY price on the pricing page is still £5.49 (not replaced by a draft price)');
+itCheck('N owner changes kept', itNumber($itN2, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'plan.update' AND `entityKey` = 'pro' AND `changesJSON` LIKE '%priceMonthly%'") === 0, 'F5: no change of Pro\'s monthly price was recorded in the admin change log');
 itCheck('N owner changes kept', itValue($itN2, "SELECT CONCAT(`planName`, '|', `priceMonthly`, '|', `ctaMode`, '|', `sortOrder`) FROM `tblSubscriptionPlans` WHERE `planKey` = 'enterprise'") === 'Our Enterprise|150.00|checkout|9', 'the owner\'s hand-made Enterprise plan is kept exactly (name, price, button, position)');
 itCheck('N owner changes kept', itNumber($itN2, "SELECT COUNT(*) FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'enterprise'") === 0, '...and is NOT given the draft £99 price (only a Contact us plan 0004 made gets it)');
 itCheck('N owner changes kept', itNumber($itN2, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`') === $itPlanCountBeforeN2, 'no second Enterprise plan was made');
