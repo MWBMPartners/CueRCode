@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-27, human check #163: the table below was re-measured; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -50,9 +50,9 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 661 |
-| `test_admin_plans.php` | 566 |
-| `test_admin_settings.php` | 1266 |
+| `test_admin_access.php` | 663 |
+| `test_admin_plans.php` | 580 |
+| `test_admin_settings.php` | 1296 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -60,24 +60,26 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
 | `test_client_ip.php` | 246 |
-| `test_commercial_literals.php` | 8 |
+| `test_commercial_literals.php` | 9 |
 | `test_core.php` | 146 |
-| `test_credentials_template.php` | 9 |
+| `test_credentials_template.php` | 8 |
 | `test_curl_content_decoding_guard.php` | 3 |
+| `test_deploy_test_gate.php` | 9 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
 | `test_email_queue_runner.php` | 479 |
 | `test_emoji_logo.php` | 123 |
-| `test_error_catalogue.php` | 137 |
+| `test_error_catalogue.php` | 144 |
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
+| `test_human_check.php` | 377 |
 | `test_install_checks.php` | 101 |
 | `test_installer_load_order.php` | 9 |
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 459 |
+| `test_migrations.php` | 478 |
 | `test_money.php` | 161 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
@@ -86,23 +88,29 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_php86_compat_scan.php` | 76 |
 | `test_php_lint_script.php` | 6 |
 | `test_php_runtime_guards.php` | 24 |
-| `test_plans_prices_migration.php` | 146 |
+| `test_plans_prices_migration.php` | 168 |
 | `test_predefined_logo_png.php` | 264 |
 | `test_pricing.php` | 122 |
 | `test_pricing_flex.php` | 51 |
-| `test_pricing_page.php` | 91 |
+| `test_pricing_page.php` | 124 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 81 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **7513** |
+| **Total** | **8026** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
 **Task 7n Phase 2 slice 2c (2026-11-26)** added `test_admin_plans.php` (566 assertions: the plan-key rule, UK-time dates, every freezing rule P1/P4/P5/P6 shown to refuse and to allow, new-version and price keys, fingerprints, the price-group form, the mirror, the five new settings, and static guards each proved against a bad sample first) and 54 assertions in `test_admin_settings.php`. The whole suite was then **7390** on PHP 8.5.12.
 
 **Task 7n Phase 2 slice 2d (2026-11-26)** added `test_pricing_page.php` (the kind filter and sale dates, a stand-in database in a child process including one without upgrade 0004, the "Contact us" card and its link, hidden prices, the rendered cards, the preview and its access rules) and `test_commercial_literals.php` (the whole-site guard against hard-coded plan keys and prices). Each new rule was broken on purpose (28 changes) and the tests failed every time. The whole suite is then **7513** on PHP 8.5.12.
+
+**Human check (#163, 2026-11-27)** added `test_human_check.php` (377 assertions: each of the three providers with stand-in replies - success, failure, provider unreachable, error page, reply that is not JSON, missing or bad token, keys absent, wrong host name, replayed or expired token, wrong keys, published test keys - plus the widget, the command-line options, static checks that every page and JSON route makes the call, the exact content security policy and the migration rules). No real provider is called. It was first run before the code existed (it failed: the function file was missing), then with the functions but before the pages were wired (49 of 377 checks failed). The table above was re-measured on PHP 8.5.12 the same day: **8026** assertions, all passing.
+
+### Real-database and HTTP runs for the human check (#163, 2026-11-27)
+
+On throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other: the new `human_check_real_mysql.php` passed 60 checks on each (scenarios A to G: keys stored encrypted and read back, the order Turnstile then reCAPTCHA then hCaptcha, the command-line off/on switch with its admin change-log row, and real HTTP through PHP's built-in web server with `curl_init` switched off in it so no provider can be reached: all four forms and the three JSON routes refused without a token, a valid API key no way round it, a token refused as "could not be reached", "let people through" letting the account be made, no key in any log); `migrations_real_mysql.php` passed 190 checks on each (A and J extended for 0005 in both install orders, N extended, new O: an untouched "none" becomes "auto", a choice an admin or the command line made is kept, an owner's own waiting time is kept, a forced re-run changes nothing); `admin_settings_real_mysql.php` 232, `admin_access_real_mysql.php` 167, `admin_plans_real_mysql.php` 124, `account_recovery_real_mysql.php` 192 and `resend_verification_real_mysql.php` 32 on each, unchanged. `email_queue_real_mysql.php` was not re-run (it does not use the upgrades or the forms). No real browser and no real provider widget were used.
 
 ### Real-database and HTTP runs for the 7n Phase 2 review fixes (2026-11-27)
 

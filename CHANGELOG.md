@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Human check on the account forms (#163, decision 0024, 2026-11-27) - built, Opus and Codex reviews owed
+
+**Apply database upgrade 0005 after deploying** (`/admin/upgrades/` or `migrate.php --apply`). Nothing changes for visitors until a Global Admin enters a provider's keys.
+
+- **A short "are you a person" check** from Cloudflare Turnstile, Google reCAPTCHA (version 2, the tick box) or hCaptcha on the forms to create an account, sign in, reset a password and ask for a new verification link, and on the JSON routes that do the same jobs (`/api/v1/auth/register`, `/auth/login`, `/auth/request-password-reset`). An API key does not skip it. One call (`humanCheckVerifyRequest()` in `_functions/fn_human_check.php`) does the checking everywhere, so the abuse-report form (#169) can reuse it.
+- **Off until keys are entered.** On "Automatic" (the new starting value) the first provider with both its keys entered is used, in the order Turnstile, reCAPTCHA, hCaptcha. Keys are entered on `/admin/settings/` (stored encrypted, never shown); the section now shows which provider is in use and warns about the providers' published test keys.
+- **When the provider cannot be reached** the forms are refused with "try again in a few minutes" (a Global Admin can choose "let people through" instead); wrong keys are always refused; both are logged. **If it locks everyone out**, `php _includes/cli/human_check.php off` on the server switches it off (with a row in the admin change log); `... on` puts it back.
+- **With JavaScript off** the widget cannot be drawn: the form shows a note saying the check needs JavaScript, and a form sent without the check is refused.
+- **Content security policy** (`public_html/.htaccess`) now allows exactly the three providers' script, frame, style and connect addresses; the admin area's policy does not.
+- **Privacy page** section 5.1 names the provider in use and links to its privacy policy (or says none is in use).
+- **Database upgrade 0005:** the provider setting gains "auto" ("none" now means off; an untouched "none" moves to "auto", a choice an admin or the command line made is kept), plus "if the provider cannot be reached" (refuse) and "how long to wait" (5 seconds).
+- **API:** new optional body field `human_check_token`; new error codes `HUMAN_CHECK_REQUIRED` (400), `HUMAN_CHECK_FAILED` (403) and `HUMAN_CHECK_UNAVAILABLE` (503), all in `openapi.json`.
+- **Tests:** `tests/test_human_check.php` (each provider: success, failure, unreachable, missing or wrong token, keys absent, wrong host name, replayed token, all with stand-in replies, no real provider called) and `tests/integration/human_check_real_mysql.php` (real database and real HTTP, with outbound requests switched off in the web server).
+
 ### Fixes - Recheck of the plans and prices review fixes (task 7n Phase 2 recheck, 2026-11-27, #31)
 
 Each finding was first shown failing on the old code, then fixed.

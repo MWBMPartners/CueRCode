@@ -38,7 +38,7 @@
 - Predefined logos have no PNG copies (#65).
 - ~~`install.sql` can't safely run twice, and there is no upgrade script~~ - fixed by task 7n Phase 1A (2026-11-23, #113 item 5): numbered migrations, `migrate.php`, and `/admin/upgrades/` (Phase 1B).
 - Email/password sign-ups, logins and password resets are not recorded as their own events in the activity log — only a generic "API call" row with no user or outcome when they come through the API (#114; also #12/#14/#15).
-- No bot protection (#114; also #47 DS-8/#12).
+- Human check (bot protection) built for the account forms and their JSON routes, off until a provider's keys are entered (#163, 2026-11-27; Opus and Codex reviews and a real-browser pass with real keys still owed). The QR generator has none (#114; also #47 DS-8/#12).
 - Deploy doesn't upload the third-party libraries or the CDN fallback copies, and no credentials template is in the repo (#113; also #1/#7/#36/#44).
 - The version number is never shown (#115; also #35).
 - Footer copyright shows one year, not 2025-current (#115; also #38).
