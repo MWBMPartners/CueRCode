@@ -40,3 +40,7 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0028](0028-launch-free-service-first-if-go2my-link-is-late.md) | 2026-11-27 | Owner: if Go2My.Link is late, the free service launches first | Current (limits 0023) |
 | [0029](0029-link-safety-uses-web-risk-plus-a-second-provider.md) | 2026-11-27 | Owner: link safety uses Web Risk plus a second paid provider | Current (replaces O-3) |
 | [0030](0030-alpha-test-codes-use-alpha-qrmy-link.md) | 2026-11-27 | Owner: alpha test codes use alpha.QRmy.Link | Current |
+| [0031](0031-three-dynamic-codes-with-per-person-increases-by-global-admin.md) | 2026-11-27 | Owner: 3 dynamic codes each; a Global Admin can raise it per person or for everyone | Current |
+| [0032](0032-dual-function-qr-not-in-first-version.md) | 2026-11-27 | Owner: dual-function QR is not in the first version | Current |
+| [0033](0033-first-version-shows-total-scans-only.md) | 2026-11-27 | Owner: first version shows total scans only | Current |
+| [0034](0034-abuse-mailbox-and-one-working-day-promise.md) | 2026-11-27 | Owner: abuse@cuercode.net, one-working-day takedown promise | Current |
