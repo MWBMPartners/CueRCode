@@ -1167,9 +1167,12 @@ $itUpN = migrationRun($itN, 'apply', 'test', migrationDefaultDirectory(), migrat
 itCheck(
     'N upgrade from 0003',
     $itUpN['status'] === 'ok' && count($itUpN['migrations']) === 1 && $itUpN['migrations'][0]['key'] === '0004_plans_prices_currencies'
-        && $itUpN['migrations'][0]['outcome'] === 'applied' && $itUpN['migrations'][0]['stepsRun'] === 29 && $itUpN['migrations'][0]['stepsSkipped'] === 0,
-    'the upgrade applies 0004 alone, all 29 steps: ' . json_encode($itUpN['migrations'])
+        && $itUpN['migrations'][0]['outcome'] === 'applied' && $itUpN['migrations'][0]['stepsRun'] === 31 && $itUpN['migrations'][0]['stepsSkipped'] === 0,
+    'the upgrade applies 0004 alone, all 31 steps: ' . json_encode($itUpN['migrations'])
 );
+// 📝 Decision 0022 (#161): the starting descriptions mark unbuilt features as coming soon.
+itCheck('N upgrade from 0003', itValue($itN, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === 'For individuals who need dynamic QR codes, analytics and automation (all coming soon).', '#161: the starting Pro description now marks the unbuilt features as coming soon');
+itCheck('N upgrade from 0003', str_contains(itValue($itN, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'"), 'team roles coming soon'), '#161: ...and so does the starting Business description');
 itCheck('N upgrade from 0003', itSchemaSnapshot($itN) === $itSchemaA, 'the upgraded database\'s structure is byte-for-byte the fresh install\'s');
 itCheck('N upgrade from 0003', itPhase2Data($itN) === $itDataA, 'and its plans, price points and settings are exactly the fresh install\'s');
 itCheck('N upgrade from 0003', migrationDbSeedDataState($itN)['state'] === 'complete', 'the installer\'s starting-data check still reads "complete"');
@@ -1181,7 +1184,7 @@ $itN2 = itFreshDb($itEnv, $itPort, $itDbN2);
 itRunSqlFile($itN2, $itInstallSql);
 itRunSqlFile($itN2, $itSeedSql);
 migrationRun($itN2, 'apply', 'test', $itDir0003, migrationDefaultInstallSqlPath());
-$itN2->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 5.49 WHERE `planKey` = 'pro'");
+$itN2->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 5.49, `description` = 'Our own Pro wording.' WHERE `planKey` = 'pro'");
 $itN2->query("INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `billingInterval`, `amount`, `currency`) SELECT `planID`, 'yearly_gbp', 'yearly', 45.00, 'GBP' FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'");
 $itN2->query("INSERT INTO `tblSubscriptionPlans` (`planKey`, `planName`, `priceMonthly`, `priceYearly`, `currency`, `featuresJSON`, `limitsJSON`, `sortOrder`) VALUES ('enterprise', 'Our Enterprise', 150.00, 1500.00, 'GBP', '{}', '{}', 9)");
 $itN2->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('billing', 'billing_currencies', 'GBP', 'string', 0, 1, 'Owner wording')");
@@ -1190,6 +1193,8 @@ $itUpN2 = migrationRun($itN2, 'apply', 'test', migrationDefaultDirectory(), migr
 itCheck('N owner changes kept', $itUpN2['status'] === 'ok', '0004 applies on a database the owner had already changed: ' . $itUpN2['error']);
 itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '5.49', 'the owner\'s own Pro monthly price (£5.49, no longer the placeholder) is NOT moved to £6.99');
 itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'") === '24.99', 'Business, still at the placeholder, IS moved to £24.99');
+itCheck('N owner changes kept', itValue($itN2, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === 'Our own Pro wording.', '#161: a Pro description the owner had changed is NOT overwritten');
+itCheck('N owner changes kept', str_contains(itValue($itN2, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'"), 'coming soon'), '#161: ...while the untouched Business description is updated');
 itCheck('N owner changes kept', itValue($itN2, "SELECT CONCAT(`pp`.`amount`, '|', COALESCE(`pp`.`priceGroupKey`, 'NULL'), '|', `pp`.`isDefault`) FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'pro' AND `pp`.`priceKey` = 'yearly_gbp'") === '45.00|NULL|0', 'the owner\'s own Pro yearly price point (£45.00) is kept exactly, not replaced by the draft £49.99');
 // 💷 Review finding F5 (7n Phase 2 review): the price list must agree with the
 //    owner's own price, never hold the draft. Before the fix 0004 added the

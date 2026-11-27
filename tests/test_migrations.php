@@ -969,7 +969,7 @@ foreach ($migReplayReal['steps'] as $migReplayEntry) {
     $migReplayRealTypes[$migReplayEntry['step']['type']] = true;
 }
 assertEquals(['insert_if_missing', 'update_if_unchanged'], array_keys($migReplayRealTypes), 'replay of the real 0004: only its insert-if-missing and update-if-unchanged steps');
-assertEquals(13, count($migReplayReal['steps']), 'replay of the real 0004: its 13 data steps (5 settings, 1 plan, 5 price points, 2 price moves)');
+assertEquals(15, count($migReplayReal['steps']), 'replay of the real 0004: its 15 data steps (5 settings, 1 plan, 2 price moves, 5 price points, 2 descriptions)');
 
 // 🌱 Independent review (Codex C1 finding 1, 2026-11-25): seed_data.sql is
 // loaded inside ONE transaction (migrationDbRunSeedSql()), which only makes it

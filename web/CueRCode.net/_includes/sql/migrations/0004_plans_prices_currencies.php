@@ -30,11 +30,15 @@
  *      GBP price points are then COPIED from those columns (review finding
  *      F5), so a price the owner had already changed stays the owner's price
  *      in the price list too - never the draft.
+ *   5. Marks the features the starting Pro and Business descriptions name but
+ *      that are not built yet as "coming soon" (owner decision 0022, #161) -
+ *      only while each description is still exactly its starting wording.
  *
  * NEVER OVERWRITES THE OWNER'S CHANGES:
  *   - settings, plans and price points are "insert if missing" (ON DUPLICATE
  *     KEY UPDATE `x` = `x` changes nothing when the row is already there);
- *   - the two price moves only match a row still at its placeholder value;
+ *   - the two price moves and the two description changes only match a row
+ *     still at its starting value;
  *   - the Enterprise price is only added to an Enterprise plan this migration
  *     created (one whose button is "Contact us"), never to an Enterprise plan
  *     the owner had already made by hand.
@@ -69,7 +73,7 @@
 
 return [
     'key'         => '0004_plans_prices_currencies',
-    'description' => 'Adds the plan-editor columns (kind, contact button, sale dates and cap, copied-from, price promise), price-point groups, the subscription price-promise snapshot, the currency and price-promise settings, the Enterprise plan and the draft GBP prices, without overwriting anything the owner has changed',
+    'description' => 'Adds the plan-editor columns (kind, contact button, sale dates and cap, copied-from, price promise), price-point groups, the subscription price-promise snapshot, the currency and price-promise settings, the Enterprise plan and the draft GBP prices, and marks the unbuilt features in the starting Pro and Business descriptions as coming soon, without overwriting anything the owner has changed',
     'steps'       => [
 
         // ======================================================================
@@ -372,6 +376,30 @@ return [
                 . ' SELECT `planID`, \'monthly_gbp\', \'monthly\', \'monthly\', 1, `priceMonthly`, \'GBP\', 0, 1, 1'
                 . ' FROM `tblSubscriptionPlans` WHERE `planKey` = \'enterprise\' AND `ctaMode` = \'contact\' AND `currency` = \'GBP\' AND `priceMonthly` > 0'
                 . ' ON DUPLICATE KEY UPDATE `priceKey` = `priceKey`',
+        ],
+
+        // ======================================================================
+        // 📝 Starting descriptions: unbuilt features marked "coming soon"
+        //    (owner decision 0022, #161)
+        // ======================================================================
+        // The starting Pro and Business descriptions named features that are
+        // not built yet (dynamic QR codes, analytics, automation, team roles,
+        // organisation-wide single sign-on). The owner chose to keep naming
+        // them, marked as coming soon. ONLY a description still exactly at its
+        // starting wording is changed: one an admin has edited is left alone.
+        [
+            'type'  => 'update_if_unchanged',
+            'table' => 'tblSubscriptionPlans',
+            'label' => 'pro description: unbuilt features marked coming soon',
+            'sql'   => 'UPDATE `tblSubscriptionPlans` SET `description` = \'For individuals who need dynamic QR codes, analytics and automation (all coming soon).\''
+                . ' WHERE `planKey` = \'pro\' AND `description` = \'For individuals who need dynamic QR codes, analytics, and automation.\'',
+        ],
+        [
+            'type'  => 'update_if_unchanged',
+            'table' => 'tblSubscriptionPlans',
+            'label' => 'business description: unbuilt features marked coming soon',
+            'sql'   => 'UPDATE `tblSubscriptionPlans` SET `description` = \'For teams and organisations that need enterprise-scale volume, with organisation-wide single sign-on (SSO) and team roles coming soon.\''
+                . ' WHERE `planKey` = \'business\' AND `description` = \'For teams and organisations that need SSO, roles, and enterprise-scale volume.\'',
         ],
     ],
 ];

@@ -89,9 +89,11 @@ assertEquals(
         'insert_if_missing:tblPlanPricePoints (price point business monthly_gbp)',
         'insert_if_missing:tblPlanPricePoints (price point business yearly_gbp)',
         'insert_if_missing:tblPlanPricePoints (price point enterprise monthly_gbp)',
+        'update_if_unchanged:tblSubscriptionPlans (pro description: unbuilt features marked coming soon)',
+        'update_if_unchanged:tblSubscriptionPlans (business description: unbuilt features marked coming soon)',
     ],
     $ppSummary,
-    'migration 0004: the 29 planned steps, one piece each, structure first, then settings, the plan, the price moves, then the price points copied from the moved columns (review finding F5)'
+    'migration 0004: the 31 planned steps, one piece each, structure first, then settings, the plan, the price moves, the price points copied from the moved columns (review finding F5), then the two starting descriptions (#161)'
 );
 
 /**
@@ -237,6 +239,25 @@ $ppSeedSql = (string) file_get_contents($ppSqlDir . 'seed_data.sql');
 assertContains("('pro', 'Pro', 'For individuals who need dynamic QR codes, analytics, and automation.', 4.99, 49.99, 'GBP',", $ppSeedSql, 'the Pro placeholder the move looks for (4.99) is what seed_data.sql loads, and its yearly price already matches the draft (49.99)');
 assertContains("('business', 'Business', 'For teams and organisations that need SSO, roles, and enterprise-scale volume.', 19.99, 199.99, 'GBP',", $ppSeedSql, 'the Business placeholder (19.99) is what seed_data.sql loads, and its yearly price already matches (199.99)');
 
+// 📝 Decision 0022 (#161): the starting Pro and Business descriptions keep
+//    mentioning features that are not built yet, marked "coming soon" - and
+//    ONLY while the description is still exactly the starting wording, so a
+//    description an admin has changed is never overwritten.
+$ppDescriptions = [
+    'pro'      => ['For individuals who need dynamic QR codes, analytics, and automation.', 'For individuals who need dynamic QR codes, analytics and automation (all coming soon).'],
+    'business' => ['For teams and organisations that need SSO, roles, and enterprise-scale volume.', 'For teams and organisations that need enterprise-scale volume, with organisation-wide single sign-on (SSO) and team roles coming soon.'],
+];
+foreach ($ppDescriptions as $ppPlanKey => $ppWords) {
+    $ppSql = ppStepSql($ppSteps, $ppPlanKey . ' description: unbuilt features marked coming soon');
+    assertEquals(
+        'UPDATE `tblSubscriptionPlans` SET `description` = \'' . $ppWords[1] . '\' WHERE `planKey` = \'' . $ppPlanKey . '\' AND `description` = \'' . $ppWords[0] . '\'',
+        $ppSql,
+        '#161: the ' . $ppPlanKey . ' description changes ONLY while it is still the starting wording'
+    );
+    assertContains("'" . $ppWords[0] . "'", $ppSeedSql, '#161: the wording the ' . $ppPlanKey . ' step looks for is exactly what seed_data.sql loads');
+    assertTrue(str_contains($ppWords[1], 'coming soon') && mb_strlen($ppWords[1], 'UTF-8') <= 500, '#161: the new ' . $ppPlanKey . ' wording says "coming soon" and fits the column');
+}
+
 // ==============================================================================
 // 🚫 Section 6: what 0004 must NOT do
 // ==============================================================================
@@ -250,7 +271,9 @@ foreach (['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_
 foreach ($ppSteps as $ppStep) {
     assertTrue(in_array($ppStep['type'], ['add_column', 'add_index', 'add_foreign_key', 'insert_if_missing', 'update_if_unchanged'], true), migrationDescribeStep($ppStep) . ': additive step type only');
     if ($ppStep['type'] === 'update_if_unchanged') {
-        assertMatches('/ AND `priceMonthly` = [0-9.]+ AND `currency` = \'GBP\'$/D', $ppStep['sql'], migrationDescribeStep($ppStep) . ': only matches the exact old value, so an owner-edited price is never overwritten');
+        // The price moves match the old price; the #161 description changes
+        // match the old wording - either way, only an untouched row changes.
+        assertMatches('/ AND (`priceMonthly` = [0-9.]+ AND `currency` = \'GBP\'|`description` = \'[^\']+\')$/D', $ppStep['sql'], migrationDescribeStep($ppStep) . ': only matches the exact old value, so an owner-edited price or description is never overwritten');
     }
 }
 $ppInstallSql = (string) file_get_contents($ppSqlDir . 'install.sql');
