@@ -300,6 +300,23 @@ assertEquals(1, substr_count($ppPromiseShown, 'for as long as you stay subscribe
 assertFalse(str_contains(ppRenderGrid($ppPromisePlans, false, '', 'team@example.com', ['mode' => 'while_subscribed', 'months' => 12]), 'Your price stays'), '#159: with prices hidden there is no price to keep, so no promise is shown');
 assertEquals(1, substr_count(ppRenderGrid($ppPromisePlans, true), 'Your price stays the same for the first 6 months'), '#159: a page that passes no site-wide promise still shows a plan\'s own one');
 
+// 🤝 Recheck finding 4: the note above the cards may only say "Each plan says
+//    how long you keep the price" when every priced card really does. Before
+//    upgrade 0004 (no promise settings or columns) no card states a promise,
+//    and the note said so anyway (reproduced over HTTP by the recheck).
+$ppEachPlanSays = 'Each plan says how long you keep the price you sign up at.';
+$ppNoPromiseShown = ppRenderGrid($ppPlans, true);
+assertFalse(str_contains($ppNoPromiseShown, 'Your price stays') || str_contains($ppNoPromiseShown, 'This price can change'), 'recheck F4 setup: before upgrade 0004 no card states a promise');
+assertFalse(str_contains($ppNoPromiseShown, 'Each plan says') || str_contains($ppNoPromiseShown, 'its card says'), 'recheck F4: ...so the note above the cards does not claim that any plan states one');
+assertContains('Prices shown are introductory pricing and may change.', $ppNoPromiseShown, 'recheck F4: ...and still says prices may change');
+assertContains($ppEachPlanSays, $ppPromiseShown, 'recheck F4: every priced card states a promise - the note says each plan does');
+$ppSomePromiseShown = ppRenderGrid($ppPromisePlans, true);
+assertFalse(str_contains($ppSomePromiseShown, $ppEachPlanSays), 'recheck F4: only some priced cards state a promise - the note does not say "each plan"');
+assertContains('Where a plan promises to keep your price, its card says for how long.', $ppSomePromiseShown, 'recheck F4: ...it says where a plan promises, its card says so');
+assertEquals('', pricingPromiseNote([]), 'recheck F4: no priced card at all - no promise wording');
+assertEquals('', pricingPromiseNote(['', '']), 'recheck F4: no card states a promise - no promise wording');
+assertEquals($ppEachPlanSays, pricingPromiseNote(['a', 'b']), 'recheck F4: every card states one - "each plan"');
+
 // 💱 Price points in several currencies: only the plan's own currency is used.
 $ppMixed = $ppDisplay(['priceMonthly' => '3.50', 'pricePoints' => [
     ['priceKey' => 'monthly_usd', 'billingInterval' => 'monthly', 'amount' => '4.25', 'currency' => 'USD', 'isDefault' => 1],

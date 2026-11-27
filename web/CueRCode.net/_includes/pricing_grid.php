@@ -31,9 +31,10 @@
  * @package     CueRCode
  * @subpackage  Pages / Pricing
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.0.0
+ * @version     1.1.0
  * @since       2026-11-26 (task 7n Phase 2, slice 2d - #31)
- * @see         _functions/fn_pricing.php - pricingPriceBlock(), pricingContactLink()
+ * @since       2026-11-27 (7n Phase 2 recheck finding 4) - the note follows the cards' promises
+ * @see         _functions/fn_pricing.php - pricingPriceBlock(), pricingContactLink(), pricingPromiseNote()
  */
 
 // ==============================================================================
@@ -61,6 +62,27 @@ if (isset($pricingPromiseDefaults) && is_array($pricingPromiseDefaults)) {
     }
 }
 
+// 🤝 Decision 0020 (#159): each card's own price promise, worked out once
+//    here so the note above the cards can say only what the cards really say
+//    (recheck finding 4). A promise shows only beside a real price figure
+//    (never on a free card, nor when prices are hidden).
+$pricingBlocks = [];
+$pricingPromises = [];
+$pricingPricedPromises = [];
+foreach ($pricingDisplayPlans as $pricingIndex => $pricingPlan) {
+    $pricingBlocks[$pricingIndex] = pricingPriceBlock($pricingPlan, $pricingShowPrices, $pricingPreviewCurrency);
+    $pricingPromises[$pricingIndex] = '';
+    if ($pricingShowPrices && $pricingBlocks[$pricingIndex]['isFigure'] && !$pricingPlan['isZeroPrice']) {
+        $pricingPromises[$pricingIndex] = pricingPromiseText($pricingPlan['pricePromiseMode'], $pricingPlan['pricePromiseMonths'], $pricingPromiseMode, $pricingPromiseMonths);
+        $pricingPricedPromises[] = $pricingPromises[$pricingIndex];
+    }
+}
+$pricingNoteText = 'Prices shown are introductory pricing and may change.';
+$pricingPromiseNoteText = pricingPromiseNote($pricingPricedPromises);
+if ($pricingPromiseNoteText !== '') {
+    $pricingNoteText .= ' ' . $pricingPromiseNoteText;
+}
+
 // 🧱 Four cards sit in one row on wide screens; otherwise up to three.
 $pricingRowClass = 'row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 justify-content-center';
 if (count($pricingDisplayPlans) === 4) {
@@ -74,11 +96,12 @@ if (count($pricingDisplayPlans) === 4) {
             <div class="row justify-content-center">
                 <div class="col-lg-8 text-center mb-4">
                     <?php /* 🤝 Decision 0020 (#159): no site-wide promise here any more -
-                         each card below says what its own plan promises. */ ?>
+                         each card below says what its own plan promises, and
+                         this note only says so when the cards really do
+                         (pricingPromiseNote(), recheck finding 4). */ ?>
                     <p class="text-body-secondary small mb-0">
                         <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
-                        Prices shown are introductory pricing and may change. Each plan says
-                        how long you keep the price you sign up at.
+                        <?php echo htmlspecialchars($pricingNoteText, ENT_QUOTES, 'UTF-8'); ?>
                     </p>
                     <?php if ($pricingVatNote !== '') { ?>
                     <p class="text-body-secondary small mt-2 mb-0" id="pricing-vat-note">
@@ -93,8 +116,8 @@ if (count($pricingDisplayPlans) === 4) {
                  🃏 Plan comparison card grid
                  ============================================================ */ ?>
             <div class="<?php echo htmlspecialchars($pricingRowClass, ENT_QUOTES, 'UTF-8'); ?>">
-                <?php foreach ($pricingDisplayPlans as $pricingPlan) { ?>
-                <?php $pricingBlock = pricingPriceBlock($pricingPlan, $pricingShowPrices, $pricingPreviewCurrency); ?>
+                <?php foreach ($pricingDisplayPlans as $pricingIndex => $pricingPlan) { ?>
+                <?php $pricingBlock = $pricingBlocks[$pricingIndex]; ?>
                 <div class="col">
                     <div class="card h-100 shadow-sm">
                         <div class="card-body d-flex flex-column">
@@ -132,12 +155,8 @@ if (count($pricingDisplayPlans) === 4) {
                             <?php } ?>
                             <?php
                                 // 🤝 Decision 0020 (#159): this plan's own price
-                                // promise, only beside a real price figure (never
-                                // on a free card, nor when prices are hidden).
-                                $pricingPromise = '';
-                                if ($pricingShowPrices && $pricingBlock['isFigure'] && !$pricingPlan['isZeroPrice']) {
-                                    $pricingPromise = pricingPromiseText($pricingPlan['pricePromiseMode'], $pricingPlan['pricePromiseMonths'], $pricingPromiseMode, $pricingPromiseMonths);
-                                }
+                                // promise (worked out above the grid).
+                                $pricingPromise = $pricingPromises[$pricingIndex];
                                 $pricingSublineClass = 'text-body-secondary small mb-3';
                                 if ($pricingPromise !== '') {
                                     $pricingSublineClass = 'text-body-secondary small mb-1';

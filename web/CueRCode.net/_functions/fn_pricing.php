@@ -605,6 +605,42 @@ function pricingPromiseText(mixed $planMode, mixed $planMonths, mixed $defaultMo
     return 'Your price stays the same for the first ' . $count . ' months of your subscription.';
 }
 
+/**
+ * 🤝 The sentence about price promises in the note above the cards. PURE.
+ *    (Recheck finding 4 of the 7n Phase 2 review.)
+ *
+ * The note used to say "Each plan says how long you keep the price you sign
+ * up at" whatever the cards said - and before upgrade 0004 no card states a
+ * promise at all. It now follows what the cards really show:
+ *   - no priced card, or none states a promise: nothing ('');
+ *   - every priced card states one: "Each plan says ...";
+ *   - only some do: "Where a plan promises to keep your price, its card says
+ *     for how long."
+ *
+ * @param array<int, string> $pricedCardPromises The promise sentence of each card
+ *                                               that shows a price figure ('' = none)
+ * @return string Plain English, or ''
+ */
+function pricingPromiseNote(array $pricedCardPromises): string
+{
+    $stated = 0;
+    foreach ($pricedCardPromises as $promise) {
+        if (is_string($promise) && $promise !== '') {
+            $stated++;
+        }
+    }
+
+    if ($stated === 0) {
+        return '';
+    }
+
+    if ($stated === count($pricedCardPromises)) {
+        return 'Each plan says how long you keep the price you sign up at.';
+    }
+
+    return 'Where a plan promises to keep your price, its card says for how long.';
+}
+
 // ==============================================================================
 // 👁️ pricingShowPrices() - the pricing_show_prices setting
 // ==============================================================================
