@@ -68,7 +68,7 @@ function dbQuery(string $sql, string $types = '', array $params = []): PpStateme
         return new PpStatement([['planID' => 2]]);
     }
     $old = [
-        ['planID' => 1, 'planKey' => 'one', 'planName' => 'One', 'priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP'],
+        ['planID' => 1, 'planKey' => CUERCODE_PLAN_KEY_FREE, 'planName' => 'One', 'priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP'],
         ['planID' => 2, 'planKey' => 'two', 'planName' => 'Two', 'priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP'],
     ];
     if ($argv[2] === 'before') {
@@ -142,9 +142,21 @@ assertEquals('Billed monthly', $ppPaid['subline'], 'a monthly-only plan never sa
 $ppYearOnly = pricingPriceBlock($ppDisplay(['priceYearly' => '35.00']), true);
 assertEquals(['£35.00', '/year'], [$ppYearOnly['headline'], $ppYearOnly['suffix']], 'a yearly-only plan shows its yearly price, not "Free"');
 assertFalse($ppDisplay(['priceYearly' => '35.00'])['isZeroPrice'], 'a yearly-only plan is not free');
-$ppFreeBlock = pricingPriceBlock($ppDisplay([]), true);
-assertEquals('Free', $ppFreeBlock['headline'], 'a plan with nothing to pay and no price is Free');
-assertEquals('Price to be announced', pricingPriceBlock($ppDisplay(['hasPricePoint' => true]), true)['headline'], 'a priced plan showing 0.00 is not called Free');
+$ppFreeBlock = pricingPriceBlock($ppDisplay(['planKey' => CUERCODE_PLAN_KEY_FREE]), true);
+assertEquals('Free', $ppFreeBlock['headline'], 'the free plan, with nothing to pay and no price, is Free');
+assertEquals('Price coming soon', pricingPriceBlock($ppDisplay(['hasPricePoint' => true]), true)['headline'], 'a priced plan showing 0.00 is not called Free');
+
+// 🏷️ Decision 0021 (#160): only the plans people get without paying (the
+//    visitors' plan and the free plan new accounts are given) can be "Free".
+//    Any other plan with no price yet says "Price coming soon", with no
+//    sign-up button.
+$ppNoPriceYet = $ppDisplay(['planKey' => 'team_plus', 'planName' => 'Team plus']);
+assertFalse($ppNoPriceYet['isZeroPrice'], '#160: a paid plan put on sale before any price is entered is NOT free');
+assertEquals('Price coming soon', pricingPriceBlock($ppNoPriceYet, true)['headline'], '#160: ...its card says "Price coming soon"');
+assertEquals('Price to be announced', pricingPriceBlock($ppNoPriceYet, false)['headline'], '#160: ...and with prices hidden it is not "Free" either');
+assertTrue(pricingIsNoPaymentPlan(CUERCODE_PLAN_KEY_FREE) && pricingIsNoPaymentPlan(CUERCODE_PLAN_KEY_ANONYMOUS) && !pricingIsNoPaymentPlan('team_plus') && !pricingIsNoPaymentPlan(''), '#160: the no-payment plans are exactly the two fallback plans');
+$ppFreeAccountPlan = $ppDisplay(['planKey' => CUERCODE_PLAN_KEY_FREE]);
+assertTrue($ppFreeAccountPlan['isZeroPrice'] && pricingPriceBlock($ppFreeAccountPlan, true)['headline'] === 'Free', '#160: the free plan new accounts get still says "Free"');
 
 // 🔗 Where "Contact us" goes.
 assertEquals('https://example.com/sales?x=1', pricingContactLink('https://example.com/sales?x=1', 'a@example.com'), 'contact link: the plan\'s https address');
@@ -177,7 +189,7 @@ function ppRenderGrid(array $pricingDisplayPlans, bool $pricingShowPrices, strin
 }
 
 $ppPlans = pricingDisplayRowsFromPlans([
-    $ppPlanRow(['planID' => 1, 'planName' => 'Starter']),
+    $ppPlanRow(['planID' => 1, 'planKey' => CUERCODE_PLAN_KEY_FREE, 'planName' => 'Starter']),
     $ppPlanRow(['planID' => 2, 'planName' => 'Paid', 'priceMonthly' => '3.50', 'priceYearly' => '35.00']),
     $ppPlanRow(['planID' => 3, 'planName' => 'Big <b>"x"</b>', 'description' => '<script>alert(1)</script>', 'ctaMode' => 'contact', 'priceMonthly' => '150.00']),
 ]);
@@ -193,6 +205,9 @@ assertFalse(str_contains($ppShown, '<script'), 'cards: an admin-typed descriptio
 assertFalse(str_contains($ppShown, '<b>'), 'cards: an admin-typed name is escaped');
 assertContains('Big &lt;b&gt;&quot;x&quot;&lt;/b&gt;', $ppShown, 'cards: the name shows as plain text');
 assertFalse(str_contains($ppShown, '<table'), 'cards: no table');
+$ppNoPriceShown = ppRenderGrid([$ppNoPriceYet], true);
+assertFalse(str_contains($ppNoPriceShown, 'Create free account') || str_contains($ppNoPriceShown, '/register/'), '#160: a paid plan with no price has no sign-up button');
+assertContains('Price coming soon', $ppNoPriceShown, '#160: ...and its card says "Price coming soon"');
 $ppBig = ppRenderGrid([$ppDisplay(['priceMonthly' => '99999.99'])], true);
 assertContains('<p class="fs-2 fw-bold mb-0">', $ppBig, 'cards: a very long figure is set smaller so it is never split');
 assertContains('<p class="display-6 fw-bold mb-0">', $ppShown, 'cards: an ordinary figure keeps the large size');
@@ -215,7 +230,7 @@ assertContains("getConfig('site_email'", $ppPageSource, 'the pricing page reads 
 // 🔭 Section 5: the preview
 // ==============================================================================
 $ppPreviewSource = [
-    $ppPlanRow(['planID' => 1, 'planName' => 'Starter', 'hasPricePoint' => false]),
+    $ppPlanRow(['planID' => 1, 'planKey' => CUERCODE_PLAN_KEY_FREE, 'planName' => 'Starter', 'hasPricePoint' => false]),
     $ppPlanRow(['planID' => 2, 'planName' => 'Paid', 'priceMonthly' => '3.50', 'priceYearly' => '35.00', 'hasPricePoint' => true]),
     $ppPlanRow(['planID' => 3, 'planName' => 'Big', 'ctaMode' => 'contact', 'priceMonthly' => '150.00', 'hasPricePoint' => true]),
 ];

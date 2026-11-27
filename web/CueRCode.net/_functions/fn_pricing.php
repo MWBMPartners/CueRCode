@@ -15,8 +15,9 @@
  * OWNER REQUIREMENT this file inherits from fn_features.php (the gating
  * engine it sits alongside): tblSubscriptionPlans is the SINGLE SOURCE OF
  * TRUTH for every tier's name/price/features/limits. This file contains NO
- * hardcoded plan-key literals whatsoever - not even the two fallback keys
- * fn_features.php itself is documented to reference by name - every plan
+ * hardcoded plan-key literals whatsoever - the two fallback keys are only
+ * ever reached through fn_features.php's constants, and only to decide which
+ * plans may read "Free" (pricingIsNoPaymentPlan(), decision 0021) - every plan
  * this page renders, and every feature/limit row within each plan's card, is
  * discovered GENERICALLY from the decoded featuresJSON/limitsJSON of
  * whatever rows the database actually returns. Adding a 5th tier, renaming a
@@ -73,6 +74,16 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 // 💷 Whole-pence money helpers: every price shown here is read from the
 //    database's decimal TEXT and formatted without ever becoming a float.
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_money.php';
+
+// 🏷️ The two fallback plan-key CONSTANTS (decision 0021, #160): only the
+//    plans the site gives people without any payment may be called "Free".
+//    fn_features.php defines them and is loaded by bootstrap.php; loading it
+//    here too (only when it is not loaded yet) keeps this file usable on its
+//    own, as tests/test_pricing*.php use it. It only defines constants and
+//    functions.
+if (!defined('CUERCODE_PLAN_KEY_FREE') || !defined('CUERCODE_PLAN_KEY_ANONYMOUS')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_features.php';
+}
 
 // ==============================================================================
 // 📋 listPublicPlansForDisplay() - Fetch the plans the pricing page shows
@@ -297,6 +308,31 @@ function pricingPlanIsOnGrid(array $planRow, string $nowUtc): bool
 }
 
 // ==============================================================================
+// 🏷️ pricingIsNoPaymentPlan() - which plans can ever be "Free" (decision 0021)
+// ==============================================================================
+
+/**
+ * 🏷️ Is this one of the plans the site gives people WITHOUT any payment? PURE.
+ *
+ * Owner decision 0021 (#160, 2026-11-26): a paid plan put on sale before any
+ * price is entered must show "Price coming soon" with no sign-up button -
+ * never "Free" with a "Create free account" button. The only plans anyone
+ * gets without paying are the two the code itself falls back to (fn_features.php):
+ * the plan for visitors who are not signed in, and the plan every new account
+ * is given. "Create free account" leads to that second plan, so only these two
+ * may read "Free". This is a fact about the code, not a commercial rule: the
+ * plans' names, prices, features and limits all stay admin-editable data, and
+ * either of these plans shows a price if one is ever set on it.
+ *
+ * @param string $planKey The plan's key
+ * @return bool
+ */
+function pricingIsNoPaymentPlan(string $planKey): bool
+{
+    return $planKey !== '' && ($planKey === CUERCODE_PLAN_KEY_FREE || $planKey === CUERCODE_PLAN_KEY_ANONYMOUS);
+}
+
+// ==============================================================================
 // 👁️ pricingShowPrices() - the pricing_show_prices setting
 // ==============================================================================
 
@@ -387,7 +423,10 @@ function pricingEmailIsPlain(string $address): bool
  * 🧾 What one card says about money. PURE.
  *
  * The cases:
- *   - free plan: "Free" (not a price figure, so it stays when prices are hidden);
+ *   - free plan (one of the two plans given without payment, decision 0021):
+ *     "Free" (not a price figure, so it stays when prices are hidden);
+ *   - any other plan with nothing on sale: "Price coming soon" (decision 0021,
+ *     #160), or "Price to be announced" while prices are hidden;
  *   - "Contact us" plan: "From <monthly price>/month", never "Free";
  *   - ordinary paid plan: the monthly price, with the yearly one underneath;
  *     whichever is missing is left out (a missing price is never "Free");
@@ -479,7 +518,8 @@ function pricingPriceBlock(array $plan, bool $showPrices, string $previewCurrenc
         return ['prefix' => '', 'headline' => $yearly, 'suffix' => '/year', 'subline' => 'Billed yearly', 'isFigure' => true];
     }
 
-    return $words('Price to be announced', '');
+    // 🏷️ Decision 0021 (#160): a paid plan with nothing on sale right now.
+    return $words('Price coming soon', '');
 }
 
 // ==============================================================================
@@ -1374,8 +1414,12 @@ function pricingDisplayRowsFromPlans(array $plans): array
 
         // 🆓 Really free = a "buy it" plan with nothing to pay in either of
         // the single-price columns AND no price of its own. A "Contact us"
-        // plan (whose yearly column is 0.00) is never free.
+        // plan (whose yearly column is 0.00) is never free, and (decision
+        // 0021, #160) neither is any plan other than the two the site gives
+        // without payment: a paid plan with no price yet says "Price coming
+        // soon" instead (pricingPriceBlock()).
         $isFree = ($decodedPlan['ctaMode'] !== 'contact'
+            && pricingIsNoPaymentPlan($decodedPlan['planKey'])
             && !$decodedPlan['hasPricePoint']
             && pricingFormatPrice($decodedPlan['priceMonthly'], $decodedPlan['currency']) === 'Free'
             && in_array(pricingFormatPrice($decodedPlan['priceYearly'], $decodedPlan['currency']), ['Free', ''], true));
