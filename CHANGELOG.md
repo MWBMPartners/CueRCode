@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixes - Recheck of the plans and prices review fixes (task 7n Phase 2 recheck, 2026-11-27, #31)
+
+Each finding was first shown failing on the old code, then fixed.
+
+- **Rebuild any database that applied the 26 November version of upgrade 0004.** Upgrade 0004 was corrected in place before any deploy (decision 0036). A database that already had the earlier version keeps its draft prices and the old plan descriptions for ever, because an applied upgrade never runs again. Drop it, create it again empty and run the installer. (No live database exists, so only developers' own or throwaway databases are affected.)
+- **Installer: stops when an applied upgrade's file has changed (recheck finding 1).** Before changing anything, the installer now checks whether this database applied any upgrade from an earlier version of its file. If so it stops, changes nothing, does not lock itself, and says to start again with an empty database. Before, it warned and then locked itself as "successful" with data that did not match a normal install. The upgrade tool's warning about a changed file now also says what it means for that database (recheck finding 5).
+
 ### Fixes - Independent review of plans, prices and currencies (task 7n Phase 2 review, 2026-11-27, #31)
 
 Each finding was first reproduced (a test failing on the old code), then fixed. Real-database checks ran on MySQL 8.0.36 and MariaDB 10.6.

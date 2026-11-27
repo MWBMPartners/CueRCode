@@ -59,6 +59,10 @@
  *     and under the upgrade lock, repeats the data steps of upgrades that ran
  *     BEFORE the starting data existed (task 7n Phase 2, made all-or-nothing
  *     by review finding F1 of the Phase 2 review; see migrationReplayPlan())
+ *   - migrationDbChangedAppliedUpgrades(mysqli $db, string $migrationsDir): array -
+ *     the web installer only: upgrades applied from a file that has changed
+ *     since; the installer stops without locking itself when there are any
+ *     (recheck finding 1, decision 0036)
  *   - the command line: _includes/cli/migrate.php (--status/--dry-run/--apply)
  *
  * SEED-PROTECTION RULE (review finding F1, made precise in task 7n Phase 2):
@@ -997,6 +1001,34 @@ function migrationReplayPlan(array $migrations, array $appliedChecksums): array
     }
 
     return ['steps' => $steps, 'skipped' => $skipped];
+}
+
+/**
+ * 🛑 What the web installer says when an upgrade file has CHANGED since this
+ *    database applied it (recheck finding 1 of the 7n Phase 2 review,
+ *    decision 0036). PURE.
+ *
+ * Such a database is not what a normal install gives: the new text of the
+ * file never ran on it, and it will never run (an applied file is never run
+ * again), so the installer stops before changing anything and does not lock
+ * itself. The only databases this can happen to are developers' own or
+ * throwaway ones (decision 0036: no live database exists yet), so the advice
+ * is to rebuild from an empty database.
+ *
+ * @param array<int, string> $changedKeys Upgrades changed since they were applied
+ * @return string Plain English, safe to show to anyone; '' when the list is empty
+ */
+function migrationChangedUpgradesRefusal(array $changedKeys): string
+{
+    if ($changedKeys === []) {
+        return '';
+    }
+
+    return 'This database had some database upgrades applied from an earlier version of their files, and those '
+        . 'files have changed since: ' . implode(', ', $changedKeys) . '. The new version will never run on this '
+        . 'database, so it would not match a normal install. The installer has stopped, nothing was changed, and it '
+        . 'will not lock itself. Start again with an empty database (delete this database and create it again '
+        . 'empty, or point the site at a new empty one), then reload this page.';
 }
 
 // ==============================================================================
@@ -3137,7 +3169,10 @@ function migrationRunLocked(\mysqli $db, string $mode, bool $isApply, string $ap
 
     // ⚠️ Step 5: warnings - never re-run a changed file.
     foreach ($plan['changed'] as $changedKey) {
-        $result['warnings'][] = $changedKey . ' was changed after it was applied. It will not run again; put new work in a new numbered file.';
+        // 🛑 Recheck finding 5 (decision 0036): say what this means for THIS
+        //    database, not only for the next developer.
+        $result['warnings'][] = $changedKey . ' was changed after it was applied. It will not run again; put new work in a new numbered file. '
+            . 'This database keeps the earlier version: if it must match the new one, rebuild it from an empty database.';
     }
     foreach ($plan['missingFiles'] as $missingKey) {
         $result['warnings'][] = $missingKey . ' is recorded as applied but its file is missing.';
@@ -3330,26 +3365,96 @@ function migrationDbReplayPlanForDatabase(\mysqli $db, string $migrationsDir): a
             return $result;
         }
 
-        // 🈳 Nothing recorded yet (the normal fresh install): nothing to repeat.
-        if (!migrationDbLedgerExists($db)) {
-            $result['ok'] = true;
+        $applied = migrationDbAppliedChecksums($db);
+        if ($applied['ok'] !== true) {
+            $result['error'] = $applied['error'];
             return $result;
         }
 
-        $readApplied = migrationDbReadApplied($db);
-        if ($readApplied['ok'] !== true) {
-            $result['error'] = 'Could not read tblSchemaMigrations (' . $readApplied['error'] . ')';
-            return $result;
-        }
-
-        $appliedChecksums = [];
-        foreach ($readApplied['rows'] as $appliedKey => $appliedRow) {
-            $appliedChecksums[$appliedKey] = $appliedRow['checksum'];
-        }
-
-        $plan              = migrationReplayPlan($loaded['migrations'], $appliedChecksums);
+        $plan              = migrationReplayPlan($loaded['migrations'], $applied['checksums']);
         $result['steps']   = $plan['steps'];
         $result['skipped'] = $plan['skipped'];
+        $result['ok']      = true;
+    } catch (\Throwable $unexpected) {
+        $result['ok']    = false;
+        $result['error'] = 'Stopped by an unexpected error (' . get_class($unexpected) . ': ' . $unexpected->getMessage() . ')';
+    }
+
+    return $result;
+}
+
+/**
+ * 📖 The fingerprint recorded for every applied upgrade (key => checksum).
+ *    A database with no tblSchemaMigrations yet (the normal fresh install)
+ *    has none, which is not an error.
+ *
+ * @param \mysqli $db Connection with the site database selected
+ * @return array{ok: bool, checksums: array<string, string>, error: string}
+ *         error may hold raw database text - log it, never show it
+ */
+function migrationDbAppliedChecksums(\mysqli $db): array
+{
+    $result = ['ok' => false, 'checksums' => [], 'error' => ''];
+
+    // 🈳 Nothing recorded yet: nothing applied.
+    if (!migrationDbLedgerExists($db)) {
+        $result['ok'] = true;
+        return $result;
+    }
+
+    $readApplied = migrationDbReadApplied($db);
+    if ($readApplied['ok'] !== true) {
+        $result['error'] = 'Could not read tblSchemaMigrations (' . $readApplied['error'] . ')';
+        return $result;
+    }
+
+    foreach ($readApplied['rows'] as $appliedKey => $appliedRow) {
+        $result['checksums'][(string) $appliedKey] = (string) $appliedRow['checksum'];
+    }
+    $result['ok'] = true;
+
+    return $result;
+}
+
+/**
+ * 🛑 Which upgrades this database applied from a file that has CHANGED since
+ *    (recheck finding 1 of the 7n Phase 2 review, decision 0036). Reads only.
+ *
+ * The web installer asks this before it changes anything, and stops without
+ * locking itself when the list is not empty (migrationChangedUpgradesRefusal()
+ * says why). The command-line tool and the admin Upgrades page keep their
+ * warning: they never run a changed file again either.
+ *
+ * @param \mysqli $db            Connection with the site database selected
+ * @param string  $migrationsDir Folder of migration files
+ * @return array{ok: bool, changed: array<int, string>, error: string}
+ *         error may hold raw database text - log it, never show it
+ */
+function migrationDbChangedAppliedUpgrades(\mysqli $db, string $migrationsDir): array
+{
+    $result = ['ok' => false, 'changed' => [], 'error' => ''];
+
+    try {
+        $loaded = migrationLoadAll($migrationsDir);
+        if ($loaded['errors'] !== []) {
+            $result['error'] = 'The migrations folder has problems: ' . implode('; ', $loaded['errors']);
+            return $result;
+        }
+
+        $applied = migrationDbAppliedChecksums($db);
+        if ($applied['ok'] !== true) {
+            $result['error'] = $applied['error'];
+            return $result;
+        }
+
+        $availableChecksums = [];
+        foreach ($loaded['migrations'] as $key => $migration) {
+            $availableChecksums[(string) $key] = (string) $migration['checksum'];
+        }
+
+        // 🧭 The same "changed since applied" rule the upgrade run warns about.
+        $plan              = migrationBuildPlan($availableChecksums, $applied['checksums']);
+        $result['changed'] = $plan['changed'];
         $result['ok']      = true;
     } catch (\Throwable $unexpected) {
         $result['ok']    = false;

@@ -1219,3 +1219,32 @@ assertContains("\$seedRun['refusal'] !== ''", $migInstallerSource, 'installer (R
 assertContains("'message' => \$seedRun['refusal']", $migInstallerSource, 'installer (R1-2): the refusal reason is shown in plain words');
 assertContains("\$finalSeedState['summary']", $migInstallerSource, 'installer (R1-1): the final check before the lock file names what is missing');
 assertFalse(str_contains($migInstallerSource, "\$finalSeedState['empty']"), 'installer (R1-1): the final check no longer reports only empty tables (a table can be part-filled)');
+
+// 🛑 Recheck finding 1 (7n Phase 2 recheck, decision 0036): an upgrade file
+//    that has CHANGED since this database applied it means the database is
+//    not what a normal install gives (its new text never ran here, and the
+//    installer's repeat skips it). The installer must stop, change nothing
+//    and NOT lock itself, saying plainly what to do. Before this fix it only
+//    warned and then locked itself as "successful".
+$migChangedMessage = migrationChangedUpgradesRefusal(['0004_plans_prices_currencies', '0002_admin_audit_log_and_settings']);
+assertContains('0004_plans_prices_currencies', $migChangedMessage, 'recheck F1: the refusal names each changed upgrade');
+assertContains('0002_admin_audit_log_and_settings', $migChangedMessage, 'recheck F1: ...every one of them');
+assertContains('nothing was changed', $migChangedMessage, 'recheck F1: the refusal says nothing was changed');
+assertContains('will not lock itself', $migChangedMessage, 'recheck F1: the refusal says the installer did not lock itself');
+assertContains('empty database', $migChangedMessage, 'recheck F1: the refusal says what to do (rebuild from an empty database)');
+assertFalse(str_contains($migChangedMessage, 'checksum') || str_contains($migChangedMessage, 'tblSchemaMigrations'), 'recheck F1: the refusal is plain words (no checksum or table names)');
+assertEquals('', migrationChangedUpgradesRefusal([]), 'recheck F1: no changed upgrade, no refusal');
+
+// 🔎 The installer asks BEFORE it changes anything: the check comes after the
+//    one-installer lock and before install.sql, seed_data.sql and the upgrades.
+$migChangedCheckAt = strpos($migInstallerSource, '= migrationDbChangedAppliedUpgrades($mysqli, migrationDefaultDirectory())');
+assertTrue(is_int($migChangedCheckAt), 'recheck F1: the installer checks for upgrade files changed since they were applied');
+assertTrue(
+    is_int($migChangedCheckAt)
+    && $migChangedCheckAt > (int) strpos($migInstallerSource, '$installerLockState = migrationDbAcquireInstallerLock($mysqli);')
+    && $migChangedCheckAt < (int) strpos($migInstallerSource, '$installRun = migrationDbRunInstallSql($mysqli, $installSQL);')
+    && $migChangedCheckAt < (int) strpos($migInstallerSource, '$seedRun = migrationDbRunSeedSql(')
+    && $migChangedCheckAt < $migApplyPendingCallPosition,
+    'recheck F1: ...under the installer lock, and before install.sql, the starting data and the upgrades run'
+);
+assertContains("migrationChangedUpgradesRefusal(\$upgradeFileCheck['changed'])", $migInstallerSource, 'recheck F1: the installer shows the plain refusal');

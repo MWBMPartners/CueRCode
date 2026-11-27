@@ -914,6 +914,20 @@ tables that already existed earlier in the same file. That meant:
    (SHA-256) the moment it applies it, and reports an edited file as a
    warning ("changed after it was applied") without ever running it again.
    If you need to fix a mistake, write a new, higher-numbered migration.
+   The one exception so far is upgrade 0004, corrected in place on
+   27 November 2026 before any deploy (decision 0036 in `docs/decisions/`).
+   **The web installer refuses a database like that** (recheck finding 1 of
+   the 7n Phase 2 review): before it changes anything it asks
+   `migrationDbChangedAppliedUpgrades()` whether any applied upgrade's file
+   has changed since, and if so it stops, changes nothing, does not lock
+   itself and says to start again with an empty database.
+   **Rebuild any database that applied the 26 November 2026 version of
+   0004** (a developer's own or a throwaway one; no live database exists).
+   It keeps the draft price points and the old starting plan descriptions
+   for ever, because the corrected 0004 never runs on it again, and the
+   upgrade tool only warns. To rebuild: drop the database, create it again
+   empty, then run the web installer (or `migrate.php --apply` followed by
+   the installer).
 
 6. **Running the upgrade tool** - the command line (`_includes/cli/migrate.php`,
    run with the command-line `php`, never from a URL - it lives outside

@@ -353,6 +353,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                     'message' => 'Installation has already been completed (it finished while this request was waiting). Nothing was changed.'
                 ];
                 $isLocked = true;
+            } elseif (($upgradeFileCheck = migrationDbChangedAppliedUpgrades($mysqli, migrationDefaultDirectory()))['ok'] !== true) {
+                // ----------------------------------------------------------------
+                // 🛑 Step 3c: upgrade files changed since this database applied
+                //    them (recheck finding 1 of the 7n Phase 2 review, decision
+                //    0036). Asked BEFORE anything is changed. A database like
+                //    that is not what a normal install gives, and before this
+                //    check the installer only warned and then locked itself as
+                //    "successful". The full detail goes to the error log only.
+                // ----------------------------------------------------------------
+                error_log('CueRCode Installer: could not check the applied database upgrades: ' . $upgradeFileCheck['error']);
+                $results[] = [
+                    'status' => 'error',
+                    'message' => 'The installer could not check which database upgrades this database already has, so it '
+                        . 'has not started and nothing was changed. Check the server error log, then reload this page.'
+                ];
+            } elseif ($upgradeFileCheck['changed'] !== []) {
+                // 🛑 Stop: nothing changed, no lock file; the message says to
+                //    start again with an empty database.
+                $results[] = [
+                    'status' => 'error',
+                    'message' => migrationChangedUpgradesRefusal($upgradeFileCheck['changed'])
+                ];
             } else {
                 // ----------------------------------------------------------------
                 // 📌 Step 4: Execute install.sql (table creation)

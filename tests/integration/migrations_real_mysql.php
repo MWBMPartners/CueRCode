@@ -107,6 +107,11 @@
  *      upgrade holds the lock the load is refused with nothing written, and a
  *      repeated step that fails rolls the starting data back with it, so the
  *      retry the installer asks for loads everything again.
+ *      Added by recheck finding 1 (2026-11-27, decision 0036): the
+ *      installer's check migrationDbChangedAppliedUpgrades() reports an
+ *      upgrade applied from an earlier version of its file (J, and the edited
+ *      file in G), and nothing on a brand-new empty database; the upgrade
+ *      tool's warning says to rebuild such a database (G, recheck finding 5).
  *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
@@ -964,6 +969,13 @@ itCheck(
     count($itResult['warnings']) === 1 && str_contains($itResult['warnings'][0], 'changed after it was applied'),
     'editing an already-applied file is reported as a warning: ' . json_encode($itResult['warnings'])
 );
+itCheck(
+    'G failing step stops/resumes',
+    count($itResult['warnings']) === 1 && str_contains($itResult['warnings'][0], 'rebuild it from an empty database'),
+    'recheck F5: ...and the warning says this database keeps the earlier version and how to bring it in line'
+);
+$itChangedG = migrationDbChangedAppliedUpgrades($itG, $itTempMigrationsDir);
+itCheck('G failing step stops/resumes', $itChangedG['ok'] === true && count($itChangedG['changed']) === 1, 'recheck F1: the installer\'s check reports the same edited file: ' . json_encode($itChangedG));
 
 // 🚫 A brand-new migration that tries a destructive change (DROP) is refused
 //    before anything in it runs, even though its first clause (ADD COLUMN) is
@@ -1138,6 +1150,27 @@ itCheck('J empty db then seed check', itValue($itJ, 'SELECT @@SESSION.sql_mode')
 itCheck('J empty db then seed check', $itJ->query("SELECT 1 FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider' AND `description` = 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)'")->num_rows === 1, 'upgrade-tool order (upgrades, then seed): the bot-protection description ALSO names hCaptcha (R1-3)');
 $itCliResultJ2 = itCli($itDbJ, 'status');
 itCheck('J empty db then seed check', $itCliResultJ2['exit'] === 0 && !str_contains($itCliResultJ2['out'] . $itCliResultJ2['err'], 'changed after it was applied'), 'and the upgrade tool reports up to date with no "changed after it was applied" warning (migration 0002 was not edited)');
+
+// 🛑 Recheck finding 1 (decision 0036): an upgrade applied from an EARLIER
+//    version of its file. The installer asks migrationDbChangedAppliedUpgrades()
+//    before changing anything and stops, without locking itself, when the list
+//    is not empty. Simulated by changing the recorded fingerprint of 0004, which
+//    is exactly what a database that applied the 26 November 0004 looks like.
+$itChangedNoneJ = migrationDbChangedAppliedUpgrades($itJ, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itChangedNoneJ['ok'] === true && $itChangedNoneJ['changed'] === [], 'recheck F1: with every upgrade file as applied, nothing is reported changed');
+$itRealChecksumJ = itValue($itJ, "SELECT `checksum` FROM `tblSchemaMigrations` WHERE `migrationKey` = '0004_plans_prices_currencies'");
+$itJ->query("UPDATE `tblSchemaMigrations` SET `checksum` = REPEAT('0', 64) WHERE `migrationKey` = '0004_plans_prices_currencies'");
+$itChangedJ = migrationDbChangedAppliedUpgrades($itJ, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itChangedJ['ok'] === true && $itChangedJ['changed'] === ['0004_plans_prices_currencies'], 'recheck F1: an upgrade applied from an earlier version of its file is reported: ' . json_encode($itChangedJ));
+$itRestoreChecksumJ = $itJ->prepare("UPDATE `tblSchemaMigrations` SET `checksum` = ? WHERE `migrationKey` = '0004_plans_prices_currencies'");
+$itRestoreChecksumJ->bind_param('s', $itRealChecksumJ);
+$itRestoreChecksumJ->execute();
+$itRestoreChecksumJ->close();
+$itChangedEmptyDb = itFreshDb($itEnv, $itPort, $itDbJ . '_c');
+$itChangedFreshJ = migrationDbChangedAppliedUpgrades($itChangedEmptyDb, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itChangedFreshJ['ok'] === true && $itChangedFreshJ['changed'] === [], 'recheck F1: a brand-new empty database (no upgrade record yet) has nothing changed, so a normal install goes ahead');
+$itChangedEmptyDb->close();
+itDropDb($itEnv, $itPort, $itDbJ . '_c');
 
 // ==============================================================================
 // 🅽 Scenario N (task 7n Phase 2): a database already at migration 0003
