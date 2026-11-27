@@ -524,6 +524,110 @@ function adminPlansProtectedReason(string $planKey, array $settingPlanKeys): str
 }
 
 /**
+ * 🛡️ What, in a plan's own boxes, would take a protected plan (P5) off the
+ *    pricing page or take away its own button. PURE. (Review finding F3 and
+ *    recheck finding 2 of the 7n Phase 2 review.)
+ *
+ * A protected plan must always be on sale, on the page, with its own button
+ * (for the free plan that is "Create free account", the only sign-up button):
+ *   - sale dates: a start later or an end that passes takes it off the page;
+ *   - "Contact us": replaces its own button;
+ *   - display order 0: hides its card. Not for the visitors' plan, which
+ *     never has a card of its own (order 0 is how it is kept off the grid);
+ *   - a sales cap: ends its sales once reached.
+ * A box missing from $plan (a row from before upgrade 0004) is not a problem.
+ * Used by the plan form (adminPlansValidatePlanForm()) and by the settings
+ * screen (adminPlansTrialPlanChoices()), so the two can never disagree.
+ *
+ * @param array<string, mixed> $plan    Plan columns: a stored row, or the values about to be saved
+ * @param string               $planKey The plan's key
+ * @return array<string, string> Form box => plain words (finishing "For the same
+ *                               reason ..."); empty when nothing is wrong
+ */
+function adminPlansProtectedPlanProblems(array $plan, string $planKey): array
+{
+    $problems = [];
+    $datesWords = 'it cannot have sale dates: leave both dates empty.';
+
+    if (isset($plan['availableFrom'])) {
+        $problems['available_from_date'] = $datesWords;
+    }
+
+    if (isset($plan['availableUntil'])) {
+        $problems['available_until_date'] = $datesWords;
+    }
+
+    if (isset($plan['ctaMode']) && $plan['ctaMode'] === 'contact') {
+        $problems['cta_mode'] = 'it must keep its own button, so it cannot be "Contact us".';
+    }
+
+    if ($planKey !== CUERCODE_PLAN_KEY_ANONYMOUS && array_key_exists('sortOrder', $plan) && (int) $plan['sortOrder'] < 1) {
+        $problems['sort_order'] = 'it must stay on the pricing page, so its display order must be 1 or more (0 hides a plan).';
+    }
+
+    if (isset($plan['maxSales'])) {
+        $problems['max_sales'] = 'it cannot have a sales cap: leave the cap empty.';
+    }
+
+    return $problems;
+}
+
+/**
+ * 🎟️ The plans the free-trial setting (billing_trial_plan_key) may name.
+ *    PURE. (Recheck finding 2 of the 7n Phase 2 review.)
+ *
+ * The plan a setting names becomes protected (adminPlansProtectedReason()),
+ * so it may only be one the plan form would accept as protected: on sale, an
+ * ordinary plan, costing money (monthly or yearly), and with none of the
+ * problems in adminPlansProtectedPlanProblems(). Before this, a plan whose
+ * sale dates had ENDED could be chosen, and the plan could then not be put
+ * right because protected plans may not have dates at all.
+ *
+ * @param array<int, array<string, mixed>> $planRows tblSubscriptionPlans rows (any order)
+ * @return array<int, string> Plan keys, in the order given
+ */
+function adminPlansTrialPlanChoices(array $planRows): array
+{
+    $keys = [];
+
+    foreach ($planRows as $row) {
+        if (!isset($row['planKey']) || !is_string($row['planKey']) || $row['planKey'] === '') {
+            continue;
+        }
+        if (!isset($row['isActive']) || (int) $row['isActive'] !== 1) {
+            continue;
+        }
+        if (array_key_exists('planKind', $row) && $row['planKind'] !== 'standard') {
+            continue;
+        }
+
+        // 💷 Costs money: a monthly or a yearly figure above zero. Read as
+        //    text (a stored DECIMAL with a non-zero digit), never as a float.
+        $costsMoney = false;
+        foreach (['priceMonthly', 'priceYearly'] as $column) {
+            if (!isset($row[$column])) {
+                continue;
+            }
+            $stored = (string) $row[$column];
+            if (preg_match('/^[0-9]{1,8}(\.[0-9]{1,4})?$/D', $stored) === 1 && trim(str_replace('.', '', $stored), '0') !== '') {
+                $costsMoney = true;
+            }
+        }
+        if (!$costsMoney) {
+            continue;
+        }
+
+        if (adminPlansProtectedPlanProblems($row, $row['planKey']) !== []) {
+            continue;
+        }
+
+        $keys[] = $row['planKey'];
+    }
+
+    return $keys;
+}
+
+/**
  * 🗑️ May this plan be deleted (P4 + P5)? PURE.
  *
  * Only a plan nothing has ever referred to may go: no subscription (of any
@@ -922,25 +1026,6 @@ function adminPlansValidatePlanForm(array $post, ?array $current, array $context
         $errors['available_until_date'] = 'The end must be after the start.';
     }
 
-    // 🛡️ Review finding F3 (7n Phase 2 review): a protected plan (P5) must
-    //    always be on sale. Taking it off sale was already refused, but sale
-    //    dates did the same thing by another route (the Free card - the only
-    //    sign-up button - left the pricing page). So a protected plan can have
-    //    no sale dates at all; one that somehow has some is told to clear them.
-    $protectedReason = '';
-    if (isset($context['protectedReason']) && is_string($context['protectedReason'])) {
-        $protectedReason = $context['protectedReason'];
-    }
-    if ($protectedReason !== '' && $from['ok'] && $until['ok']) {
-        $datesWords = ' For the same reason it cannot have sale dates: leave both dates empty.';
-        if ($from['utc'] !== null) {
-            $errors['available_from_date'] = $protectedReason . $datesWords;
-        }
-        if ($until['utc'] !== null) {
-            $errors['available_until_date'] = $protectedReason . $datesWords;
-        }
-    }
-
     // -------------------------------------------------------------- sales cap
     $cap = adminPlansCheckWhole($read('max_sales', 'maxSales', ''), 1, CUERCODE_ADMIN_PLAN_MAX_SALES, true);
     if (!$cap['ok']) {
@@ -981,6 +1066,26 @@ function adminPlansValidatePlanForm(array $post, ?array $current, array $context
                 $values['pricePromiseMode'] = $promise;
             }
             $values['pricePromiseMonths'] = null;
+        }
+    }
+
+    // 🛡️ Review finding F3 and recheck finding 2 (7n Phase 2): a protected
+    //    plan (P5) must always be on the pricing page with its own button.
+    //    Taking it off sale was already refused, but other boxes did the same
+    //    thing by another route (the Free card - the only sign-up button -
+    //    left the page, or lost its button). adminPlansProtectedPlanProblems()
+    //    names every such route; each is refused with the reason, and a plan
+    //    that somehow already has one is told to put it right before saving.
+    //    Boxes that already have an error keep that error.
+    $protectedReason = '';
+    if (isset($context['protectedReason']) && is_string($context['protectedReason'])) {
+        $protectedReason = $context['protectedReason'];
+    }
+    if ($protectedReason !== '' && !$creating) {
+        foreach (adminPlansProtectedPlanProblems($values, (string) $current['planKey']) as $box => $problem) {
+            if (!isset($errors[$box])) {
+                $errors[$box] = $protectedReason . ' For the same reason ' . $problem;
+            }
         }
     }
 

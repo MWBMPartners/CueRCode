@@ -577,7 +577,7 @@ function adminSettingsRegistry(): array
     $fields[] = adminSettingsField([
         'key' => 'billing_trial_plan_key', 'section' => 'trials', 'kind' => 'plan_key', 'group' => 'billing', 'type' => 'string',
         'label' => 'Plan a trial gives',
-        'help' => 'Only active paid plans are listed.',
+        'help' => 'Only paid plans on sale are listed, and only those with no sale dates, no sales cap, a display order above 0 and their own buy button (the plan chosen here must stay on the pricing page).',
         'description' => 'Which plan a free trial gives',
     ]);
     $fields[] = adminSettingsField([
@@ -1696,7 +1696,14 @@ function adminSettingsLoadRows(array $keys, bool $forUpdate = false): ?array
 }
 
 /**
- * 📋 The plan keys a free trial may give: active plans that cost money.
+ * 📋 The plan keys a free trial may give: paid ordinary plans on sale that
+ *    can stay on the pricing page with their own button (recheck finding 2 of
+ *    the 7n Phase 2 review - the rule is adminPlansTrialPlanChoices(), shared
+ *    with the plan form's protection rules). Used both to list the choices
+ *    and to check a save.
+ *
+ * Every column is read (`SELECT *`), so this works before upgrade 0004 adds
+ * the sale-date, button and cap columns as well as after.
  *
  * @return array<int, string>|null null when they could not be read
  */
@@ -1706,19 +1713,22 @@ function adminSettingsTrialPlanKeys(): ?array
         return null;
     }
 
+    // 📦 The shared rule lives with the other plan rules (loads functions only).
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin_plans.php';
+
     try {
         $stmt = dbQuery(
-            'SELECT `planKey` FROM `tblSubscriptionPlans` '
-            . 'WHERE `isActive` = 1 AND (`priceMonthly` > 0 OR `priceYearly` > 0) ORDER BY `sortOrder`, `planKey`',
+            'SELECT * FROM `tblSubscriptionPlans` WHERE `isActive` = 1 ORDER BY `sortOrder`, `planKey`',
             '',
             []
         );
         $result = $stmt->get_result();
-        $keys = [];
+        $rows = [];
         while ($row = $result->fetch_assoc()) {
-            $keys[] = (string) $row['planKey'];
+            $rows[] = $row;
         }
         $stmt->close();
+        $keys = adminPlansTrialPlanChoices($rows);
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
             logError('error', 'Admin settings could not read the plan list', get_class($e));

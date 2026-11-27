@@ -602,7 +602,34 @@ foreach (['anonymous', 'free', 'pro'] as $ipProtectedKey) {
     $ipDatedLater = adminPlansUpdate($ipAdmin, $ipProtectedID, ipPlanFp($ipProtectedID), ['available_from_date' => '2030-01-01']);
     $ipDatedRow = ipPlan($ipServer, $ipProtectedKey);
     ipCheck('F', $ipDated['ok'] === false && isset($ipDated['errors']['available_until_date']) && $ipDatedLater['ok'] === false && $ipDatedRow['availableUntil'] === null && $ipDatedRow['availableFrom'] === null, 'F3: ' . $ipProtectedKey . ' cannot be given an ended or a future sale date through the details form: ' . json_encode([$ipDated['errors'], $ipDatedLater['errors']]));
+    // 🛡️ Recheck finding 2: nor hidden by display order 0 (the visitors' plan
+    //    keeps its 0 - it never has a card), nor given "Contact us" in place of
+    //    its own button, nor a sales cap.
+    $ipBeforeRoutes = ipPlan($ipServer, $ipProtectedKey);
+    $ipRoutes = ['cta_mode' => 'contact', 'max_sales' => '100'];
+    if ($ipProtectedKey !== 'anonymous') {
+        $ipRoutes['sort_order'] = '0';
+    }
+    foreach ($ipRoutes as $ipRouteBox => $ipRouteValue) {
+        $ipRouted = adminPlansUpdate($ipAdmin, $ipProtectedID, ipPlanFp($ipProtectedID), [$ipRouteBox => $ipRouteValue]);
+        ipCheck('F', $ipRouted['ok'] === false && isset($ipRouted['errors'][$ipRouteBox]) && ipPlan($ipServer, $ipProtectedKey) === $ipBeforeRoutes, 'recheck F2: ' . $ipProtectedKey . ' cannot be given ' . $ipRouteBox . ' = ' . $ipRouteValue . ' (nothing saved): ' . json_encode($ipRouted['errors'] ?? null));
+    }
 }
+// 🎟️ Recheck finding 2, settings side: the trial setting cannot name a plan
+//    whose sale dates have ended - not in the list, and refused when saved
+//    even if the page offered it (an out-of-date page or a hand-made request).
+$ipEndedMade = adminPlansCreate($ipAdmin, ['plan_key' => 'ended_it', 'plan_kind' => 'standard', 'plan_name' => 'Ended', 'sort_order' => '7', 'cta_mode' => 'checkout']);
+$ipEndedID = (int) $ipEndedMade['planID'];
+adminPricesSaveGroup($ipAdmin, $ipEndedID, 'monthly', ipPricesFp($ipEndedID), ['amount' => ['GBP' => '4.00']]);
+adminPlansSetOnSale($ipAdmin, $ipEndedID, ipPlanFp($ipEndedID), true, false);
+ipCheck('F', in_array('ended_it', (array) adminSettingsTrialPlanKeys(), true), 'recheck F2 setup: a paid plan on sale with no dates may be the trial plan');
+$ipEndedDated = adminPlansUpdate($ipAdmin, $ipEndedID, ipPlanFp($ipEndedID), ['available_until_date' => '2026-01-01']);
+ipCheck('F', $ipEndedDated['ok'] === true && !in_array('ended_it', (array) adminSettingsTrialPlanKeys(), true), 'recheck F2: once its sale dates have ended it is no longer offered for the trial setting: ' . json_encode(adminSettingsTrialPlanKeys()));
+$ipTrialStatesF = adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection('trials')));
+$ipTrialStaleF = adminSettingsProcessSection('trials', ['f' => ['billing_trial_plan_key' => 'ended_it']], (array) $ipTrialStatesF, ['planKeys' => ['pro', 'ended_it']]);
+$ipTrialSavedF = adminSettingsSaveSection($ipAdmin, 'trials', adminSettingsSectionFingerprint('trials', (array) $ipTrialStatesF), $ipTrialStaleF['changes']);
+ipCheck('F', $ipTrialStaleF['changes'] !== [] && $ipTrialSavedF['ok'] === false && (string) ipRow($ipServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'billing_trial_plan_key'")['settingValue'] === 'pro', 'recheck F2: a save naming it is refused by the server even when the page offered it (the trial plan stays Pro): ' . (string) $ipTrialSavedF['message']);
+adminPlansSetOnSale($ipAdmin, $ipEndedID, ipPlanFp($ipEndedID), false, true);
 $ipGridKeys = array_column(pricingDisplayRowsFromPlans(listPublicPlansForDisplay()), 'planKey');
 ipCheck('F', in_array('free', $ipGridKeys, true) && in_array('pro', $ipGridKeys, true), 'F3: the free plan (the only sign-up button) and the trial plan are still on the pricing page: ' . implode(',', $ipGridKeys));
 $ipBusinessID = (int) $ipBusiness['planID'];

@@ -211,7 +211,7 @@ assertFalse(isset(adminPlansValidatePlanForm(['plan_kind' => 'standard'], $apPla
 //    fallback plans, and any plan a setting names) must always be on sale, so
 //    it can never be given sale dates through the details form either.
 $apProtectedContext = ['timezone' => $apUk, 'soldCount' => 0, 'protectedReason' => 'This is the plan everyone signed in falls back to.'];
-$apNoDates = array_merge($apPlan, ['availableUntil' => null]);
+$apNoDates = array_merge($apPlan, ['availableUntil' => null, 'maxSales' => null]);
 $apEnded = adminPlansValidatePlanForm(['available_until_date' => '2026-01-01'], $apNoDates, $apProtectedContext);
 assertTrue(isset($apEnded['errors']['available_until_date']) && str_contains($apEnded['errors']['available_until_date'], 'falls back to'), 'F3: a protected plan cannot be given an end date (the reason is shown)');
 assertEquals([], $apEnded['values'], 'F3: ...and nothing is saved');
@@ -220,6 +220,51 @@ assertTrue(isset($apLater['errors']['available_from_date']), 'F3: ...nor a start
 assertEquals([], adminPlansValidatePlanForm(['plan_name' => 'Free plan'], $apNoDates, $apProtectedContext)['errors'], 'F3: other changes to a protected plan with no sale dates are fine');
 assertTrue(isset(adminPlansValidatePlanForm(['plan_name' => 'Free plan'], $apPlan, $apProtectedContext)['errors']['available_until_date']), 'F3: a protected plan that somehow already has dates is told to clear them before saving');
 assertEquals([], adminPlansValidatePlanForm(['available_until_date' => '2026-01-01'], $apNoDates, ['timezone' => $apUk, 'soldCount' => 0])['errors'], 'F3: an ordinary plan can still be given sale dates');
+
+// 🛡️ Recheck finding 2 (7n Phase 2 recheck): the other ways a protected plan
+//    could leave the pricing page or lose its own button. Display order 0
+//    hides a card; "Contact us" replaces "Create free account"; a sales cap
+//    ends sales once reached. All refused for a protected plan, with the
+//    reason shown; an ordinary plan may still do all three.
+$apFreeRow = array_merge($apPlan, ['planKey' => CUERCODE_PLAN_KEY_FREE, 'availableUntil' => null, 'maxSales' => null, 'sortOrder' => 1]);
+foreach ([
+    'display order 0'  => [['sort_order' => '0'], 'sort_order'],
+    '"Contact us"'     => [['cta_mode' => 'contact'], 'cta_mode'],
+    'a sales cap'      => [['max_sales' => '100'], 'max_sales'],
+] as $apRouteLabel => [$apRoutePost, $apRouteBox]) {
+    $apRouteResult = adminPlansValidatePlanForm($apRoutePost, $apFreeRow, $apProtectedContext);
+    assertTrue(isset($apRouteResult['errors'][$apRouteBox]) && str_contains($apRouteResult['errors'][$apRouteBox], 'falls back to'), 'recheck F2: a protected plan cannot be given ' . $apRouteLabel . ' (the reason is shown): ' . json_encode($apRouteResult['errors']));
+    assertEquals([], $apRouteResult['values'], 'recheck F2: ...and nothing is saved (' . $apRouteLabel . ')');
+    assertEquals([], adminPlansValidatePlanForm($apRoutePost, $apFreeRow, ['timezone' => $apUk, 'soldCount' => 0])['errors'], 'recheck F2: an ordinary plan may still have ' . $apRouteLabel);
+}
+$apVisitorsRow = array_merge($apFreeRow, ['planKey' => CUERCODE_PLAN_KEY_ANONYMOUS, 'sortOrder' => 0]);
+assertEquals([], adminPlansValidatePlanForm(['plan_name' => 'Visitors'], $apVisitorsRow, $apProtectedContext)['errors'], 'recheck F2: the visitors\' plan keeps display order 0 (it never has a card of its own)');
+assertTrue(isset(adminPlansValidatePlanForm(['cta_mode' => 'contact'], $apVisitorsRow, $apProtectedContext)['errors']['cta_mode']), 'recheck F2: ...but it cannot be made "Contact us" either');
+assertEquals([], adminPlansProtectedPlanProblems(['planKey' => 'old'], 'old'), 'recheck F2: a plan row from before upgrade 0004 (no new columns) has nothing to object to');
+assertEquals(['available_from_date', 'available_until_date', 'cta_mode', 'sort_order', 'max_sales'], array_keys(adminPlansProtectedPlanProblems(['availableFrom' => '2030-01-01 00:00:00', 'availableUntil' => '2031-01-01 00:00:00', 'ctaMode' => 'contact', 'sortOrder' => 0, 'maxSales' => 5], 'pro')), 'recheck F2: every route is named, one box each');
+
+// 🎟️ Recheck finding 2, the settings screen side: the trial setting may only
+//    name a plan that could be protected - on sale, an ordinary plan, costing
+//    money, and none of the problems above. Before this, a plan whose sale
+//    dates had ENDED could be chosen (and then could not be put right).
+$apTrialRow = static function (array $apOver): array {
+    return array_merge(['planKey' => 'pro', 'planKind' => 'standard', 'isActive' => 1, 'priceMonthly' => '5.49', 'priceYearly' => '0.00', 'ctaMode' => 'checkout', 'sortOrder' => 2, 'availableFrom' => null, 'availableUntil' => null, 'maxSales' => null], $apOver);
+};
+assertEquals(['pro', 'yearly_only'], adminPlansTrialPlanChoices([
+    $apTrialRow([]),
+    $apTrialRow(['planKey' => 'yearly_only', 'priceMonthly' => '0.00', 'priceYearly' => '50.00']),
+    $apTrialRow(['planKey' => 'ended', 'availableUntil' => '2026-01-01 00:00:00']),
+    $apTrialRow(['planKey' => 'later', 'availableFrom' => '2030-01-01 00:00:00']),
+    $apTrialRow(['planKey' => 'off_sale', 'isActive' => 0]),
+    $apTrialRow(['planKey' => 'contact_plan', 'ctaMode' => 'contact']),
+    $apTrialRow(['planKey' => 'hidden', 'sortOrder' => 0]),
+    $apTrialRow(['planKey' => 'capped', 'maxSales' => 10]),
+    $apTrialRow(['planKey' => 'deal', 'planKind' => 'lifetime_deal']),
+    $apTrialRow(['planKey' => CUERCODE_PLAN_KEY_FREE, 'priceMonthly' => '0.00']),
+]), 'recheck F2: the trial setting lists only paid ordinary plans on sale with no sale dates, no cap, a display order above 0 and their own button');
+assertEquals(['old_pro'], adminPlansTrialPlanChoices([['planKey' => 'old_pro', 'isActive' => 1, 'priceMonthly' => '5.49', 'priceYearly' => '0.00', 'sortOrder' => 2]]), 'recheck F2: before upgrade 0004 (no new columns) a paid plan on sale can still be chosen');
+$apSettingsSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_admin_settings.php');
+assertContains('adminPlansTrialPlanChoices(', $apSettingsSource, 'recheck F2: the settings screen (list AND save) uses the same rule');
 
 // 🔢 Sales cap: never below what is sold (plan §4.5).
 assertTrue(isset(adminPlansValidatePlanForm(['max_sales' => '9'], $apPlan, ['timezone' => $apUk, 'soldCount' => 10])['errors']['max_sales']), 'cap below sold (9 < 10) is refused');
