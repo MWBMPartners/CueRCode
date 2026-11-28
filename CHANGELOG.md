@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - Admin pages run scripts only from the two pinned CDN folders; jQuery has its integrity hash (fourth-round review, Low 2 and Info 2, 2026-11-28)
+
+- **The fault:** the admin area's security policy allowed scripts from anywhere on `cdn.jsdelivr.net`. jsDelivr serves any public npm package or GitHub file, so a single injected `<script src>` tag could still run anyone's code on an admin page. jQuery was also loaded with no integrity hash.
+- **The fix:** the admin policy (in `admin/.htaccess` and in the PHP copy, `adminSendSecurityHeaders()`) now allows only `cdn.jsdelivr.net/npm/jquery@3.7.1/` and `cdn.jsdelivr.net/npm/bootstrap@5.3.3/`. jQuery now carries its integrity hash on every page. The hash was taken from the committed local copy, which is byte for byte the jsDelivr file, and its SHA-256 is the one jQuery publishes. A changed CDN file is refused and the local copy is used.
+- **The check for inline event handlers (Info 2)** now finds any `on...=` attribute (it knew only some, so `ondblclick` or `onpointerdown` passed).
+- Shown in a real browser (headless Edge, outside hosts blocked): on an admin page, scripts from `jsdelivr.net/gh/...` and from another npm package were refused by the policy, and the two pinned folders were allowed. With the old policy nothing was refused. The new checks in `tests/test_admin_csp.php` failed first (3).
+
 ### Security - The offline worker no longer keeps admin pages or signed-in pages (fourth-round review, Medium 2, 2026-11-28)
 
 - **The fault:** the offline worker (`public_html/sw.js`) kept a full copy of every page visited, including the admin settings, plans and prices pages, whatever the server said. After signing out, with the network off, those copies could still be read on that computer. Pages drawn for a signed-in visitor (with the email address in the menu) were kept the same way.

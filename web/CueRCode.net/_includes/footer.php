@@ -144,11 +144,13 @@ if (function_exists('isDebugMode')) {
          📦 JavaScript: jQuery (CDN with local fallback)
          @see https://jquery.com/
          ==================================================================== */ ?>
-    <?php /* TODO F-004: capture SRI hash for jquery@3.7.1 at live deploy —
-         public_html_landing/index.php does not reference jQuery, so no
-         existing verified hash can be safely copied for this version. Do NOT
-         guess a hash: an incorrect integrity value BLOCKS the resource. */ ?>
+    <?php /* 🔒 F-004 (fourth-round review, Low 2): the hash of the committed
+         local copy assets/vendor/jquery/jquery.min.js, which is byte for byte
+         the jsDelivr file (compared on 2026-11-28; its SHA-256 is the one
+         jQuery publishes for 3.7.1). A changed file on the CDN is refused,
+         and the fallback below then loads the local copy. */ ?>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
+            integrity="sha384-1H217gwSVyLSIfaLxHbE7dRb3v4mYCKbpQvzx0cegeju1MVsGrX5xXxAvs/HgeFs"
             crossorigin="anonymous"></script>
     <?php /* 🔄 jQuery CDN fallback to the local copy (a file, not inline: #154) */ ?>
     <script src="/assets/js/cuercode-fallback-jquery.js"></script>

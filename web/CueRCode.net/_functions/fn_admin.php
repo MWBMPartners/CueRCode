@@ -1810,8 +1810,12 @@ function adminSendSecurityHeaders(): void
     // 🖼️ Only the frame and script rules: the full admin policy comes from
     //    admin/.htaccess (which replaces this header), and where a host ignores
     //    that file two policies are both enforced, so this can only tighten.
-    //    No inline scripts in the admin area (#154).
-    header("Content-Security-Policy: frame-ancestors 'none'; script-src 'self' https://cdn.jsdelivr.net");
+    //    No inline scripts in the admin area (#154). Fourth-round review, Low 2:
+    //    from jsDelivr only the two pinned folders (jQuery and Bootstrap) -
+    //    jsDelivr serves ANY public package or GitHub file, so allowing the
+    //    whole host would let an injected <script src> run anyone's code. A
+    //    path ending in "/" allows only files inside that folder.
+    header("Content-Security-Policy: frame-ancestors 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/jquery@3.7.1/ https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/");
 }
 
 /**

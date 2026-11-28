@@ -792,7 +792,7 @@ assertContains('NO: Apache\'s OWN error page for a file under /admin/', $aaHtacc
 assertContains('Header always set Cache-Control "no-store"', $aaHtaccess, 'admin .htaccess: Cache-Control no-store');
 assertContains('Header always set X-Robots-Tag "noindex, nofollow"', $aaHtaccess, 'admin .htaccess: X-Robots-Tag noindex, nofollow');
 assertContains("frame-ancestors 'none'", $aaHtaccess, "admin .htaccess: CSP frame-ancestors 'none'");
-assertContains("script-src 'self' https://cdn.jsdelivr.net;", $aaHtaccess, 'admin .htaccess: no new script sources, and no inline scripts (#154)');
+assertContains("script-src 'self' https://cdn.jsdelivr.net/npm/jquery@3.7.1/ https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/;", $aaHtaccess, 'admin .htaccess: no new script sources, no inline scripts (#154), and from jsDelivr only the pinned jQuery and Bootstrap folders (fourth-round review, Low 2)');
 $aaSiteHtaccess = (string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . '.htaccess');
 preg_match('/Header set Content-Security-Policy "([^"]+)"/', $aaSiteHtaccess, $aaSiteCsp);
 preg_match('/Header always set Content-Security-Policy "([^"]+)"/', $aaHtaccess, $aaAdminCsp);
@@ -812,12 +812,12 @@ $aaSiteCspForAdmin = str_replace(
 assertFalse(str_contains((string) $aaAdminCsp[1], 'hcaptcha') || str_contains((string) $aaAdminCsp[1], 'recaptcha') || str_contains((string) $aaAdminCsp[1], 'challenges.cloudflare.com'), 'admin CSP: no human-check provider is allowed in the admin area (#163)');
 assertEquals(
     str_replace(
-        ["frame-ancestors 'self'", "script-src 'self' 'unsafe-inline' "],
-        ["frame-ancestors 'none'", "script-src 'self' "],
+        ["frame-ancestors 'self'", "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"],
+        ["frame-ancestors 'none'", "script-src 'self' https://cdn.jsdelivr.net/npm/jquery@3.7.1/ https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/;"],
         $aaSiteCspForAdmin
     ),
     (string) $aaAdminCsp[1],
-    "admin CSP = the site CSP with frame-ancestors 'none', no inline scripts (#154) and without the human-check providers (the two stay in step)"
+    "admin CSP = the site CSP with frame-ancestors 'none', no inline scripts (#154), scripts from jsDelivr's pinned jQuery and Bootstrap folders only (Low 2) and without the human-check providers (the two stay in step)"
 );
 assertFalse(str_contains((string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'robots.txt'), 'admin'), 'robots.txt does not advertise /admin/');
 
