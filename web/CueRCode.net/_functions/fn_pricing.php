@@ -221,6 +221,15 @@ function listPublicPlansForDisplay(): array
                     $planPrices = $pricesByPlan[(int) $planRow['planID']];
                 }
 
+                // 🆓 Decision 0041: the Free plan never has a price. Any price
+                //    row or older figure found on it (older data) is ignored,
+                //    so its "Create free account" button always stays.
+                if (isset($planRow['planKey']) && pricingIsFreePlan((string) $planRow['planKey'])) {
+                    $planRows[$planIndex]['priceMonthly'] = '0';
+                    $planRows[$planIndex]['priceYearly'] = '0';
+                    continue;
+                }
+
                 foreach ($planPrices as $planPrice) {
                     $priceStatus = pricingPriceRowStatus($planPrice, $nowUtc);
                     if ($priceStatus === 'on_sale' || $priceStatus === 'scheduled') {
@@ -286,7 +295,8 @@ function listPublicPlansForDisplay(): array
 
             foreach ($planRows as &$planRowRef) {
                 $thisPlanID = (int) $planRowRef['planID'];
-                if (isset($pricePointsByPlanID[$thisPlanID])) {
+                // 🆓 Decision 0041: no price points on the Free plan's card.
+                if (isset($pricePointsByPlanID[$thisPlanID]) && !(isset($planRowRef['planKey']) && pricingIsFreePlan((string) $planRowRef['planKey']))) {
                     $planRowRef['pricePoints'] = $pricePointsByPlanID[$thisPlanID];
                 }
             }
@@ -530,8 +540,9 @@ function pricingApplyPriceList(array $planRow, array $priceRows, string $mainCur
  * the plan for visitors who are not signed in, and the plan every new account
  * is given. "Create free account" leads to that second plan, so only these two
  * may read "Free". This is a fact about the code, not a commercial rule: the
- * plans' names, prices, features and limits all stay admin-editable data, and
- * either of these plans shows a price if one is ever set on it.
+ * plans' names, prices, features and limits all stay admin-editable data.
+ * The visitors' plan shows a price if one is ever set on it; the Free plan can
+ * never have one (decision 0041, pricingIsFreePlan()).
  *
  * @param string $planKey The plan's key
  * @return bool
@@ -539,6 +550,26 @@ function pricingApplyPriceList(array $planRow, array $priceRows, string $mainCur
 function pricingIsNoPaymentPlan(string $planKey): bool
 {
     return $planKey !== '' && ($planKey === CUERCODE_PLAN_KEY_FREE || $planKey === CUERCODE_PLAN_KEY_ANONYMOUS);
+}
+
+/**
+ * 🆓 Is this the Free plan - the plan every new account is given? PURE.
+ *
+ * Owner decision 0041 (#175, 2026-11-28): the Free plan can never have a
+ * price, because its card's "Create free account" button is the sign-up
+ * button and a price would replace it. Which plan that is is a fact about the
+ * code (fn_features.php's CUERCODE_PLAN_KEY_FREE), not a setting. The admin
+ * editor refuses every way of giving it a price (fn_admin_plans.php), and the
+ * pricing page ignores any price found on it all the same
+ * (listPublicPlansForDisplay()), so a row from older data can never hide the
+ * button.
+ *
+ * @param string $planKey The plan's key
+ * @return bool
+ */
+function pricingIsFreePlan(string $planKey): bool
+{
+    return $planKey !== '' && $planKey === CUERCODE_PLAN_KEY_FREE;
 }
 
 // ==============================================================================

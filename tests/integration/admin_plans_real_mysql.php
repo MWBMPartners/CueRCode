@@ -43,6 +43,12 @@
  *      main-currency change at the same moment end in the new currency; the
  *      trial-plan setting saved while that plan is deleted, in both orders,
  *      never leaves the setting naming a deleted plan.
+ *   N. (Decision 0041, #175) The Free plan can never have a price: the
+ *      starting data gives it none; a save in every group (including
+ *      hand-made ones) is refused with the reason and writes nothing; a new
+ *      version under its key is refused; a price older data left on it is
+ *      ignored by the pricing page, never offered as the trial plan, and put
+ *      back to zero in its older columns by a change of main currency.
  *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php), as
  * it needs a database. How to run it (Docker example):
@@ -946,6 +952,57 @@ foreach (['delete first' => ['delete-plan', 'setting'], 'setting first' => ['set
     }
 }
 ipCheck('M', (string) ipRow($ipServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'billing_trial_plan_key'")['settingValue'] === 'pro', 'tidy up: the trial plan is Pro again');
+
+// ==============================================================================
+// N. Decision 0041 (#175): the Free plan can never have a price
+// ==============================================================================
+echo PHP_EOL . 'N. The Free plan can never have a price (decision 0041)' . PHP_EOL;
+$ipFree = ipPlan($ipServer, CUERCODE_PLAN_KEY_FREE);
+$ipFreeID = (int) $ipFree['planID'];
+$ipFreeRows = 'SELECT COUNT(*) FROM `tblPlanPricePoints` WHERE `planID` = ?';
+ipCheck('N', $ipFree !== null && $ipFree['priceMonthly'] === '0.00' && $ipFree['priceYearly'] === '0.00' && ipCount($ipServer, $ipFreeRows, 'i', [$ipFreeID]) === 0, 'the installer data and every upgrade give the Free plan no price row and 0.00 / 0.00');
+
+// N1. The price editor, and hand-made requests for every group.
+foreach (['monthly' => ['GBP' => '4.99'], 'yearly' => ['GBP' => '49.99', 'USD' => '59.99'], 'once' => ['GBP' => '99.00'], 'made_up' => ['GBP' => '1.00']] as $ipFreeGroup => $ipFreeAmounts) {
+    $ipFreeSave = adminPricesSaveGroup($ipAdmin, $ipFreeID, $ipFreeGroup, ipPricesFp($ipFreeID), ipFullPost(['amount' => $ipFreeAmounts]));
+    ipCheck('N', $ipFreeSave['ok'] === false && str_contains((string) $ipFreeSave['message'], 'Create free account'), 'a ' . $ipFreeGroup . ' price on the Free plan is refused, with the reason: ' . (string) $ipFreeSave['message']);
+}
+ipCheck('N', ipCount($ipServer, $ipFreeRows, 'i', [$ipFreeID]) === 0 && ipCount($ipServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `entityKey` LIKE 'free/%'") === 0, 'nothing was written: no price row, no change-log row');
+
+// N2. A new version under the Free plan's key (it copies the prices). The
+//     Free plan's own row is renamed for a moment, so the key is free to take.
+$ipServer->query("UPDATE `tblSubscriptionPlans` SET `planKey` = 'free_hold_it' WHERE `planID` = " . $ipFreeID);
+$ipBusinessForVersion = (int) ipPlan($ipServer, 'business')['planID'];
+$ipFreeVersion = adminPlansNewVersion($ipAdmin, $ipBusinessForVersion, ipPlanFp($ipBusinessForVersion), CUERCODE_PLAN_KEY_FREE, true);
+ipCheck('N', $ipFreeVersion['ok'] === false && isset($ipFreeVersion['errors']['new_key']) && ipPlan($ipServer, CUERCODE_PLAN_KEY_FREE) === null && (int) ipPlan($ipServer, 'business')['isActive'] === 1, 'a new version of Business under the key "free" is refused, nothing made, Business still on sale');
+$ipServer->query("UPDATE `tblSubscriptionPlans` SET `planKey` = '" . CUERCODE_PLAN_KEY_FREE . "' WHERE `planID` = " . $ipFreeID);
+
+// N3. Older data left a price on the Free plan (a price row on sale and
+//     figures in its older columns, written straight to the database).
+$ipServer->query("INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`) VALUES (" . $ipFreeID . ", 'monthly_gbp', 'monthly', 'monthly', 1, 3.00, 'GBP', 0, 1, 1)");
+$ipServer->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 3.00, `priceYearly` = 30.00 WHERE `planID` = " . $ipFreeID);
+$ipCards = ipPublicCards();
+ipCheck('N', isset($ipCards[CUERCODE_PLAN_KEY_FREE]) && $ipCards[CUERCODE_PLAN_KEY_FREE]['free'] === true && str_starts_with($ipCards[CUERCODE_PLAN_KEY_FREE]['text'], 'Free'), 'the pricing page ignores it: the Free card still says Free (with its sign-up button): ' . json_encode($ipCards[CUERCODE_PLAN_KEY_FREE] ?? null));
+ipCheck('N', !in_array(CUERCODE_PLAN_KEY_FREE, (array) adminSettingsTrialPlanKeys(), true), 'the settings screen never offers it as the trial plan');
+$ipTrialStates = adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection('trials')));
+$ipTrialFree = adminSettingsProcessSection('trials', ['f' => ['billing_trial_plan_key' => CUERCODE_PLAN_KEY_FREE]], (array) $ipTrialStates, ['planKeys' => (array) adminSettingsTrialPlanKeys()]);
+ipCheck('N', isset($ipTrialFree['errors']['billing_trial_plan_key']), 'a hand-made request naming it as the trial plan is refused');
+
+// N4. A change of main currency (the settings route) copies prices into the
+//     older columns: the Free plan's are put back to zero, never copied.
+$ipStates = adminSettingsLoadRows($ipPricesKeys);
+$ipToUsd = adminSettingsProcessSection('prices', ['f' => ['billing_default_currency' => 'USD']], (array) $ipStates);
+$ipToUsdSaved = adminSettingsSaveSection($ipAdmin, 'prices', adminSettingsSectionFingerprint('prices', (array) $ipStates), $ipToUsd['changes']);
+$ipFree = ipPlan($ipServer, CUERCODE_PLAN_KEY_FREE);
+ipCheck('N', $ipToUsdSaved['ok'] === true && $ipFree['priceMonthly'] === '0.00' && $ipFree['priceYearly'] === '0.00', 'after a change of main currency the Free plan\'s older columns are 0.00 / 0.00 again: ' . json_encode([$ipFree['priceMonthly'], $ipFree['priceYearly'], $ipFree['currency']]));
+ipCheck('N', ipCount($ipServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `action` = 'plan.update' AND `entityKey` = ?", 's', [CUERCODE_PLAN_KEY_FREE]) === 1, 'that correction is in the admin change log');
+$ipStates = adminSettingsLoadRows($ipPricesKeys);
+$ipToGbp = adminSettingsProcessSection('prices', ['f' => ['billing_default_currency' => 'GBP']], (array) $ipStates);
+adminSettingsSaveSection($ipAdmin, 'prices', adminSettingsSectionFingerprint('prices', (array) $ipStates), $ipToGbp['changes']);
+
+// ↩️ Remove the older-data row (nobody bought it).
+$ipServer->query('DELETE FROM `tblPlanPricePoints` WHERE `planID` = ' . $ipFreeID);
+ipCheck('N', ipCount($ipServer, $ipFreeRows, 'i', [$ipFreeID]) === 0 && ipPlan($ipServer, 'pro')['currency'] === 'GBP', 'tidy up: the Free plan has no price row again, main currency GBP');
 
 // ==============================================================================
 // K. Charging stays off

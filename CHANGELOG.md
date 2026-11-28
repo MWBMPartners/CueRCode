@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - The Free plan can never have a price (#175, decision 0041, 2026-11-28)
+
+- **The Free plan keeps its "Create free account" button for good.** It is the plan every new account gets, and a price would replace the sign-up button, so nothing can give it one: the price editor and hand-made requests (every kind of price), a "new version" under its key, the copy into the older price columns, the free-trial setting, and the starting data. Its prices screen now says plainly why, instead of showing the price forms.
+- **Older data cannot hide the button either.** A price row or figure already on the Free plan is ignored by the pricing page, put back to zero in the older columns the next time prices are copied (for example when the main currency changes), and listed on its prices screen so it can be retired or deleted.
+- Shown failing first (10 unit checks and 6 real-database checks on the old code), then passing: unit suite on PHP 8.5.12, and `admin_plans_real_mysql.php` (157 checks, new scenario N) on MySQL 8.0.36, MySQL 8.4 and MariaDB 10.6.
+
 ### Added - The real-database tests run automatically and block a deploy (#174, decision 0040, 2026-11-28)
 
 - **Every script in `tests/integration/` now runs on GitHub** on every pull request and push to a tier branch (`ci.yml`) and before every upload (`deploy.yml`, which now waits for it as well as for the PHP checks and the unit tests). Each run uses three throwaway database servers that GitHub starts and deletes: MySQL 8.0.36, MySQL 8.4 and MariaDB 10.6. A failure on any of them stops the upload.

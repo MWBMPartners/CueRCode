@@ -65,12 +65,20 @@ function dbQuery(string $sql, string $types = '', array $params = []): PpStateme
     global $argv;
     $GLOBALS['ppSql'][] = $sql;
     if (str_contains($sql, '`tblPlanPricePoints`')) {
+        if ($argv[2] === 'freepriced') {
+            // 🆓 Decision 0041: older data left a price on sale on the Free plan.
+            return new PpStatement([['planID' => 1, 'pricePointID' => 9, 'priceKey' => 'monthly_gbp', 'priceGroupKey' => 'monthly', 'billingInterval' => 'monthly', 'intervalCount' => 1, 'amount' => '3.00', 'currency' => 'GBP', 'grantsJSON' => null, 'validFrom' => null, 'validUntil' => null, 'isDefault' => 0, 'isActive' => 1, 'sortOrder' => 1], ['planID' => 2]]);
+        }
         return new PpStatement([['planID' => 2]]);
     }
     $old = [
         ['planID' => 1, 'planKey' => CUERCODE_PLAN_KEY_FREE, 'planName' => 'One', 'priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP'],
         ['planID' => 2, 'planKey' => 'two', 'planName' => 'Two', 'priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP'],
     ];
+    if ($argv[2] === 'freepriced') {
+        $old[0]['priceMonthly'] = '3.00';
+        $old[0]['priceYearly'] = '30.00';
+    }
     if ($argv[2] === 'before') {
         return new PpStatement($old);
     }
@@ -91,7 +99,7 @@ PPCHILD;
 $ppChildFile = (string) tempnam(sys_get_temp_dir(), 'cuercode_pp_');
 file_put_contents($ppChildFile, $ppChildSource);
 $ppRuns = [];
-foreach (['after', 'before'] as $ppMode) {
+foreach (['after', 'before', 'freepriced'] as $ppMode) {
     $ppPipes = [];
     $ppProcess = proc_open([PHP_BINARY, $ppChildFile, CUERCODE_TEST_REPO_ROOT, $ppMode], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $ppPipes);
     $ppOut = (string) stream_get_contents($ppPipes[1]);
@@ -107,6 +115,10 @@ unlink($ppChildFile);
 assertEquals([1, 2], $ppRuns['after']['ids'], 'listing: lifetime deals, credit packs and not-yet-on-sale plans are left out');
 assertEquals([true, false], $ppRuns['after']['free'], 'listing: a plan that has a price is never called Free, even with 0.00 in the old columns');
 assertEquals([1, 2], $ppRuns['before']['ids'], 'listing before upgrade 0004: the plans still show');
+// 🆓 Decision 0041 (#175): a price found on the Free plan (older data: a price
+//    row on sale and figures in its older columns) is ignored, so its card
+//    stays "Free" with the "Create free account" button.
+assertEquals([true, false], $ppRuns['freepriced']['free'], '0041: the Free plan with an old price row and old figures is still Free (its sign-up button stays)');
 assertEquals(['checkout', 'checkout'], $ppRuns['before']['cta'], 'listing before upgrade 0004: every button is the ordinary one');
 foreach (['planKind', 'ctaMode', 'availableFrom', 'priceGroupKey'] as $ppNewColumn) {
     assertFalse(str_contains(implode(' ', $ppRuns['before']['sql']), $ppNewColumn), 'listing SQL never names the upgrade 0004 column ' . $ppNewColumn);

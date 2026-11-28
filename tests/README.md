@@ -76,7 +76,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
 | `test_admin_access.php` | 664 |
-| `test_admin_plans.php` | 620 |
+| `test_admin_plans.php` | 641 |
 | `test_admin_settings.php` | 1346 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
@@ -120,15 +120,17 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_predefined_logo_png.php` | 264 |
 | `test_pricing.php` | 124 |
 | `test_pricing_flex.php` | 51 |
-| `test_pricing_page.php` | 150 |
+| `test_pricing_page.php` | 152 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9065** |
+| **Total** | **9088** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**The Free plan can never have a price (#175, decision 0041, 2026-11-28)** added 21 checks to `test_admin_plans.php` (the Free-plan rule, the reason, the trial-plan list, the copy into the older columns, where each server-side refusal sits, the prices screen, and the starting data, its guard first proved on a bad sample) and 2 to `test_pricing_page.php` (a price older data left on the Free plan is ignored). Against the code before the change 10 of them failed (with only the new one-line `pricingIsFreePlan()` added, so the file could run) and the pricing-page one failed. Suite: **9088**. `admin_plans_real_mysql.php` grew to 157 checks with scenario N: on the old code 6 failed (a monthly and a yearly price were saved on the Free plan, a new version under the key free was made), then the script stopped; on the new code all 157 passed on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28 (Linux PHP 8.4.27 container, non-root).
 
 **Real-database tests in the deploy gate (#174, decision 0040, 2026-11-28)** added 56 checks to `test_deploy_test_gate.php` (the shared script `tools/ci/run-integration-tests.sh` with stand-in scripts, the server guard, and 13 weakenings of `deploy.yml`'s new job). Run against the code before the change, 24 of them failed. Suite: **9065** in 55 files on PHP 8.5.12. The shared script then ran all eight real-database scripts inside a Linux PHP 8.4.27 container (non-root) against throwaway MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28: every one passed on each.
 
@@ -364,7 +366,7 @@ Run 2026-11-25 (after the final review: test buttons record each press before co
 ## Real-database check (admin plans and prices)
 
 `tests/test_admin_plans.php` proves the plans editor's decisions. `tests/integration/admin_plans_real_mysql.php`
-(144 checks, scenarios A-M) proves the rest on a throwaway database: the 0004 starting data; making a plan
+(157 checks, scenarios A-N) proves the rest on a throwaway database: the 0004 starting data; making a plan
 (off sale, features copied, audited, duplicate key refused); prices saved exactly as text and mirrored by
 price group; P1 a bought price cannot change or be deleted even when bought after the form was opened, but
 can be retired and replaced (`monthly_gbp_2`); a REAL race - a second process saving while another
@@ -372,7 +374,7 @@ connection holds an uncommitted purchase waits, then is refused (commit) or goes
 admins at once (the second save refused, nothing written); P4/P5/P6; new version; a price of another plan
 refused; one transaction (a trigger refusing the audit row undoes the whole save); changing the main
 currency re-runs the mirror; the pricing page follows sale dates when it loads (L); a price save racing a
-main-currency change, and the trial-plan setting racing a plan delete (M); the charging switches stay 0.
+main-currency change, and the trial-plan setting racing a plan delete (M); the Free plan can never have a price (N, decision 0041); the charging switches stay 0.
 
 ```bash
 docker run -d --rm --name cuercode-it-plans -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \

@@ -771,3 +771,81 @@ foreach (['', 'new', 'edit', 'prices'] as $apPageDir) {
 }
 $apNav = (string) file_get_contents($apSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'admin_nav.php');
 assertContains("'/admin/plans/'", $apNav, 'the admin menu links to the plans page');
+
+// ==============================================================================
+// 🆓 Section 10: decision 0041 (#175) - the Free plan can never have a price
+// ==============================================================================
+// The Free plan (CUERCODE_PLAN_KEY_FREE, the plan every new account is given)
+// cannot be given a price by any route: the price editor and hand-made
+// requests, a new version under its key, the copy into the older price
+// columns, the trial-plan setting, or the starting data. The database side
+// is proved in tests/integration/admin_plans_real_mysql.php (scenario N).
+assertTrue(function_exists('pricingIsFreePlan') && pricingIsFreePlan(CUERCODE_PLAN_KEY_FREE), '0041: the Free plan is the code\'s fallback plan key');
+assertFalse(pricingIsFreePlan(CUERCODE_PLAN_KEY_ANONYMOUS) || pricingIsFreePlan('pro') || pricingIsFreePlan('') || pricingIsFreePlan('Free'), '0041: no other key is the Free plan (exact match)');
+$apFreeReason = function_exists('adminPlansFreePlanPriceReason') ? adminPlansFreePlanPriceReason() : '';
+assertContains('Create free account', $apFreeReason, '0041: the reason names the sign-up button a price would replace');
+assertContains('can never have a price', $apFreeReason, '0041: the reason says plainly that it can never have a price');
+
+// 🎟️ The settings route: the trial plan may never be the Free plan, even when
+//    older data left a figure in its price columns.
+assertEquals(['pro'], adminPlansTrialPlanChoices([
+    $apTrialRow([]),
+    $apTrialRow(['planKey' => CUERCODE_PLAN_KEY_FREE, 'priceMonthly' => '3.00', 'priceYearly' => '30.00']),
+]), '0041: a Free plan with an old figure in its price columns is never offered as the trial plan');
+
+// 🪞 The older columns: the mirror only ever writes zero to the Free plan.
+$apFreeMirror = function_exists('adminMirrorFreePlanDecision') ? adminMirrorFreePlanDecision(['priceMonthly' => '3.00', 'priceYearly' => '0.00', 'currency' => 'GBP']) : ['change' => false, 'values' => []];
+assertTrue($apFreeMirror['change'] === true && $apFreeMirror['values'] === ['priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP'], '0041: a figure in the Free plan\'s older columns is put back to zero: ' . json_encode($apFreeMirror['values']));
+$apFreeMirrorZero = function_exists('adminMirrorFreePlanDecision') ? adminMirrorFreePlanDecision(['priceMonthly' => '0.00', 'priceYearly' => '0.00', 'currency' => 'GBP']) : ['change' => true];
+assertFalse($apFreeMirrorZero['change'], '0041: zero stays zero (no needless write or audit row)');
+
+// 🧱 The server-side refusals (each is a database function, so its place in
+//    the code is checked here and its behaviour by the real-database script).
+$apSaveGroupBody = apFunctionBody($apFunctions, 'adminPricesSaveGroup');
+$apFreeAt = strpos($apSaveGroupBody, 'pricingIsFreePlan(');
+assertTrue($apFreeAt !== false && $apFreeAt > strpos($apSaveGroupBody, 'adminPricesLockAndCheck(') && $apFreeAt < strpos($apSaveGroupBody, 'adminPlansProcessPriceGroup('), '0041: a price save is refused for the Free plan on the LOCKED row, before any amount is read');
+$apVersionBody = apFunctionBody($apFunctions, 'adminPlansNewVersion');
+assertTrue(strpos($apVersionBody, 'pricingIsFreePlan($newKey)') !== false && strpos($apVersionBody, 'pricingIsFreePlan($newKey)') < strpos($apVersionBody, 'INSERT INTO'), '0041: a new version (which copies prices) is refused under the Free plan\'s key before anything is written');
+assertContains('adminMirrorFreePlanDecision(', apFunctionBody($apFunctions, 'adminMirrorLegacyPlanPrices'), '0041: the copy into the older columns uses the Free-plan rule');
+
+// 📄 The admin screen explains, and offers no price form for the Free plan.
+$apPricesPage = (string) file_get_contents($apSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'plans' . DIRECTORY_SEPARATOR . 'prices' . DIRECTORY_SEPARATOR . 'index.php');
+assertContains('adminEscape(adminPlansFreePlanPriceReason())', $apPricesPage, '0041: the prices screen shows the plain reason');
+assertTrue((bool) preg_match('/if \(\$pricesIsFree\) \{\s*\$pricesGroups = \[\];/', $apPricesPage), '0041: the prices screen draws no price form for the Free plan');
+
+// 📦 The starting data: install.sql/seed_data.sql give the Free plan no
+//    price, and no upgrade adds a price row for it.
+$apSqlDir = $apSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'sql' . DIRECTORY_SEPARATOR;
+$apSeedSql = (string) file_get_contents($apSqlDir . 'seed_data.sql');
+assertEquals(1, preg_match("/\\('" . CUERCODE_PLAN_KEY_FREE . "', 'Free', '[^']*', 0\\.00, 0\\.00, 'GBP',/", $apSeedSql), '0041: seed_data.sql gives the Free plan 0.00 monthly and 0.00 yearly');
+$apMigrationFiles = (array) glob($apSqlDir . 'migrations' . DIRECTORY_SEPARATOR . '*.php');
+assertTrue(count($apMigrationFiles) >= 5, '0041: the upgrades were found (' . count($apMigrationFiles) . ')');
+
+/**
+ * 🔎 The labels of an upgrade's steps that would give the Free plan a price:
+ *    a step adding a price row for it, or setting one of its price columns.
+ *
+ * @param string $apSource An upgrade file's source
+ * @return array<int, string> Step labels (or their first characters)
+ */
+function apFreePlanPricedSteps(string $apSource): array
+{
+    $apFound = [];
+    preg_match_all("/'sql'\\s*=>\\s*(.*?)\\n\\s*\\],/s", $apSource, $apSteps);
+    foreach ($apSteps[1] as $apStep) {
+        $apNamesFree = str_contains($apStep, "`planKey` = \\'" . CUERCODE_PLAN_KEY_FREE . "\\'");
+        $apPrices = str_contains($apStep, 'INTO `tblPlanPricePoints`') || (bool) preg_match('/SET[^;]*`price(?:Monthly|Yearly)`/', $apStep);
+        if ($apNamesFree && $apPrices) {
+            $apFound[] = substr($apStep, 0, 60);
+        }
+    }
+    return $apFound;
+}
+
+// 🧪 The guard catches a bad sample first: 0004's own Pro price step, aimed at the Free plan.
+$apMigration0004 = (string) file_get_contents($apSqlDir . 'migrations' . DIRECTORY_SEPARATOR . '0004_plans_prices_currencies.php');
+assertTrue(apFreePlanPricedSteps($apMigration0004) === [] && apFreePlanPricedSteps(str_replace("`planKey` = \\'pro\\' AND `currency` = \\'GBP\\' AND `priceMonthly` > 0", "`planKey` = \\'" . CUERCODE_PLAN_KEY_FREE . "\\' AND `currency` = \\'GBP\\' AND `priceMonthly` > 0", $apMigration0004)) !== [], '0041: the starting-data guard catches a price row aimed at the Free plan');
+assertTrue(apFreePlanPricedSteps(str_replace("WHERE `planKey` = \\'pro\\' AND `priceMonthly` = 4.99", "WHERE `planKey` = \\'" . CUERCODE_PLAN_KEY_FREE . "\\' AND `priceMonthly` = 4.99", $apMigration0004)) !== [], '0041: ...and a price set on the Free plan');
+foreach ($apMigrationFiles as $apMigrationFile) {
+    assertEquals([], apFreePlanPricedSteps((string) file_get_contents((string) $apMigrationFile)), '0041: ' . basename((string) $apMigrationFile) . ' gives the Free plan no price');
+}

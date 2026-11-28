@@ -524,6 +524,20 @@ function adminPlansProtectedReason(string $planKey, array $settingPlanKeys): str
 }
 
 /**
+ * 🆓 Why the Free plan can have no price (decision 0041, #175). PURE.
+ *
+ * Shown on its prices screen and given as the reason every time something
+ * tries to give it a price: the price editor, a hand-made request, a new
+ * version under its key, the copy into the older price columns.
+ *
+ * @return string Plain-English reason
+ */
+function adminPlansFreePlanPriceReason(): string
+{
+    return 'This is the Free plan: every new account gets it without paying, and its "Create free account" button on the pricing page is how people sign up. A price would replace that button, so the Free plan can never have a price (owner decision 0041). To charge for more, change what a paid plan offers instead.';
+}
+
+/**
  * 🛡️ What, in a plan's own boxes, would take a protected plan (P5) off the
  *    pricing page or take away its own button. PURE. (Review finding F3 and
  *    recheck finding 2 of the 7n Phase 2 review.)
@@ -598,6 +612,11 @@ function adminPlansTrialPlanChoices(array $planRows): array
             continue;
         }
         if (array_key_exists('planKind', $row) && $row['planKind'] !== 'standard') {
+            continue;
+        }
+        // 🆓 Decision 0041: never the Free plan, even if older data left a
+        //    figure in its price columns.
+        if (pricingIsFreePlan($row['planKey'])) {
             continue;
         }
 
@@ -1457,6 +1476,41 @@ function adminMirrorDecision(array $plan, array $selection, string $currency): a
         $decision['values']['priceYearly'] = (string) $selection['yearly'];
     }
     $decision['change'] = true;
+
+    return $decision;
+}
+
+/**
+ * 🆓 What the mirror writes to the Free plan's older columns (decision 0041):
+ *    zero monthly and yearly, in the currency already stored; a change only
+ *    when a figure is there now. PURE.
+ *
+ * @param array<string, mixed> $plan priceMonthly, priceYearly, currency (stored values)
+ * @return array{change: bool, values: array{priceMonthly: string, priceYearly: string, currency: string}, warnings: array<int, string>}
+ */
+function adminMirrorFreePlanDecision(array $plan): array
+{
+    $currency = (string) $plan['currency'];
+    $zero = '0';
+    if (moneyCurrencyKnown($currency)) {
+        $zero = moneyMinorToDecimalString(0, $currency);
+    }
+
+    $decision = [
+        'change'   => false,
+        'values'   => ['priceMonthly' => $zero, 'priceYearly' => $zero, 'currency' => $currency],
+        'warnings' => [],
+    ];
+
+    foreach (['priceMonthly', 'priceYearly'] as $column) {
+        $stored = (string) $plan[$column];
+        if (preg_match('/^0+(\.0+)?$/D', $stored) !== 1) {
+            $decision['change'] = true;
+        }
+    }
+    if ($decision['change']) {
+        $decision['warnings'][] = adminPlansFreePlanPriceReason() . ' The figure found in its older price columns was put back to zero.';
+    }
 
     return $decision;
 }
@@ -2512,6 +2566,13 @@ function adminPlansNewVersion(array $admin, int $planID, string $fingerprint, st
             return adminPlansResult(false, 'There is a problem. Nothing was saved.', ['errors' => ['new_key' => 'Type a key of 2 to 32 characters: a lower-case letter first, then lower-case letters, digits or underscores.']]);
         }
 
+        // 🆓 Decision 0041: a new version copies the prices, so it can never
+        //    be made under the Free plan's key (which would give the Free
+        //    plan a price if that plan were ever missing).
+        if (pricingIsFreePlan($newKey)) {
+            return adminPlansResult(false, 'There is a problem. Nothing was saved.', ['errors' => ['new_key' => 'The key ' . CUERCODE_PLAN_KEY_FREE . ' belongs to the Free plan, which can never have a price. Choose another key.']]);
+        }
+
         $stmt = dbQuery('SELECT `planID` FROM `tblSubscriptionPlans` WHERE `planKey` = ? FOR UPDATE', 's', [$newKey]);
         $taken = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -2686,6 +2747,12 @@ function adminPricesSaveGroup(array $admin, int $planID, string $groupKey, strin
         }
         $plan = $locked['plan'];
         $prices = $locked['prices'];
+
+        // 🆓 Decision 0041: the Free plan never gets a price - whatever the
+        //    group, the amount or the request. Checked on the locked row.
+        if (pricingIsFreePlan((string) $plan['planKey'])) {
+            return adminPlansResult(false, adminPlansFreePlanPriceReason() . ' Nothing was saved.');
+        }
 
         $groups = adminPlansPriceGroups((string) $plan['planKind']);
         if (!isset($groups[$groupKey])) {
@@ -3013,6 +3080,14 @@ function adminMirrorLegacyPlanPrices(array $admin, int $planID, string $currency
 
     $selection = adminMirrorSelection($prices, $currency, adminPlansNowUtc());
     $decision = adminMirrorDecision($plan, $selection, $currency);
+
+    // 🆓 Decision 0041: nothing is ever copied into the Free plan's older
+    //    price columns, and a figure older data left there is put back to
+    //    zero (the pricing page ignores it anyway).
+    if (pricingIsFreePlan((string) $plan['planKey'])) {
+        $decision = adminMirrorFreePlanDecision($plan);
+        $emptiedGroups = [];
+    }
 
     // 🗑️ Review finding F6: a group whose LAST price was just deleted has no
     //    price rows any more, so the public page falls back to its older

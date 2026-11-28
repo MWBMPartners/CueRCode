@@ -28,6 +28,9 @@
  *    database ready, then ONE transaction (lock plan and prices, check the
  *    fingerprint, save, audit, mirror), then a redirect.
  *
+ * 🆓 The Free plan (decision 0041): no price forms, only the plain reason why
+ *    it can never have a price; the server refuses a hand-made save too.
+ *
  * 🚪 requireGlobalAdminPage() is the first application call (a test checks
  *    this for every admin page).
  *
@@ -265,6 +268,13 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <?php
                     $pricesFp = adminPlansPricesFingerprint($pricesRows);
                     $pricesGroups = adminPlansPriceGroups((string) $pricesPlan['planKind']);
+                    // 🆓 Decision 0041: the Free plan never has a price, so it gets
+                    //    the reason instead of the price forms (the server refuses
+                    //    a hand-made save too: adminPricesSaveGroup()).
+                    $pricesIsFree = pricingIsFreePlan((string) $pricesPlan['planKey']);
+                    if ($pricesIsFree) {
+                        $pricesGroups = [];
+                    }
                     $pricesNowUtc = adminPlansNowUtc();
                     // 🗓️ Review finding F6: what visitors see is worked out from
                     //    the price list when the page loads - the same function
@@ -321,7 +331,15 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </div>
                     </div>
 
-                    <?php if ($pricesGroups === []) { ?>
+                    <?php if ($pricesIsFree) { ?>
+                    <div class="alert alert-info" role="status">
+                        <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
+                        <?php echo adminEscape(adminPlansFreePlanPriceReason()); ?>
+                        <?php if ($pricesRows !== []) { ?>
+                        The prices listed below come from older data. The pricing page ignores them; you can retire or delete them.
+                        <?php } ?>
+                    </div>
+                    <?php } elseif ($pricesGroups === []) { ?>
                     <div class="alert alert-info" role="status">
                         <i class="fa-solid fa-circle-info me-1" aria-hidden="true"></i>
                         Pay-as-you-go pack prices are set on the pay-as-you-go screen, which comes later.
