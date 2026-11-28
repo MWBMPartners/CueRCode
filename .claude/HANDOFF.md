@@ -9,18 +9,20 @@
 Owner (2026-11-27): work autonomously until the **first version** can be launched. First version = free service **plus dynamic QR codes**, nobody charged (decision 0023). 7n Phases 3-7 and payments come after launch.
 
 ### Where the work is
-- Branch `work-in-progress`. GitHub is at `e594ec8` (this already includes the unreviewed Phase 2 code, pushed 2026-11-26 22:00 UTC). Local commits after it are **not pushed** until reviewed (decision 0008): check `git log --oneline origin/work-in-progress..HEAD`.
-- Tests at `b7ce022`: `php tests/run.php` 7522/7522 (PHP 8.5.12). Polish check 0 problems, 9 warnings. PHP 8.6 scan 0.
-- **Not verified anywhere:** real browser pass; DreamHost; real Microsoft mail; HTTPS/HSTS; deploy test gate on GitHub; MySQL 8.4 for the newest scenarios.
+- Branch `work-in-progress`. GitHub is at `e594ec8` (already includes the unreviewed Phase 2 code, pushed 2026-11-26). Later commits are local only: `git log --oneline origin/work-in-progress..HEAD`.
+- Phase 2: Opus review (6 findings) fixed `777148e..621835a`; Opus re-check (8 minor) fixed `7eceacf..fe317f6` (suite 7667/7667; MySQL 8.0.36 and MariaDB 10.6.28). Those last fixes are not yet independently re-checked; Codex is owed.
+- Deploy test gate (#155) built `b7ce022`; Opus checked; not yet seen on GitHub.
+- Owner decisions 0023-0039 recorded 2026-11-27. First-launch plan: `.claude/plans/first-launch-plan.md`; dynamic QR issues #164-#172; later second link checker #173.
+- **Not verified anywhere:** real browser pass; DreamHost; real Microsoft mail; real human-check providers; HTTPS/HSTS; MySQL 8.4 for the newest scenarios.
 
-### In flight (watched, this session)
-1. **Opus review of 7n Phase 2** (`c487dab..07a6f55`, #31). Running report: `.claude/plans/7n-phase2-review-report.md` (untracked). The 2026-11-26 run was cut off after about two minutes with no findings.
-2. **Opus planner** writing `.claude/plans/first-launch-plan.md` (dynamic QR on Go2My.Link per #27 comment of 2026-09-25 and Go2My.Link#276).
-- If either is gone after a restart, re-brief it; the report/plan file shows how far it got.
+### In flight (watched, this session) — 2026-11-28
+1. **Opus fix builder:** the Codex findings in `.claude/plans/7n-phase2-codex-report.md` (#31).
+2. **Opus review** of `66e0591..c95d1a5` (recheck fixes and the human check, now merged: suite 8378/8378, all 8 real-database scripts on MySQL 8.0.36 and MariaDB 10.6.28). Report: `.claude/plans/163-merged-review-report.md`.
+- Codex works with the account default model only (`gpt-6.1-terra`; `gpt-6.2-astra` and `gpt-6.2-sol` are refused). Use `-c model_reasoning_effort=high`. Script pattern: three read-only pieces.
 
 ### Next (order)
-Fix review findings plus #159/#160/#161 (decisions 0020-0022) → Opus re-check → Codex review → push → comment #31. Then follow the first-launch plan; human check for three providers (#163, decision 0024). Last: ask the owner, then the one pull request into `alpha` (#162, decision 0026).
-- Test gate before deploy (#155) built `b7ce022`, unreviewed.
+Fix review findings → Codex on the fixes and the human check, until clean → push `work-in-progress` (decision 0008) → comment/close #31, #159-#161, #163 → move finished review reports to `.claude/plans/history/` → first-launch plan WP5, then dynamic QR WP4a (#164, now upgrade `0006`) → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
+- Questions to ask in the next batch: #174 (database tests in the deploy gate); adding a price to the free plan replaces "Create free account" with "Coming soon" (keep?); human-check choices from the build (cross-device sign-in approval; whole-site no-JavaScript allowance).
 - Model tiers (decision 0001): gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium (money and security = Opus); every check or review = Opus.
 
 ### Waiting on the owner
