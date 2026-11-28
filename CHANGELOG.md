@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Abuse report page, automatic suspension and the admin abuse screen (WP4f #169, 2026-11-28)
+
+- **`/report/`** (public, linked from the footer, the terms and the neutral page): the code (or its printed QRmy.Link address), what is wrong, an optional description and an optional email (stored encrypted). **Always the same thank-you, after at least 0.4 seconds**, whether the code exists, works or is suspended: the page never reveals a code or its destination. Each address may send 5 reports an hour (an IPv6 address counts as its /64), counted before the human check.
+- **The human check (#163) decides whether a report counts.** Without JavaScript the form offers "Send my report without JavaScript": the report is kept and read by a person but never counted towards the automatic suspension (a script could otherwise skip the check and suspend anyone's code). The same when the provider cannot be reached. While the check is switched off site-wide, reports count.
+- **Automatic suspension (decision 0034):** 3 counted reports from different people within 24 hours (both admin settings). "Different people" means different addresses AND different wider networks (an IPv4 /24, an IPv6 /48), so one person with many addresses from one block counts once; dismissed reports never count again. The takedown reaches Go2My.Link through the every-minute cron step, so a report never takes longer when it suspends.
+- **Emails:** every report to the abuse mailbox (at most 30 an hour, an admin setting; every report is still on the screen), the owner once per window (never who reported or what they wrote), nothing to the reporter.
+- **`/admin/abuse/`** (Global Admins): open reports with what was written, the reporter's email and whether they passed the human check; mark a report being looked at, dealt with or dismissed (the handled date starts the 12 months of decision 0046); suspend a code with a reason; lift a suspension with a reason (the destination is checked with Web Risk again, Go2My.Link is changed first, the code's open reports are dismissed). Every change needs a fresh password and is in the admin change log; the owner can never lift one.
+- **The neutral `/unavailable/` page** now serves both switched-off and suspended codes with the same words, the takedown promise and a "Report this code" link; it never looks a code up.
+- **Settings:** a new "Abuse reports and takedowns" section (mailbox, promise, number and window, the two new limits). **Terms** section 4.1 and **privacy** section 5.3 describe what happens and what is kept, in factual words (legal review still owed, #38). The 12-month clean-up also removes the new network fingerprint.
+- Tests: `tests/test_abuse_reports.php` (67 checks) failed before the code existed; `dynamic_qr_abuse_real_mysql.php` gained sections G-K (the real `/report/`, `/unavailable/` and `/admin/abuse/` pages in child processes). Removing each protection (counting unchecked reports, one network suspending, the minimum answer time, the admin check on lifting, the re-check on lifting, counting dismissed reports, owner emails per report, the clean-up of the network fingerprint, counting no-JavaScript reports) made a test fail.
+
 ### Added - Link-safety check with Google Web Risk, takedowns and the daily re-check (WP4e #168, 2026-11-28)
 
 Dynamic codes are still switched off by default, so no visitor sees any of this yet.

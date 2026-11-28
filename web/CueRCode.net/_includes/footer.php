@@ -130,6 +130,7 @@ if (function_exists('isDebugMode')) {
                         <a href="/privacy" class="text-body-secondary text-decoration-none me-3">Privacy Policy</a>
                         <a href="/accessibility/" class="text-body-secondary text-decoration-none me-3">Accessible printing</a>
                         <a href="/attributions/" class="text-body-secondary text-decoration-none me-3">Attributions</a>
+                        <a href="/report/" class="text-body-secondary text-decoration-none me-3">Report a QR code</a>
                         <a href="/developers/" class="text-body-secondary text-decoration-none me-3">Developers</a>
                         <a href="/api/docs/" class="text-body-secondary text-decoration-none me-3">API</a>
                         <a href="/pricing/" class="text-body-secondary text-decoration-none me-3">Pricing</a>

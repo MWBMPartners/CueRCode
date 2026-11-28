@@ -335,14 +335,15 @@ assertEquals(
         'link_safety_hits_retention_days',
         'no_script_route_password_per_day',
         'link_safety_timeout_seconds',
+        'abuse_report_ip_per_hour', 'abuse_report_emails_per_hour',
         'trusted_proxy_ips',
         'verification_resend_min_gap_seconds', 'verification_resend_daily_cap', 'verification_resend_ip_per_hour',
         'password_reset_request_min_gap_seconds', 'password_reset_request_daily_cap', 'password_reset_request_ip_per_hour',
     ],
     $asOptionalKeys,
-    'only the two #179 log periods, the abuse-report period (decision 0046), the link-safety record period and waiting time (#168), trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
+    'only the two #179 log periods, the abuse-report period (decision 0046), the link-safety record period and waiting time (#168), the two abuse-report limits (#169), trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
 );
-assertEquals(10, count(adminSettingsSections()), 'there are ten sections (plan §7.2, plus the website address section, #113 B9, and dynamic QR codes, #165)');
+assertEquals(11, count(adminSettingsSections()), 'there are eleven sections (plan §7.2, plus the website address section, #113 B9, dynamic QR codes, #165, and abuse reports, #169)');
 
 // 📣 Decision 0046: the abuse-report keeping period is a Global Admin setting, 365 days (12 months) by default.
 assertTrue(isset($asRegistry['abuse_report_retention_days']) && $asRegistry['abuse_report_retention_days']['section'] === 'email-records' && $asRegistry['abuse_report_retention_days']['default'] === 365 && $asRegistry['abuse_report_retention_days']['max'] === 3650, 'decision 0046: "keep abuse-report details for (days)" is on the Email records section, 365 by default, 1 to 3650');
@@ -989,6 +990,11 @@ foreach ($asRegistry as $asKey => $asField) {
     $asBox = adminSettingsRenderField($asField, ['state' => ['exists' => true, 'hasValue' => false, 'value' => '', 'updatedAt' => null], 'error' => '', 'planChoices' => ['pro']]);
     // 💱 'currency_list' (billing_currencies, task 7n Phase 2) is required too.
     $asKindIsRequired = in_array($asField['kind'], ['int', 'decimal', 'choice', 'timezone', 'plan_key', 'https_url', 'site_url', 'scopes', 'currency_list'], true);
+    // 📣 #169: a text or email box that may not be emptied (the abuse mailbox
+    //    and the takedown promise) is required too.
+    if (in_array($asField['kind'], ['text', 'email', 'ip_ranges'], true) && $asField['allowEmpty'] === false) {
+        $asKindIsRequired = true;
+    }
     if ($asKindIsRequired) {
         assertTrue(adminSettingsFieldIsRequired($asField), $asKey . ' is required');
         assertContains('(required)', $asBox, $asKey . ' says "(required)" in its label');
@@ -1126,11 +1132,11 @@ foreach (['verification_resend', 'password_reset_request'] as $asPrefix) {
         assertEquals($asBound['max'], $asCodeLimits[$asKeyMap[$asSuffix]], $asLimitKey . ': the code pulls a too-big saved number back to the same top value the editor allows');
     }
 }
-assertEquals(['human_check_form', 'no_script_route', 'verification_resend', 'password_reset_request'], array_values(array_unique(array_map(static function (string $asK): string {
+assertEquals(['human_check_form', 'no_script_route', 'abuse_report', 'verification_resend', 'password_reset_request'], array_values(array_unique(array_map(static function (string $asK): string {
     return (string) preg_replace('/_(min_gap_seconds|daily_cap|ip_per_hour)$/', '', $asK);
 }, array_filter(array_keys($asRegistry), static function (string $asK): bool {
     return (bool) preg_match('/_(min_gap_seconds|daily_cap|ip_per_hour)$/', $asK);
-})))), 'exactly the two emailed-link forms\' limits, the human check\'s form limit and the no-JavaScript route limit (#163) are the per-hour limits in the editor');
+})))), 'exactly the two emailed-link forms\' limits, the human check\'s form limit, the no-JavaScript route limit (#163) and the abuse-report limit (#169) are the per-hour limits in the editor');
 
 // ==============================================================================
 // ✅ Section 10: Website address - wording guard and warning logic

@@ -66,6 +66,10 @@ for MariaDB `-e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 mariadb:10.6`), run the
 command above, then `docker stop cuercode-it-ci`. The sections below describe
 each script and how to run one on its own.
 
+## Real-database check (abuse reports, #169)
+
+Sections G-K of `tests/integration/dynamic_qr_abuse_real_mysql.php`: storing reports (email encrypted, two fingerprints only), counting different people (addresses from one /24 count once; reports without the human check never count), the automatic suspension, the per-address limit, lifting a suspension (admin only, reason, re-checked, Go2My.Link first, reports dismissed), the real `/report/`, `/unavailable/` and `/admin/abuse/` pages rendered in child processes (the report page is byte for byte the same for an unknown, a working and a suspended code, after at least 0.4 seconds), and the 12-month clean-up.
+
 ## Real-database check (link safety and takedowns, #168)
 
 `tests/integration/dynamic_qr_abuse_real_mysql.php` creates and drops its own `cuercode_it_` database and checks, with scripted stand-ins for Go2My.Link and Google Web Risk (nothing leaves the machine): the check at create and change (listed = refused and recorded; no answer = let through and logged once), Google's caching rule, the daily re-check (suspends, emails the owner and the abuse mailbox, a system row in the admin change log; nothing sent without a declared site copy or without a key; stops early when Google is down), a takedown Go2My.Link could not take being sent again by the cron step, and an owner's change that lands after the takedown. Run it with the usual `CUERCODE_IT_DB_*` variables; the shared script includes it.
@@ -96,20 +100,21 @@ erasure, on a real database.
 `tests/test_admin_csp.php` fails if the admin policy allows inline scripts
 again, or if a page the admin area can show contains one.
 
-## Current suite (2026-11-28, link-safety check and takedowns #168: the table below was re-measured; before that 2026-11-28, dynamic QR flows #166 and the round-six fixes #181: the table below was re-measured; before that 2026-11-28, dynamic QR groundwork #164/#165; before that 2026-11-28, Codex review fixes of task 7n Phase 2; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; earlier rounds are in git history)
+## Current suite (2026-11-28, abuse reports #169: the table below was re-measured; before that 2026-11-28, link-safety check and takedowns #168: the table below was re-measured; before that 2026-11-28, dynamic QR flows #166 and the round-six fixes #181: the table below was re-measured; before that 2026-11-28, dynamic QR groundwork #164/#165; before that 2026-11-28, Codex review fixes of task 7n Phase 2; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; earlier rounds are in git history)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
 | File | Assertions |
 | --- | --- |
+| `test_abuse_reports.php` | 67 |
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 82 |
-| `test_admin_access.php` | 680 |
-| `test_admin_csp.php` | 50 |
-| `test_admin_plans.php` | 665 |
-| `test_admin_settings.php` | 1513 |
+| `test_admin_access.php` | 690 |
+| `test_admin_csp.php` | 51 |
+| `test_admin_plans.php` | 671 |
+| `test_admin_settings.php` | 1570 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -169,7 +174,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_sessions_valid_from.php` | 83 |
 | `test_url_reputation.php` | 134 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **10672** |
+| **Total** | **10813** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 

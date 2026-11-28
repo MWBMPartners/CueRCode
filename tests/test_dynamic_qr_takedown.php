@@ -125,7 +125,7 @@ assertTrue($tdLocalAt !== false && $tdAuditAt !== false && $tdCommitAt !== false
 $tdApply = substr($tdSource, (int) strpos($tdSource, 'function dynamicQrApplySuspension('), 1600);
 assertTrue(strpos($tdApply, 'acquireDynamicCodeLimitLock(') !== false && strpos($tdApply, 'releaseDynamicCodeLimitLock(') !== false, 'a takedown is sent to Go2My.Link under the owner\'s lock (so an owner\'s change cannot be sent at the same moment)');
 assertContains('`suspensionAppliedAt` = UTC_TIMESTAMP() WHERE `redirectID` = ? AND `suspendedAt` IS NOT NULL AND `suspensionAppliedAt` IS NULL', $tdSource, 'only a confirmed takedown fills suspensionAppliedAt');
-assertEquals(1, substr_count($tdSource, 'dynamicQrCheckDestinationSafety('), 'the daily re-check goes through the one link-safety hook');
+assertEquals(2, substr_count($tdSource, 'dynamicQrCheckDestinationSafety('), 'the daily re-check and lifting a suspension go through the one link-safety hook');
 assertTrue(substr_count($tdSource, 'dynamicQrCronCopyProblem($options)') === 2, 'both cron steps (re-sending takedowns, the re-check) refuse to call out without a declared site copy');
 
 $tdRedirects = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_api_redirects.php');

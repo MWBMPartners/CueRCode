@@ -635,6 +635,225 @@ function dynamicQrSuspend(int $redirectId, array $actor, string $note, #[\Sensit
 }
 
 // ==============================================================================
+// ↩️ dynamicQrRestore() - an admin lifts a suspension (WP4f, #169)
+// ==============================================================================
+
+/**
+ * ↩️ Lift a suspension. Only a Global Admin, with a written reason and a
+ *    fresh password (the page checks the password; this checks the admin
+ *    again, fresh from the database). The owner can never do this. In order,
+ *    under the owner's per-person lock:
+ *      1. what Go2My.Link must point at again: the destination when the owner
+ *         had the code switched on, otherwise the neutral page;
+ *      2. a destination that goes live again is checked again through the
+ *         link-safety hook: still listed = refused, nothing changes;
+ *      3. Go2My.Link FIRST (confirmed by its answer or a look-up): not
+ *         confirmed = refused, the code stays suspended;
+ *      4. then here, in one transaction with the admin change log row: the
+ *         suspension is cleared and the code's open reports are dismissed
+ *         (their handled date set, decision 0046), so they never count again.
+ *         If that fails, the takedown is sent to Go2My.Link again.
+ *    The owner and the abuse mailbox are told.
+ *
+ * @param int                  $redirectId
+ * @param array<string, mixed> $admin   From requireGlobalAdminPage()
+ * @param string               $reason  Written by the admin (one line, up to 500 characters)
+ * @param array<string, mixed> $options 'go2mylink' and 'linkSafety' (tests)
+ * @return array{ok: bool, outcome: string, message: string}
+ *         outcome: restored | not_suspended | refused | unsafe | busy | failed
+ */
+function dynamicQrRestore(int $redirectId, array $admin, string $reason, #[\SensitiveParameter] array $options = []): array
+{
+    $answer = static function (bool $ok, string $outcome, string $message): array {
+        return ['ok' => $ok, 'outcome' => $outcome, 'message' => $message];
+    };
+
+    if (!function_exists('dbQuery') || !dynamicQrUpgrade0008Ready() || !adminTableExists('tblAdminAuditLog')) {
+        return $answer(false, 'failed', 'Database upgrades are waiting, so the suspension cannot be lifted yet.');
+    }
+
+    $adminUserId = 0;
+    if (isset($admin['userID']) && is_int($admin['userID'])) {
+        $adminUserId = $admin['userID'];
+    }
+    if (adminAccessDecision(['userID' => $adminUserId], adminLoadAccessRow($adminUserId)) !== 'admin') {
+        return $answer(false, 'refused', 'Only a Global Admin can lift a suspension, so nothing was changed.');
+    }
+
+    $reason = trim($reason);
+    if ($reason === '' || mb_strlen($reason, 'UTF-8') > 500 || preg_match('/[\p{Cc}\p{Cf}\x{2028}\x{2029}]/u', $reason) !== 0) {
+        return $answer(false, 'refused', 'Write why the suspension is lifted, on one line (up to 500 characters). It is kept in the admin change log.');
+    }
+
+    $row = dynamicQrLoadTakedownRow($redirectId);
+    if ($row === null) {
+        return $answer(false, 'refused', 'That dynamic code was not found.');
+    }
+    if (!dynamicQrRowIsSuspended($row)) {
+        return $answer(false, 'not_suspended', 'That dynamic code is not suspended, so nothing was changed.');
+    }
+
+    $ownerId = dynamicQrOwnerOf($row);
+    if ($ownerId !== null && !acquireDynamicCodeLimitLock($ownerId)) {
+        return $answer(false, 'busy', 'The code\'s owner has a change on its way just now. Please try again in a moment; nothing was changed.');
+    }
+
+    try {
+        $outcome = dynamicQrRestoreLocked($redirectId, $admin, $adminUserId, $reason, $options);
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'A suspension could not be lifted', 'redirectID: ' . $redirectId . ' | ' . get_class($e));
+        }
+        $outcome = $answer(false, 'failed', 'Not lifted: something went wrong. The code stays suspended. Please try again.');
+    } finally {
+        if ($ownerId !== null) {
+            releaseDynamicCodeLimitLock($ownerId);
+        }
+    }
+
+    if ($outcome['ok'] === true) {
+        $fresh = dynamicQrLoadTakedownRow($redirectId);
+        if ($fresh !== null) {
+            $printed = dynamicQrPrintedAddress($fresh);
+            $promise = dynamicQrTakedownPromise();
+            dynamicQrQueueNotice(dynamicQrAccountEmail($ownerId), 'Your CueRCode dynamic QR code is working again', [
+                'The suspension of your dynamic QR code ' . $printed . ' has been lifted after a person looked at it. ' . $promise,
+                'It sends people to its destination again (if you had switched it off yourself, it stays switched off). You can change it as usual.',
+            ]);
+            dynamicQrQueueNotice(dynamicQrAbuseMailbox(), 'CueRCode: suspension of dynamic code ' . (string) $fresh['shortCode'] . ' lifted', [
+                'The suspension of dynamic code ' . $printed . ' (account ' . (int) $fresh['ownerUserID'] . ') was lifted by ' . (string) $admin['email'] . '.',
+                'Their reason: ' . $reason,
+            ]);
+        }
+    }
+
+    return $outcome;
+}
+
+/**
+ * ↩️ Steps 1-4 of dynamicQrRestore(), called ONLY while the owner's lock is held.
+ *
+ * @param int                  $redirectId
+ * @param array<string, mixed> $admin
+ * @param int                  $adminUserId
+ * @param string               $reason
+ * @param array<string, mixed> $options
+ * @return array{ok: bool, outcome: string, message: string}
+ */
+function dynamicQrRestoreLocked(int $redirectId, array $admin, int $adminUserId, string $reason, #[\SensitiveParameter] array $options): array
+{
+    $row = dynamicQrLoadTakedownRow($redirectId);
+    if ($row === null || !dynamicQrRowIsSuspended($row)) {
+        return ['ok' => false, 'outcome' => 'not_suspended', 'message' => 'That dynamic code is not suspended (any more), so nothing was changed.'];
+    }
+
+    // 🎯 1. Where Go2My.Link must point again. A code switched off by an admin
+    //    or for abuse in the older way counts as the owner's "on".
+    $ownerHadItOn = ((int) $row['isActive'] === 1 && ($row['disabledReason'] === null || in_array($row['disabledReason'], ['abuse', 'admin'], true)));
+    $shortCode    = (string) $row['shortCode'];
+    $target       = dynamicQrUnavailablePageUrl((string) humanCheckText(humanCheckSiteConfig('site_url', '')), $shortCode);
+    if ($ownerHadItOn) {
+        $target = (string) $row['destinationURL'];
+
+        // 🛡️ 2. Still listed? Then it stays suspended.
+        $safetyOptions = [];
+        if (isset($options['linkSafety']) && is_array($options['linkSafety'])) {
+            $safetyOptions = $options['linkSafety'];
+        }
+        $safetyOptions['redirectID'] = $redirectId;
+        $safetyOptions['userID']     = $adminUserId;
+        $safety = dynamicQrCheckDestinationSafety($target, 'restore', $safetyOptions);
+        dynamicQrNoteSafety($redirectId, $safety['verdict']);
+        if ($safety['allowed'] !== true) {
+            return ['ok' => false, 'outcome' => 'unsafe', 'message' => $safety['message'] . ' The code stays suspended; nothing was changed.'];
+        }
+    }
+
+    // 🌐 3. Go2My.Link FIRST, when it holds the link.
+    $go2Options = dynamicQrGo2Options($options);
+    $remoteChanged = false;
+    if (in_array((string) $row['syncState'], ['active', 'unconfirmed'], true)) {
+        if ($target === '') {
+            return ['ok' => false, 'outcome' => 'failed', 'message' => 'The website address (site_url) is not an https address, so Go2My.Link cannot be updated. Nothing was changed.'];
+        }
+        $settings = go2mylinkSettingsFromOptions($go2Options);
+        if ($settings['problem'] !== '') {
+            return ['ok' => false, 'outcome' => 'failed', 'message' => 'Go2My.Link is not set up (' . $settings['problem'] . '), so the suspension cannot be lifted. Nothing was changed.'];
+        }
+        $result    = go2mylinkUpdateDestination($shortCode, $target, $go2Options);
+        $confirmed = ($result['ok'] === true && $result['data']['destinationUrl'] === go2mylinkEncodeDestination($target));
+        if (!$confirmed && ($result['ok'] === true || $result['outcomeUnknown'] === true)) {
+            $lookup = go2mylinkLookupLink($shortCode, $go2Options);
+            $confirmed = ($lookup['ok'] === true && $lookup['data']['destinationUrl'] === go2mylinkEncodeDestination($target));
+        }
+        if (!$confirmed) {
+            dynamicQrNoteSyncError($redirectId, (string) $result['reason']);
+            // 🔁 The neutral page may be gone already (a lost answer): send it again.
+            dynamicQrMarkSuspensionUnapplied($redirectId);
+            return ['ok' => false, 'outcome' => 'failed', 'message' => 'Go2My.Link did not confirm the change (' . (string) $result['reason'] . '), so the code stays suspended. Please try again later.'];
+        }
+        $remoteChanged = true;
+    }
+
+    // 💾 4. Then here, with its audit row, in one transaction.
+    try {
+        getDB()->begin_transaction();
+        $clearDisabled = '';
+        if (in_array($row['disabledReason'], ['abuse', 'admin'], true)) {
+            $clearDisabled = ', `disabledReason` = NULL';
+        }
+        $update = dbQuery(
+            'UPDATE `tblQRRedirects` SET `suspendedAt` = NULL, `suspendedByUserID` = NULL, `suspensionNote` = NULL, `suspensionAppliedAt` = NULL, `lastSyncError` = NULL' . $clearDisabled . ' '
+            . 'WHERE `redirectID` = ? AND (`suspendedAt` IS NOT NULL OR `disabledReason` IN (\'abuse\', \'admin\'))',
+            'i',
+            [$redirectId]
+        );
+        $changed = ($update->affected_rows === 1);
+        $update->close();
+
+        if ($changed && adminTableExists('tblAbuseReports')) {
+            $reports = dbQuery(
+                "UPDATE `tblAbuseReports` SET `status` = 'dismissed', `handledByUserID` = ?, `handledAt` = UTC_TIMESTAMP() WHERE `redirectID` = ? AND `status` IN ('new', 'reviewing')",
+                'ii',
+                [$adminUserId, $redirectId]
+            );
+            $reports->close();
+        }
+
+        $audited = false;
+        if ($changed) {
+            $audited = adminAuditWrite(adminAuditEntryForAdmin($admin, 'dynamic_code.restore', 'dynamic_code', (string) $row['redirectUUID'], 'success', [
+                'suspended'      => ['old' => true, 'new' => false],
+                'suspensionNote' => ['old' => (string) $row['suspensionNote'], 'new' => null],
+            ], $reason));
+        }
+        if (!$changed || !$audited) {
+            adminRollbackQuietly(getDB());
+            if ($remoteChanged) {
+                // 🔁 Go2My.Link already points at the destination: take it down again.
+                dynamicQrMarkSuspensionUnapplied($redirectId);
+                dynamicQrApplySuspensionLocked($redirectId, $go2Options);
+            }
+            return ['ok' => false, 'outcome' => 'failed', 'message' => 'Not lifted: it could not be recorded in the admin change log. The code stays suspended.'];
+        }
+        getDB()->commit();
+    } catch (\Throwable $e) {
+        adminRollbackQuietly(getDB());
+        if ($remoteChanged) {
+            dynamicQrMarkSuspensionUnapplied($redirectId);
+            dynamicQrApplySuspensionLocked($redirectId, $go2Options);
+        }
+        throw $e;
+    }
+
+    if (function_exists('logActivity')) {
+        logActivity('dynamic_code_restored', 'Lifted the suspension of dynamic code ' . (string) $row['redirectUUID'], 'redirect', $redirectId, ['uuid' => (string) $row['redirectUUID'], 'by' => (string) $admin['email']]);
+    }
+
+    return ['ok' => true, 'outcome' => 'restored', 'message' => 'The suspension was lifted. Go2My.Link points the code at its destination again (or at the neutral page if its owner had switched it off).'];
+}
+
+// ==============================================================================
 // 🌐 Telling Go2My.Link
 // ==============================================================================
 

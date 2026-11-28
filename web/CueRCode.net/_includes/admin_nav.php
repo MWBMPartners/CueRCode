@@ -17,8 +17,8 @@
  *   require_once CUERCODE_INCLUDES_DIR . 'admin_nav.php';
  *
  * Recognised $adminActive values: 'overview', 'settings', 'plans' (every page
- * under /admin/plans/, task 7n Phase 2), 'pricing-preview', 'upgrades',
- * 'reauth'. Anything else leaves every link inactive.
+ * under /admin/plans/, task 7n Phase 2), 'pricing-preview', 'limits',
+ * 'abuse' (#169), 'upgrades', 'reauth'. Anything else leaves every link inactive.
  *
  * @package     CueRCode
  * @subpackage  Admin
@@ -60,6 +60,7 @@ $adminNavLinks = [
     'plans'    => ['Plans and prices',  '/admin/plans/',    'fa-solid fa-tags'],
     'pricing-preview' => ['Pricing page preview', '/admin/pricing-preview/', 'fa-solid fa-eye'],
     'limits'   => ['People\'s own limits', '/admin/limits/',  'fa-solid fa-user-gear'],
+    'abuse'    => ['Abuse reports',     '/admin/abuse/',    'fa-solid fa-flag'],
     'upgrades' => ['Database upgrades', '/admin/upgrades/', 'fa-solid fa-database'],
     'reauth'   => ['Confirm password',  '/admin/reauth/',   'fa-solid fa-key'],
 ];

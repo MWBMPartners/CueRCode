@@ -1517,6 +1517,25 @@ The connection sets `time_zone = '+00:00'`, so every `DATETIME` the database wri
 
 **Showing a stored time (#178, 2026-11-28):** use `siteFormatDatabaseTime($stored, 'j M Y')` (`fn_auth.php`, beside the rule above): it reads the value as UTC and writes it in the site's zone (PHP's, set from `site_timezone`; an unknown zone falls back to UTC; anything that is not a real stored date-time shows nothing). The "Saved", "Linked", "Created" and "Last used" dates on `/account/` use it; before, `date(..., strtotime(...))` showed the UTC wall time (with a Tokyo site, 23:30 UTC on 28 November read "28 Nov" instead of "29 Nov"). The admin screens have their own zone setting (`admin_display_timezone`, `adminFormatUtcForDisplay()`). `tests/test_account_ui.php` fails if the account page uses `strtotime()` again.
 
+## 📣 Abuse reports and the takedown runbook (2026-11-28, WP4f #169)
+
+**Where things are.** `_functions/fn_abuse_reports.php` (the form's checks `abuseReportCheckInput()`, the fingerprints `abuseReporterAddressHash()` and `abuseReporterNetworkHash()`, the rule `abuseReportShouldSuspend()`, `abuseReportSubmit()`, `abuseReportNotify()`, the admin lists and `abuseReportSetStatus()`); `dynamicQrRestore()` in `fn_dynamic_qr_takedown.php`; pages `public_html/report/`, `public_html/admin/abuse/`, `public_html/unavailable/`.
+
+**One answer.** `/report/` checks the token and the shapes, then the per-address limit (`abuseReportRateAllowed()`, the shared record-then-count helper, endpoint `abuse_report`), then the human check, and only then stores. The page never reads what `abuseReportSubmit()` returns, shows one thank-you, and pads every POST to 0.4 seconds. A suspension caused by a report uses `applyNow => false` (the minute cron step tells Go2My.Link), so its timing is the same. No activity-log row is written for a report (it would keep the reporter's address); the rate log keeps the counting address as for every other form.
+
+**Counting.** `countedForSuspension = 1` only when `humanCheckVerifyRequest()` passed or answered "off". The count is over the window, `status <> 'dismissed'`: distinct `reporterAddressHash` (IPv6 /64) AND distinct `reporterNetworkHash` (IPv4 /24, IPv6 /48) must both reach the setting. A suspended code is not re-suspended.
+
+**Lifting (`dynamicQrRestore()`).** Global Admin re-checked from the database, a one-line reason, the owner's lock; the target is the destination if the owner had the code on (otherwise the neutral page); the destination goes through the hook (`restore`); Go2My.Link first (confirmed); then in one transaction the suspension cleared, open reports dismissed with `handledAt`, `dynamic_code.restore` in the admin change log. A failure after Go2My.Link changed sends the takedown again.
+
+**Takedown runbook (what an admin does; the promise is "We act on reports within one working day", decision 0034).**
+1. A report arrives by email at the abuse mailbox and on `/admin/abuse/`. Treat every destination as dangerous: do not open it on an unprotected computer; use a separate, disposable browser or an online URL scanner.
+2. Within one working day, decide. Harmful: **Suspend this code** with a reason (its open reports become "dealt with"). Not harmful: mark the report **Dismissed**. Unsure: mark it **Being looked at**, and decide later the same day.
+3. A code suspended automatically (3 people, or a Web Risk listing) needs a person too: read the reports; if it was a mistake, **Lift this suspension** with a reason (the destination is checked again; a destination Web Risk still lists cannot be lifted).
+4. Check "On Go2My.Link: Confirmed". "Not confirmed yet" means the minute cron job is still sending it; if it stays, check that the email cron line starts with `CUERCODE_SITE_COPY=live` and that Go2My.Link is reachable.
+5. A request from the police or a court, or a repeat offender, goes to the owner (the account can be suspended on its own; legal steps are for the owner and counsel, #38).
+
+**Tests.** `tests/test_abuse_reports.php`; sections G-K of `tests/integration/dynamic_qr_abuse_real_mysql.php`.
+
 ## 🛡️ Link safety and takedowns (2026-11-28, WP4e #168)
 
 **Where things are.** `_functions/fn_url_reputation.php` asks the providers (`urlReputationCheck()`; the list `urlReputationProviders()`, Web Risk only for now); `dynamicQrCheckDestinationSafety()` in `fn_redirects.php` is the ONE hook every check goes through (occasions `create`, `change`, `restore`, `recheck`). `_functions/fn_dynamic_qr_takedown.php` has `dynamicQrSuspend()`, the Go2My.Link step `dynamicQrApplySuspension()` (takes the owner's lock) and `dynamicQrApplySuspensionLocked()`, the cron step `dynamicQrApplyPendingSuspensions()` (step 10 of `process_email_queue.php`) and the daily `dynamicQrRecheckSafety()` (`_includes/cron/dynamic_qr_daily.php`). Upgrade 0008 adds `safetyVerdict`, `safetyCheckedAt`, `suspensionAppliedAt`, `tblLinkSafetyHits` and the abuse-report columns for #169.

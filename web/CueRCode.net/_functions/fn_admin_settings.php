@@ -122,6 +122,11 @@ if (!function_exists('urlReputationParseProviderList')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_url_reputation.php';
 }
 
+// 📣 #169: the abuse-report limits' setting names. Pure on loading.
+if (!function_exists('abuseReportSettings')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_abuse_reports.php';
+}
+
 // 🗑️ #179 and decision 0046: the error-log, visitor-details and abuse-report
 //    periods' defaults (CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT and friends) live in
 //    fn_email.php with the clean-up that uses them. That file defines
@@ -309,6 +314,12 @@ function adminSettingsSections(): array
             'title' => 'Dynamic QR codes (Go2My.Link)',
             'icon'  => 'fa-solid fa-arrows-rotate',
             'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it creates and changes no link on Go2My.Link (Go2My.Link still records the calls in its request log and counts them towards the key\'s request limit). Dynamic codes stay switched off until you switch them on below, which is only possible within an hour of a passing "Test connection" with no change to these settings since, and once the Google Web Risk key is saved (the link-safety check, decision 0029). The screens where members make and manage their codes are still being built; until then codes can be made through the API only.',
+        ],
+        'abuse' => [
+            'saveLabel' => 'Save abuse report settings',
+            'title' => 'Abuse reports and takedowns',
+            'icon'  => 'fa-solid fa-flag',
+            'intro' => 'Anyone can report a dynamic QR code that leads somewhere harmful on the public /report/ page. Every report is emailed to the abuse mailbox (up to the hourly number below) and listed on /admin/abuse/, where you suspend a code, lift a suspension with a written reason, or mark a report as dealt with. A code is suspended automatically when enough different people report it within the window below (decision 0034); only reports that passed the human check count, and the reporters must come from different addresses and different networks. The takedown promise is shown on the report page, the suspended-code page and in the emails.',
         ],
         'paypal' => [
             'saveLabel' => 'Save PayPal settings',
@@ -677,6 +688,50 @@ function adminSettingsRegistry(): array
         'help' => 'Whole seconds, ' . CUERCODE_URL_REPUTATION_MIN_TIMEOUT . ' to ' . CUERCODE_URL_REPUTATION_MAX_TIMEOUT . '. The default is ' . CUERCODE_URL_REPUTATION_DEFAULT_TIMEOUT . '. After this the destination is let through unchecked (and checked again by the daily job).',
         'min' => CUERCODE_URL_REPUTATION_MIN_TIMEOUT, 'max' => CUERCODE_URL_REPUTATION_MAX_TIMEOUT, 'rowOptional' => true, 'default' => CUERCODE_URL_REPUTATION_DEFAULT_TIMEOUT,
         'description' => 'Link-safety check: seconds to wait for a provider. Whole number 2-15; anything else means the default of 5. (#168)',
+    ]);
+
+    // ------------------------------------------- 4c. Abuse reports and takedowns (#169)
+    $fields[] = adminSettingsField([
+        'key' => 'abuse_mailbox', 'section' => 'abuse', 'kind' => 'email', 'group' => 'abuse', 'type' => 'email',
+        'label' => 'Abuse mailbox',
+        'help' => 'Every report about a dynamic code and every suspension is emailed here (decision 0034: abuse@cuercode.net, with abuse@qrmy.link forwarding to it). It is also shown on the report page as another way to tell us.',
+        'allowEmpty' => false, 'maxLength' => 254,
+        'description' => 'Abuse: the mailbox that receives every report and takedown notice (decision 0034; abuse@qrmy.link forwards to it)',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'abuse_takedown_promise', 'section' => 'abuse', 'kind' => 'text', 'group' => 'abuse', 'type' => 'string',
+        'label' => 'Takedown promise',
+        'help' => 'One sentence, shown on the report page, on the page a suspended code shows, and in the emails (decision 0034: "We act on reports within one working day."). Up to 200 characters.',
+        'allowEmpty' => false, 'maxLength' => 200,
+        'description' => 'Abuse: the takedown promise shown on the report page, the suspended page and in the terms (decision 0034)',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'abuse_auto_suspend_reports', 'section' => 'abuse', 'kind' => 'int', 'group' => 'abuse', 'type' => 'integer',
+        'label' => 'Reports from different people that suspend a code automatically',
+        'help' => 'Whole number, 1 to 100. The default is 3 (decision 0034). Only reports that passed the human check count, and they must come from this many different internet addresses AND this many different networks, so one person with many addresses counts once.',
+        'min' => 1, 'max' => 100,
+        'description' => 'Abuse: reports from different people (an IPv6 address counts as its /64) within the window below that suspend a dynamic code automatically. Whole number 1-100; anything else means the default of 3.',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'abuse_auto_suspend_window_hours', 'section' => 'abuse', 'kind' => 'int', 'group' => 'abuse', 'type' => 'integer',
+        'label' => 'Within how many hours (the window)',
+        'help' => 'Whole number of hours, 1 to 720. The default is 24 (decision 0034).',
+        'min' => 1, 'max' => 720,
+        'description' => 'Abuse: the window, in hours, in which those reports are counted. Whole number 1-720; anything else means the default of 24.',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => CUERCODE_SETTING_ABUSE_REPORT_IP_PER_HOUR, 'section' => 'abuse', 'kind' => 'int', 'group' => 'abuse', 'type' => 'integer',
+        'label' => 'Most reports from one visitor address in an hour',
+        'help' => 'Whole number, 1 to 100. The default is 5. Counted before the human check is asked; an IPv6 address counts as its whole /64 network, as on every other form.',
+        'min' => 1, 'max' => 100, 'rowOptional' => true, 'default' => 5,
+        'description' => 'Abuse reports: the most one visitor address (IPv6 as its /64) may send in an hour (#169)',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => CUERCODE_SETTING_ABUSE_REPORT_EMAILS_PER_HOUR, 'section' => 'abuse', 'kind' => 'int', 'group' => 'abuse', 'type' => 'integer',
+        'label' => 'Most report emails to the abuse mailbox in an hour',
+        'help' => 'Whole number, 1 to 1000. The default is 30. A flood of reports cannot bury the mailbox: past this number reports are still kept, listed on /admin/abuse/ and counted in the daily email, but not emailed one by one.',
+        'min' => 1, 'max' => 1000, 'rowOptional' => true, 'default' => 30,
+        'description' => 'Abuse reports: the most report emails sent to the abuse mailbox in an hour (#169)',
     ]);
 
     // ----------------------------------------------------------------- 5. PayPal

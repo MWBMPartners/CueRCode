@@ -1661,3 +1661,12 @@ footer a:hover {
 .oapi-schema dd {
     overflow-wrap: anywhere;
 }
+
+/**
+ * 📣 Abuse reports (#169) - what a reporter wrote keeps its own line breaks
+ * on /admin/abuse/, and long words wrap instead of widening the page.
+ */
+.cuercode-keep-lines {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

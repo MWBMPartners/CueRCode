@@ -1983,8 +1983,8 @@ function humanCheckEmailRouteChosen(array $post): bool
  *    'brokenExplain' for everyone while the saved keys cannot be read
  *    (merged review L4), when "without JavaScript" would be wrong.
  *
- * @param string $purpose login | register | forgot | resend
- * @return array{button: string, explain: string, brokenButton: string, brokenExplain: string}|null
+ * @param string $purpose login | register | forgot | resend | report
+ * @return array{button: string, explain: string, brokenButton: string, brokenExplain: string, limit: string}|null
  */
 function humanCheckEmailRouteWording(string $purpose): ?array
 {
@@ -2013,10 +2013,26 @@ function humanCheckEmailRouteWording(string $purpose): ?array
             'brokenButton'  => 'Send the new link by email',
             'brokenExplain' => 'We can still email you a new verification link.',
         ],
+        // 📣 #169: the abuse-report form. No email is involved: a report sent
+        //    this way reaches a person, but is never counted towards the
+        //    automatic suspension of a code (fn_abuse_reports.php).
+        'report'   => [
+            'button'        => 'Send my report without JavaScript',
+            'explain'       => 'Without JavaScript you can still send your report. A person reads every report, but one sent this way does not count towards suspending a code automatically.',
+            'brokenButton'  => 'Send my report anyway',
+            'brokenExplain' => 'You can still send your report. A person reads every report, but one sent this way does not count towards suspending a code automatically.',
+            'limit'         => 'To prevent abuse, each connection can send only a few reports an hour.',
+        ],
     ];
 
     if (!isset($wording[$purpose])) {
         return null;
+    }
+
+    // 📏 The sentence about the route's limits (the four account forms send
+    //    emails; the report form does not).
+    if (!isset($wording[$purpose]['limit'])) {
+        $wording[$purpose]['limit'] = 'To prevent abuse, this way is limited to a few emails an hour.';
     }
 
     return $wording[$purpose];
@@ -2097,7 +2113,7 @@ function humanCheckWidgetHtml(#[\SensitiveParameter] ?array $settings = null, st
 
     $route = humanCheckEmailRouteWording($purpose);
     if ($route !== null) {
-        $html .= '<p class="mt-2 mb-2">' . humanCheckEscape($route['explain']) . ' To prevent abuse, this way is limited to a few emails an hour.</p>'
+        $html .= '<p class="mt-2 mb-2">' . humanCheckEscape($route['explain']) . ' ' . humanCheckEscape($route['limit']) . '</p>'
             . '<button type="submit" class="btn btn-outline-secondary w-100" name="' . humanCheckEscape(CUERCODE_HUMAN_CHECK_EMAIL_ROUTE_FIELD) . '" value="1">'
             . humanCheckEscape($route['button'])
             . '</button>';
@@ -2125,7 +2141,7 @@ function humanCheckBrokenWidgetHtml(string $purpose): string
 
     $route = humanCheckEmailRouteWording($purpose);
     if ($route !== null) {
-        $html .= '<p class="mb-2">' . humanCheckEscape($route['brokenExplain']) . ' To prevent abuse, this way is limited to a few emails an hour.</p>'
+        $html .= '<p class="mb-2">' . humanCheckEscape($route['brokenExplain']) . ' ' . humanCheckEscape($route['limit']) . '</p>'
             . '<button type="submit" class="btn btn-outline-secondary w-100" name="' . humanCheckEscape(CUERCODE_HUMAN_CHECK_EMAIL_ROUTE_FIELD) . '" value="1">'
             . humanCheckEscape($route['brokenButton'])
             . '</button>';

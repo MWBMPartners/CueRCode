@@ -26,6 +26,19 @@
  *   F  an owner's change in flight when the code is suspended: the change is
  *      refused and the takedown is sent again, so Go2My.Link ends on the
  *      neutral page (rule 12)
+ *   G  abuse reports (#169): stored with the email encrypted and only two
+ *      fingerprints of the address; the owner told once, the abuse mailbox
+ *      each time; 3 different people from 3 different networks suspend it
+ *      (addresses from one /24 count once; reports without the human check
+ *      never count); an unknown code is stored too
+ *   H  the per-address limit (an IPv6 /64 counts once)
+ *   I  lifting a suspension: Global Admin only, a written reason, the
+ *      destination checked again, Go2My.Link first, the reports dismissed
+ *      (and never counted again), the admin change log
+ *   J  the real pages in child processes: /report/ gives one answer for an
+ *      unknown, a working and a suspended code, after at least 0.4 seconds;
+ *      the neutral page; /admin/abuse/ (fresh password needed)
+ *   K  the 12-month clean-up also removes the network fingerprint (0046)
  *
  * Nothing is sent to Google, Go2My.Link or anywhere else: scripted stand-ins
  * answer in-process. (tests/test_url_reputation.php proves the real HTTPS
@@ -221,6 +234,55 @@ function daOptions(array $daExtra = []): array
 }
 $GLOBALS['daLogged'] = [];
 
+$daArguments = array_slice($argv, 1);
+
+// ==============================================================================
+// 👶 CHILD mode: render one REAL page (scenario J)
+// php <this file> --render <db> <base64 json {page, userID, token, method, get, post, reauth, csrf, ip}>
+// ==============================================================================
+if (isset($daArguments[0]) && $daArguments[0] === '--render') {
+    if (!isset($daArguments[1], $daArguments[2]) || preg_match('/^cuercode_it_[a-z0-9_]+$/', $daArguments[1]) !== 1) {
+        exit(9);
+    }
+    $daRequest = json_decode((string) base64_decode($daArguments[2], true), true);
+    if (!in_array($daRequest['page'], ['report', 'unavailable', 'admin/abuse'], true)) {
+        exit(9);
+    }
+    daDefineDatabase($daArguments[1]);
+    $_SERVER['HTTP_HOST']       = 'cuercode.test';
+    $_SERVER['REQUEST_METHOD']  = $daRequest['method'];
+    $_SERVER['REQUEST_URI']     = '/' . $daRequest['page'] . '/';
+    $_SERVER['SCRIPT_NAME']     = '/' . $daRequest['page'] . '/index.php';
+    $_SERVER['SCRIPT_FILENAME'] = $daSiteRoot . 'public_html/' . $daRequest['page'] . '/index.php';
+    $_SERVER['REMOTE_ADDR']     = $daRequest['ip'];
+    $_SERVER['HTTP_USER_AGENT'] = 'integration-test';
+    require_once $daSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+    restore_error_handler();
+    restore_exception_handler();
+    ini_set('session.save_path', sys_get_temp_dir());
+    session_id('cuercode' . bin2hex(random_bytes(8)));
+    session_start();
+    if ($daRequest['token'] !== '') {
+        $_SESSION[CUERCODE_SESSION_TOKEN_KEY] = $daRequest['token'];
+    }
+    $_SESSION[CUERCODE_CSRF_SESSION_KEY]   = $daRequest['csrf'];
+    $_SESSION[CUERCODE_CSRF_TIMESTAMP_KEY] = time();
+    if ($daRequest['reauth'] === true) {
+        $_SESSION['cuercode_admin_reauth'] = ['userID' => (int) $daRequest['userID'], 'sessionHash' => hash('sha256', (string) $daRequest['token']), 'confirmedAt' => time(), 'lastUsedAt' => time()];
+    }
+    $_GET  = $daRequest['get'];
+    $_POST = $daRequest['post'];
+    register_shutdown_function(static function (): void {
+        $daFlash = [];
+        if (isset($_SESSION['cuercode_admin_flash'])) {
+            $daFlash = $_SESSION['cuercode_admin_flash'];
+        }
+        echo PHP_EOL . '@@STATE@@' . json_encode(['flash' => $daFlash, 'status' => http_response_code()]) . PHP_EOL;
+    });
+    require $daSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $daRequest['page']) . DIRECTORY_SEPARATOR . 'index.php';
+    exit(0);
+}
+
 // ==============================================================================
 // 🛡️ Safety, then a fresh database
 // ==============================================================================
@@ -278,6 +340,7 @@ daDefineDatabase($daDbName);
 require_once $daSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
 require_once $daSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_migrations.php';
 require_once $daSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_dynamic_qr_takedown.php';
+require_once $daSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_abuse_reports.php';
 restore_error_handler();
 ini_set('display_errors', 'stderr');
 set_exception_handler(static function (\Throwable $daError): void {
@@ -576,6 +639,199 @@ $daRowF = daCode($daCodeF);
 daCheck(!$daOut['ok'] && $daOut['httpCode'] === 409 && $daOut['errorCode'] === 'REDIRECT_SUSPENDED', 'the owner\'s change is refused (409 REDIRECT_SUSPENDED), not reported as done');
 daCheck($daRowF['destinationURL'] === 'https://example.com/bob-f' && $daRowF['suspendedAt'] !== null, '...nothing of it was saved here; the code stays suspended');
 daCheck(daRemote($daRowF) === 'https://cuercode.net/unavailable/?code=' . $daRowF['shortCode'] && $daRowF['suspensionAppliedAt'] !== null, '...and the takedown was SENT AGAIN, so Go2My.Link ends on the neutral page, not the owner\'s new destination');
+
+
+// ==============================================================================
+// G. Abuse reports and the automatic suspension (#169)
+// ==============================================================================
+echo PHP_EOL . 'G. Abuse reports: counting different people, and the automatic suspension' . PHP_EOL;
+$daCarol = daUser('carol');
+$daOut   = createDynamicRedirectForOwner($daCarol, 'https://example.com/carol', daOptions());
+$daCodeG = (int) $daOut['row']['redirectID'];
+$daRowG  = daCode($daCodeG);
+$daCarolEmail = 'da-carol@da.cuercode.invalid';
+$daReport = static function (string $daIp, bool $daCounted, string $daCode = '', string $daEmail = '') use ($daRowG): array {
+    if ($daCode === '') {
+        $daCode = (string) $daRowG['shortCode'];
+    }
+    return abuseReportSubmit(['code' => $daCode, 'category' => 'phishing', 'details' => 'It asks for my bank login.', 'email' => $daEmail], ['ip' => $daIp, 'counted' => $daCounted]);
+};
+$daBefore = daLastEmailId();
+$daG1 = $daReport('198.51.100.7', true, '', 'reporter@example.org');
+$daStored = daRows('SELECT `redirectID`, `reporterEmailEncrypted`, `reporterAddressHash`, `reporterNetworkHash`, `countedForSuspension`, `status` FROM `tblAbuseReports` WHERE `reportID` = ?', 'i', [$daG1['reportID']])[0];
+daCheck($daG1['stored'] && $daG1['known'] && !$daG1['suspended'] && (int) $daStored['redirectID'] === $daCodeG && $daStored['status'] === 'new' && (int) $daStored['countedForSuspension'] === 1, 'a report is stored against the code, "new", counted (it passed the human check)');
+daCheck(!str_contains((string) $daStored['reporterEmailEncrypted'], 'reporter@') && decryptValue((string) $daStored['reporterEmailEncrypted']) === 'reporter@example.org', '...the reporter\'s email is stored encrypted and reads back exactly');
+daCheck(strlen((string) $daStored['reporterAddressHash']) === 64 && strlen((string) $daStored['reporterNetworkHash']) === 64 && !str_contains((string) $daStored['reporterAddressHash'] . $daStored['reporterNetworkHash'], '198.51'), '...the address is kept only as two 64-character fingerprints');
+daCheck(count(daEmails($daCarolEmail, $daBefore)) === 1 && str_contains((string) daEmails($daCarolEmail, $daBefore)[0]['subject'], 'reported') && !str_contains((string) daEmails($daCarolEmail, $daBefore)[0]['paramsJSON'], 'reporter@example.org') && !str_contains((string) daEmails($daCarolEmail, $daBefore)[0]['paramsJSON'], 'bank login'), 'the owner is told, without who reported it or what they wrote');
+$daAbuseG = daEmails('abuse@cuercode.net', $daBefore);
+daCheck(count($daAbuseG) === 1 && str_contains((string) $daAbuseG[0]['paramsJSON'], 'reporter@example.org') && str_contains((string) $daAbuseG[0]['paramsJSON'], 'bank login') && str_contains((string) $daAbuseG[0]['paramsJSON'], 'example[.]com/carol'), 'the abuse mailbox gets the report, the reporter\'s email and the destination (defanged)');
+
+$daG2 = $daReport('198.51.100.8', true);
+$daG3 = $daReport('203.0.113.5', true);
+daCheck(!$daG2['suspended'] && !$daG3['suspended'] && daCode($daCodeG)['suspendedAt'] === null, '3 counted reports, but two from the same /24: only 2 networks, so NOT suspended (one person with many addresses counts once)');
+$daG4 = $daReport('192.0.2.9', false);
+daCheck(!$daG4['suspended'] && daCode($daCodeG)['suspendedAt'] === null, 'a 4th from a new network but WITHOUT the human check: kept, never counted, still not suspended');
+daCheck(count(daEmails($daCarolEmail, $daBefore)) === 1 && count(daEmails('abuse@cuercode.net', $daBefore)) === 4, 'the owner was told once only (the first report in the window); the abuse mailbox got every report');
+$daG5 = $daReport('2001:db8:5:1::1', true);
+$daRowG = daCode($daCodeG);
+daCheck($daG5['suspended'] && $daRowG['suspendedAt'] !== null && $daRowG['suspendedByUserID'] === null && str_contains((string) $daRowG['suspensionNote'], '3 reports from different people within 24 hours'), 'a counted report from a 3rd network: suspended automatically (3 people, 3 networks, decision 0034)');
+daCheck($daRowG['suspensionAppliedAt'] === null && daRemote($daRowG) === 'https://example.com/carol', '...Go2My.Link is told by the cron job, not by the report (so the answer takes no longer)');
+$daAuditG = daRows("SELECT `actorType`, `actorLabel` FROM `tblAdminAuditLog` WHERE `action` = 'dynamic_code.suspend' AND `entityKey` = ?", 's', [(string) $daRowG['redirectUUID']]);
+daCheck(count($daAuditG) === 1 && $daAuditG[0]['actorType'] === 'system' && str_contains((string) $daAuditG[0]['actorLabel'], 'abuse reports'), '...in the admin change log as done by the system (abuse reports)');
+daCheck(count(daEmails($daCarolEmail, $daBefore)) === 2 && str_contains((string) daEmails($daCarolEmail, $daBefore)[1]['paramsJSON'], 'different people reported it'), '...and the owner is told it was suspended, and why');
+dynamicQrApplyPendingSuspensions(daOptions());
+daCheck(daRemote(daCode($daCodeG)) === 'https://cuercode.net/unavailable/?code=' . $daRowG['shortCode'] && daCode($daCodeG)['suspensionAppliedAt'] !== null, 'the cron step then points Go2My.Link at the neutral page');
+$daG6 = $daReport('2001:db8:6:1::1', true);
+daCheck($daG6['stored'] && !$daG6['suspended'], 'a report about a code already suspended is still stored');
+$daG7 = $daReport('2001:db8:7:1::1', true, 'Zz9Yy8x');
+$daUnknown = daRows('SELECT `redirectID`, `shortCode` FROM `tblAbuseReports` WHERE `reportID` = ?', 'i', [$daG7['reportID']])[0];
+daCheck($daG7['stored'] && !$daG7['known'] && $daUnknown['redirectID'] === null && $daUnknown['shortCode'] === 'Zz9Yy8x', 'a report about a code that does not exist is stored too (with the code as given)');
+
+// ==============================================================================
+// H. The per-address limit
+// ==============================================================================
+echo PHP_EOL . 'H. Each address may send only a few reports an hour' . PHP_EOL;
+$daH = [];
+foreach (['2001:db8:9:1::1', '2001:db8:9:1::2', '2001:db8:9:1::3', '2001:db8:9:1::ffff', '2001:db8:9:2::1'] as $daHIp) {
+    $daH[] = abuseReportRateAllowed($daHIp, 3);
+}
+daCheck($daH === [true, true, true, false, true], 'a limit of 3: three from one /64 pass, a 4th address in the SAME /64 is refused, another /64 passes (' . json_encode($daH) . ')');
+
+// ==============================================================================
+// I. Lifting a suspension
+// ==============================================================================
+echo PHP_EOL . 'I. Lifting a suspension (Global Admin, reason, checked again, Go2My.Link first)' . PHP_EOL;
+$daAdminRow = ['userID' => $daAdmin, 'email' => 'da-admin@da.cuercode.invalid', 'displayName' => 'DA admin', 'sessionHash' => '', 'hasPassword' => true];
+$daNotAdmin = ['userID' => $daCarol, 'email' => $daCarolEmail, 'displayName' => 'DA carol', 'sessionHash' => '', 'hasPassword' => true];
+$daI = dynamicQrRestore($daCodeG, $daNotAdmin, 'I own it', daOptions());
+daCheck(!$daI['ok'] && $daI['outcome'] === 'refused' && daCode($daCodeG)['suspendedAt'] !== null, 'the owner (not a Global Admin) cannot lift it');
+$daI = dynamicQrRestore($daCodeG, $daAdminRow, '  ', daOptions());
+daCheck(!$daI['ok'] && $daI['outcome'] === 'refused' && daCode($daCodeG)['suspendedAt'] !== null, 'an admin with no written reason cannot lift it');
+$GLOBALS['daRisk']['listed'] = ['https://example.com/carol'];
+$GLOBALS['daGo2']['requests'] = [];
+$daI = dynamicQrRestore($daCodeG, $daAdminRow, 'Checked: looks fine', daOptions());
+daCheck(!$daI['ok'] && $daI['outcome'] === 'unsafe' && $GLOBALS['daGo2']['requests'] === [] && daCode($daCodeG)['suspendedAt'] !== null, 'a destination Web Risk lists now: refused, nothing sent to Go2My.Link, still suspended');
+$GLOBALS['daRisk']['listed'] = [];
+daExec('DELETE FROM `tblLinkSafetyHits` WHERE `destinationURL` = ?', 's', ['https://example.com/carol']);
+$GLOBALS['daGo2']['modes'] = ['putDown'];
+$daI = dynamicQrRestore($daCodeG, $daAdminRow, 'Checked: looks fine', daOptions());
+$daRowI = daCode($daCodeG);
+daCheck(!$daI['ok'] && $daI['outcome'] === 'failed' && $daRowI['suspendedAt'] !== null && $daRowI['suspensionAppliedAt'] === null, 'Go2My.Link unreachable: refused, still suspended, and the takedown is marked to be sent again (in case the change reached it)');
+$GLOBALS['daGo2']['modes'] = [];
+dynamicQrApplyPendingSuspensions(daOptions());
+$daBefore = daLastEmailId();
+$daI = dynamicQrRestore($daCodeG, $daAdminRow, 'Checked: the page is the shop\'s real menu', daOptions());
+$daRowI = daCode($daCodeG);
+daCheck($daI['ok'] && $daI['outcome'] === 'restored' && $daRowI['suspendedAt'] === null && $daRowI['suspensionNote'] === null && daRemote($daRowI) === 'https://example.com/carol', 'lifted: Go2My.Link points at the destination again, and the suspension is cleared here');
+$daOpenLeft = daRows("SELECT COUNT(*) AS `c` FROM `tblAbuseReports` WHERE `redirectID` = ? AND `status` IN ('new', 'reviewing')", 'i', [$daCodeG])[0]['c'];
+$daDismissed = daRows("SELECT COUNT(*) AS `c` FROM `tblAbuseReports` WHERE `redirectID` = ? AND `status` = 'dismissed' AND `handledAt` IS NOT NULL AND `handledByUserID` = ?", 'ii', [$daCodeG, $daAdmin])[0]['c'];
+daCheck((int) $daOpenLeft === 0 && (int) $daDismissed === 6, 'its 6 open reports are dismissed, with the admin and the handled date (decision 0046: the 12 months start)');
+$daAuditI = daRows("SELECT `actorType`, `actorUserID`, `reason` FROM `tblAdminAuditLog` WHERE `action` = 'dynamic_code.restore' AND `entityKey` = ?", 's', [(string) $daRowI['redirectUUID']]);
+daCheck(count($daAuditI) === 1 && $daAuditI[0]['actorType'] === 'admin' && (int) $daAuditI[0]['actorUserID'] === $daAdmin && str_contains((string) $daAuditI[0]['reason'], 'real menu'), '...recorded in the admin change log with the admin and the reason');
+daCheck(count(daEmails($daCarolEmail, $daBefore)) === 1 && str_contains((string) daEmails($daCarolEmail, $daBefore)[0]['subject'], 'working again') && count(daEmails('abuse@cuercode.net', $daBefore)) === 1, 'the owner and the abuse mailbox are told');
+$daOut = dynamicQrChangeForOwner($daCarol, (string) $daRowI['redirectUUID'], ['destination_url' => 'https://example.com/carol-2'], daOptions());
+daCheck($daOut['ok'], 'the owner can change it again');
+$daI2 = $daReport('2001:db8:8:1::1', true);
+daCheck(!$daI2['suspended'] && daCode($daCodeG)['suspendedAt'] === null, 'a new report after the lift does not re-suspend it: the dismissed reports never count again');
+
+// ==============================================================================
+// J. The real pages
+// ==============================================================================
+echo PHP_EOL . 'J. The real pages: /report/, the neutral page, /admin/abuse/' . PHP_EOL;
+$daRender = static function (array $daRequest) use ($daDbName): array {
+    $daStart = microtime(true);
+    $daProc = proc_open([PHP_BINARY, __FILE__, '--render', $daDbName, base64_encode((string) json_encode($daRequest))], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $daPipes, null, getenv());
+    fclose($daPipes[0]);
+    $daOutText = (string) stream_get_contents($daPipes[1]);
+    $daErrText = (string) stream_get_contents($daPipes[2]);
+    fclose($daPipes[1]);
+    fclose($daPipes[2]);
+    $daExit = proc_close($daProc);
+    $daState = [];
+    $daHtml  = $daOutText;
+    $daAt = strrpos($daOutText, '@@STATE@@');
+    if ($daAt !== false) {
+        $daHtml  = substr($daOutText, 0, $daAt);
+        $daState = (array) json_decode(trim(substr($daOutText, $daAt + 9)), true);
+    }
+    return ['exit' => $daExit, 'html' => $daHtml, 'err' => $daErrText, 'state' => $daState, 'seconds' => microtime(true) - $daStart];
+};
+$daCsrf = str_repeat('c', 64);
+$daPublic = ['page' => 'report', 'userID' => 0, 'token' => '', 'method' => 'GET', 'get' => [], 'post' => [], 'reauth' => false, 'csrf' => $daCsrf, 'ip' => '198.18.0.1'];
+$daPage = $daRender(array_merge($daPublic, ['get' => ['code' => 'QRmy.Link/Ab3dE9x']]));
+daCheck($daPage['exit'] === 0 && $daPage['err'] === '' && substr_count($daPage['html'], '<h1') === 1 && str_contains($daPage['html'], 'value="Ab3dE9x"') && str_contains($daPage['html'], 'We act on reports within one working day.'), '/report/ renders (one h1, no errors), the code filled in from the address, the promise shown' . substr($daPage['err'], 0, 300));
+daCheck(!str_contains($daPage['html'], '<script>') && preg_match('/\son[a-z]+="/', $daPage['html']) === 0 && str_contains($daPage['html'], '<legend'), '...no inline script or handler; the choices are a fieldset with a legend');
+
+// 🤝 One answer: an unknown code, a working code and a suspended code.
+$daCodeJ  = (string) daCode($daCodeG)['shortCode'];
+$daOutJ   = createDynamicRedirectForOwner($daCarol, 'https://example.com/carol-j', daOptions());
+$daRowJ   = daCode((int) $daOutJ['row']['redirectID']);
+dynamicQrSuspend((int) $daRowJ['redirectID'], ['type' => 'system', 'label' => 'test'], 'Test: suspended for the page check', daOptions(['notify' => false, 'applyNow' => false]));
+$daAnswers = [];
+foreach (['unknown' => 'Qq7Ww6e', 'working' => $daCodeJ, 'suspended' => (string) $daRowJ['shortCode']] as $daCase => $daTyped) {
+    $daPost = ['csrf_token' => $daCsrf, 'report_submit' => '1', 'code' => $daTyped, 'category' => 'scam', 'details' => 'Fake shop.', 'email' => ''];
+    $daPage = $daRender(array_merge($daPublic, ['method' => 'POST', 'post' => $daPost, 'ip' => '198.18.' . count($daAnswers) . '.9']));
+    $daMain = '';
+    if (preg_match('#<main[^>]*>(.*)</main>#s', $daPage['html'], $daMatch) === 1) {
+        $daMain = preg_replace('/name="csrf_token" value="[^"]*"/', '', $daMatch[1]);
+    }
+    $daAnswers[$daCase] = ['main' => $daMain, 'seconds' => $daPage['seconds'], 'status' => (int) ($daPage['state']['status'] ?? 0)];
+}
+daCheck(str_contains($daAnswers['unknown']['main'], 'Thank you. Your report has been received'), '/report/: the thank-you is shown');
+daCheck($daAnswers['unknown']['main'] !== '' && $daAnswers['unknown']['main'] === $daAnswers['working']['main'] && $daAnswers['working']['main'] === $daAnswers['suspended']['main'], '/report/: the page is byte for byte the same for an unknown, a working and a suspended code (it never reveals whether a code exists)');
+daCheck($daAnswers['unknown']['status'] === $daAnswers['working']['status'] && $daAnswers['working']['status'] === $daAnswers['suspended']['status'] && $daAnswers['unknown']['status'] < 400, '...with the same status, not an error (' . $daAnswers['unknown']['status'] . '; 0 = none set, which is 200)');
+daCheck($daAnswers['unknown']['seconds'] >= 0.4 && $daAnswers['working']['seconds'] >= 0.4 && $daAnswers['suspended']['seconds'] >= 0.4, '...and each took at least 0.4 seconds (' . round($daAnswers['unknown']['seconds'], 2) . ', ' . round($daAnswers['working']['seconds'], 2) . ', ' . round($daAnswers['suspended']['seconds'], 2) . ')');
+daCheck(!str_contains(implode('', array_column($daAnswers, 'main')), 'example.com'), '...and never shows a destination');
+$daPage = $daRender(array_merge($daPublic, ['method' => 'POST', 'post' => ['csrf_token' => 'wrong', 'report_submit' => '1', 'code' => $daCodeJ, 'category' => 'scam']]));
+daCheck(str_contains($daPage['html'], 'session has expired') && !str_contains($daPage['html'], 'Thank you.'), '/report/: a wrong form token is refused');
+$daPage = $daRender(array_merge($daPublic, ['method' => 'POST', 'post' => ['csrf_token' => $daCsrf, 'report_submit' => '1', 'code' => 'https://evil.example/x', 'category' => 'nope']]));
+daCheck(str_contains($daPage['html'], 'aria-invalid="true"') && str_contains($daPage['html'], 'report-code-error') && !str_contains($daPage['html'], 'Thank you.'), '/report/: a wrong code shape and category are shown next to the boxes (aria-invalid, described)');
+for ($daI = 0; $daI < 5; $daI++) {
+    $daRender(array_merge($daPublic, ['method' => 'POST', 'post' => ['csrf_token' => $daCsrf, 'report_submit' => '1', 'code' => 'Pp' . $daI . 'Oo9i', 'category' => 'scam'], 'ip' => '198.18.77.1']));
+}
+$daPage = $daRender(array_merge($daPublic, ['method' => 'POST', 'post' => ['csrf_token' => $daCsrf, 'report_submit' => '1', 'code' => 'Pp9Oo9i', 'category' => 'scam'], 'ip' => '198.18.77.1']));
+daCheck(str_contains($daPage['html'], 'Too many reports from your connection') && !str_contains($daPage['html'], 'Thank you.'), '/report/: the 6th report from one address in an hour is refused (5 by default)');
+
+$daPage = $daRender(array_merge($daPublic, ['page' => 'unavailable', 'get' => ['code' => (string) $daRowJ['shortCode']]]));
+daCheck($daPage['exit'] === 0 && str_contains($daPage['html'], 'href="/report/?code=' . rawurlencode((string) $daRowJ['shortCode']) . '"') && str_contains($daPage['html'], 'We act on reports within one working day.') && !str_contains($daPage['html'], 'example.com'), 'the neutral page: the report link with the code, the promise, never the destination');
+$daPageX = $daRender(array_merge($daPublic, ['page' => 'unavailable', 'get' => ['code' => 'Nn5Mm4b']]));
+$daNeutral = static function (string $daHtml): string {
+    return (string) preg_replace('/code=[A-Za-z0-9_-]+/', 'code=X', $daHtml);
+};
+daCheck($daNeutral($daPage['html']) === $daNeutral($daPageX['html']), '...the same words for a suspended code and a code that does not exist');
+
+$daToken = bin2hex(random_bytes(32));
+daExec('INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `expiresAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 DAY))', 'si', [$daToken, $daAdmin]);
+$daAdminReq = ['page' => 'admin/abuse', 'userID' => $daAdmin, 'token' => $daToken, 'method' => 'GET', 'get' => [], 'post' => [], 'reauth' => true, 'csrf' => $daCsrf, 'ip' => '203.0.113.200'];
+$daPage = $daRender($daAdminReq);
+daCheck($daPage['exit'] === 0 && $daPage['err'] === '' && substr_count($daPage['html'], '<h1') === 1 && str_contains($daPage['html'], 'Reports still open') && str_contains($daPage['html'], 'Suspended codes'), '/admin/abuse/ renders for a Global Admin' . substr($daPage['err'], 0, 300));
+daCheck(str_contains($daPage['html'], 'Fake shop.') && str_contains($daPage['html'], '<code>https://example.com/carol-j</code>') && !str_contains($daPage['html'], 'href="https://example.com'), '...the reports with what was written, and destinations as text, never links');
+daCheck(!str_contains($daPage['html'], '<script>') && preg_match('/\son[a-z]+="/', $daPage['html']) === 0, '...no inline script or handler');
+$daSuspendPost = ['csrf_token' => $daCsrf, 'abuse_action' => 'suspend', 'code' => 'QRmy.Link/' . $daCodeJ, 'reason' => 'Admin test: suspended from the screen'];
+$daPage = $daRender(array_merge($daAdminReq, ['method' => 'POST', 'reauth' => false, 'post' => $daSuspendPost]));
+daCheck(daCode($daCodeG)['suspendedAt'] === null && str_contains($daPage['html'], 'confirm your password'), 'suspending without a fresh password confirmation: nothing happens');
+$daPage = $daRender(array_merge($daAdminReq, ['method' => 'POST', 'post' => $daSuspendPost]));
+$daAuditJ = daRows("SELECT `actorType`, `actorUserID`, `reason` FROM `tblAdminAuditLog` WHERE `action` = 'dynamic_code.suspend' AND `entityKey` = ? ORDER BY `auditID` DESC LIMIT 1", 's', [(string) daCode($daCodeG)['redirectUUID']]);
+daCheck(daCode($daCodeG)['suspendedAt'] !== null && (int) daCode($daCodeG)['suspendedByUserID'] === $daAdmin && $daAuditJ[0]['actorType'] === 'admin' && str_contains((string) $daAuditJ[0]['reason'], 'from the screen'), 'with it: suspended by the admin, with the reason, in the admin change log');
+$daPage = $daRender(array_merge($daAdminReq, ['method' => 'POST', 'post' => ['csrf_token' => $daCsrf, 'abuse_action' => 'restore', 'redirect' => (string) $daCodeG, 'reason' => '']]));
+daCheck(daCode($daCodeG)['suspendedAt'] !== null && str_contains($daPage['html'], 'Write why the suspension is lifted'), 'lifting with no reason through the screen: refused, still suspended');
+$daOpenReport = (int) daRows("SELECT `reportID` FROM `tblAbuseReports` WHERE `status` = 'new' ORDER BY `reportID` LIMIT 1")[0]['reportID'];
+$daRender(array_merge($daAdminReq, ['method' => 'POST', 'post' => ['csrf_token' => $daCsrf, 'abuse_action' => 'report_status', 'report' => (string) $daOpenReport, 'status' => 'actioned']]));
+$daHandled = daRows('SELECT `status`, `handledAt`, `handledByUserID` FROM `tblAbuseReports` WHERE `reportID` = ?', 'i', [$daOpenReport])[0];
+daCheck($daHandled['status'] === 'actioned' && $daHandled['handledAt'] !== null && (int) $daHandled['handledByUserID'] === $daAdmin && count(daRows("SELECT `auditID` FROM `tblAdminAuditLog` WHERE `action` = 'abuse.report_update' AND `entityKey` = ?", 's', [(string) $daOpenReport])) === 1, 'marking a report dealt with sets its handled date and who, in the admin change log');
+$daBobToken = bin2hex(random_bytes(32));
+daExec('INSERT INTO `tblUserSessions` (`sessionID`, `userID`, `expiresAt`) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 DAY))', 'si', [$daBobToken, $daBob]);
+$daPage = $daRender(array_merge($daAdminReq, ['userID' => $daBob, 'token' => $daBobToken]));
+daCheck(!str_contains($daPage['html'], 'Reports still open') && (int) ($daPage['state']['status'] ?? 0) === 404, 'an ordinary member gets the same 404 as a missing page');
+
+// ==============================================================================
+// K. The 12-month clean-up (decision 0046)
+// ==============================================================================
+echo PHP_EOL . 'K. Twelve months after a report is dealt with, its personal details go' . PHP_EOL;
+daExec("UPDATE `tblAbuseReports` SET `handledAt` = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 400 DAY) WHERE `status` IN ('actioned', 'dismissed')");
+$daCleared = clearOldAbuseReportDetails(365, 100);
+$daLeft = daRows("SELECT COUNT(*) AS `c` FROM `tblAbuseReports` WHERE `status` IN ('actioned', 'dismissed') AND (`reporterNetworkHash` IS NOT NULL OR `reporterAddressHash` IS NOT NULL OR `reporterEmailEncrypted` IS NOT NULL OR `details` IS NOT NULL)")[0]['c'];
+daCheck($daCleared >= 7 && (int) $daLeft === 0, 'every dealt-with report lost its email, description and BOTH fingerprints (' . $daCleared . ' cleared); the bare records stay');
 
 // ==============================================================================
 // 🔐 No secret anywhere, then clean up

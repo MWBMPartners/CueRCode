@@ -4218,7 +4218,8 @@ function clearOldActivityVisitorDetails(int $olderThanDays, int $limit): ?int
 
 /**
  * 📣 Decision 0046: remove the reporter's email, the description and the
- *    visitor fingerprint (address hash) from abuse reports dealt with
+ *    visitor fingerprints (the address hash and, since upgrade 0008, the
+ *    network hash) from abuse reports dealt with
  *    (status actioned or dismissed) more than $olderThanDays ago. The bare
  *    record that a report happened stays; personalDetailsRemovedAt says
  *    when. Rows already done are never read again (the index on
@@ -4258,8 +4259,29 @@ function clearOldAbuseReportDetails(int $olderThanDays, int $limit): ?int
         return 0;
     }
 
+    // 🔐 Upgrade 0008 (#169) adds the wider-network fingerprint: removed
+    //    with the rest once that column exists.
+    $networkSql = '';
+    try {
+        $columnStmt = dbQuery(
+            'SELECT COUNT(*) AS `found` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ? AND `COLUMN_NAME` = ?',
+            'ss',
+            ['tblAbuseReports', 'reporterNetworkHash']
+        );
+        $columnRow = $columnStmt->get_result()->fetch_assoc();
+        $columnStmt->close();
+        if (is_array($columnRow) && (int) $columnRow['found'] === 1) {
+            $networkSql = '`reporterNetworkHash` = NULL, ';
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Abuse-report clean-up failed', get_class($e));
+        }
+        return null;
+    }
+
     return emailQueueChangeRows(
-        'UPDATE `tblAbuseReports` SET `reporterEmailEncrypted` = NULL, `details` = NULL, `reporterAddressHash` = NULL, `personalDetailsRemovedAt` = UTC_TIMESTAMP() '
+        'UPDATE `tblAbuseReports` SET `reporterEmailEncrypted` = NULL, `details` = NULL, `reporterAddressHash` = NULL, ' . $networkSql . '`personalDetailsRemovedAt` = UTC_TIMESTAMP() '
         . "WHERE `personalDetailsRemovedAt` IS NULL AND `handledAt` < DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY) AND `status` IN ('actioned', 'dismissed') "
         . 'ORDER BY `handledAt` LIMIT ?',
         'ii',

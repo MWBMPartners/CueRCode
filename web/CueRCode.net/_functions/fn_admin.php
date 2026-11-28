@@ -581,6 +581,9 @@ function adminAuditActionNames(): array
         // 🚫 #168: a dynamic code taken down (by an admin, or by the system
         //    after a link-safety hit or reports).
         'dynamic_code.suspend',
+        // ↩️ #169: an admin lifts a suspension (reason and fresh password),
+        //    and changes an abuse report's status.
+        'dynamic_code.restore', 'abuse.report_update',
         'plan.create', 'plan.update', 'plan.update_reduction', 'plan.new_version', 'plan.retire', 'plan.restore', 'plan.delete',
         'price.create', 'price.update', 'price.retire', 'price.delete',
         'entitlement.update', 'apikeys.resync',

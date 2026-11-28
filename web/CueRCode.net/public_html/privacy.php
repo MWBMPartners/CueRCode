@@ -87,7 +87,7 @@ if (function_exists('getConfig')) {
 // 🧹 #129 / #179: how long email records, the error log and visitor details
 //    in the activity log are kept - the periods actually in force (a Global
 //    Admin can change them), read by the same rule the clean-up uses.
-$privacyEmailPeriods = ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90];
+$privacyEmailPeriods = ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'abuseReportRetentionDays' => 365];
 if (function_exists('emailQueueHousekeepingOptions') && function_exists('getConfig')) {
     $privacyEmailPeriods = emailQueueHousekeepingOptions('getConfig');
 }
@@ -167,7 +167,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <li><a href="#data-collected">2. Information we collect</a></li>
                                 <li><a href="#purposes">3. Purposes &amp; lawful bases</a></li>
                                 <li><a href="#cookies">4. Cookies, localStorage &amp; similar technologies</a></li>
-                                <li><a href="#sharing">5. How we share information</a> (including <a href="#human-check">5.1 the human check</a> and <a href="#link-safety">5.2 checking where dynamic QR codes lead</a>)</li>
+                                <li><a href="#sharing">5. How we share information</a> (including <a href="#human-check">5.1 the human check</a>, <a href="#link-safety">5.2 checking where dynamic QR codes lead</a> and <a href="#abuse-reports">5.3 reports about dynamic QR codes</a>)</li>
                                 <li><a href="#transfers">6. International data transfers</a></li>
                                 <li><a href="#retention">7. Data retention</a></li>
                                 <li><a href="#security">8. Data security</a></li>
@@ -436,6 +436,28 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             information is described in <a href="https://policies.google.com/privacy" rel="noopener">Google&rsquo;s privacy policy</a>.
                         </p>
 
+                        <?php /* 📣 5.3 Reports about dynamic QR codes (#169). Factual
+                             wording; the legal review (#38) adds the rest. */ ?>
+                        <h3 id="abuse-reports" class="h6 mt-3 mb-2">5.3 Reports About Dynamic QR Codes</h3>
+                        <p>
+                            Anyone can tell us on our <a href="/report/">report page</a> about a dynamic QR code that leads
+                            somewhere harmful. A report holds the code, the kind of harm chosen, what the reporter wrote,
+                            and, only if they choose to give it, their email address (stored encrypted). We do not store the
+                            reporter&rsquo;s internet address with the report: we keep only two scrambled fingerprints of it
+                            (one for the address, one for its wider network), which cannot be turned back into the address
+                            and are used only to count how many different people reported the same code. As on our other
+                            forms, the internet address is also used for a short time to limit how many reports one
+                            connection can send.
+                        </p>
+                        <p>
+                            Reports are read by our team, through our abuse mailbox and our administration screen. The owner
+                            of the reported code is told that it was reported and what kind of harm was chosen, but never who
+                            reported it, their email address or what they wrote. We send nothing to the reporter. The
+                            reporter&rsquo;s email address, what they wrote and the fingerprints are removed
+                            <?php echo (int) $privacyEmailPeriods['abuseReportRetentionDays']; ?>&nbsp;days after the report has
+                            been dealt with; a bare record that a report was made is kept.
+                        </p>
+
                         <?php /* ============================================================
                              6. International transfers
                              ============================================================ */ ?>
@@ -480,6 +502,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <li>QR code content submitted by anonymous users is retained only as long as needed to generate and deliver the requested output;</li>
                             <li>Saved QR codes and account data are retained for the life of your account and for a limited period afterwards;</li>
                             <li id="retention-logs">Our error log, which can include your internet address, the name of your browser and the address of the page you were on (never your email address, and never the code from a one-time link), is deleted after <?php echo (int) $privacyEmailPeriods['errorLogRetentionDays']; ?>&nbsp;days; the internet address and browser name stored with other entries in our activity log are removed after <?php echo (int) $privacyEmailPeriods['visitorDetailsRetentionDays']; ?>&nbsp;days (the entry itself, saying what happened and when, is kept), by a scheduled clean-up. Our record of changes made by administrators keeps the administrator's internet address;</li>
+                            <li id="retention-abuse-reports">The reporter&rsquo;s email address, description and address fingerprints in a report about a dynamic QR code (<a href="#abuse-reports">section 5.3</a>) are removed <?php echo (int) $privacyEmailPeriods['abuseReportRetentionDays']; ?>&nbsp;days after the report has been dealt with, by a scheduled clean-up;</li>
                             <li id="retention-link-safety">The record of a dynamic QR code&rsquo;s web address that Google Web Risk listed as harmful (the address, the account and the time, <a href="#link-safety">section 5.2</a>) is deleted after <?php echo (int) $privacyLinkSafetyDays; ?>&nbsp;days by a scheduled clean-up;</li>
                             <li id="retention-email">Records of the emails we send you, and the matching entries in our activity log (both include your email address), are deleted after <?php echo (int) $privacyEmailPeriods['retentionDays']; ?>&nbsp;days for emails that were sent or deliberately not sent, and after <?php echo (int) $privacyEmailPeriods['givenUpRetentionDays']; ?>&nbsp;days for emails that could not be delivered, by a scheduled clean-up;</li>
                             <li>Records we must keep for legal, tax or accounting reasons are retained for the period required by law.</li>

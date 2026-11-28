@@ -33,6 +33,14 @@
 
 require_once __DIR__ . '/../_includes/bootstrap.php';
 
+// 📣 #169: the reporting and takedown facts in section 4.1 come from the
+//    Global Admin settings (decision 0034), so the page never disagrees with them.
+require_once CUERCODE_FUNCTIONS_DIR . 'fn_dynamic_qr_takedown.php';
+require_once CUERCODE_FUNCTIONS_DIR . 'fn_abuse_reports.php';
+$termsAbuseSettings = abuseReportSettings();
+$termsAbuseMailbox  = dynamicQrAbuseMailbox();
+$termsAbusePromise  = dynamicQrTakedownPromise();
+
 // ==============================================================================
 // ⚙️ Page Variables
 // ==============================================================================
@@ -129,7 +137,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <li><a href="#acceptance">1. Acceptance of terms</a></li>
                                 <li><a href="#description">2. Description of the Service</a></li>
                                 <li><a href="#eligibility">3. Eligibility &amp; accounts</a></li>
-                                <li><a href="#acceptable-use">4. Acceptable use</a></li>
+                                <li><a href="#acceptable-use">4. Acceptable use</a> (including <a href="#reporting">4.1 dynamic QR codes: reports and takedowns</a>)</li>
                                 <li><a href="#user-content">5. Your content &amp; responsibilities</a></li>
                                 <li><a href="#ip">6. Intellectual property &amp; copyright</a></li>
                                 <li><a href="#api">7. API usage terms</a></li>
@@ -203,6 +211,39 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             We may investigate and take appropriate action, including suspending or
                             terminating access, for any suspected violation.
                         </p>
+
+                        <?php /* 📣 4.1 Dynamic QR codes: reports and takedowns (#169).
+                             Factual description of how it works; the legal review (#38) adds the rest. */ ?>
+                        <h3 id="reporting" class="h6 mt-3 mb-2">4.1 Dynamic QR Codes: Reports and Takedowns</h3>
+                        <p>
+                            A dynamic QR code sends the people who scan it on to a web address its owner chose and can
+                            change. You must not make a dynamic code lead to any page described above, and you must not
+                            change it to lead to one later. This is how we keep dynamic codes safe:
+                        </p>
+                        <ul>
+                            <li>
+                                Every address a dynamic code leads to is checked with a link-safety service (Google Web
+                                Risk) when the code is made, whenever the address changes or the code is switched back on,
+                                and once a day while it is in use. An address listed as harmful is refused, or the code is
+                                suspended.
+                            </li>
+                            <li>
+                                Anyone can report a dynamic code on our <a href="/report/">report page</a><?php if ($termsAbuseMailbox !== '') { ?>
+                                or by emailing <a href="mailto:<?php echo htmlspecialchars($termsAbuseMailbox, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($termsAbuseMailbox, ENT_QUOTES, 'UTF-8'); ?></a><?php } ?>.
+                                <?php echo htmlspecialchars($termsAbusePromise, ENT_QUOTES, 'UTF-8'); ?>
+                            </li>
+                            <li>
+                                A code is suspended automatically when <?php echo (int) $termsAbuseSettings['autoSuspendReports']; ?> different
+                                people report it within <?php echo (int) $termsAbuseSettings['windowHours']; ?>&nbsp;hours. While it is
+                                suspended, people who scan it see a neutral page instead of its destination, and its owner
+                                cannot change it or switch it back on. We tell the owner when a code is reported or
+                                suspended, but not who reported it.
+                            </li>
+                            <li>
+                                Only our team can lift a suspension, after looking at the reports. If you think your code
+                                was suspended by mistake, contact us<?php if ($termsAbuseMailbox !== '') { ?> at <?php echo htmlspecialchars($termsAbuseMailbox, ENT_QUOTES, 'UTF-8'); ?><?php } ?>.
+                            </li>
+                        </ul>
 
                         <?php /* ============================================================
                              5. Your content & responsibilities
