@@ -54,3 +54,5 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0042](0042-support-three-decimal-currencies-before-launch.md) | 2026-11-28 | Owner: support three-decimal currencies before launch | Current; built in cbf96eb |
 | [0043](0043-lead-limits-and-retention-defaults.md) | 2026-11-28 | Lead (owner may overrule): starting limits and log keeping periods | Current (unapproved) |
 | [0044](0044-no-javascript-route-limit-exhaustion-accepted.md) | 2026-11-28 | Owner: accept that a hostile script can use up the no-JavaScript route limits | Current |
+| [0045](0045-personal-limit-is-a-raise-only.md) | 2026-11-28 | Owner: a personal limit only raises, and is ignored while payment is overdue | Current |
+| [0046](0046-abuse-reports-kept-twelve-months.md) | 2026-11-28 | Owner: abuse report details kept 12 months after being dealt with | Current |
