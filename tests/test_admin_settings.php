@@ -138,10 +138,8 @@ assertFalse($asValidate('bot_protection_provider', 'friendlycaptcha')['ok'], 'bo
 // 🤖 #163: "auto" comes first (the recommended choice) and "none" means off.
 assertEquals('auto', array_key_first($asRegistry['bot_protection_provider']['options']), 'human check: "Automatic" is the first choice shown');
 assertContains('Off', $asRegistry['bot_protection_provider']['options']['none'], 'human check: "none" is labelled as off');
-assertTrue($asValidate('bot_protection_when_unreachable', 'signin_only')['ok'] && $asValidate('bot_protection_when_unreachable', 'refuse')['ok'], 'human check: every provider down: let only sign-in through (decision 0037) or refuse');
-assertFalse($asValidate('bot_protection_when_unreachable', 'allow')['ok'], 'human check: "let every form through" is no longer offered (decision 0037 rules it out)');
-assertEquals('signin_only', array_key_first($asRegistry['bot_protection_when_unreachable']['options']), 'human check: decision 0037 is the first (recommended) choice');
-assertFalse($asValidate('bot_protection_when_unreachable', 'maybe')['ok'], 'human check: when unreachable refuses anything else');
+assertFalse(isset($asRegistry['bot_protection_when_unreachable']), 'human check: there is no "if every provider cannot be reached" choice (second Codex review: decision 0037 is the only rule, so a refuse choice cannot be saved)');
+assertContains('tries it first', $asRegistry['bot_protection_provider']['help'], 'human check: choosing a provider tries it first; the others follow (second Codex review)');
 assertTrue($asValidate('human_check_form_ip_per_hour', '1')['ok'] && $asValidate('human_check_form_ip_per_hour', '1000')['ok'], 'human check: the form limit is 1 to 1000');
 assertFalse($asValidate('human_check_form_ip_per_hour', '0')['ok'] || $asValidate('human_check_form_ip_per_hour', '1001')['ok'], 'human check: a form limit outside 1 to 1000 is refused');
 assertFalse($asValidate('no_script_route_email_per_day', '21')['ok'], 'no-JavaScript route: more than 20 emails a day to one address is refused');
@@ -151,7 +149,7 @@ assertFalse($asValidate('no_script_route_password_per_day', '101')['ok'], 'no-Ja
 assertFalse($asValidate('no_script_route_password_per_day', '0')['ok'], 'no-JavaScript route: 0 password checks (no sign-in at all) is refused');
 assertTrue($asValidate('bot_protection_timeout_seconds', '2')['ok'] && $asValidate('bot_protection_timeout_seconds', '15')['ok'], 'human check: waiting time 2 to 15 seconds');
 assertFalse($asValidate('bot_protection_timeout_seconds', '1')['ok'] || $asValidate('bot_protection_timeout_seconds', '16')['ok'], 'human check: waiting time outside 2 to 15 is refused');
-assertEquals(['bot_protection_provider', 'bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour', 'no_script_route_password_per_day'], array_keys(adminSettingsFieldsForSection('bot')), 'human check: the section shows the choice, the two behaviour settings, the keys in provider order, the form limit, then the no-JavaScript route limits (#163)');
+assertEquals(['bot_protection_provider', 'bot_protection_timeout_seconds', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour', 'no_script_route_password_per_day'], array_keys(adminSettingsFieldsForSection('bot')), 'human check: the section shows the choice, the waiting time, the keys in provider order, the form limit, then the no-JavaScript route limits (#163)');
 
 // 🔘 Switches.
 assertEquals('1', $asValidate('email_enabled', '1')['value'], 'a switch: 1 is on');

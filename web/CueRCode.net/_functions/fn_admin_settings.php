@@ -487,23 +487,21 @@ function adminSettingsRegistry(): array
     $fields[] = adminSettingsField([
         'key' => 'bot_protection_provider', 'section' => 'bot', 'kind' => 'choice', 'group' => 'security', 'type' => 'string',
         'label' => 'Which provider to use',
-        'help' => 'Automatic is recommended. Choosing one provider uses only that one, and the check is off while its two keys are not both entered. Off switches the check off whatever keys are saved.',
+        'help' => 'Automatic is recommended. Choosing a provider tries it first; the others with both keys follow if it cannot be reached (decision 0037). Off switches the check off whatever keys are saved.',
         'options' => [
             'auto'      => 'Automatic (the first with both keys: Turnstile, then reCAPTCHA, then hCaptcha)',
-            'turnstile' => 'Cloudflare Turnstile only',
-            'recaptcha' => 'Google reCAPTCHA only (version 2, the "I\'m not a robot" box)',
-            'hcaptcha'  => 'hCaptcha only',
+            'turnstile' => 'Cloudflare Turnstile first',
+            'recaptcha' => 'Google reCAPTCHA first (version 2, the "I\'m not a robot" box)',
+            'hcaptcha'  => 'hCaptcha first',
             'none'      => 'Off (no human check)',
         ],
-        'description' => 'Human check provider: auto (the first with both keys, in the order turnstile, recaptcha, hcaptcha), turnstile, recaptcha, hcaptcha, or none (off)',
+        'description' => 'Human check provider: auto (the first with both keys, in the order turnstile, recaptcha, hcaptcha), turnstile, recaptcha or hcaptcha (tried first, the others with keys follow), or none (off)',
     ]);
-    $fields[] = adminSettingsField([
-        'key' => 'bot_protection_when_unreachable', 'section' => 'bot', 'kind' => 'choice', 'group' => 'security', 'type' => 'string',
-        'label' => 'If every provider cannot be reached',
-        'help' => 'While one provider is down the next one with keys is used. This choice only matters when EVERY provider with keys is down, judged by a test call the server makes itself (nothing a visitor sends can cause it). Decision 0037: let only sign-in through - the password, the wrong-password lock-out and the limits still apply - and record it in the activity log; sign-up, forgot password and new links sent the normal way are refused. In both choices the email-confirmed route for visitors without JavaScript stays open, with its own limits. Wrong or unreadable keys are always refused.',
-        'options' => humanCheckOutageModes(),
-        'description' => 'Human check: what happens when EVERY configured provider cannot be reached (by a test call the server makes itself) - signin_only (decision 0037: only sign-in is let through, recorded in the activity log) or refuse (every form is refused).',
-    ]);
+    // 🚦 Second Codex review: there is no "if every provider cannot be
+    //    reached" choice any more. Decision 0037 is the only rule (the status
+    //    box above describes it); the old "refuse" choice could refuse
+    //    sign-in, which 0037 rules out. Upgrade 0005's row is left in place
+    //    and is not read.
     $fields[] = adminSettingsField([
         'key' => 'bot_protection_timeout_seconds', 'section' => 'bot', 'kind' => 'int', 'group' => 'security', 'type' => 'integer',
         'label' => 'How long to wait for the provider (seconds)',

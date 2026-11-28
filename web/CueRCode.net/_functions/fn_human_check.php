@@ -54,13 +54,16 @@
  *     token while the test call says "up" is simply a failed check. The
  *     test result is remembered (tblHumanCheckState) for a minute, so test
  *     calls are bounded. While one provider is down the page draws the next
- *     configured one. Only when EVERY configured provider is down does the
- *     admin-editable rule apply: "signin_only" (the 0037 default) lets SIGN-IN
- *     through without the check - the password, the wrong-password lock-out
- *     and the rate limits all still apply - and writes it to the activity log
- *     (at most one row a minute, plus one per account an hour for a
- *     successful sign-in); the other three forms are refused. "refuse"
- *     refuses sign-in too.
+ *     configured one. Only when EVERY configured provider is down does
+ *     decision 0037 apply: SIGN-IN is let through without the check - the
+ *     password, the wrong-password lock-out and the rate limits all still
+ *     apply - and it is written to the activity log (at most one row a
+ *     minute, plus one per account an hour for a successful sign-in); the
+ *     other three forms are refused. It is the ONLY rule (second Codex
+ *     review: the old "refuse" choice could refuse sign-in, which 0037 rules
+ *     out; a saved bot_protection_when_unreachable value is not read). And
+ *     with NO activity record there is no let-through: if the outage cannot
+ *     be recorded, sign-in is refused ("try again") instead.
  *   - the four web forms are rate limited per visitor address BEFORE the
  *     call to the provider (human_check_form_ip_per_hour, default 30).
  *   - the only Global Admin is locked out: `php _includes/cli/human_check.php
@@ -298,8 +301,9 @@ function humanCheckProviders(): array
  *
  *   'none'                 -> off (the off switch; also what the command line sets)
  *   'auto'                 -> the first provider with BOTH keys, in order
- *   'turnstile' and so on  -> that provider only, and off if its keys are missing
- *                             (never quietly a different provider)
+ *   'turnstile' and so on  -> that provider FIRST, then the others with keys
+ *                             in the usual order (second Codex review, decision
+ *                             0037: fall back to the other configured providers)
  *   anything else          -> treated as 'auto', so a damaged value never
  *                             switches the protection off
  *
@@ -363,21 +367,19 @@ function humanCheckPlanFor(string $choice, #[\SensitiveParameter] array $keys): 
         }
     }
 
+    // 🔁 The order to try them in: the usual one, Turnstile, reCAPTCHA,
+    //    hCaptcha. A chosen provider is moved to the front (second Codex
+    //    review: "chosen" means tried first, and decision 0037 says the other
+    //    configured providers follow - before, a chosen provider's outage
+    //    never tried the others, and sign-in could pass with no check at all).
+    //    "auto" or an unknown stored value keeps the usual order.
+    $order = array_keys($providers);
     if (isset($providers[$choice])) {
-        // 🎯 One provider chosen: only that one, never another.
-        if (in_array($choice, $plan['unreadable'], true)) {
-            $plan['state'] = 'broken';
-            return $plan;
-        }
-        if (humanCheckKeysPresent($keys, $choice)) {
-            $plan['state']     = 'on';
-            $plan['providers'] = [$choice];
-        }
-        return $plan;
+        $order = array_merge([$choice], array_values(array_diff($order, [$choice])));
     }
 
-    // 🔁 Automatic (or an unknown stored value): every usable provider, in order.
-    foreach (array_keys($providers) as $provider) {
+    // ✅ Every usable provider, in that order.
+    foreach ($order as $provider) {
         if (humanCheckKeysPresent($keys, $provider)) {
             $plan['providers'][] = $provider;
         }
@@ -401,19 +403,6 @@ function humanCheckPlanFor(string $choice, #[\SensitiveParameter] array $keys): 
 function humanCheckPlan(#[\SensitiveParameter] array $settings): array
 {
     return humanCheckPlanFor((string) $settings['choice'], $settings['keys']);
-}
-
-/**
- * 🚦 The two outage rules a Global Admin may choose (decision 0037). PURE.
- *
- * @return array<string, string> Value => plain description
- */
-function humanCheckOutageModes(): array
-{
-    return [
-        'signin_only' => 'Let only sign-in through, and record it in the activity log (decision 0037, recommended)',
-        'refuse'      => 'Refuse sign-in too, until a provider can be reached (the email-confirmed route for visitors without JavaScript stays open)',
-    ];
 }
 
 /**
@@ -444,7 +433,7 @@ function humanCheckFormLimitBounds(): array
  *                                    Null means the site's getConfig().
  * @param callable|null $storedState  function (string $key): string - missing | empty | present | error.
  *                                    Null means configStoredValueState() (fn_config.php).
- * @return array{choice: string, keys: array<string, array{siteKey: string, secret: string, unreadable: bool}>, whenUnreachable: string, timeout: int, formIpPerHour: int, siteUrl: string}
+ * @return array{choice: string, keys: array<string, array{siteKey: string, secret: string, unreadable: bool}>, timeout: int, formIpPerHour: int, siteUrl: string}
  */
 function humanCheckReadSettings(?callable $configGetter = null, ?callable $storedState = null): array
 {
@@ -468,12 +457,9 @@ function humanCheckReadSettings(?callable $configGetter = null, ?callable $store
         ];
     }
 
-    // 🚦 Decision 0037 is the default; "refuse" is the only other choice. The
-    //    old "allow" (let every form through) is no longer offered.
-    $whenUnreachable = 'signin_only';
-    if (strtolower(trim(humanCheckText($configGetter('bot_protection_when_unreachable', 'signin_only')))) === 'refuse') {
-        $whenUnreachable = 'refuse';
-    }
+    // 🚦 Second Codex review: there is no outage choice to read. Decision 0037
+    //    is the only rule, so a bot_protection_when_unreachable value saved
+    //    earlier ("refuse", or the even older "allow") changes nothing.
 
     // ⏱️ A whole number of seconds within the bounds, otherwise the default.
     $timeout    = CUERCODE_HUMAN_CHECK_DEFAULT_TIMEOUT;
@@ -496,7 +482,6 @@ function humanCheckReadSettings(?callable $configGetter = null, ?callable $store
     return [
         'choice'          => $choice,
         'keys'            => $keys,
-        'whenUnreachable' => $whenUnreachable,
         'timeout'         => $timeout,
         'formIpPerHour'   => $formLimit,
         'siteUrl'         => trim(humanCheckText($configGetter('site_url', ''))),
@@ -1368,8 +1353,8 @@ function humanCheckDependencies(#[\SensitiveParameter] array $settings, array $o
     $outageLogger = humanCheckOption($options, 'outageLogger', null);
     if ($outageLogger === null) {
         $logDue       = $deps['logDue'];
-        $outageLogger = static function (string $event, array $details) use ($logDue): void {
-            humanCheckRecordOutage($event, $details, ['logDue' => $logDue]);
+        $outageLogger = static function (string $event, array $details) use ($logDue): bool {
+            return humanCheckRecordOutage($event, $details, ['logDue' => $logDue]);
         };
     }
     $deps['outageLogger'] = $outageLogger;
@@ -1401,9 +1386,9 @@ function humanCheckDependencies(#[\SensitiveParameter] array $settings, array $o
 
 /**
  * 🚪 May this request go through without a passed check because EVERY
- *    configured provider is down? Only for sign-in, only with the rule
- *    "signin_only", and only when the server's own test says every
- *    configured provider is down (nothing the visitor sent is used).
+ *    configured provider is down? Only for sign-in (decision 0037, the only
+ *    rule), and only when the server's own test says every configured
+ *    provider is down (nothing the visitor sent is used).
  *
  * @param string $purpose
  * @param array  $settings
@@ -1413,7 +1398,7 @@ function humanCheckDependencies(#[\SensitiveParameter] array $settings, array $o
  */
 function humanCheckOutageAllows(string $purpose, #[\SensitiveParameter] array $settings, array $plan, array $deps): bool
 {
-    if ($purpose !== 'login' || $settings['whenUnreachable'] !== 'signin_only') {
+    if ($purpose !== 'login') {
         return false;
     }
 
@@ -1447,13 +1432,23 @@ function humanCheckAllProvidersDown(array $providers, callable $health): bool
 /**
  * 🚪 The "let through during an outage" result, written to the activity log.
  *
+ * 📝 Second Codex review: no record, no let-through. Decision 0037 lets
+ * sign-in through only if it is flagged in the activity log, so when the
+ * logger cannot confirm that a record of the outage is there, the sign-in is
+ * refused with "try again" (the same answer as any other unreachable
+ * provider) instead.
+ *
  * @param array $plan
  * @param array $deps
  * @return array
  */
 function humanCheckOutageResult(array $plan, array $deps): array
 {
-    $deps['outageLogger']('attempt', ['providers' => implode(',', $plan['providers'])]);
+    $recorded = $deps['outageLogger']('attempt', ['providers' => implode(',', $plan['providers'])]);
+
+    if ($recorded !== true) {
+        return humanCheckResult('unavailable', $plan['providers'][0]);
+    }
 
     return humanCheckResult('outage_signin', $plan['providers'][0]);
 }
@@ -1464,24 +1459,33 @@ function humanCheckOutageResult(array $plan, array $deps): array
  *
  *   'attempt' - a sign-in let through without the check: at most ONE row a
  *               minute for the whole site (a flood cannot fill the log).
+ *               Returns whether a record of the outage IS there (second
+ *               Codex review): true when the row was written now, or when a
+ *               row written within the minute is found; false otherwise (the
+ *               write failed, or the throttle said "written" but no row is
+ *               there). The caller lets the sign-in through only on true.
  *   'success' - that sign-in worked: at most one row per account an hour,
- *               naming only the account number.
+ *               naming only the account number. Returns true (the sign-in
+ *               has already happened; nothing depends on it).
  *
  * @param string               $event   attempt | success
  * @param array<string, mixed> $details providers (attempt) or userID (success)
- * @param array<string, mixed> $deps    'logDue', 'activityLog', 'recentlyLogged' (stand-ins in tests)
- * @return void
+ * @param array<string, mixed> $deps    'logDue', 'activityLog' (returns bool), 'recentOutageRow',
+ *                                      'recentlyLogged' (stand-ins in tests)
+ * @return bool
  */
-function humanCheckRecordOutage(string $event, array $details, array $deps = []): void
+function humanCheckRecordOutage(string $event, array $details, array $deps = []): bool
 {
     $logDue = humanCheckOption($deps, 'logDue', 'humanCheckStateLogDue');
 
+    // ✅ logActivityChecked() says whether the row was really written.
     $activityLog = humanCheckOption($deps, 'activityLog', null);
     if ($activityLog === null) {
-        $activityLog = static function (string $type, string $detail, ?string $entityType, ?int $entityID, array $extra): void {
-            if (function_exists('logActivity')) {
-                logActivity($type, $detail, $entityType, $entityID, $extra);
+        $activityLog = static function (string $type, string $detail, ?string $entityType, ?int $entityID, array $extra): bool {
+            if (!function_exists('logActivityChecked')) {
+                return false;
             }
+            return logActivityChecked($type, $detail, $entityType, $entityID, $extra);
         };
     }
 
@@ -1491,22 +1495,26 @@ function humanCheckRecordOutage(string $event, array $details, array $deps = [])
             if (isset($details['providers']) && is_string($details['providers'])) {
                 $providers = $details['providers'];
             }
-            $activityLog(
+            return $activityLog(
                 'human_check_outage_signin',
                 'Sign-in let through without the human check: every configured provider could not be reached (decision 0037). At most one such row a minute.',
                 null,
                 null,
                 ['providers' => $providers]
-            );
+            ) === true;
         }
-        return;
+
+        // 🔎 Not due: a row should have been written within the minute. Only
+        //    a row that is really there counts.
+        $recentOutageRow = humanCheckOption($deps, 'recentOutageRow', 'humanCheckRecentOutageRow');
+        return $recentOutageRow(CUERCODE_HUMAN_CHECK_OUTAGE_LOG_SECONDS) === true;
     }
 
     if ($event === 'success' && isset($details['userID']) && is_int($details['userID']) && $details['userID'] > 0) {
         $recentlyLogged = humanCheckOption($deps, 'recentlyLogged', null);
         if ($recentlyLogged === null) {
             if (!function_exists('limitedRowWrittenRecently')) {
-                return;
+                return true;
             }
             $recentlyLogged = 'limitedRowWrittenRecently';
         }
@@ -1520,6 +1528,39 @@ function humanCheckRecordOutage(string $event, array $details, array $deps = [])
             );
         }
     }
+
+    return true;
+}
+
+/**
+ * 🔎 Is a "sign-in let through during an outage" row in the activity log from
+ *    the last $seconds seconds? (Second Codex review: the let-through needs a
+ *    record that is really there.) False on any database error - the safe
+ *    direction (the sign-in is then refused with "try again").
+ *
+ * @param int $seconds
+ * @return bool
+ */
+function humanCheckRecentOutageRow(int $seconds): bool
+{
+    if (!function_exists('dbQuery')) {
+        return false;
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT COUNT(*) AS `rowCount` FROM `tblActivityLog` '
+            . "WHERE `activityType` = 'human_check_outage_signin' AND `createdAt` >= DATE_SUB(NOW(), INTERVAL ? SECOND)",
+            'i',
+            [$seconds]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        return false;
+    }
+
+    return is_array($row) && (int) $row['rowCount'] > 0;
 }
 
 /**
@@ -2159,13 +2200,10 @@ function humanCheckStatusLines(#[\SensitiveParameter] array $settings, array $he
         }
     }
 
-    if ($settings['whenUnreachable'] === 'refuse') {
-        // 🗣️ The email-confirmed route (decision 0038) asks no provider, so it
-        //    stays open during an outage, in both modes.
-        $lines[] = 'If every provider cannot be reached: the four forms sent the normal way are refused, including sign-in (and it is logged). The email-confirmed route for visitors without JavaScript stays open, with its own limits.';
-    } else {
-        $lines[] = 'If every provider cannot be reached: only sign-in is let through, without the check, and it is recorded in the activity log (decision 0037). The other forms sent the normal way are refused; the email-confirmed route for visitors without JavaScript stays open, with its own limits.';
-    }
+    // 🗣️ Decision 0037 is the only rule (second Codex review). The
+    //    email-confirmed route (decision 0038) asks no provider, so it stays
+    //    open during an outage.
+    $lines[] = 'If every provider cannot be reached: only sign-in is let through, without the check, and it is recorded in the activity log (decision 0037); if it cannot be recorded, sign-in is refused too until it can. The other forms sent the normal way are refused; the email-confirmed route for visitors without JavaScript stays open, with its own limits.';
 
     return $lines;
 }

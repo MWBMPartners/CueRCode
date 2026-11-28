@@ -7,7 +7,7 @@
  * Path: _includes/cli/human_check.php
  *
  * The way back in if the human check locks people out - for example the
- * provider cannot be reached (and "refuse" is chosen), or a wrong key was
+ * provider cannot be reached and the outage cannot be recorded, or a wrong key was
  * saved, and the only Global Admin can no longer sign in to fix it:
  *
  *     php /home/<user>/<path>/CueRCode.net/_includes/cli/human_check.php

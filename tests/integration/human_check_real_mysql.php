@@ -39,8 +39,11 @@
  *      cannot): sign-in without a token is let through and written to the
  *      activity log ONCE (bounded); wrong passwords still count and still
  *      lock the account; sign-up and forgot password are still refused; the
- *      JSON sign-in too; "refuse" refuses sign-in; an OLD "down" is tested
- *      again (here: curl is off, so "our set-up", never "down").
+ *      JSON sign-in too; an OLD "down" is tested again (here: curl is off, so
+ *      "our set-up", never "down"). Second Codex review: a saved "refuse"
+ *      (the removed choice) changes nothing; with the activity log unable to
+ *      record the outage, sign-in is refused; a CHOSEN provider that is down
+ *      is followed by the other configured one.
  *   K. Decision 0038 over real HTTP: the no-JavaScript email sign-in (wrong
  *      password and unknown address: the same answer as a right one, no
  *      email; right password: one email; opening the link in another browser
@@ -439,7 +442,7 @@ hcCheck('A', hcValue($hcServer, "SELECT `settingValue` FROM `tblSettings` WHERE 
 hcCheck('A', humanCheckActive() === null, 'no keys: the check is off');
 $hcOff = humanCheckVerifyRequest([]);
 hcCheck('A', $hcOff['ok'] === true && $hcOff['reason'] === 'off', 'the one call answers "off" and lets the form through');
-hcCheck('A', humanCheckReadSettings()['whenUnreachable'] === 'signin_only' && humanCheckReadSettings()['timeout'] === 5, 'every provider down: only sign-in (decision 0037); wait 5 seconds (from the real rows)');
+hcCheck('A', !array_key_exists('whenUnreachable', humanCheckReadSettings()) && humanCheckReadSettings()['timeout'] === 5, 'every provider down: decision 0037 is the only rule (no outage choice is read; second Codex review); wait 5 seconds (from the real rows)');
 hcCheck('A', hcValue($hcServer, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`) ORDER BY `settingKey`) FROM `tblSettings` WHERE `settingKey` IN ('human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour')") === 'human_check_form_ip_per_hour=30,no_script_route_email_per_day=3,no_script_route_ip_per_hour=5,no_script_route_site_per_hour=30', 'the limit settings start at 30, 3, 5 and 30: ' . hcValue($hcServer, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`)) FROM `tblSettings` WHERE `settingKey` LIKE 'no_script_route_%' OR `settingKey` = 'human_check_form_ip_per_hour'"));
 hcCheck('A', hcValue($hcServer, "SELECT COUNT(*) FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` IN ('tblHumanCheckTokens', 'tblHumanCheckState', 'tblNoScriptRequests', 'tblEmailSignInRequests')") === '4', 'the four new tables exist');
 
@@ -630,6 +633,15 @@ $hcServer->query("UPDATE `tblHumanCheckState` SET `stateValue` = 'up' WHERE `sta
 $hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
 $hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
 hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'Please complete the human check'), 'Turnstile down but reCAPTCHA up: sign-in without a token is still refused (the other provider is used)');
+// 🎯 Second Codex review: Turnstile CHOSEN (not automatic), Turnstile down,
+//    reCAPTCHA up: reCAPTCHA follows, so sign-in without a token is refused
+//    (before, a chosen provider's outage let sign-in through with no check).
+hcSet('bot_protection_provider', 'turnstile');
+$hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
+hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'Please complete the human check') && str_contains($hcPage['body'], 'data-provider="recaptcha"'), 'second Codex review: Turnstile CHOSEN and down, reCAPTCHA up: the page draws reCAPTCHA, and sign-in without a token is refused');
+hcSet('bot_protection_provider', 'auto');
 $hcServer->query("UPDATE `tblHumanCheckState` SET `stateValue` = 'down', `checkedAt` = NOW() WHERE `stateKey` = 'health:recaptcha'");
 $hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
 $hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
@@ -661,11 +673,22 @@ $hcAnswer = hcHttp('POST', $hcBase . '/api/v1/auth/login', $hcJar, [], ['email' 
 hcCheck('F', $hcAnswer['status'] === 200, 'JSON sign-in with no token during the outage: 200 (' . $hcAnswer['status'] . ')');
 $hcAnswer = hcHttp('POST', $hcBase . '/api/v1/auth/register', $hcJar, [], ['email' => 'outage@it.cuercode.invalid', 'password' => 'Plenty-Long-Pass-41'], ['X-CSRF-Token: ' . $hcCsrfToken]);
 hcCheck('F', $hcAnswer['status'] === 400 && is_array($hcAnswer['json']) && $hcAnswer['json']['error_code'] === 'HUMAN_CHECK_REQUIRED', 'JSON sign-up with no token during the outage: still 400 HUMAN_CHECK_REQUIRED');
+// 🚦 Second Codex review: the "refuse" choice is gone; a value saved earlier
+//    means the decision 0037 rule (sign-in let through, and recorded).
 $hcServer->query("UPDATE `tblSettings` SET `settingValue` = 'refuse' WHERE `settingKey` = 'bot_protection_when_unreachable'");
 $hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
 $hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
 $hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
-hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'Please complete the human check'), '"refuse" chosen: sign-in is refused during the outage too');
+hcCheck('F', $hcPost['status'] === 302, 'second Codex review: a saved "refuse" changes nothing: sign-in with the right password is let through during the outage (decision 0037) (HTTP ' . $hcPost['status'] . ')');
+// 📝 Second Codex review: no record, no let-through. With the activity log
+//    unable to take the row (its table renamed away for one request), the
+//    same sign-in is refused with "try again".
+$hcServer->query('RENAME TABLE `tblActivityLog` TO `tblActivityLog_it_away`');
+$hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
+$hcServer->query('RENAME TABLE `tblActivityLog_it_away` TO `tblActivityLog`');
+hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'could not be completed just now') && hcHttp('GET', $hcBase . '/account/', $hcJar)['status'] !== 200, 'second Codex review: every provider down but the activity log cannot record it: sign-in is NOT let through ("try again"), nobody is signed in');
 $hcServer->query("UPDATE `tblSettings` SET `settingValue` = 'signin_only' WHERE `settingKey` = 'bot_protection_when_unreachable'");
 $hcServer->query("UPDATE `tblHumanCheckState` SET `checkedAt` = DATE_SUB(NOW(), INTERVAL 10 MINUTE) WHERE `stateKey` IN ('health:turnstile', 'health:recaptcha')");
 $hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);

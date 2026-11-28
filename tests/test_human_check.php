@@ -146,7 +146,8 @@ function hcRun(array $settings, array $input, array $reply, array &$calls, strin
         'health'       => static function (string $provider, int $maxAgeSeconds) use ($health): string {
             return $health;
         },
-        'outageLogger' => static function (string $event, array $details): void {
+        'outageLogger' => static function (string $event, array $details): bool {
+            return true;
         },
     ]);
 }
@@ -185,7 +186,7 @@ $hcSpaces['turnstile'] = ['siteKey' => '   ', 'secret' => "\t"];
 assertEquals(null, humanCheckChooseProvider('auto', $hcSpaces), 'automatic: keys that are only spaces count as missing');
 assertEquals(null, humanCheckChooseProvider('none', $hcAll), 'switched off ("none"): off even with every key');
 assertEquals('recaptcha', humanCheckChooseProvider('recaptcha', $hcAll), 'one provider chosen: that one, even if an earlier one has keys');
-assertEquals(null, humanCheckChooseProvider('turnstile', $hcNoTurnstile), 'one provider chosen but its keys missing: off (never a different provider)');
+assertEquals('recaptcha', humanCheckChooseProvider('turnstile', $hcNoTurnstile), 'one provider chosen but its keys missing: the next one with keys is used (second Codex review: chosen means tried first, never quietly off)');
 assertEquals('turnstile', humanCheckChooseProvider('friendlycaptcha', $hcAll), 'an unknown stored value behaves as automatic (the check stays on)');
 
 // ==============================================================================
@@ -194,11 +195,10 @@ assertEquals('turnstile', humanCheckChooseProvider('friendlycaptcha', $hcAll), '
 
 $hcDefaults = humanCheckReadSettings(hcGetter([]));
 assertEquals('auto', $hcDefaults['choice'], 'settings: the choice defaults to automatic');
-assertEquals('signin_only', $hcDefaults['whenUnreachable'], 'settings: every provider down means "let only sign-in through" by default (decision 0037)');
+assertFalse(array_key_exists('whenUnreachable', $hcDefaults), 'settings: there is no outage choice (decision 0037 is the only rule; second Codex review)');
 assertEquals(5, $hcDefaults['timeout'], 'settings: the waiting time defaults to 5 seconds');
 assertEquals('', $hcDefaults['keys']['turnstile']['secret'], 'settings: no keys by default');
-assertEquals('refuse', humanCheckReadSettings(hcGetter(['bot_protection_when_unreachable' => 'refuse']))['whenUnreachable'], 'settings: "refuse" is read');
-assertEquals('signin_only', humanCheckReadSettings(hcGetter(['bot_protection_when_unreachable' => 'maybe']))['whenUnreachable'], 'settings: anything else means the default');
+assertFalse(array_key_exists('whenUnreachable', humanCheckReadSettings(hcGetter(['bot_protection_when_unreachable' => 'refuse']))), 'settings: a saved "refuse" is not read at all');
 assertEquals(9, humanCheckReadSettings(hcGetter(['bot_protection_timeout_seconds' => '9']))['timeout'], 'settings: a waiting time stored as text is read');
 assertEquals(5, humanCheckReadSettings(hcGetter(['bot_protection_timeout_seconds' => '99']))['timeout'], 'settings: a waiting time outside 2 to 15 seconds means the default');
 assertEquals(5, humanCheckReadSettings(hcGetter(['bot_protection_timeout_seconds' => '1']))['timeout'], 'settings: a waiting time below 2 seconds means the default');

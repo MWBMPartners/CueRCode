@@ -142,7 +142,8 @@ function fbRun(array $settings, array $input, callable $transport, array $option
             $claims[$hash] = true;
             return 'claimed';
         },
-        'outageLogger' => static function (string $event, array $details): void {
+        'outageLogger' => static function (string $event, array $details): bool {
+            return true;
         },
     ], $options));
 }
@@ -155,14 +156,12 @@ $fbPass = static function (string $url, array $fields): array {
 };
 
 // ==============================================================================
-// ⚙️ The outage setting: decision 0037 is the default, "refuse" the choice
+// ⚙️ The outage rule is decision 0037, with no other choice (second Codex
+//    review: a "refuse" choice could refuse sign-in, which 0037 rules out)
 // ==============================================================================
 
-assertEquals('signin_only', humanCheckReadSettings(fbGetter([]))['whenUnreachable'], '0037: with nothing saved, the outage rule is "let only sign-in through"');
-assertEquals('refuse', humanCheckReadSettings(fbGetter(['bot_protection_when_unreachable' => 'refuse']))['whenUnreachable'], '0037: a Global Admin may choose "refuse"');
-assertEquals('signin_only', humanCheckReadSettings(fbGetter(['bot_protection_when_unreachable' => 'allow']))['whenUnreachable'], '0037: the old "let everyone through" value is not offered any more and means the default');
-assertEquals('signin_only', humanCheckReadSettings(fbGetter(['bot_protection_when_unreachable' => 'anything']))['whenUnreachable'], '0037: an unknown value means the default');
-assertEquals(['signin_only', 'refuse'], array_keys(humanCheckOutageModes()), '0037: exactly two outage rules can be chosen');
+assertFalse(function_exists('humanCheckOutageModes'), 'Codex 2: there is no list of outage rules to choose from any more (decision 0037 is the only rule)');
+assertFalse(array_key_exists('whenUnreachable', humanCheckReadSettings(fbGetter(['bot_protection_when_unreachable' => 'refuse']))), 'Codex 2: the settings no longer carry an outage choice, so a saved value cannot change the rule');
 
 // ==============================================================================
 // 🩺 Who decides "down": only the server's own test call
@@ -263,8 +262,9 @@ assertEquals('up', humanCheckProviderHealth('turnstile', 60, [
 // ==============================================================================
 
 $fbLogged = [];
-$fbLogger = static function (string $event, array $details) use (&$fbLogged): void {
+$fbLogger = static function (string $event, array $details) use (&$fbLogged): bool {
     $fbLogged[] = $event;
+    return true;
 };
 
 foreach (['login' => true, 'register' => false, 'forgot' => false, 'resend' => false, '' => false] as $fbPurpose => $fbLetThrough) {
@@ -288,14 +288,57 @@ foreach (['login' => true, 'register' => false, 'forgot' => false, 'resend' => f
     }
 }
 
-// 🔒 "refuse" chosen: sign-in is refused too.
+// 🔒 Codex 2: a "refuse" value saved before (or typed into the database)
+//    means the 0037 rule: sign-in is let through during an outage.
+foreach (['refuse', 'allow', 'anything'] as $fbSavedRule) {
+    $fbAsked = [];
+    $fbCalls = [];
+    $fbRefuse = fbRun(fbKeys(['turnstile'], ['bot_protection_when_unreachable' => $fbSavedRule]), ['cf-turnstile-response' => 't'], fbTransport($fbTimeout, $fbCalls), [
+        'purpose' => 'login',
+        'health'  => fbHealth(['turnstile' => 'down'], $fbAsked),
+    ]);
+    assertEquals('outage_signin', $fbRefuse['reason'], 'Codex 2: a saved "' . $fbSavedRule . '" changes nothing: sign-in is let through during an outage (decision 0037)');
+}
+$fbStatusRefuse = strtolower(implode("\n", humanCheckStatusLines(humanCheckReadSettings(fbGetter(fbKeys(['turnstile'], ['bot_protection_when_unreachable' => 'refuse']))))));
+assertContains('only sign-in is let through', $fbStatusRefuse, 'Codex 2: the admin status describes the 0037 rule even with "refuse" saved');
+assertFalse(str_contains($fbStatusRefuse, 'including sign-in'), 'Codex 2: ... and never says sign-in is refused');
+
+// 📝 Codex 2: no activity record, no let-through. If the outage cannot be
+//    written to the activity log, the sign-in is refused ("try again").
 $fbAsked = [];
 $fbCalls = [];
-$fbRefuse = fbRun(fbKeys(['turnstile'], ['bot_protection_when_unreachable' => 'refuse']), ['cf-turnstile-response' => 't'], fbTransport($fbTimeout, $fbCalls), [
-    'purpose' => 'login',
-    'health'  => fbHealth(['turnstile' => 'down'], $fbAsked),
+$fbNoRecord = fbRun(fbKeys(['turnstile']), [], fbTransport($fbTimeout, $fbCalls), [
+    'purpose'      => 'login',
+    'health'       => fbHealth(['turnstile' => 'down'], $fbAsked),
+    'outageLogger' => static function (string $event, array $details): bool {
+        return false;
+    },
 ]);
-assertEquals('unavailable', $fbRefuse['reason'], '0037: with "refuse" chosen, sign-in is refused during an outage');
+assertFalse($fbNoRecord['ok'], 'Codex 2: every provider down but the activity record cannot be written: sign-in is NOT let through');
+assertEquals('unavailable', $fbNoRecord['reason'], 'Codex 2: ... it is refused with "try again later"');
+
+// 🎯 Codex 2: a chosen provider is tried FIRST; the others with keys follow.
+$fbChosenPlan = humanCheckPlan(humanCheckReadSettings(fbGetter(fbKeys(['turnstile', 'recaptcha', 'hcaptcha'], ['bot_protection_provider' => 'recaptcha']))));
+assertEquals(['recaptcha', 'turnstile', 'hcaptcha'], $fbChosenPlan['providers'], 'Codex 2: reCAPTCHA chosen: reCAPTCHA first, then the others with keys in the usual order');
+$fbChosenMissing = humanCheckPlan(humanCheckReadSettings(fbGetter(fbKeys(['recaptcha'], ['bot_protection_provider' => 'turnstile']))));
+assertEquals(['on', ['recaptcha']], [$fbChosenMissing['state'], $fbChosenMissing['providers']], 'Codex 2: Turnstile chosen but only reCAPTCHA has keys: the check stays ON with reCAPTCHA (never quietly off)');
+$fbAsked = [];
+$fbCalls = [];
+$fbChosenDown = fbRun(fbKeys(['turnstile', 'recaptcha'], ['bot_protection_provider' => 'turnstile']), [], fbTransport($fbTimeout, $fbCalls), [
+    'purpose' => 'login',
+    'health'  => fbHealth(['turnstile' => 'down', 'recaptcha' => 'up'], $fbAsked),
+]);
+assertFalse($fbChosenDown['ok'], 'Codex 2 (the reviewer\'s case): Turnstile chosen and down, reCAPTCHA keys saved and up: sign-in WITHOUT a check is not let through');
+assertEquals('missing_token', $fbChosenDown['reason'], 'Codex 2: ... the visitor is asked to complete the check (reCAPTCHA is drawn next)');
+$fbChosenWidget = humanCheckWidgetHtml(humanCheckReadSettings(fbGetter(fbKeys(['turnstile', 'recaptcha'], ['bot_protection_provider' => 'turnstile']))), 'login', [
+    'cachedHealth' => static function (string $provider): string {
+        if ($provider === 'turnstile') {
+            return 'down';
+        }
+        return 'up';
+    },
+]);
+assertContains('data-provider="recaptcha"', $fbChosenWidget, 'Codex 2: Turnstile chosen but down: the page draws reCAPTCHA');
 
 // 🔁 One of two providers down: no let-through; the other provider is next.
 $fbAsked = [];
@@ -388,12 +431,36 @@ for ($fbI = 0; $fbI < 50; $fbI++) {
             $fbLogState[$key] = true;
             return true;
         },
-        'activityLog' => static function (string $type, string $detail, ?string $entityType, ?int $entityID, array $extra) use (&$fbLogRows): void {
+        'activityLog' => static function (string $type, string $detail, ?string $entityType, ?int $entityID, array $extra) use (&$fbLogRows): bool {
             $fbLogRows++;
+            return true;
+        },
+        'recentOutageRow' => static function (int $seconds) use (&$fbLogRows): bool {
+            return $fbLogRows > 0;
         },
     ]);
 }
 assertEquals(1, $fbLogRows, '0037: fifty let-through sign-ins inside a minute write ONE activity row (bounded)');
+
+// 📝 Codex 2: humanCheckRecordOutage() says whether a record of the outage
+//    is there: written now, or written within the minute and still there.
+$fbRecord = static function (bool $due, bool $written, bool $recent): mixed {
+    return humanCheckRecordOutage('attempt', [], [
+        'logDue'          => static function (string $key, int $seconds) use ($due): bool {
+            return $due;
+        },
+        'activityLog'     => static function (string $type, string $detail, ?string $entityType, ?int $entityID, array $extra) use ($written): bool {
+            return $written;
+        },
+        'recentOutageRow' => static function (int $seconds) use ($recent): bool {
+            return $recent;
+        },
+    ]);
+};
+assertEquals(true, $fbRecord(true, true, false), 'Codex 2: a row was due and written: a record is there');
+assertEquals(false, $fbRecord(true, false, false), 'Codex 2: a row was due but could NOT be written: no record');
+assertEquals(true, $fbRecord(false, false, true), 'Codex 2: not due, and the row written within the minute is there: a record is there');
+assertEquals(false, $fbRecord(false, false, false), 'Codex 2: not due, but no row is there (the earlier write failed, or the throttle could not be read): no record');
 
 // ==============================================================================
 // ✉️ 0038: the email-confirmed route for visitors without JavaScript
@@ -519,6 +586,8 @@ assertEquals(CUERCODE_NO_SCRIPT_SIGN_IN_TTL_MINUTES * 60, $fbLifetimes['email_si
 // provider, so it stays open while every provider is down - in both outage
 // modes. The admin screen used to say "every form is refused" (refuse) and
 // "the other forms are refused" (sign-in only), which was not true of it.
+// (Since the second Codex review there is only the 0037 rule; a saved
+// "refuse" must describe it too.)
 foreach (['refuse', 'signin_only'] as $fbOutageMode) {
     $fbOutageLines = implode("\n", humanCheckStatusLines(humanCheckReadSettings(static function (string $fbKey, mixed $fbDefault) use ($fbOutageMode): mixed {
         if ($fbKey === 'bot_protection_when_unreachable') {
@@ -529,6 +598,3 @@ foreach (['refuse', 'signin_only'] as $fbOutageMode) {
     assertFalse(str_contains($fbOutageLines, 'every form is refused'), 'status wording (' . $fbOutageMode . '): does not say every form is refused');
     assertContains('without JavaScript', $fbOutageLines, 'status wording (' . $fbOutageMode . '): says the email-confirmed route for visitors without JavaScript stays open');
 }
-$fbOutageOptions = humanCheckOutageModes();
-assertFalse(str_contains($fbOutageOptions['refuse'], 'Refuse every form'), 'status wording: the "refuse" choice no longer says it refuses every form');
-assertContains('without JavaScript', $fbOutageOptions['refuse'], 'status wording: the "refuse" choice says the no-JavaScript route stays open');

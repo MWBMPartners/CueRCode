@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - The human check follows decision 0037 exactly during an outage (second Codex review, 2026-11-28)
+
+- **No "refuse" choice any more.** The setting "If every provider cannot be reached" offered "refuse sign-in too", which decision 0037 rules out. It is removed from `/admin/settings/`. A value saved earlier (or typed into the database) is no longer read, so the 0037 rule always applies: during an outage only sign-in is let through, and it is recorded. (Upgrade 0005 still adds the old row; it is left unused.)
+- **A chosen provider is tried first, and the others follow.** Choosing, say, Turnstile used to mean Turnstile only. If Turnstile was down, reCAPTCHA (even with keys saved) was never tried, and sign-in could pass with no check at all. A chosen provider now goes first and every other provider with keys follows in the usual order, as on "Automatic". A chosen provider with no keys no longer switches the check off quietly either.
+- **No record, no let-through.** The outage sign-in is let through only when its activity-log row is really there: written now, or found from the last minute. If it cannot be recorded, sign-in is refused with "try again" instead.
+- Shown failing first: 20 new or changed unit checks (`test_human_check_fallbacks.php`, `test_human_check.php`, `test_human_check_review_fixes.php`), and three new real-HTTP checks in scenario F of `human_check_real_mysql.php` on MySQL 8.4 with the old code: a saved "refuse" refused sign-in (HTTP 200); a chosen, down Turnstile did not hand over to reCAPTCHA; with the activity table renamed away, sign-in was still let through. All pass with the change.
+
 ### Tests - Test web servers are stopped even if their supervisor dies; the admin change-log check always runs (fourth-round review, Info 1 and Info 3, 2026-11-28)
 
 - **Info 1:** if the small supervisor that stops a test web server was itself killed (kill -9), or had to be killed after its 10-second wait, the PHP web server kept running. The supervisor now tells the test script the server's own process number, and `itWebServerStop()` stops the server by that number while it still answers on its address. A new case in `tests/test_integration_web_server.php` kills the supervisor first. It failed before the change (the server was left running; the test then stopped it) and passes now.

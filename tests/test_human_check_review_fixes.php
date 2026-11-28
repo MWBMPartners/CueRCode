@@ -286,13 +286,18 @@ $rfMixedSettings = humanCheckReadSettings(rfBrokenGetter($rfMixed, ['turnstile_s
 assertEquals('recaptcha', humanCheckActive($rfMixedSettings)['provider'], 'M2: automatic, Turnstile unreadable, reCAPTCHA readable: reCAPTCHA is used (the check stays on)');
 assertContains('cannot be read', strtolower(implode("\n", humanCheckStatusLines($rfMixedSettings))), 'M2: ... and the status still warns about Turnstile');
 
-// 🎯 A chosen provider whose keys cannot be read: refused, never another provider.
-$rfChosen = humanCheckVerifyRequest([], [
-    'configGetter' => rfBrokenGetter(array_merge($rfMixed, ['bot_protection_provider' => 'turnstile']), ['turnstile_secret_key']),
+// 🎯 A chosen provider whose keys cannot be read: the check stays ON with the
+//    next readable provider (second Codex review: chosen means tried first,
+//    the others follow - as with "automatic"), and the status still warns.
+$rfChosenSettings = humanCheckReadSettings(rfBrokenGetter(array_merge($rfMixed, ['bot_protection_provider' => 'turnstile']), ['turnstile_secret_key']), $rfStoredPresent);
+assertEquals('recaptcha', humanCheckActive($rfChosenSettings)['provider'] ?? null, 'M2 and Codex 2: Turnstile chosen and unreadable, reCAPTCHA readable: reCAPTCHA is used (never off)');
+assertContains('cannot be read', strtolower(implode("\n", humanCheckStatusLines($rfChosenSettings))), 'M2: ... and the status still warns about Turnstile');
+$rfChosenAlone = humanCheckVerifyRequest([], [
+    'configGetter' => rfBrokenGetter(array_merge(rfKeys('turnstile'), ['bot_protection_provider' => 'turnstile']), ['turnstile_secret_key']),
     'storedState'  => $rfStoredPresent,
     'transport'    => rfTransport($rfReply, $rfCalls),
 ]);
-assertEquals('misconfigured', $rfChosen['reason'], 'M2: Turnstile chosen and unreadable: refused (not off, not reCAPTCHA)');
+assertEquals('misconfigured', $rfChosenAlone['reason'], 'M2: Turnstile chosen, unreadable and no other provider: refused (not off)');
 
 // 🗄️ The stored-row question itself failing counts as unreadable (fail closed).
 $rfErrorState = humanCheckReadSettings(rfBrokenGetter(rfKeys('turnstile'), ['turnstile_secret_key']), static function (string $key): string {

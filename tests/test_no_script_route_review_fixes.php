@@ -287,7 +287,8 @@ $nsOptions = [
     'rateLimiter'  => static function (int $limit): bool {
         return true;
     },
-    'outageLogger' => static function (string $event, array $details): void {
+    'outageLogger' => static function (string $event, array $details): bool {
+        return true;
     },
     'logDue'       => static function (string $key, int $seconds): bool {
         return false;
