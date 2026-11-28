@@ -141,7 +141,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     <h1 class="h2 fw-bold mb-4">Privacy &amp; Data Protection Policy</h1>
                     <p class="text-body-secondary mb-2">
                         <?php // 📅 Fixed on purpose: change this date ONLY when the wording of this page changes (it used to print today's date) ?>
-                        <strong>Last updated:</strong> 27 November 2026
+                        <strong>Last updated:</strong> 28 November 2026
                     </p>
                     <p class="text-body-secondary mb-4">
                         <strong>Applies to:</strong> the
