@@ -70,6 +70,8 @@
  *      Fourth-round review, Medium 1: an accented, zero-width,
  *      control-character or full-width spelling of the address is not a way
  *      round that number (right password: no email).
+ *      Fourth-round review, Low 5: eleven RIGHT sign-ins through the route in
+ *      a day all get their email (a right password gives its check back).
  *   P. Merged review L5, L6, I1: a stranger with their own waiting sign-in
  *      opening someone else's link is not signed in; the approve page shows
  *      when, from what browser and address; an approval runs out after 3
@@ -1066,6 +1068,21 @@ for ($hcI = 1; $hcI <= 5; $hcI++) {
 }
 hcCheck('R', $hcTargetLockState() === '5|0', 'the normal form still counts wrong passwords and locks after five (' . $hcTargetLockState() . ')');
 hcCli($hcDbName, ['on']);
+// 5️⃣ Fourth-round review, Low 5: a RIGHT password gives its check place back,
+//    so a person's own sign-ins never count as wrong passwords. Eleven right
+//    sign-ins in a day (one more than the per-account number of 10), with the
+//    email limits raised: the 11th still gets its email.
+$hcServer->query('DELETE FROM `tblNoScriptRequests`');
+hcSet('no_script_route_email_per_day', '20');
+$hcOwnEmail    = 'own-sign-ins@it.cuercode.invalid';
+$hcOwnPassword = 'Own-Pass-' . bin2hex(random_bytes(4));
+hcAddUser($hcServer, $hcOwnEmail, $hcOwnPassword, 'active', null);
+for ($hcI = 1; $hcI <= 11; $hcI++) {
+    hcStartEmailSignIn($hcBase, tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_'), $hcOwnEmail, $hcOwnPassword);
+}
+$hcOwnMails = $hcCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `templateKey` = 'email_sign_in' AND `toAddress` = '" . $hcOwnEmail . "'");
+hcCheck('R', $hcOwnMails === 11 && $hcCount("SELECT COUNT(*) FROM `tblNoScriptRequests` WHERE `purpose` = 'login_wrong'") === 0, 'fourth-round review, Low 5: eleven RIGHT sign-ins through the route in a day all get their email (' . $hcOwnMails . '); none is counted as a wrong password');
+hcSet('no_script_route_email_per_day', '3');
 $hcServer->query('DELETE FROM `tblNoScriptRequests`');
 
 // ==============================================================================

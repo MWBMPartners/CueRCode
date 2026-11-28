@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests - A right password's check place is given back: now tested (fourth-round review, Low 5, 2026-11-28)
+
+- Nothing tested that a right password on the no-JavaScript sign-in gives its "password check" place back. Without it, a person's own sign-ins would count as wrong passwords, and after 10 in a day they could not sign in that way. Scenario R of `human_check_real_mysql.php` now signs in correctly 11 times through the route, with the email limit raised, and expects all 11 emails. With the give-back removed (the reviewer's change) the check fails, with 10 emails; with it, 11.
+
 ### Fixed - The visitor-details clean-up no longer re-reads the whole activity log on every run (fourth-round review, Low 4, 2026-11-28)
 
 - **The fault:** the clean-up that removes the visitor's address and browser name from activity entries after 90 days searched the whole log for "old and still has details" on every queue run. That included the run at the end of a page that queued an email. It therefore read again every old entry it had already cleared: about 600,000 rows and 1.6 to 2.6 seconds a run with a million cleared entries.
