@@ -42,3 +42,12 @@ define('DB_PASS', 'REPLACE_ME');       // the database password
 //    Keep a safe copy: if it is lost, encrypted values (such as saved email
 //    passwords) cannot be read back and must be entered again.
 define('ENCRYPTION_KEY', 'REPLACE_ME_WITH_64_RANDOM_HEX_CHARACTERS');
+
+// 🏷️ Optional: which copy of the site uses THIS file - 'live', 'alpha' or
+//    'beta' (#181). Only set it when this credentials file is used by one
+//    copy alone. When the copies share one file (the standard layout), leave
+//    it out and declare the copy in each cron line instead, for example:
+//        CUERCODE_SITE_COPY=live php .../_includes/cron/process_email_queue.php
+//    Without a declaration the cron job never calls Go2My.Link (it cannot
+//    tell an alpha or beta run from the live one).
+// define('CUERCODE_SITE_COPY', 'live');

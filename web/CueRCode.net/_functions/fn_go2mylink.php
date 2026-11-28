@@ -334,10 +334,97 @@ function go2mylinkHostOf(string $url): string
 }
 
 /**
+ * 🔤 A destination in the form Go2My.Link stores it (round-six review, Low 3,
+ *    #181). Go2My.Link's g2ml_sanitiseURL() (web/_functions/security.php and
+ *    url_ascii.php g2ml_urlToAscii(), read 2026-11-28) turns every run of
+ *    non-English bytes after the host into %XX codes (capital hex) and every
+ *    space into %20, then applies FILTER_SANITIZE_URL. CueRCode does the same
+ *    BEFORE it stores or sends a destination, so the two sides hold the same
+ *    text and a look-up or a confirmed change can be compared exactly.
+ *    (validateRedirectDestination() has already turned a non-English host
+ *    into its xn-- form.) Doing it twice changes nothing. PURE.
+ *
+ * @param string $url A destination that passed validateRedirectDestination()
+ * @return string
+ */
+function go2mylinkEncodeDestination(string $url): string
+{
+    $url = trim($url);
+
+    $parts = [];
+    if (preg_match('~^([A-Za-z][A-Za-z0-9+.\-]*://)([^/?#\\\\]*)(.*)$~s', $url, $parts) !== 1) {
+        return $url;
+    }
+
+    $rest = preg_replace_callback(
+        '/[\x80-\xFF]+/',
+        static function (array $match): string {
+            return '%' . rtrim(chunk_split(strtoupper(bin2hex($match[0])), 2, '%'), '%');
+        },
+        $parts[3]
+    );
+    if (!is_string($rest)) {
+        return $url;
+    }
+    $rest = str_replace(' ', '%20', $rest);
+
+    $sanitised = filter_var($parts[1] . $parts[2] . $rest, FILTER_SANITIZE_URL);
+    if (!is_string($sanitised)) {
+        return $url;
+    }
+
+    return $sanitised;
+}
+
+/**
+ * 🏷️ Which copy of the site this is, as the owner declared it (round-six
+ *    review, Low 4, #181): 'live', 'alpha', 'beta', or '' when undeclared or
+ *    not one of those words. PURE apart from reading the environment.
+ *
+ * WHY A DECLARATION: alpha, beta and live share one upload of _functions/ and
+ * _includes/, one _auth_keys/ file and the same seeded site_url, so a cron
+ * (command-line) run shows no folder or address that tells the copies apart.
+ * Each copy's cron job therefore says which copy it is, in this order:
+ *   1. CUERCODE_SITE_COPY in $server (tests, or a web server's SetEnv);
+ *   2. the environment variable CUERCODE_SITE_COPY (the cron line, for
+ *      example: CUERCODE_SITE_COPY=alpha php .../process_email_queue.php);
+ *   3. the constant CUERCODE_SITE_COPY (an auth_creds.php used by one copy only).
+ * The cron tidy step refuses to call Go2My.Link when this is '' (it cannot
+ * know it is not alpha or beta), see dynamicQrTidyPendingRows().
+ *
+ * @param array<string, mixed> $server $_SERVER (or a test's stand-in)
+ * @return string
+ */
+function go2mylinkSiteCopyMarker(array $server): string
+{
+    $declared = '';
+    if (isset($server['CUERCODE_SITE_COPY']) && is_string($server['CUERCODE_SITE_COPY'])) {
+        $declared = $server['CUERCODE_SITE_COPY'];
+    } else {
+        $fromEnvironment = getenv('CUERCODE_SITE_COPY');
+        if (is_string($fromEnvironment) && $fromEnvironment !== '') {
+            $declared = $fromEnvironment;
+        } elseif (defined('CUERCODE_SITE_COPY') && is_string(constant('CUERCODE_SITE_COPY'))) {
+            $declared = (string) constant('CUERCODE_SITE_COPY');
+        }
+    }
+
+    $declared = strtolower(trim($declared));
+    if (in_array($declared, ['live', 'alpha', 'beta'], true)) {
+        return $declared;
+    }
+
+    return '';
+}
+
+/**
  * 🧪 Is this an alpha or beta copy of the site (review L11, decision 0030)?
- *    'alpha', 'beta' or '' (the live copy, or not detectable). PURE.
+ *    'alpha', 'beta' or '' (the live copy, or not detectable). PURE apart
+ *    from go2mylinkSiteCopyMarker() reading the environment.
  *
  * Signs, any one of which is enough:
+ *   - the declared copy (go2mylinkSiteCopyMarker(), #181 Low 4) is alpha or
+ *     beta - the only sign a command-line (cron) run is sure to have;
  *   - the web folder (DOCUMENT_ROOT or SCRIPT_FILENAME) is public_html_dev_alpha
  *     or public_html_dev_beta (also the older public_html_alpha / _beta, the
  *     same rule as infoAppVer.php);
@@ -353,6 +440,11 @@ function go2mylinkHostOf(string $url): string
  */
 function go2mylinkTestCopyName(array $server, string $siteUrl, string $apiBaseUrl): string
 {
+    $declared = go2mylinkSiteCopyMarker($server);
+    if ($declared === 'alpha' || $declared === 'beta') {
+        return $declared;
+    }
+
     foreach (['DOCUMENT_ROOT', 'SCRIPT_FILENAME'] as $pathKey) {
         if (!isset($server[$pathKey]) || !is_string($server[$pathKey])) {
             continue;
@@ -507,6 +599,7 @@ function go2mylinkReasonFacts(string $reason): array
         'test_copy_live_domain' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'This is an alpha or beta copy of the site, but its short-link address is the live https://QRmy.Link. Test codes are never printed there (decision 0030), so nothing was sent to Go2My.Link. Set "Short-link address printed in dynamic codes" to https://alpha.QRmy.Link (or the beta address) on the settings page.', 503],
         'wrong_short_domain' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link made the link on a different short domain from the one this site prints in codes. The link exists on Go2My.Link, but it is not printed and is not tried again. Make the short-link address on the settings page the CueRCode organisation\'s default short domain on Go2My.Link (and verify that domain there), then deal with this code by hand.', 503],
         'domain_unconfirmed' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but its look-up does not say which short domain the link is on, so CueRCode cannot confirm that the printed address would work. The code is held: it is not printed and is not tried again. Check the link on the Go2My.Link dashboard. (Go2My.Link has been asked to include the short address in its look-up: Go2My.Link issue #276.)', 503],
+        'code_mismatch'      => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link answered the look-up of this short code with a link whose code differs in capital letters, so it may be another link that CueRCode did not make. It was not changed, the code is not printed and is not tried again; check both links on the Go2My.Link dashboard.', 409],
         'link_switched_off'  => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but it is switched off there, so it is not printed. CueRCode cannot switch a link back on; look at it on the Go2My.Link dashboard.', 409],
     ];
 
@@ -1083,12 +1176,32 @@ function go2mylinkLinkFromData(array $data): ?array
  */
 function go2mylinkShortUrlIsOurs(string $shortUrl, string $shortCode, string $shortLinkBase): bool
 {
-    if (stripos($shortUrl, 'https://') !== 0 || parse_url($shortUrl, PHP_URL_PATH) !== '/' . $shortCode) {
+    // 🔒 Round-six review, Low 2 (#181): the address must be EXACTLY
+    //    https://<our host>/<code> - no port, no user name or password, no
+    //    "?" or "#" part, no hidden characters - so a faulty or hostile reply
+    //    can never decide anything else about a printed address. Only the
+    //    host is compared without regard to capitals; the code is compared
+    //    exactly.
+    if (stripos($shortUrl, 'https://') !== 0 || preg_match('/[\s\\\\@?#]/', $shortUrl) === 1) {
         return false;
     }
-    $host = go2mylinkHostOf($shortUrl);
 
-    return ($host !== '' && $host === go2mylinkHostOf($shortLinkBase));
+    $parts = parse_url($shortUrl);
+    if (!is_array($parts) || !isset($parts['host'], $parts['path'])) {
+        return false;
+    }
+    foreach (['port', 'user', 'pass', 'query', 'fragment'] as $notAllowed) {
+        if (isset($parts[$notAllowed])) {
+            return false;
+        }
+    }
+    if ($parts['path'] !== '/' . $shortCode) {
+        return false;
+    }
+
+    $host = strtolower($parts['host']);
+
+    return ($host !== '' && $host === go2mylinkHostOf($shortLinkBase) && $shortUrl === substr($shortUrl, 0, 8) . $parts['host'] . $parts['path']);
 }
 
 /**
@@ -1152,6 +1265,9 @@ function go2mylinkCreateLink(array $link, #[\SensitiveParameter] array $options 
         return $refused;
     }
 
+    // 🔤 #181 Low 3: sent in the form Go2My.Link stores.
+    $link['destinationUrl'] = go2mylinkEncodeDestination($link['destinationUrl']);
+
     $reply  = go2mylinkSend($settings, 'POST', 'urls', [
         'destination_url'  => $link['destinationUrl'],
         'qr_external_id'   => $link['redirectID'],
@@ -1188,8 +1304,10 @@ function go2mylinkCreateLink(array $link, #[\SensitiveParameter] array $options 
 
     // 🌐 Decision 0030: a code is only ever printed on the address this site
     //    prints (QRmy.Link, or alpha.QRmy.Link on alpha). A link made on any
-    //    other short domain is reported, never used.
-    if (go2mylinkHostOf($data['short_url']) !== go2mylinkHostOf((string) $settings['shortLinkBase'])) {
+    //    other short domain is reported, never used. Round-six review, Low 2
+    //    (#181): the whole address must match exactly (go2mylinkShortUrlIsOurs()),
+    //    not only its host - a port, user name or "?" part is refused too.
+    if (!go2mylinkShortUrlIsOurs($data['short_url'], $data['short_code'], (string) $settings['shortLinkBase'])) {
         $elsewhere = go2mylinkFailure('wrong_short_domain', false, ['httpStatus' => $result['httpStatus'], 'data' => $made, 'remoteExists' => true]);
         go2mylinkLogFailure($options, 'create', $elsewhere);
         return $elsewhere;
@@ -1273,6 +1391,14 @@ function go2mylinkUpdateDestination(string $shortCode, string $destinationUrl, #
         return $refused;
     }
 
+    // 🔤 #181 Low 3: sent in the form Go2My.Link stores.
+    $destinationUrl = go2mylinkEncodeDestination($destinationUrl);
+    if (strlen($destinationUrl) > 2048) {
+        $refused = go2mylinkFailure('bad_request', false);
+        go2mylinkLogFailure($options, 'update', $refused);
+        return $refused;
+    }
+
     $result = go2mylinkResultFromReply(go2mylinkSend($settings, 'PUT', 'urls/' . rawurlencode($shortCode), ['destination_url' => $destinationUrl], $options), [200], true);
     if (!$result['ok']) {
         go2mylinkLogFailure($options, 'update', $result);
@@ -1326,6 +1452,11 @@ function go2mylinkUpdateDestination(string $shortCode, string $destinationUrl, #
  */
 function go2mylinkCreateLinkSafely(array $link, #[\SensitiveParameter] array $options = []): array
 {
+    // 🔤 #181 Low 3: every comparison below uses the form Go2My.Link stores.
+    if (isset($link['destinationUrl']) && is_string($link['destinationUrl'])) {
+        $link['destinationUrl'] = go2mylinkEncodeDestination($link['destinationUrl']);
+    }
+
     $first = go2mylinkCreateLink($link, $options);
     if ($first['ok']) {
         return $first;
@@ -1345,7 +1476,15 @@ function go2mylinkCreateLinkSafely(array $link, #[\SensitiveParameter] array $op
         $held      = ['httpStatus' => $found['httpStatus'], 'remoteExists' => true, 'data' => ['shortCode' => $shortCode, 'remoteDestination' => $foundLink['destinationUrl']]];
 
         $reason = '';
-        if ($foundLink['isActive'] !== true) {
+        if ($foundLink['shortCode'] !== $shortCode) {
+            // 🔒 Round-six review, Low 1 (#181): Go2My.Link compares codes
+            //    without regard to capitals, so its look-up of "Ab3dE9x" can
+            //    answer ANOTHER link, "ab3de9x", that CueRCode did not make.
+            //    Only an exact match may be treated as ours; nothing is
+            //    changed on any other link. (Go2My.Link issue #276 is asked to
+            //    also return the QR id, which would prove it outright.)
+            $reason = 'code_mismatch';
+        } elseif ($foundLink['isActive'] !== true) {
             $reason = 'link_switched_off';
         } elseif ($foundLink['shortUrl'] === '') {
             // 🚧 Go2My.Link's look-up does not give the short address today

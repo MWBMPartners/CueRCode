@@ -485,6 +485,75 @@ $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 't
 assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'rejected' && $g2Result['remoteExists'] === true, 'L1: ...and if that change is refused, it is not a success (the link exists, pointing elsewhere)');
 
 // ==============================================================================
+// ✅ Section 6b: round-six review fixes (#181)
+// ==============================================================================
+
+// 🔒 Low 5 (G4): a resent destination counts only when the reply confirms it.
+$g2Seen = [];
+$g2Other = array_merge($g2RowUrl, ['destination_url' => 'https://example.com/other']);
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok($g2Other)), $g2Reply(200, $g2Ok($g2Other))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['remoteExists'] === true && $g2Result['outcomeUnknown'] === true, '#181 Low 5 (G4): a change answered 200 but still pointing elsewhere is not a success (' . $g2Result['reason'] . ')');
+assertEquals('unconfirmed', go2mylinkSyncStateFor($g2Result), '#181 Low 5 (G4): ...held as "unconfirmed"');
+
+// 🔒 Low 5 (G7): "QR already linked" and then a lost look-up still says a link exists.
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(409, $g2Err(409, 'That QR code is already linked to a short URL.', 'qr_external_uuid')), $g2Fail(28, 'timed out')], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['remoteExists'] === true && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', '#181 Low 5 (G7): "QR already linked" plus a lost look-up keeps "a link exists on Go2My.Link"');
+assertEquals('unconfirmed', go2mylinkSyncStateFor($g2Result), '#181 Low 5 (G7): ...so it is held as "unconfirmed", never "pending" (which the tidy step would retry)');
+
+// 🔒 Low 1: a found link whose code differs in capital letters is not ours, and is never changed.
+$g2Seen = [];
+$g2Lower = array_merge($g2RowUrl, ['short_code' => 'ab3de9x', 'short_url' => 'https://QRmy.Link/ab3de9x', 'destination_url' => 'https://someone-else.example/']);
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok($g2Lower))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'code_mismatch' && $g2Result['remoteExists'] === true, '#181 Low 1: a look-up answering "ab3de9x" for our "Ab3dE9x" is not ours (' . $g2Result['reason'] . ')');
+assertEquals('POST urls, GET urls/Ab3dE9x', $g2Methods($g2Seen), '#181 Low 1: ...and that other link is NOT changed (no PUT)');
+assertEquals('unconfirmed', go2mylinkSyncStateFor($g2Result), '#181 Low 1: ...held for an admin');
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(409, $g2Err(409, 'That QR code is already linked to a short URL.', 'qr_external_uuid')), $g2Reply(200, $g2Ok($g2Lower))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'code_mismatch' && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', '#181 Low 1: the same after "QR already linked" (case C2): no change is sent');
+
+// 🔒 Low 2: the short address must be exactly https://<our host>/<code>.
+foreach ([
+    'https://QRmy.Link:8443/Ab3dE9x' => 'a port',
+    'https://x@QRmy.Link/Ab3dE9x'    => 'a user name',
+    'https://x:y@QRmy.Link/Ab3dE9x'  => 'a user name and password',
+    'https://QRmy.Link/Ab3dE9x?u=1'  => 'a "?" part',
+    'https://QRmy.Link/Ab3dE9x#top'  => 'a "#" part',
+    'https://QRmy.Link:/Ab3dE9x'     => 'an empty port',
+] as $g2BadShort => $g2What) {
+    assertFalse(go2mylinkShortUrlIsOurs($g2BadShort, 'Ab3dE9x', 'https://QRmy.Link'), '#181 Low 2: a short address with ' . $g2What . ' is not ours: ' . $g2BadShort);
+    $g2Seen = [];
+    $g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Ok(['short_code' => 'Ab3dE9x', 'short_url' => $g2BadShort, 'qr_code_external_uuid' => $g2Link['redirectUUID']]))], $g2Seen)));
+    assertTrue(!$g2Result['ok'] && $g2Result['remoteExists'] === true, '#181 Low 2: a create reply with ' . $g2What . ' is refused and held (' . $g2Result['reason'] . ')');
+}
+assertTrue(go2mylinkShortUrlIsOurs('https://qrmy.link/Ab3dE9x', 'Ab3dE9x', 'https://QRmy.Link'), '#181 Low 2: the host is still compared without regard to capitals');
+assertFalse(go2mylinkShortUrlIsOurs('https://QRmy.Link/ab3de9x', 'Ab3dE9x', 'https://QRmy.Link'), '#181 Low 2: ...but the code is compared exactly');
+
+// 🔤 Low 3: destinations in the form Go2My.Link stores them.
+assertEquals('https://example.com/a%20b/%C3%BC?q=%C3%A9', go2mylinkEncodeDestination('https://example.com/a b/ü?q=é'), '#181 Low 3: spaces and non-English letters after the host become %XX, as Go2My.Link stores them');
+assertEquals('https://example.com/a%20b/%C3%BC?q=%C3%A9', go2mylinkEncodeDestination('https://example.com/a%20b/%C3%BC?q=%C3%A9'), '#181 Low 3: doing it twice changes nothing');
+assertEquals('https://example.com/menu', go2mylinkEncodeDestination('https://example.com/menu'), '#181 Low 3: a plain address is left as it is');
+$g2Spaced = array_merge($g2Link, ['destinationUrl' => 'https://example.com/caf é']);
+$g2Seen = [];
+go2mylinkCreateLink($g2Spaced, $g2Opts($g2Script([$g2Reply(201, $g2Created)], $g2Seen)));
+assertEquals('https://example.com/caf%20%C3%A9', json_decode((string) $g2Seen[0]['body'], true)['destination_url'], '#181 Low 3: the create sends the stored form');
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Spaced, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok(array_merge($g2RowUrl, ['destination_url' => 'https://example.com/caf%20%C3%A9'])))], $g2Seen)));
+assertTrue($g2Result['ok'] && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', '#181 Low 3: a found link holding the stored form matches our destination: recovered with no change sent (' . $g2Result['reason'] . ')');
+
+// 🏷️ Low 4: a declared copy name, for runs that show no other sign (cron).
+assertEquals('alpha', go2mylinkSiteCopyMarker(['CUERCODE_SITE_COPY' => 'alpha']), '#181 Low 4: the declared copy is read');
+assertEquals('live', go2mylinkSiteCopyMarker(['CUERCODE_SITE_COPY' => ' LIVE ']), '#181 Low 4: ...without regard to capitals or spaces');
+assertEquals('', go2mylinkSiteCopyMarker(['CUERCODE_SITE_COPY' => 'staging']), '#181 Low 4: an unknown word counts as not declared');
+$g2Cron = ['SCRIPT_FILENAME' => '/home/cuercode/CueRCode.net/_includes/cron/process_email_queue.php'];
+assertEquals('', go2mylinkTestCopyName($g2Cron, 'https://cuercode.net', 'https://go2my.link/api/v1'), '#181 Low 4: a cron run with the live paths and addresses shows no sign by itself (the reviewer\'s case)');
+assertEquals('alpha', go2mylinkTestCopyName(array_merge($g2Cron, ['CUERCODE_SITE_COPY' => 'alpha']), 'https://cuercode.net', 'https://go2my.link/api/v1'), '#181 Low 4: ...but declared alpha, it is known');
+$g2Settings = go2mylinkReadSettings($g2Config($g2Base), $g2NoRow, array_merge($g2Cron, ['CUERCODE_SITE_COPY' => 'alpha']));
+assertEquals('test_copy_live_domain', $g2Settings['problem'], '#181 Low 4: a declared alpha cron run with the live QRmy.Link address sends nothing');
+$g2Settings = go2mylinkReadSettings($g2Config($g2Base), $g2NoRow, array_merge($g2Cron, ['CUERCODE_SITE_COPY' => 'live']));
+assertEquals('', $g2Settings['problem'], '#181 Low 4: a declared live cron run may use QRmy.Link');
+
+// ==============================================================================
 // ✅ Section 7: "Test connection" creates and changes no link
 // ==============================================================================
 $g2Account = $g2Ok(['userUID' => 7, 'email' => 'owner@example.com', 'displayName' => 'Owner', 'orgHandle' => 'cuercode', 'keyName' => 'CueRCode', 'scopes' => ['qr:link', 'urls:read', 'urls:write', 'urls:delete', 'analytics:read', 'account:read']]);
