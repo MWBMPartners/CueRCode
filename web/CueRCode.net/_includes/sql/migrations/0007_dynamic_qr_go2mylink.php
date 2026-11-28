@@ -28,7 +28,10 @@
  *      a keyed hash of it, counted as its /64 network for IPv6 (the same rule
  *      as every other limit, clientAddressCountingKey()), so "3 reports from
  *      different people in 24 hours" (owner answer O-4, decision 0034) can
- *      be counted.
+ *      be counted. Decision 0046: 12 months after a report is dealt with,
+ *      the email, the description and the hash are removed (the cron
+ *      clean-up; personalDetailsRemovedAt says when) and a bare record that
+ *      a report happened stays.
  *   3. tblUserLimitOverrides: a limit a Global Admin set for ONE person
  *      (decision 0031: "keep 3 but allow global admin to specifically approve
  *      beyond 3 on a per-user basis"). Decision 0045: it only ever RAISES
@@ -172,12 +175,13 @@ return [
                 . ' `redirectID` BIGINT UNSIGNED NULL COMMENT \'🔗 FK tblQRRedirects - the code reported (NULL when the reported code is unknown or was removed)\','
                 . ' `shortCode` VARCHAR(50) NOT NULL COMMENT \'🔗 The code as the reporter gave it, kept even when it matches no code\','
                 . ' `category` VARCHAR(32) NOT NULL COMMENT \'🏷️ What kind of harm, for example phishing, malware, scam, illegal, other\','
-                . ' `details` TEXT NULL COMMENT \'📝 What the reporter wrote (length limited by the form)\','
-                . ' `reporterEmailEncrypted` TEXT NULL COMMENT \'🔐 The reporter\'\'s email if they gave one, encrypted with encryptValue() (AES-256-GCM, HKDF, its own salt); NULL when none was given\','
-                . ' `reporterAddressHash` CHAR(64) NOT NULL COMMENT \'🔐 Keyed hash of the reporter\'\'s internet address as counted (IPv6 as its /64), for counting different people; never the address itself\','
+                . ' `details` TEXT NULL COMMENT \'📝 What the reporter wrote (length limited by the form); removed 12 months after the report is dealt with (decision 0046)\','
+                . ' `reporterEmailEncrypted` TEXT NULL COMMENT \'🔐 The reporter\'\'s email if they gave one, encrypted with encryptValue() (AES-256-GCM, HKDF, its own salt); NULL when none was given or once removed (decision 0046)\','
+                . ' `reporterAddressHash` CHAR(64) NULL COMMENT \'🔐 Keyed hash of the reporter\'\'s internet address as counted (IPv6 as its /64), for counting different people; never the address itself; NULL once removed (decision 0046)\','
                 . ' `status` VARCHAR(16) NOT NULL DEFAULT \'new\' COMMENT \'📊 new, reviewing, actioned or dismissed\','
                 . ' `handledByUserID` INT UNSIGNED NULL COMMENT \'👤 FK tblUsers - the admin who handled it\','
                 . ' `handledAt` DATETIME NULL COMMENT \'📅 When it was handled (UTC)\','
+                . ' `personalDetailsRemovedAt` DATETIME NULL COMMENT \'🧹 When the email, description and address hash were removed (UTC), by the cron clean-up 12 months (an admin setting) after a report was dealt with (decision 0046); the bare record stays\','
                 . ' `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'📅 When it was reported (UTC)\','
                 . ' `updatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT \'📅 Last change\','
                 . ' PRIMARY KEY (`reportID`),'
@@ -185,6 +189,7 @@ return [
                 . ' INDEX `idx_abuse_code_created` (`shortCode`, `createdAt`),'
                 . ' INDEX `idx_abuse_reporter_created` (`reporterAddressHash`, `createdAt`),'
                 . ' INDEX `idx_abuse_status_created` (`status`, `createdAt`),'
+                . ' INDEX `idx_abuse_details_removal` (`personalDetailsRemovedAt`, `handledAt`),'
                 . ' CONSTRAINT `fk_abuse_redirect` FOREIGN KEY (`redirectID`)'
                 . ' REFERENCES `tblQRRedirects` (`redirectID`) ON DELETE SET NULL ON UPDATE CASCADE,'
                 . ' CONSTRAINT `fk_abuse_handled_by` FOREIGN KEY (`handledByUserID`)'

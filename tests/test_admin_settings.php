@@ -331,16 +331,20 @@ foreach ($asRegistry as $asKey => $asField) {
 }
 assertEquals(
     [
-        'error_log_retention_days', 'activity_visitor_details_retention_days',
+        'error_log_retention_days', 'activity_visitor_details_retention_days', 'abuse_report_retention_days',
         'no_script_route_password_per_day',
         'trusted_proxy_ips',
         'verification_resend_min_gap_seconds', 'verification_resend_daily_cap', 'verification_resend_ip_per_hour',
         'password_reset_request_min_gap_seconds', 'password_reset_request_daily_cap', 'password_reset_request_ip_per_hour',
     ],
     $asOptionalKeys,
-    'only the two #179 log periods, trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
+    'only the two #179 log periods, the abuse-report period (decision 0046), trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
 );
 assertEquals(10, count(adminSettingsSections()), 'there are ten sections (plan §7.2, plus the website address section, #113 B9, and dynamic QR codes, #165)');
+
+// 📣 Decision 0046: the abuse-report keeping period is a Global Admin setting, 365 days (12 months) by default.
+assertTrue(isset($asRegistry['abuse_report_retention_days']) && $asRegistry['abuse_report_retention_days']['section'] === 'email-records' && $asRegistry['abuse_report_retention_days']['default'] === 365 && $asRegistry['abuse_report_retention_days']['max'] === 3650, 'decision 0046: "keep abuse-report details for (days)" is on the Email records section, 365 by default, 1 to 3650');
+assertContains('12 months', $asRegistry['abuse_report_retention_days']['help'] ?? '', 'decision 0046: its help says 365 days is the 12 months the owner chose');
 
 // 🔗 #165: the dynamic QR (Go2My.Link) section.
 assertEquals(

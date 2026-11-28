@@ -107,6 +107,8 @@ $eqrNewStore = static function (): \stdClass {
     $eqrStore->errorRows      = 0;
     $eqrStore->visitorClears  = [];
     $eqrStore->visitorRows    = 0;
+    $eqrStore->abuseClears    = [];  // decision 0046: what the abuse-report clean-up was asked
+    $eqrStore->abuseRows      = 0;
     $eqrStore->claimCalls     = 0;
     $eqrStore->releaseCalls   = 0;
     $eqrStore->nested         = null;
@@ -662,6 +664,17 @@ $eqrMakeGateway = static function (\stdClass $eqrStore, string $eqrRunner) use (
             $eqrStore->visitorClears[] = [$eqrDays, $eqrLimit];
 
             return $eqrStore->visitorRows;
+        },
+        // V (decision 0046): remove the personal details of abuse reports
+        //    dealt with longer ago than the keeping period.
+        'clearAbuseReportDetails' => static function (int $eqrDays, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'clearAbuseReportDetails')) {
+                return null;
+            }
+
+            $eqrStore->abuseClears[] = [$eqrDays, $eqrLimit];
+
+            return $eqrStore->abuseRows;
         },
     ];
 };
@@ -1603,24 +1616,24 @@ foreach ($eqrRetentionCases as $eqrCase) {
 
 // --- emailQueueHousekeepingOptions() ---------------------------------------------------
 assertEquals(
-    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => []],
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'abuseReportRetentionDays' => 365, 'invalidSettings' => []],
     emailQueueHousekeepingOptions($eqrSettingsGetter([])),
     'emailQueueHousekeepingOptions: missing settings -> the defaults, nothing reported'
 );
 assertEquals(
-    ['retentionDays' => 45, 'givenUpRetentionDays' => 120, 'errorLogRetentionDays' => 14, 'visitorDetailsRetentionDays' => 30, 'invalidSettings' => []],
-    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => '45', 'email_queue_failed_retention_days' => 120, 'error_log_retention_days' => '14', 'activity_visitor_details_retention_days' => 30])),
+    ['retentionDays' => 45, 'givenUpRetentionDays' => 120, 'errorLogRetentionDays' => 14, 'visitorDetailsRetentionDays' => 30, 'abuseReportRetentionDays' => 180, 'invalidSettings' => []],
+    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => '45', 'email_queue_failed_retention_days' => 120, 'error_log_retention_days' => '14', 'activity_visitor_details_retention_days' => 30, 'abuse_report_retention_days' => '180'])),
     'emailQueueHousekeepingOptions: valid values are used'
 );
 assertEquals(
-    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => ['email_queue_retention_days', 'email_queue_failed_retention_days', 'error_log_retention_days', 'activity_visitor_details_retention_days']],
-    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 0, 'email_queue_failed_retention_days' => 'thirty', 'error_log_retention_days' => 0, 'activity_visitor_details_retention_days' => '3651'])),
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'abuseReportRetentionDays' => 365, 'invalidSettings' => ['email_queue_retention_days', 'email_queue_failed_retention_days', 'error_log_retention_days', 'activity_visitor_details_retention_days', 'abuse_report_retention_days']],
+    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 0, 'email_queue_failed_retention_days' => 'thirty', 'error_log_retention_days' => 0, 'activity_visitor_details_retention_days' => '3651', 'abuse_report_retention_days' => 'forever'])),
     'emailQueueHousekeepingOptions: 0 / "thirty" -> the default, and the setting is named'
 );
 $eqrHousekeepingBad = emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 'retention-value-777']));
 assertFalse(str_contains((string) json_encode($eqrHousekeepingBad), 'retention-value-777'), 'emailQueueHousekeepingOptions: an invalid value is never included in the result');
 assertEquals(
-    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => []],
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'abuseReportRetentionDays' => 365, 'invalidSettings' => []],
     emailQueueHousekeepingOptions(static function (string $eqrKey, mixed $eqrDefault = null): mixed {
         throw new \RuntimeException('simulated settings failure');
     }),
@@ -1892,6 +1905,28 @@ assertEquals(9, $eqrResult['visitorDetailsCleared'] ?? null, '#179: ...and how m
 $eqrTidyText = implode(' ', formatEmailQueueTidyLines($eqrResult));
 assertContains('6 old error-log entries', $eqrTidyText, '#179: ...in plain words (error log)');
 assertContains('9 older activity-log entries', $eqrTidyText, '#179: ...in plain words (visitor details)');
+
+// 📣 Decision 0046: abuse reports dealt with over 12 months (365 days) ago lose
+//    the reporter's email, the description and the visitor fingerprint.
+$eqrStore            = $eqrNewStore();
+$eqrStore->abuseRows = 4;
+$eqrResult           = $eqrRun($eqrStore, 'A');
+assertEquals([[365, 500]], $eqrStore->abuseClears, 'decision 0046: each run clears abuse reports dealt with more than 365 days (12 months) ago, at most 500 a run');
+assertEquals(4, $eqrResult['abuseReportDetailsCleared'] ?? null, 'decision 0046: ...and reports how many');
+assertContains('4 abuse report', implode(' ', formatEmailQueueTidyLines($eqrResult)), 'decision 0046: ...in plain words');
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['abuseReportRetentionDays' => 730]);
+assertEquals([[730, 500]], $eqrStore->abuseClears, 'decision 0046: the period a Global Admin sets is used');
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['abuseReportRetentionDays' => 0]);
+assertEquals([[365, 500]], $eqrStore->abuseClears, 'decision 0046: an invalid period (0) falls back to 365 days, never "remove now"');
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['useLock' => false]);
+assertEquals([], $eqrStore->abuseClears, 'decision 0046: no abuse-report clean-up without the queue lock');
+$eqrStore                                    = $eqrNewStore();
+$eqrStore->failOps['clearAbuseReportDetails'] = 'throw';
+assertEquals(1, $eqrRun($eqrStore, 'A')['housekeepingFailures'], 'decision 0046: a failing abuse-report clean-up is reported (exit code 3)');
+assertEquals('clearOldAbuseReportDetails', emailQueueDatabaseGateway()['clearAbuseReportDetails'] ?? null, 'decision 0046: the real gateway runs clearOldAbuseReportDetails()');
 
 $eqrStore = $eqrNewStore();
 $eqrRun($eqrStore, 'A', ['errorLogRetentionDays' => 14, 'visitorDetailsRetentionDays' => 30]);

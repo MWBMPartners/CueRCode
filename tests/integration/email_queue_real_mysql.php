@@ -564,7 +564,7 @@ itCheck('0 set-up', emailQueueLinkLifetimes() === ['verification' => 86400, 'pas
 // 🧹 #122: the two seeded clean-up settings, read through the real getConfig() (integer type).
 itCheck(
     '0 set-up',
-    emailQueueHousekeepingOptions('getConfig') === ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => []],
+    emailQueueHousekeepingOptions('getConfig') === ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'abuseReportRetentionDays' => 365, 'invalidSettings' => []],
     'emailQueueHousekeepingOptions(getConfig) reads the seeded 30 / 90 days, with no invalid settings'
 );
 
@@ -1018,6 +1018,50 @@ itCheck('12d visitor-details clean-up cost (fourth-round review Low 4)', $itLow4
 itCheck('12d visitor-details clean-up cost (fourth-round review Low 4)', $itLow4Changed === 1 && count($itLow4Rows) === 2 && $itLow4Rows[1]['requestIP'] === null && $itLow4Rows[0]['requestIP'] === '203.0.113.4', 'one run clears the new old entry (and only it): the recent entry keeps its details (' . json_encode($itLow4Rows) . ')');
 itCheck('12d visitor-details clean-up cost (fourth-round review Low 4)', $itLow4Reads < 2000, 'that run read ' . $itLow4Reads . ' rows, not the ' . $itLow4Cleared . ' already-cleared old entries again');
 itExec('DELETE FROM `tblActivityLog` WHERE `activityType` LIKE ?', 's', ['it_low4_%']);
+
+// ==============================================================================
+// 📣 12e. Decision 0046: an abuse report dealt with more than 12 months ago
+//    loses the reporter's email, the description and the address hash; the
+//    bare record stays. (Upgrade 0007's table, applied in 12c.)
+// ==============================================================================
+echo PHP_EOL . 'Scenario 12e: abuse reports lose their personal details 12 months after they are dealt with (decision 0046)' . PHP_EOL;
+$itHasAbuse = (int) itSelect("SELECT COUNT(*) AS `n` FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?", 's', ['tblAbuseReports'])[0]['n'] === 1;
+itCheck('12e abuse reports kept 12 months (decision 0046)', $itHasAbuse, 'set-up: upgrade 0007\'s tblAbuseReports exists');
+if ($itHasAbuse) {
+    itExec('DELETE FROM `tblAbuseReports` WHERE `reportID` > ?', 'i', [0]);
+    // [code, status, days since it was dealt with (null = not dealt with)]
+    foreach ([['it-old-act', 'actioned', 400], ['it-old-dis', 'dismissed', 366], ['it-recent', 'actioned', 300], ['it-open', 'new', null], ['it-review', 'reviewing', null]] as $itAbuse) {
+        itExec(
+            "INSERT INTO `tblAbuseReports` (`shortCode`, `category`, `details`, `reporterEmailEncrypted`, `reporterAddressHash`, `status`, `createdAt`) VALUES (?, 'phishing', 'Call me on 07700 900123', 'IT-ENCRYPTED-EMAIL', REPEAT('a', 64), ?, DATE_SUB(UTC_TIMESTAMP(), INTERVAL 500 DAY))",
+            'ss',
+            [$itAbuse[0], $itAbuse[1]]
+        );
+        if ($itAbuse[2] !== null) {
+            itExec('UPDATE `tblAbuseReports` SET `handledAt` = DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY) WHERE `shortCode` = ?', 'is', [$itAbuse[2], $itAbuse[0]]);
+        }
+    }
+    $itAbuseState = static function (): array {
+        $itOut = [];
+        foreach (itSelect('SELECT `shortCode`, `category`, `status`, `details`, `reporterEmailEncrypted`, `reporterAddressHash`, `personalDetailsRemovedAt` FROM `tblAbuseReports` ORDER BY `shortCode`') as $itRow) {
+            $itKept = ($itRow['details'] !== null && $itRow['reporterEmailEncrypted'] !== null && $itRow['reporterAddressHash'] !== null && $itRow['personalDetailsRemovedAt'] === null);
+            $itGone = ($itRow['details'] === null && $itRow['reporterEmailEncrypted'] === null && $itRow['reporterAddressHash'] === null && $itRow['personalDetailsRemovedAt'] !== null);
+            $itOut[$itRow['shortCode']] = $itRow['status'] . '|' . $itRow['category'] . '|' . ($itKept ? 'kept' : ($itGone ? 'removed' : 'MIXED'));
+        }
+        return $itOut;
+    };
+    $itAbuseChanged = clearOldAbuseReportDetails(365, CUERCODE_EMAIL_QUEUE_TIDY_BATCH);
+    itCheck('12e abuse reports kept 12 months (decision 0046)', $itAbuseChanged === 2 && $itAbuseState() === [
+        'it-old-act' => 'actioned|phishing|removed',
+        'it-old-dis' => 'dismissed|phishing|removed',
+        'it-open'    => 'new|phishing|kept',
+        'it-recent'  => 'actioned|phishing|kept',
+        'it-review'  => 'reviewing|phishing|kept',
+    ], 'reports dealt with 400 and 366 days ago lose the email, description and address hash (the bare record stays); one dealt with 300 days ago and two not yet dealt with keep them: ' . json_encode([$itAbuseChanged, $itAbuseState()]));
+    itCheck('12e abuse reports kept 12 months (decision 0046)', clearOldAbuseReportDetails(365, CUERCODE_EMAIL_QUEUE_TIDY_BATCH) === 0, 'run again: nothing more to do');
+    $itResult = runEmailQueueBatch($itGateway, $itOkSender, ['abuseReportRetentionDays' => 200]);
+    itCheck('12e abuse reports kept 12 months (decision 0046)', ($itResult['abuseReportDetailsCleared'] ?? null) === 1 && $itResult['housekeepingFailures'] === 0 && $itAbuseState()['it-recent'] === 'actioned|phishing|removed', 'the cron clean-up uses the period an admin sets (200 days): the 300-day-old report is done too, and no step failed: ' . json_encode([$itResult['abuseReportDetailsCleared'] ?? null, $itResult['housekeepingFailures']]));
+    itExec('DELETE FROM `tblAbuseReports` WHERE `reportID` > ?', 'i', [0]);
+}
 
 // ==============================================================================
 // 1️⃣3️⃣ #122: an email whose details were cleared is never sent

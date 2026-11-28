@@ -110,8 +110,8 @@ if (!function_exists('go2mylinkTestConnection')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_go2mylink.php';
 }
 
-// 🗑️ #179: the error-log and visitor-details periods' defaults
-//    (CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT and friends) live in
+// 🗑️ #179 and decision 0046: the error-log, visitor-details and abuse-report
+//    periods' defaults (CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT and friends) live in
 //    fn_email.php with the clean-up that uses them. That file defines
 //    constants and functions only on loading.
 if (!defined('CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT')) {
@@ -456,6 +456,15 @@ function adminSettingsRegistry(): array
         'help' => 'Whole days, 1 to 3650. The default is ' . CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT . '. After this many days the internet address and browser name are removed from activity-log entries; the entries themselves (what happened, and when) are kept. The admin change log keeps its own record.',
         'min' => 1, 'max' => 3650, 'rowOptional' => true, 'default' => CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT,
         'description' => 'Days activity entries keep the visitor address and browser name (#179)',
+    ]);
+    // 📣 Decision 0046: dealt-with abuse reports keep their personal details
+    //    for 12 months (365 days), then the cron clean-up removes them.
+    $fields[] = adminSettingsField([
+        'key' => CUERCODE_SETTING_ABUSE_REPORT_RETENTION_DAYS, 'section' => 'email-records', 'kind' => 'int', 'group' => 'abuse', 'type' => 'integer',
+        'label' => 'Keep the personal details of dealt-with abuse reports for (days)',
+        'help' => 'Whole days, 1 to 3650. The default is ' . CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT . ' (the 12 months the owner chose, decision 0046). This many days after a report about a dynamic code is dealt with, the reporter\'s email address, what they wrote and the fingerprint of their internet address are removed; a bare record that a report happened is kept. Needs the cron job.',
+        'min' => 1, 'max' => 3650, 'rowOptional' => true, 'default' => CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT,
+        'description' => 'Days a dealt-with abuse report keeps the reporter email, description and address fingerprint (decision 0046)',
     ]);
 
     // ------------------------------------------------------------ 3. Sign in

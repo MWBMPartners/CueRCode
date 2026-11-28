@@ -110,7 +110,9 @@ foreach (migrationSeedProtectionTables() as $dqSeedTable) {
     assertFalse(str_contains($dqAllSql, '`' . $dqSeedTable . '`'), 'upgrade 0007 never writes to ' . $dqSeedTable . ' (only seed_data.sql fills it)');
 }
 assertContains('`reporterEmailEncrypted` TEXT NULL', $dqAllSql, 'tblAbuseReports keeps the reporter email only encrypted (TEXT, for encryptValue()\'s output)');
-assertContains('`reporterAddressHash` CHAR(64) NOT NULL', $dqAllSql, 'tblAbuseReports keeps only a 64-character hash of the reporter address');
+assertContains('`reporterAddressHash` CHAR(64) NULL', $dqAllSql, 'tblAbuseReports keeps only a 64-character hash of the reporter address (empty once removed, decision 0046)');
+assertContains('`personalDetailsRemovedAt` DATETIME NULL', $dqAllSql, 'decision 0046: tblAbuseReports records when the personal details were removed');
+assertContains('INDEX `idx_abuse_details_removal` (`personalDetailsRemovedAt`, `handledAt`)', $dqAllSql, 'decision 0046: the clean-up finds what is still to do without reading every report again');
 assertFalse((bool) preg_match('/`(reporterIP|requestIP|reporterEmail)`/', $dqAllSql), 'tblAbuseReports has no column for a plain address or a plain email');
 assertContains('PRIMARY KEY (`userID`, `limitKey`)', $dqAllSql, 'tblUserLimitOverrides: one number per person per limit');
 assertContains("`syncState` VARCHAR(16) NOT NULL DEFAULT 'unlinked'", $dqAllSql, 'L6: syncState is a short word (not an ENUM an upgrade could never widen), and a code from before 0007 starts as "unlinked", not "pending"');
@@ -171,6 +173,13 @@ assertFalse(abuseReporterAddressHash('198.51.100.7', $dqKey) === hash('sha256', 
 assertFalse(abuseReporterAddressHash('198.51.100.7', $dqKey) === abuseReporterAddressHash('198.51.100.7', 'another-key'), 'another key gives another hash');
 assertEquals(abuseReporterAddressHash('198.51.100.7'), abuseReporterAddressHash('198.51.100.7', abuseReporterHashKey()), 'with no key given, the site\'s own key (from ENCRYPTION_KEY) is used');
 assertFalse(abuseReporterHashKey() === noScriptHashKey(),'the reporter key is not the no-JavaScript route\'s key (each hash has its own)');
+
+// 🔑 L4: with no ENCRYPTION_KEY the hash refuses to work (a published
+//    fallback key would let anyone reverse IPv4 hashes in minutes).
+$dqNoKeyScript = '$_SERVER["SCRIPT_FILENAME"] = "probe.php"; require ' . var_export(CUERCODE_FUNCTIONS_DIR . 'fn_abuse_reports.php', true) . ';'
+    . ' foreach (["abuseReporterHashKey", "abuseReporterAddressHash"] as $f) { try { $f("198.51.100.7"); echo $f . "=worked "; } catch (\RuntimeException $e) { echo $f . "=refused "; } }';
+$dqNoKeyOut = (string) shell_exec(escapeshellarg(PHP_BINARY) . ' -n -r ' . escapeshellarg($dqNoKeyScript) . ' 2>&1');
+assertEquals('abuseReporterHashKey=refused abuseReporterAddressHash=refused', trim($dqNoKeyOut), 'L4: with no ENCRYPTION_KEY both the key and the hash refuse to work: ' . trim($dqNoKeyOut));
 
 // ==============================================================================
 // ✅ Section 3: a person's own limit (decision 0031)

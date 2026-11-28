@@ -18,6 +18,12 @@
  *       per-visitor limit (clientAddressCountingKey(), #177);
  *     - the hash is keyed with a key made from ENCRYPTION_KEY, so someone who
  *       only has the database cannot check it against a list of addresses.
+ *       Without ENCRYPTION_KEY it refuses to work (review L4): a fallback key
+ *       written in this file would be public, and every IPv4 hash could then
+ *       be reversed in minutes.
+ *   Decision 0046: 12 months (a Global Admin setting) after a report is
+ *   dealt with, its email, description and this hash are removed by the
+ *   cron clean-up (clearOldAbuseReportDetails() in fn_email.php).
  *   The reporter's email, when given, is stored with the site's existing
  *   encryptValue() (AES-256-GCM, HKDF, its own salt) - nothing new here.
  *
@@ -61,6 +67,8 @@ if (!function_exists('clientAddressCountingKey')) {
  *    with its own label, so it is different from every other keyed hash.
  *
  * @return string
+ * @throws \RuntimeException When ENCRYPTION_KEY is missing or empty: no report
+ *                           may be stored then (review L4)
  */
 function abuseReporterHashKey(): string
 {
@@ -68,7 +76,7 @@ function abuseReporterHashKey(): string
         return hash_hmac('sha256', 'cuercode-abuse-reporter', ENCRYPTION_KEY);
     }
 
-    return 'cuercode-abuse-reporter-without-key';
+    throw new \RuntimeException('ENCRYPTION_KEY is not set, so an abuse report cannot be counted or stored.');
 }
 
 /**
@@ -78,6 +86,7 @@ function abuseReporterHashKey(): string
  * @param string $ip  getClientIP()
  * @param string $key '' = the site's own key
  * @return string 64 hex characters
+ * @throws \RuntimeException When the site's own key is needed and ENCRYPTION_KEY is missing
  */
 function abuseReporterAddressHash(string $ip, #[\SensitiveParameter] string $key = ''): string
 {

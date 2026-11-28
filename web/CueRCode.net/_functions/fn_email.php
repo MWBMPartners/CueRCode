@@ -1103,6 +1103,7 @@ if (!defined('CUERCODE_EMAIL_QUEUE_GATEWAY_KEYS')) {
         'purgeEmailLog',    // 🗑️ #129: delete old email entries from the activity log
         'purgeErrorLog',    // 🗑️ #179: delete old error-log rows
         'clearVisitorDetails', // 🙈 #179: clear visitor address and browser name of old activity entries
+        'clearAbuseReportDetails', // 📣 decision 0046: remove personal details of abuse reports dealt with long ago
     ]);
 }
 
@@ -1229,6 +1230,21 @@ if (!defined('CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT')) {
  */
 if (!defined('CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT')) {
     define('CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT', 90);
+}
+
+/**
+ * @var int Decision 0046: days after an abuse report is dealt with until its
+ * reporter email, description and visitor fingerprint (address hash) are
+ * removed. The owner chose 12 months; 365 days is that in this site's one
+ * unit for keeping periods. A Global Admin can change it.
+ */
+if (!defined('CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT')) {
+    define('CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT', 365);
+}
+
+/** @var string Decision 0046: tblSettings key - days dealt-with abuse reports keep personal details (no seeded row). */
+if (!defined('CUERCODE_SETTING_ABUSE_REPORT_RETENTION_DAYS')) {
+    define('CUERCODE_SETTING_ABUSE_REPORT_RETENTION_DAYS', 'abuse_report_retention_days');
 }
 
 /** @var string #179: tblSettings key - days to keep error-log rows (no seeded row; the default applies). */
@@ -1803,6 +1819,7 @@ function emptyEmailQueueRunResult(): array
         'logPurged'            => 0,  // 🗑️ #129: old email entries deleted from the activity log
         'errorLogPurged'       => 0,  // 🗑️ #179: old error-log rows deleted
         'visitorDetailsCleared' => 0, // 🙈 #179: activity entries whose visitor address and browser name were cleared
+        'abuseReportDetailsCleared' => 0, // 📣 decision 0046: abuse reports whose personal details were removed
         'housekeepingFailures' => 0,  // ⚠️ #122/#123: clean-up steps that failed (database error)
     ];
 }
@@ -2004,7 +2021,9 @@ function parseEmailQueueRetentionDays(mixed $value): ?int
  * #179: also the error-log period and the visitor-details period (the same
  * accepted range and the same "missing or invalid means the default" rule).
  *
- * @return array{retentionDays: int, givenUpRetentionDays: int, errorLogRetentionDays: int, visitorDetailsRetentionDays: int, invalidSettings: list<string>}
+ * Decision 0046: also the abuse-report period (the same accepted range).
+ *
+ * @return array{retentionDays: int, givenUpRetentionDays: int, errorLogRetentionDays: int, visitorDetailsRetentionDays: int, abuseReportRetentionDays: int, invalidSettings: list<string>}
  */
 function emailQueueHousekeepingOptions(callable $getSetting): array
 {
@@ -2013,6 +2032,7 @@ function emailQueueHousekeepingOptions(callable $getSetting): array
         'givenUpRetentionDays'        => CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT,
         'errorLogRetentionDays'       => CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT,
         'visitorDetailsRetentionDays' => CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT,
+        'abuseReportRetentionDays'    => CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT,
         'invalidSettings'             => [],
     ];
 
@@ -2022,6 +2042,7 @@ function emailQueueHousekeepingOptions(callable $getSetting): array
         CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS      => 'givenUpRetentionDays',
         CUERCODE_SETTING_ERROR_LOG_RETENTION_DAYS                 => 'errorLogRetentionDays',
         CUERCODE_SETTING_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS  => 'visitorDetailsRetentionDays',
+        CUERCODE_SETTING_ABUSE_REPORT_RETENTION_DAYS              => 'abuseReportRetentionDays',
     ];
 
     foreach ($settingMap as $settingKey => $optionName) {
@@ -2205,6 +2226,11 @@ function formatEmailQueueTidyLines(array $result): array
     $logPurged      = 0;
     $errorPurged    = 0;
     $visitorCleared = 0;
+    $abuseCleared   = 0;
+
+    if (isset($result['abuseReportDetailsCleared'])) {
+        $abuseCleared = (int) $result['abuseReportDetailsCleared'];
+    }
 
     if (isset($result['logPurged'])) {
         $logPurged = (int) $result['logPurged'];
@@ -2257,6 +2283,10 @@ function formatEmailQueueTidyLines(array $result): array
 
     if ($visitorCleared > 0) {
         $lines[] = 'Tidied up: removed the visitor address and browser name from ' . $visitorCleared . ' older activity-log entries (the entries themselves are kept).';
+    }
+
+    if ($abuseCleared > 0) {
+        $lines[] = 'Tidied up: removed the reporter\'s email, description and visitor fingerprint from ' . $abuseCleared . ' abuse report(s) dealt with long ago (a bare record of each report is kept).';
     }
 
     if ($failures > 0) {
@@ -2328,8 +2358,10 @@ function validateEmailQueueGateway(array $gateway): void
  * @param int   $errorLogDays         #179: days to keep error-log rows.
  * @param int   $visitorDetailsDays   #179: days activity entries keep the visitor's
  *                                    address and browser name.
+ * @param int   $abuseReportDays      Decision 0046: days a dealt-with abuse report
+ *                                    keeps its personal details.
  *
- * @return array{expired: int, detailsCleared: int, purged: int, logPurged: int, errorLogPurged: int, visitorDetailsCleared: int, failures: int}
+ * @return array{expired: int, detailsCleared: int, purged: int, logPurged: int, errorLogPurged: int, visitorDetailsCleared: int, abuseReportDetailsCleared: int, failures: int}
  */
 function runEmailQueueHousekeeping(
     array $gateway,
@@ -2338,7 +2370,8 @@ function runEmailQueueHousekeeping(
     int $givenUpRetentionDays,
     int $tidyLimit,
     int $errorLogDays = CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT,
-    int $visitorDetailsDays = CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT
+    int $visitorDetailsDays = CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT,
+    int $abuseReportDays = CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT
 ): array {
     $counts = [
         'expired'               => 0,
@@ -2347,6 +2380,7 @@ function runEmailQueueHousekeeping(
         'logPurged'             => 0,
         'errorLogPurged'        => 0,
         'visitorDetailsCleared' => 0,
+        'abuseReportDetailsCleared' => 0,
         'failures'              => 0,
     ];
 
@@ -2423,9 +2457,12 @@ function runEmailQueueHousekeeping(
     //    Error-log rows are deleted; activity entries are KEPT (the admin and
     //    security history stays), only their address and browser name go.
     //    tblAdminAuditLog is never touched here.
+    //    Decision 0046: dealt-with abuse reports lose the reporter's email,
+    //    description and address hash; a bare record stays.
     $visitorSteps = [
-        'purgeErrorLog'       => ['days' => $errorLogDays, 'count' => 'errorLogPurged'],
-        'clearVisitorDetails' => ['days' => $visitorDetailsDays, 'count' => 'visitorDetailsCleared'],
+        'purgeErrorLog'           => ['days' => $errorLogDays, 'count' => 'errorLogPurged'],
+        'clearVisitorDetails'     => ['days' => $visitorDetailsDays, 'count' => 'visitorDetailsCleared'],
+        'clearAbuseReportDetails' => ['days' => $abuseReportDays, 'count' => 'abuseReportDetailsCleared'],
     ];
 
     foreach ($visitorSteps as $operationName => $step) {
@@ -2604,6 +2641,17 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         }
     }
 
+    // 📣 Decision 0046: the abuse-report period, the same way.
+    $abuseReportDays = CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT;
+
+    if (array_key_exists('abuseReportRetentionDays', $options)) {
+        $parsedDays = parseEmailQueueRetentionDays($options['abuseReportRetentionDays']);
+
+        if ($parsedDays !== null) {
+            $abuseReportDays = $parsedDays;
+        }
+    }
+
     $tidyLimit = CUERCODE_EMAIL_QUEUE_TIDY_BATCH;
 
     if (isset($options['tidyLimit'])) {
@@ -2747,7 +2795,7 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         // checks further down still apply. A failed step is counted and
         // reported (exit code 3) but never stops sending.
         if ($haveLock) {
-            $housekeeping = runEmailQueueHousekeeping($gateway, $linkLifetimes, $retentionDays, $givenUpRetentionDays, $tidyLimit, $errorLogDays, $visitorDetailsDays);
+            $housekeeping = runEmailQueueHousekeeping($gateway, $linkLifetimes, $retentionDays, $givenUpRetentionDays, $tidyLimit, $errorLogDays, $visitorDetailsDays, $abuseReportDays);
 
             $result['expired']               = $result['expired'] + $housekeeping['expired'];
             $result['detailsCleared']        = $housekeeping['detailsCleared'];
@@ -2755,6 +2803,7 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
             $result['logPurged']             = $housekeeping['logPurged'];
             $result['errorLogPurged']        = $housekeeping['errorLogPurged'];
             $result['visitorDetailsCleared'] = $housekeeping['visitorDetailsCleared'];
+            $result['abuseReportDetailsCleared'] = $housekeeping['abuseReportDetailsCleared'];
             $result['housekeepingFailures']  = $housekeeping['failures'];
         }
 
@@ -4165,6 +4214,58 @@ function clearOldActivityVisitorDetails(int $olderThanDays, int $limit): ?int
 }
 
 /**
+ * 📣 Decision 0046: remove the reporter's email, the description and the
+ *    visitor fingerprint (address hash) from abuse reports dealt with
+ *    (status actioned or dismissed) more than $olderThanDays ago. The bare
+ *    record that a report happened stays; personalDetailsRemovedAt says
+ *    when. Rows already done are never read again (the index on
+ *    personalDetailsRemovedAt, handledAt). Before upgrade 0007 there is no
+ *    table, and nothing to do.
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param int $olderThanDays Days since the report was dealt with.
+ * @param int $limit         Most reports changed by this call.
+ *
+ * @return int|null How many reports were changed, or null on a database error.
+ */
+function clearOldAbuseReportDetails(int $olderThanDays, int $limit): ?int
+{
+    if (!function_exists('dbQuery')) {
+        return null;
+    }
+
+    try {
+        $tableStmt = dbQuery(
+            'SELECT COUNT(*) AS `found` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?',
+            's',
+            ['tblAbuseReports']
+        );
+        $tableRow = $tableStmt->get_result()->fetch_assoc();
+        $tableStmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Abuse-report clean-up failed', get_class($e));
+        }
+        return null;
+    }
+
+    if (!is_array($tableRow) || (int) $tableRow['found'] !== 1) {
+        // 📭 Upgrade 0007 not applied yet: no reports exist.
+        return 0;
+    }
+
+    return emailQueueChangeRows(
+        'UPDATE `tblAbuseReports` SET `reporterEmailEncrypted` = NULL, `details` = NULL, `reporterAddressHash` = NULL, `personalDetailsRemovedAt` = UTC_TIMESTAMP() '
+        . "WHERE `personalDetailsRemovedAt` IS NULL AND `handledAt` < DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY) AND `status` IN ('actioned', 'dismissed') "
+        . 'ORDER BY `handledAt` LIMIT ?',
+        'ii',
+        [$olderThanDays, $limit],
+        'Abuse-report clean-up failed'
+    );
+}
+
+/**
  * 🔌 The production gateway: each queue operation mapped to its real
  * database function, by name (plain strings, so they are easy to search for).
  *
@@ -4196,6 +4297,7 @@ function emailQueueDatabaseGateway(): array
         'purgeEmailLog' => 'purgeOldEmailActivityRows',
         'purgeErrorLog'       => 'purgeOldErrorLogRows',
         'clearVisitorDetails' => 'clearOldActivityVisitorDetails',
+        'clearAbuseReportDetails' => 'clearOldAbuseReportDetails',
     ];
 }
 
@@ -4309,6 +4411,7 @@ function emailQueueRunnerMain(array $args, array $env): int
         'givenUpRetentionDays'        => $housekeeping['givenUpRetentionDays'],
         'errorLogRetentionDays'       => $housekeeping['errorLogRetentionDays'],
         'visitorDetailsRetentionDays' => $housekeeping['visitorDetailsRetentionDays'],
+        'abuseReportRetentionDays'    => $housekeeping['abuseReportRetentionDays'],
     ];
 
     // 6️⃣ / 7️⃣ Not ready to send (switched off, or switched on with settings missing):
@@ -4534,12 +4637,19 @@ function emailQueueRunnerCheck(array $settings, array $gateway, callable $out, c
         $visitorDetailsDays = (int) $housekeeping['visitorDetailsRetentionDays'];
     }
 
+    $abuseReportDays = CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT;
+
+    if (isset($housekeeping['abuseReportRetentionDays'])) {
+        $abuseReportDays = (int) $housekeeping['abuseReportRetentionDays'];
+    }
+
     $lines[] = 'Clean-up: one-time links are removed as soon as an email is sent or skipped, and '
         . CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS . ' hours after it is given up; sent and skipped records are deleted after '
         . $retentionDays . ' days and given-up ones after ' . $givenUpRetentionDays
         . ' days. Email entries in the activity log are deleted after the same two periods. Error-log entries are deleted after '
         . $errorLogDays . ' days, and other activity-log entries lose the visitor address and browser name after ' . $visitorDetailsDays
-        . ' days (the entries are kept). This also runs while sending is switched off.';
+        . ' days (the entries are kept). Abuse reports lose the reporter\'s email, description and visitor fingerprint '
+        . $abuseReportDays . ' days after they are dealt with (decision 0046). This also runs while sending is switched off.';
 
     // ⚠️ Settings that are present but not valid - their NAMES only, never values.
     if (isset($housekeeping['invalidSettings']) && is_array($housekeeping['invalidSettings']) && count($housekeeping['invalidSettings']) > 0) {
@@ -4662,6 +4772,7 @@ function processEmailQueue(int $max = 2): array
             $batchOptions['givenUpRetentionDays']        = $housekeeping['givenUpRetentionDays'];
             $batchOptions['errorLogRetentionDays']       = $housekeeping['errorLogRetentionDays'];
             $batchOptions['visitorDetailsRetentionDays'] = $housekeeping['visitorDetailsRetentionDays'];
+            $batchOptions['abuseReportRetentionDays']    = $housekeeping['abuseReportRetentionDays'];
         }
 
         $result = runEmailQueueBatch(emailQueueDatabaseGateway(), 'sendEmailNow', $batchOptions);
