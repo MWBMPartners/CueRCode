@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - The daily dynamic-code monitoring email (WP4g #170, 2026-11-28)
+
+- **Every day the daily job (`dynamic_qr_daily.php`) emails every Global Admin and the abuse mailbox** about the last 24 hours: new codes and changed destinations (with account numbers), the busiest codes by their total scans on Go2My.Link, destinations the link-safety check found harmful and codes it could not check, new reports (counted and not), the most reported codes and how many are still open, suspensions and takedowns not yet confirmed, and **the differences between CueRCode and Go2My.Link** (lead choice L5: a link pointing elsewhere, switched off or missing there).
+- A suspended code that Go2My.Link points elsewhere is marked, so the every-minute job sends its takedown again.
+- Sent even when nothing happened, so a missing email means the job is not running; at most once per 20 hours (`--force` sends another). Harmful addresses are written so a mail program does not make them links; owners are named by account number only. Go2My.Link is only called with a declared `CUERCODE_SITE_COPY`, and at most 500 codes are compared a day.
+- Tests: `tests/test_dynamic_qr_monitor.php` (20 checks) failed before the code existed; section L of `dynamic_qr_abuse_real_mysql.php`. Removing each protection (the site-copy check before calling Go2My.Link, the once-a-day rule, re-sending a drifted takedown, writing addresses safely) made a test fail. Two more checks in `tests/test_abuse_reports.php` prove the report form's "Send my report without JavaScript" button is drawn when a human-check provider is set up.
+
 ### Added - Abuse report page, automatic suspension and the admin abuse screen (WP4f #169, 2026-11-28)
 
 - **`/report/`** (public, linked from the footer, the terms and the neutral page): the code (or its printed QRmy.Link address), what is wrong, an optional description and an optional email (stored encrypted). **Always the same thank-you, after at least 0.4 seconds**, whether the code exists, works or is suspended: the page never reveals a code or its destination. Each address may send 5 reports an hour (an IPv6 address counts as its /64), counted before the human check.

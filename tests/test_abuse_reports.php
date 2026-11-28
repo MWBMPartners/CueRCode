@@ -154,3 +154,21 @@ assertFalse(str_contains($arApi, 'dynamicQrRestore('), 'no member route can lift
 $arAbuse = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_abuse_reports.php');
 assertFalse(str_contains($arAbuse, 'logActivity('), 'storing a report writes no activity-log row (which would keep the reporter\'s internet address)');
 assertContains("'applyNow' => false", $arAbuse, 'a suspension from reports is sent to Go2My.Link by the cron job, so the answer takes the same time');
+
+// 🧱 The widget with a provider configured: the report form's no-JavaScript
+//    button and its own limit sentence are drawn inside <noscript>.
+$arWidgetSettings = humanCheckReadSettings(static function (string $arKey, mixed $arDefault): mixed {
+    $arValues = ['turnstile_site_key' => '0x4AAAAAAAtest', 'turnstile_secret_key' => '0x4AAAAAAAsecret', 'bot_protection_provider' => 'auto'];
+    if (array_key_exists($arKey, $arValues)) {
+        return $arValues[$arKey];
+    }
+    return $arDefault;
+}, static function (string $arKey): string {
+    return 'missing';
+});
+$arWidget = humanCheckWidgetHtml($arWidgetSettings, 'report', ['cachedHealth' => static function (string $arProvider): string {
+    return 'up';
+}]);
+$arNoscript = substr($arWidget, (int) strpos($arWidget, '<noscript>'));
+assertTrue(str_contains($arNoscript, 'Send my report without JavaScript') && str_contains($arNoscript, 'name="' . CUERCODE_HUMAN_CHECK_EMAIL_ROUTE_FIELD . '"'), 'with a provider set up, the report form offers "Send my report without JavaScript" inside <noscript>');
+assertTrue(str_contains($arNoscript, 'each connection can send only a few reports an hour') && !str_contains($arNoscript, 'emails an hour'), '...with the report form\'s own limit sentence (no talk of emails)');

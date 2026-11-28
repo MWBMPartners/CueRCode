@@ -39,6 +39,11 @@
  *      unknown, a working and a suspended code, after at least 0.4 seconds;
  *      the neutral page; /admin/abuse/ (fresh password needed)
  *   K  the 12-month clean-up also removes the network fingerprint (0046)
+ *   L  the daily monitoring email (#170): the comparison with Go2My.Link
+ *      (differences found, a suspended code pointed elsewhere re-sent, the
+ *      busiest codes; nothing sent without a declared site copy), the
+ *      report's sections, defanged addresses, no owner email address, one
+ *      email per 20 hours to every Global Admin and the abuse mailbox
  *
  * Nothing is sent to Google, Go2My.Link or anywhere else: scripted stand-ins
  * answer in-process. (tests/test_url_reputation.php proves the real HTTPS
@@ -341,6 +346,7 @@ require_once $daSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
 require_once $daSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_migrations.php';
 require_once $daSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_dynamic_qr_takedown.php';
 require_once $daSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_abuse_reports.php';
+require_once $daSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_dynamic_qr_monitor.php';
 restore_error_handler();
 ini_set('display_errors', 'stderr');
 set_exception_handler(static function (\Throwable $daError): void {
@@ -646,6 +652,8 @@ daCheck(daRemote($daRowF) === 'https://cuercode.net/unavailable/?code=' . $daRow
 // ==============================================================================
 echo PHP_EOL . 'G. Abuse reports: counting different people, and the automatic suspension' . PHP_EOL;
 $daCarol = daUser('carol');
+daExec("INSERT INTO `tblUserLimitOverrides` (`userID`, `limitKey`, `limitValue`, `reason`) VALUES (?, 'dynamic_codes', 50, 'integration test')", 'i', [$daCarol]);
+featuresCacheStore('clear', 'limit_override:' . $daCarol . ':dynamic_codes');
 $daOut   = createDynamicRedirectForOwner($daCarol, 'https://example.com/carol', daOptions());
 $daCodeG = (int) $daOut['row']['redirectID'];
 $daRowG  = daCode($daCodeG);
@@ -832,6 +840,61 @@ daExec("UPDATE `tblAbuseReports` SET `handledAt` = DATE_SUB(UTC_TIMESTAMP(), INT
 $daCleared = clearOldAbuseReportDetails(365, 100);
 $daLeft = daRows("SELECT COUNT(*) AS `c` FROM `tblAbuseReports` WHERE `status` IN ('actioned', 'dismissed') AND (`reporterNetworkHash` IS NOT NULL OR `reporterAddressHash` IS NOT NULL OR `reporterEmailEncrypted` IS NOT NULL OR `details` IS NOT NULL)")[0]['c'];
 daCheck($daCleared >= 7 && (int) $daLeft === 0, 'every dealt-with report lost its email, description and BOTH fingerprints (' . $daCleared . ' cleared); the bare records stay');
+
+// ==============================================================================
+// L. The daily monitoring email (#170)
+// ==============================================================================
+echo PHP_EOL . 'L. The daily monitoring email' . PHP_EOL;
+// 🎭 Go2My.Link's side drifts: one code points elsewhere, one suspended code
+//    was pointed back at its destination, and the scan totals differ.
+$daOutL1 = createDynamicRedirectForOwner($daCarol, 'https://example.com/carol-l1', daOptions());
+$daOutL2 = createDynamicRedirectForOwner($daCarol, 'https://example.com/carol-l2', daOptions());
+$daRowL1 = daCode((int) $daOutL1['row']['redirectID']);
+$daRowL2 = daCode((int) $daOutL2['row']['redirectID']);
+dynamicQrSuspend((int) $daRowL2['redirectID'], ['type' => 'system', 'label' => 'test'], 'Test: suspended for the comparison', daOptions(['notify' => false]));
+$GLOBALS['daGo2']['links'][strtolower((string) $daRowL1['shortCode'])]['destination'] = 'https://evil.example/swapped';
+$GLOBALS['daGo2']['links'][strtolower((string) $daRowL2['shortCode'])]['destination'] = 'https://example.com/carol-l2';
+$GLOBALS['daGo2']['links'][strtolower((string) $daRowL1['shortCode'])]['clicks'] = 900;
+$GLOBALS['daGo2']['links'][strtolower((string) $daRowL2['shortCode'])]['clicks'] = 40;
+daCheck(daCode((int) $daRowL2['redirectID'])['suspensionAppliedAt'] !== null, 'setup: the L2 takedown was confirmed before Go2My.Link drifted');
+
+$GLOBALS['daGo2']['requests'] = [];
+$daNoCopyL = dynamicQrCompareWithGo2MyLink(daOptions(['server' => ['CUERCODE_SITE_COPY' => '']]));
+daCheck($daNoCopyL['ok'] && $daNoCopyL['skipped'] === 'copy_unknown' && $GLOBALS['daGo2']['requests'] === [], 'without a declared site copy nothing is sent to Go2My.Link');
+$daCompare = dynamicQrCompareWithGo2MyLink(daOptions());
+$daDiffCodes = [];
+foreach ($daCompare['differences'] as $daDiff) {
+    $daDiffCodes[(string) $daDiff['row']['shortCode']] = $daDiff['difference'];
+}
+daCheck($daCompare['ok'] && $daCompare['compared'] >= 2 && isset($daDiffCodes[(string) $daRowL1['shortCode']], $daDiffCodes[(string) $daRowL2['shortCode']]), 'the comparison finds both differences: a code pointed elsewhere, and a suspended code pointed back at its destination');
+daCheck($daCompare['resent'] >= 1 && daCode((int) $daRowL2['redirectID'])['suspensionAppliedAt'] === null, '...the suspended one is marked so its takedown is sent again');
+dynamicQrApplyPendingSuspensions(daOptions());
+daCheck(daRemote(daCode((int) $daRowL2['redirectID'])) === 'https://cuercode.net/unavailable/?code=' . $daRowL2['shortCode'], '...and the every-minute step puts the neutral page back');
+daCheck($daCompare['totals'] !== [] && (string) $daCompare['totals'][0]['row']['shortCode'] === (string) $daRowL1['shortCode'] && (int) $daCompare['totals'][0]['total'] === 900, 'the busiest code (900 scans) comes first');
+
+$daRecheckL = dynamicQrRecheckSafety(daOptions());
+$daReport = dynamicQrMonitorReport(['recheck' => $daRecheckL, 'compare' => $daCompare, 'copy' => '']);
+$daReportText = json_encode($daReport);
+$daTitles = array_column($daReport['sections'], 'title');
+daCheck($daReport['ok'] === true && count($daReport['sections']) === 7, 'the report has its seven sections: ' . implode(' | ', $daTitles));
+daCheck(str_contains($daReportText, 'carol-l1') && str_contains($daReportText, 'Destinations changed') && str_contains($daReportText, '900 scans in all'), '...new codes, changed destinations, the busiest codes');
+daCheck(str_contains($daReportText, 'evil[.]example') && str_contains($daReportText, 'Go2My.Link sends scans somewhere else') && str_contains($daReportText, 'takedown is being sent again'), '...the differences with Go2My.Link (defanged) and the re-sent takedown');
+daCheck(str_contains($daReportText, 'report(s) about') && str_contains($daReportText, 'passed the human check') && str_contains($daReportText, 'Suspensions in the last 24 hours'), '...the reports (counted and not) and the suspensions');
+daCheck(!str_contains($daReportText, 'https:\/\/evil') && !str_contains($daReportText, 'https://evil'), 'no harmful address is written as a link');
+daCheck(!str_contains($daReportText, $daCarolEmail) && !str_contains($daReportText, 'da-amy@'), 'owners are named by account number only, never by email address');
+daCheck(str_contains($daReportText, 'WARNING: no link-safety provider has a key saved'), 'the site settings hold no Web Risk key, so the report warns that destinations are not being checked');
+
+$daBefore = daLastEmailId();
+$daSent = dynamicQrMonitorSend($daReport);
+$daAdminMail = daEmails('da-admin@da.cuercode.invalid', $daBefore);
+$daAbuseMail = daEmails('abuse@cuercode.net', $daBefore);
+daCheck($daSent['sent'] === 2 && count($daAdminMail) === 1 && count($daAbuseMail) === 1 && str_contains((string) $daAdminMail[0]['subject'], 'daily dynamic-code report'), 'sent to the Global Admin and the abuse mailbox, once each');
+$daAgainL = dynamicQrMonitorSend($daReport);
+daCheck($daAgainL['sent'] === 0 && $daAgainL['skipped'] === 'sent_recently' && count(daEmails('abuse@cuercode.net', $daBefore)) === 1, 'run again the same day: not sent again (at most once per 20 hours)');
+$daForced = dynamicQrMonitorSend($daReport, true);
+daCheck($daForced['sent'] === 2, '--force sends it again');
+[$daMailSubject, $daMailBody] = renderEmailTemplate('dynamic_qr_notice', json_decode((string) $daAbuseMail[0]['paramsJSON'], true));
+daCheck(str_contains($daMailBody, '<ul') && str_contains($daMailBody, 'Busiest codes') && !str_contains($daMailBody, 'href="https://evil'), 'the email renders: sections as lists, no link to a harmful address');
 
 // ==============================================================================
 // 🔐 No secret anywhere, then clean up

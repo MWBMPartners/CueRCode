@@ -1517,6 +1517,14 @@ The connection sets `time_zone = '+00:00'`, so every `DATETIME` the database wri
 
 **Showing a stored time (#178, 2026-11-28):** use `siteFormatDatabaseTime($stored, 'j M Y')` (`fn_auth.php`, beside the rule above): it reads the value as UTC and writes it in the site's zone (PHP's, set from `site_timezone`; an unknown zone falls back to UTC; anything that is not a real stored date-time shows nothing). The "Saved", "Linked", "Created" and "Last used" dates on `/account/` use it; before, `date(..., strtotime(...))` showed the UTC wall time (with a Tokyo site, 23:30 UTC on 28 November read "28 Nov" instead of "29 Nov"). The admin screens have their own zone setting (`admin_display_timezone`, `adminFormatUtcForDisplay()`). `tests/test_account_ui.php` fails if the account page uses `strtotime()` again.
 
+## 📊 The daily monitoring email (2026-11-28, WP4g #170)
+
+**Where things are.** `_functions/fn_dynamic_qr_monitor.php`: `dynamicQrCompareWithGo2MyLink()` (looks up every `syncState = 'active'` code, suspended ones included, at most 500 a run, after the cron copy check; stops after 3 unanswered look-ups in a row; the expected target is `dynamicQrExpectedRemote()`: the neutral page while suspended or switched off, otherwise the destination), `dynamicQrMonitorReport()` (seven sections from the last 24 hours, each at most 50 lines), `dynamicQrMonitorRecipients()` (active Global Admins plus the abuse mailbox, each once) and `dynamicQrMonitorSend()`. Steps 6 and 7 of `_includes/cron/dynamic_qr_daily.php`.
+
+**Rules.** At most one email per 20 hours through `humanCheckStateLogDue('log:dynamic_qr_daily_email', 72000)` (one statement, so two runs at once cannot both send; `--force` skips it). Every destination in the email goes through `dynamicQrDefangUrl()`; owners appear as account numbers. A suspended code whose Go2My.Link link points elsewhere gets `suspensionAppliedAt = NULL`, so step 10 of the email job sends the takedown again. The scan totals are Go2My.Link's `click_count` (all time; decision 0033, totals only).
+
+**Tests.** `tests/test_dynamic_qr_monitor.php`; section L of `tests/integration/dynamic_qr_abuse_real_mysql.php`.
+
 ## 📣 Abuse reports and the takedown runbook (2026-11-28, WP4f #169)
 
 **Where things are.** `_functions/fn_abuse_reports.php` (the form's checks `abuseReportCheckInput()`, the fingerprints `abuseReporterAddressHash()` and `abuseReporterNetworkHash()`, the rule `abuseReportShouldSuspend()`, `abuseReportSubmit()`, `abuseReportNotify()`, the admin lists and `abuseReportSetStatus()`); `dynamicQrRestore()` in `fn_dynamic_qr_takedown.php`; pages `public_html/report/`, `public_html/admin/abuse/`, `public_html/unavailable/`.

@@ -20,13 +20,22 @@
  *      day is harmless: a code checked in the last 20 hours is skipped.)
  *   2. Old link-safety records (tblLinkSafetyHits) are deleted after the
  *      keeping period (link_safety_hits_retention_days, 90 by default).
+ *   3. The comparison with Go2My.Link (WP4g, #170, lead choice L5): every
+ *      working or suspended code is looked up (at most 500), differences are
+ *      noted, scan totals collected, and a suspended code Go2My.Link points
+ *      elsewhere has its takedown sent again by the every-minute job.
+ *   4. The daily monitoring email to every Global Admin and the abuse
+ *      mailbox (dynamicQrMonitorReport(), fn_dynamic_qr_monitor.php): new and
+ *      changed destinations, the busiest codes, link-safety hits, reports,
+ *      suspensions and the differences. Sent even when nothing happened, at
+ *      most once per 20 hours (--force sends again).
  *
  * Google and Go2My.Link are only called when the cron line declares which
  * copy of the site this is (CUERCODE_SITE_COPY=live, alpha or beta, #181):
  * alpha, beta and live share the same files and settings.
  *
  * Usage:
- *     php dynamic_qr_daily.php [--quiet]   run
+ *     php dynamic_qr_daily.php [--quiet] [--force]   run (--force: send the email even if one went in the last 20 hours)
  *     php dynamic_qr_daily.php --help      show the help
  *
  * Exit codes: 0 finished (the lines say what was skipped) | 1 could not start
@@ -65,12 +74,16 @@ if (isset($_SERVER['argv']) && is_array($_SERVER['argv'])) {
     $dailyArguments = array_slice($_SERVER['argv'], 1);
 }
 $dailyQuiet = false;
+$dailyForce = false;
 foreach ($dailyArguments as $dailyArgument) {
     if ($dailyArgument === '--quiet') {
         $dailyQuiet = true;
+    } elseif ($dailyArgument === '--force') {
+        $dailyForce = true;
     } elseif ($dailyArgument === '--help') {
-        fwrite(STDOUT, 'Usage: php dynamic_qr_daily.php [--quiet]' . PHP_EOL
-            . 'The daily dynamic-code job: the link-safety re-check and the clean-up of old link-safety records.' . PHP_EOL
+        fwrite(STDOUT, 'Usage: php dynamic_qr_daily.php [--quiet] [--force]' . PHP_EOL
+            . 'The daily dynamic-code job: the link-safety re-check, the clean-up of old link-safety records,' . PHP_EOL
+            . 'the comparison with Go2My.Link and the daily monitoring email (--force sends it even if one went in the last 20 hours).' . PHP_EOL
             . 'Start the cron line with CUERCODE_SITE_COPY=live (or alpha, or beta), or nothing is sent to Google or Go2My.Link.' . PHP_EOL);
         exit(0);
     } else {
@@ -93,6 +106,7 @@ register_shutdown_function(static function (): void {
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'bootstrap.php';
 require_once CUERCODE_FUNCTIONS_DIR . 'fn_dynamic_qr_takedown.php';
+require_once CUERCODE_FUNCTIONS_DIR . 'fn_dynamic_qr_monitor.php';
 
 set_exception_handler(static function (\Throwable $exception): void {
     fwrite(STDERR, 'CueRCode daily dynamic-code job: stopped by an unexpected error (' . get_class($exception) . ') - see the error log.' . PHP_EOL);
@@ -156,7 +170,41 @@ if ($dailyPurged === null) {
 }
 
 // ==============================================================================
-// 🏁 Step 6: let the lock go, say what happened, exit
+// 🔍 Step 6: the comparison with Go2My.Link, then the daily email (WP4g, #170)
+// ==============================================================================
+$dailyCompare = dynamicQrCompareWithGo2MyLink();
+if ($dailyCompare['ok'] !== true) {
+    $dailyProblems[] = 'Go2My.Link comparison: the codes could not be read (database problem, see the error log).';
+    $dailyExit = 3;
+} elseif ($dailyCompare['skipped'] === 'copy_unknown') {
+    $dailyProblems[] = 'Go2My.Link comparison: NOT run, because this run did not say which copy of the site it is. Add CUERCODE_SITE_COPY=live (or alpha, or beta) in front of the cron command.';
+} elseif ($dailyCompare['skipped'] !== '' && $dailyCompare['skipped'] !== 'upgrade_waiting') {
+    $dailyLines[] = 'Go2My.Link comparison: not run (' . $dailyCompare['skipped'] . ').';
+} else {
+    $dailyLines[] = 'Go2My.Link comparison: compared ' . (int) $dailyCompare['compared'] . ' code(s), ' . count($dailyCompare['differences']) . ' difference(s).';
+    if ($dailyCompare['stoppedEarly'] === true) {
+        $dailyProblems[] = 'Go2My.Link comparison: stopped early - Go2My.Link could not answer ' . CUERCODE_MONITOR_COMPARE_STOP_AFTER . ' times in a row.';
+    }
+}
+
+$dailyReport = dynamicQrMonitorReport(['recheck' => $dailyRecheck, 'compare' => $dailyCompare, 'copy' => dynamicQrCronCopyProblem([])]);
+if ($dailyReport['ok'] !== true) {
+    $dailyExit = 3;
+}
+$dailySend = dynamicQrMonitorSend($dailyReport, $dailyForce);
+if ($dailySend['skipped'] === 'no_recipients') {
+    $dailyProblems[] = 'Daily email: nobody to send it to (no active Global Admin and no valid abuse mailbox).';
+} elseif ($dailySend['skipped'] === 'sent_recently') {
+    $dailyLines[] = 'Daily email: one was already sent in the last 20 hours (use --force to send another).';
+} elseif ($dailySend['sent'] === 0) {
+    $dailyProblems[] = 'Daily email: it could not be queued (see the error log).';
+    $dailyExit = 3;
+} else {
+    $dailyLines[] = 'Daily email: queued for ' . (int) $dailySend['sent'] . ' recipient(s) (the email job sends it).';
+}
+
+// ==============================================================================
+// 🏁 Step 7: let the lock go, say what happened, exit
 // ==============================================================================
 try {
     $dailyReleaseStmt = dbQuery('SELECT RELEASE_LOCK(?) AS `releaseResult`', 's', ['cuercode_dynamic_daily']);
