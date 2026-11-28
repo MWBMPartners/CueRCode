@@ -465,6 +465,7 @@ CREATE TABLE IF NOT EXISTS `tblOrganisations` (
 --     (failed, no attempts left) after email_queue_failed_retention_days
 --     (default 90).
 --   - Rows still waiting to be sent, or being sent, are never deleted.
+--   - The same two periods apply to the activity log's email entries (#129).
 --   - Existing installs keep their old column comments until the upgrade
 --     mechanism (#113) exists; the code does not read the comments.
 --

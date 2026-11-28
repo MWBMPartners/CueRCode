@@ -1283,11 +1283,21 @@ echo PHP_EOL . 'CX. Codex review: erase removes passkeys and links; a link that 
 
 // 🗑️ C3-2: erasing an account removes its passkeys, its unused emailed links
 //    (they also hold the requesting address) and any email still waiting to
-//    go to it. Sent emails and the activity log are issue #129's.
+//    go to it. #129: sent records and the activity log lose the address too.
 $arCx = arUser('cx', 'active', $arStrangerPassword, true);
 arGiveWaysIn($arCx, 'cx');
 arExec("INSERT INTO `tblEmailQueue` (`toAddress`, `toName`, `templateKey`, `paramsJSON`, `subject`, `status`) VALUES ('ar-cx@ar.cuercode.invalid', 'Cx', 'password_reset', '{\"resetUrl\":\"https://x.invalid/r?token=abc\"}', 'Reset', 'queued')");
 arExec("INSERT INTO `tblEmailQueue` (`toAddress`, `templateKey`, `subject`, `status`, `sentAt`) VALUES ('ar-cx@ar.cuercode.invalid', 'verification', 'Verify', 'sent', NOW())");
+// 📋 #129: email entries in the activity log, written by the real function
+//    (one with different capitals), one whose error text repeats the address,
+//    and one for a different person whose address only differs by an accent
+//    or is longer.
+arExec("DELETE FROM `tblActivityLog` WHERE `entityType` = 'email'");
+logEmailAttempt('email_queued', 'ar-cx@ar.cuercode.invalid', 'Verify', 'Queued (emailID 1)');
+logEmailAttempt('email_sent', 'AR-CX@ar.cuercode.invalid', 'Verify', 'Graph sendMail accepted (HTTP 202)');
+logEmailAttempt('email_failed', 'ar-cx@ar.cuercode.invalid', 'Reset', 'Template render failed for ar-cx@ar.cuercode.invalid');
+logEmailAttempt('email_sent', "ar-c\u{00E9}x@ar.cuercode.invalid", 'Verify', 'other person (accent)');
+logEmailAttempt('email_sent', 'not-ar-cx@ar.cuercode.invalid', 'Verify', 'other person (longer)');
 arCheck(arCount('SELECT COUNT(*) FROM `tblWebAuthnCredentials` WHERE `userID` = ?', 'i', [$arCx]) === 1, 'erase (C3-2): the account starts with a passkey');
 $arCxErase = eraseUserAccount($arCx, $arStrangerPassword, true);
 arCheck($arCxErase['success'] === true, 'erase (C3-2): the erase succeeds');
@@ -1296,7 +1306,17 @@ arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', '
 arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$arCx]) === 0, 'erase (C3-2): its verification links are deleted');
 arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = 'ar-cx@ar.cuercode.invalid' AND `status` IN ('queued', 'failed')") === 0, 'erase (C3-2): no email is still waiting to go to the erased address');
 arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = ? AND `status` = 'skipped' AND `paramsJSON` IS NULL AND `toName` IS NULL", 's', [buildErasedAccountEmail($arCx)]) === 1, 'erase (C3-2): ...it is marked skipped, with its link, name and address removed');
-arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = 'ar-cx@ar.cuercode.invalid' AND `status` = 'sent'") === 1, 'erase (C3-2): an already-sent email is left for the normal clean-up (issue #129)');
+arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = 'ar-cx@ar.cuercode.invalid'") === 0, 'erase (#129): no email record, sent ones included, still holds the address');
+arCheck(arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = ? AND `status` = 'sent' AND `paramsJSON` IS NULL AND `toName` IS NULL", 's', [buildErasedAccountEmail($arCx)]) === 1, 'erase (#129): ...the sent record is kept as sent, with the placeholder address');
+$arCxLog = arSelect("SELECT `activityDetail`, `additionalData` FROM `tblActivityLog` WHERE `entityType` = 'email' ORDER BY `activityID`");
+arCheck(count($arCxLog) === 5, 'erase (#129): the activity-log entries are kept (' . count($arCxLog) . ')');
+$arCxText = '';
+foreach (array_slice($arCxLog, 0, 3) as $arCxRow) {
+    $arCxText .= $arCxRow['activityDetail'] . ' ' . $arCxRow['additionalData'] . ' ';
+}
+arCheck(stripos($arCxText, 'ar-cx@') === false, 'erase (#129): ...without the erased address anywhere in them (' . $arCxText . ')');
+arCheck(substr_count($arCxText, '[address removed]') >= 7, 'erase (#129): ...it is replaced by a placeholder, in the text, the extra data and the error detail');
+arCheck(str_contains((string) $arCxLog[3]['activityDetail'], "ar-c\u{00E9}x@ar.cuercode.invalid") && str_contains((string) $arCxLog[4]['activityDetail'], 'not-ar-cx@ar.cuercode.invalid'), 'erase (#129): other people\'s addresses are untouched');
 
 // ⏰ C3-3: a reset link checked as valid, then held at the account lock while
 //    it expires, must be refused when the lock is released.

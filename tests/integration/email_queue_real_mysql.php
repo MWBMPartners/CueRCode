@@ -856,6 +856,38 @@ itCheck('12 old records deleted', itStatus($itReceiptQ) === 'queued', 'a 100-day
 itCheck('12 old records deleted', itStatus($itReceiptF) === 'failed', 'a 100-day-old failed email that still has attempts left is never deleted');
 itCheck('12 old records deleted', $itSendCalls === 0, 'nothing was sent (nothing was due)');
 
+// ------------------------------------------------------------------------------
+// #129: the activity log's email entries (they name the recipient) are deleted
+// after the same periods. Everything else in the log is left alone.
+// ------------------------------------------------------------------------------
+itExec("DELETE FROM `tblActivityLog` WHERE `entityType` = ? OR `activityType` = 'it_other'", 's', ['email']);
+$itLogCases = [
+    'sent-old'    => ['email_sent', 'email', 31, false],
+    'sent-new'    => ['email_sent', 'email', 29, true],
+    'queued-old'  => ['email_queued', 'email', 31, false],
+    'skipped-old' => ['email_skipped', 'email', 31, false],
+    'failed-31'   => ['email_failed', 'email', 31, true],
+    'failed-old'  => ['email_failed', 'email', 91, false],
+    'other-old'   => ['it_other', 'user', 400, true],
+];
+foreach ($itLogCases as $itTag => $itCase) {
+    itExec(
+        'INSERT INTO `tblActivityLog` (`activityType`, `activityDetail`, `entityType`, `createdAt`) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL ? DAY))',
+        'sssi',
+        [$itCase[0], 'To: it-' . $itTag . '@it.cuercode.invalid | Subject: x | y', $itCase[1], $itCase[2]]
+    );
+}
+$itResult = runEmailQueueBatch($itGateway, $itOkSender, []);
+foreach ($itLogCases as $itTag => $itCase) {
+    $itLeft = (int) itSelect('SELECT COUNT(*) AS `n` FROM `tblActivityLog` WHERE `activityDetail` = ?', 's', ['To: it-' . $itTag . '@it.cuercode.invalid | Subject: x | y'])[0]['n'];
+    itCheck('12b old email log entries deleted', ($itLeft === 1) === $itCase[3], 'activity log: ' . $itCase[0] . ' entry ' . $itCase[2] . ' days old is ' . ($itCase[3] ? 'kept' : 'deleted'));
+}
+itCheck('12b old email log entries deleted', ($itResult['logPurged'] ?? null) === 4, 'the run reports 4 activity-log entries removed');
+itCheck('12b old email log entries deleted', $itResult['housekeepingFailures'] === 0, 'no clean-up step failed');
+$itResult = runEmailQueueBatch($itGateway, $itOkSender, ['retentionDays' => 7, 'givenUpRetentionDays' => 10]);
+itCheck('12b old email log entries deleted', ($itResult['logPurged'] ?? null) === 2, 'shorter periods set by the admin apply to the log too (the 29-day sent and 31-day failed entries go)');
+itExec("DELETE FROM `tblActivityLog` WHERE `entityType` = ? OR `activityType` = 'it_other'", 's', ['email']);
+
 // ==============================================================================
 // 1️⃣3️⃣ #122: an email whose details were cleared is never sent
 // ==============================================================================

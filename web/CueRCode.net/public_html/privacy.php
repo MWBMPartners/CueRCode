@@ -84,6 +84,13 @@ if (function_exists('getConfig')) {
     $siteEmail = 'hello@cuercode.net';
 }
 
+// 🧹 #129: how long email records are kept - the periods actually in force
+//    (a Global Admin can change them), read by the same rule the clean-up uses.
+$privacyEmailPeriods = ['retentionDays' => 30, 'givenUpRetentionDays' => 90];
+if (function_exists('emailQueueHousekeepingOptions') && function_exists('getConfig')) {
+    $privacyEmailPeriods = emailQueueHousekeepingOptions('getConfig');
+}
+
 // 📧 Dedicated privacy / data-protection contact address (falls back to the
 //    general site email if a privacy-specific mailbox has not been configured).
 if (function_exists('getConfig')) {
@@ -441,6 +448,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <li>QR code content submitted by anonymous users is retained only as long as needed to generate and deliver the requested output;</li>
                             <li>Saved QR codes and account data are retained for the life of your account and for a limited period afterwards;</li>
                             <li>Technical and error logs are retained for a limited diagnostic period and then purged;</li>
+                            <li id="retention-email">Records of the emails we send you, and the matching entries in our activity log (both include your email address), are deleted after <?php echo (int) $privacyEmailPeriods['retentionDays']; ?>&nbsp;days for emails that were sent or deliberately not sent, and after <?php echo (int) $privacyEmailPeriods['givenUpRetentionDays']; ?>&nbsp;days for emails that could not be delivered, by a scheduled clean-up;</li>
                             <li>Records we must keep for legal, tax or accounting reasons are retained for the period required by law.</li>
                         </ul>
                         <p>
@@ -453,7 +461,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             identifiers immediately &mdash; your email address and display name are replaced
                             with a non-reversible placeholder, your password is cleared so the account can
                             never be signed back into, and your saved QR codes, active sessions, API keys and
-                            linked sign-in providers are all revoked or removed. We do <strong>not</strong>,
+                            linked sign-in providers are all revoked or removed, and your email address is
+                            also removed from our email records and activity log entries. We do <strong>not</strong>,
                             however, delete the underlying account record outright at that moment. Instead it
                             is <strong>anonymized in place</strong>, so that:
                         </p>

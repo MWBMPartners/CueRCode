@@ -46,7 +46,7 @@
 - A format of `'jxl'` quietly returns PNG (#115; also #40).
 - The installer doesn't check for the zip/bcmath/curl add-ons (#113; also #13).
 - `beta` and `main` have no `ci.yml` (#115 covers `beta`).
-- The activity log keeps email events, with recipients' addresses, with no time limit, and deleting an account does not touch them (tracked in #129; found by #122).
+- ~~The activity log keeps email events, with recipients' addresses, with no time limit, and deleting an account does not touch them~~ - fixed 2026-11-28 (#129): deleted after the email-record periods, and removed on account erasure. The privacy page now states the periods; legal review still owed (#38). Error-log rows still have no time limit.
 
 ---
 

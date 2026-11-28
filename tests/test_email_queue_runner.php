@@ -101,6 +101,8 @@ $eqrNewStore = static function (): \stdClass {
     $eqrStore->onSend         = null;
     $eqrStore->secondsPerSend = 0;
     $eqrStore->failOps        = [];
+    $eqrStore->logPurges      = [];
+    $eqrStore->logRows        = 0;
     $eqrStore->claimCalls     = 0;
     $eqrStore->releaseCalls   = 0;
     $eqrStore->nested         = null;
@@ -624,6 +626,17 @@ $eqrMakeGateway = static function (\stdClass $eqrStore, string $eqrRunner) use (
             }
 
             return $eqrDeleted;
+        },
+        // S (#129): delete old email entries from the activity log. The
+        //    stand-in only records what it was asked.
+        'purgeEmailLog' => static function (int $eqrDays, int $eqrFailedDays, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'purgeEmailLog')) {
+                return null;
+            }
+
+            $eqrStore->logPurges[] = [$eqrDays, $eqrFailedDays, $eqrLimit];
+
+            return $eqrStore->logRows;
         },
     ];
 };
@@ -1820,6 +1833,27 @@ $eqrAddRow($eqrStore, 1, ['status' => 'sent', 'createdAt' => $eqrStore->now - (4
 $eqrResult = $eqrRun($eqrStore, 'A', ['useLock' => false]);
 assertTrue(isset($eqrStore->rows[1]), 'with the lock bypassed the clean-up never runs (it must never run alongside another runner): the old record is still there');
 assertEquals(0, $eqrResult['purged'], 'with the lock bypassed the clean-up never runs (it must never run alongside another runner): purged 0');
+
+// --- #129: email entries in the activity log -------------------------------------------------------
+$eqrStore          = $eqrNewStore();
+$eqrStore->logRows = 4;
+$eqrResult         = $eqrRun($eqrStore, 'A');
+assertEquals([[30, 90, 500]], $eqrStore->logPurges, '#129: each run removes old email entries from the activity log, with the same 30 and 90 day periods');
+assertEquals(4, $eqrResult['logPurged'] ?? null, '#129: ...and reports how many');
+assertContains('4 old email entries from the activity log', implode(' ', formatEmailQueueTidyLines($eqrResult)), '#129: ...in plain words');
+
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['retentionDays' => 7, 'givenUpRetentionDays' => 10]);
+assertEquals([[7, 10, 500]], $eqrStore->logPurges, '#129: the periods an admin sets apply to the activity log too');
+
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['useLock' => false]);
+assertEquals([], $eqrStore->logPurges, '#129: no activity-log clean-up without the queue lock');
+
+$eqrStore                           = $eqrNewStore();
+$eqrStore->failOps['purgeEmailLog'] = 'throw';
+$eqrResult                          = $eqrRun($eqrStore, 'A');
+assertEquals(1, $eqrResult['housekeepingFailures'], '#129: a failing activity-log clean-up is reported (exit code 3)');
 
 // --- #123: expired links ---------------------------------------------------------------------------
 $eqrStore = $eqrNewStore();

@@ -208,3 +208,73 @@ function cleanLogText(string $text, int $maxLength = 1000): string
 
     return $clean;
 }
+
+// ==============================================================================
+// 🙈 #129: taking an erased account's address out of an activity-log entry
+// ==============================================================================
+// The database side is activityLogEraseEmailAddress() in fn_activity_log.php.
+
+/** @var string What replaces an erased email address in an activity-log entry. */
+if (!defined('CUERCODE_ACTIVITY_REMOVED_ADDRESS')) {
+    define('CUERCODE_ACTIVITY_REMOVED_ADDRESS', '[address removed]');
+}
+
+/**
+ * 🧽 The new text of ONE email entry once $address is taken out. PURE.
+ *
+ * logEmailAttempt() (fn_email.php) writes the recipient twice: at the start
+ * of the detail ("To: <address> | Subject: ...") and as {"to": ...} in
+ * additionalData; an error message later in the detail may repeat it.
+ *
+ * Only an entry whose RECIPIENT is exactly this address (capitals ignored,
+ * accents NOT ignored) is changed. So a longer address that merely contains
+ * it, or one differing by an accent (the database's text comparison would
+ * call those equal), belongs to someone else and is left alone.
+ *
+ * @param string      $detail         The activityDetail column
+ * @param string|null $additionalData The additionalData column (JSON text) or null
+ * @param string      $address        The address to remove
+ *
+ * @return array{detail: string, additionalData: string|null}|null
+ *         The replacement values, or null when the entry is not about $address
+ */
+function activityLogEntryWithoutAddress(string $detail, ?string $additionalData, string $address): ?array
+{
+    if ($address === '') {
+        return null;
+    }
+
+    // 📌 "To: <address> |" - the recipient as logEmailAttempt() wrote it.
+    $recipientPattern = '/^To: ' . preg_quote($address, '/') . ' \|/iu';
+
+    if (preg_match($recipientPattern, $detail) !== 1) {
+        return null;
+    }
+
+    // 🔁 Every copy in the text, whatever its capitals.
+    $newDetail = preg_replace('/' . preg_quote($address, '/') . '/iu', CUERCODE_ACTIVITY_REMOVED_ADDRESS, $detail);
+
+    if (!is_string($newDetail)) {
+        // 🛡️ Cannot happen after the match above; keep nothing rather than the address.
+        $newDetail = CUERCODE_ACTIVITY_REMOVED_ADDRESS;
+    }
+
+    $newData = null;
+
+    if ($additionalData !== null) {
+        $decoded = json_decode($additionalData, true);
+
+        if (!is_array($decoded)) {
+            $decoded = [];
+        }
+
+        $decoded['to'] = CUERCODE_ACTIVITY_REMOVED_ADDRESS;
+        $encoded       = json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        if (is_string($encoded)) {
+            $newData = $encoded;
+        }
+    }
+
+    return ['detail' => $newDetail, 'additionalData' => $newData];
+}

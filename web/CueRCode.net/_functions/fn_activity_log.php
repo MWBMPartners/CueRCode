@@ -22,9 +22,11 @@
  * and for email events the detail is "To: <address> | Subject: ...". Since
  * #126 both fallbacks pass everything through cleanLogText()
  * (fn_log_mask.php), which replaces every address-shaped piece of text with
- * "[address]" and removes control characters. The DATABASE row is unchanged:
- * tblActivityLog still stores the full detail (a separate retention
- * follow-up covers that).
+ * "[address]" and removes control characters. The DATABASE row keeps the
+ * full detail, but not for ever (#129): email entries are deleted by the
+ * email queue runner after the email-record periods
+ * (purgeOldEmailActivityRows(), fn_email.php), and erasing an account takes
+ * its address out of them (activityLogEraseEmailAddress(), below).
  *
  * @package     CueRCode
  * @subpackage  Logging
@@ -434,4 +436,71 @@ function getRecentActivity(int $limit = 50): array
         }
         return [];
     }
+}
+
+// ==============================================================================
+// 🙈 #129: taking an erased account's address out of the email entries
+// ==============================================================================
+
+/**
+ * 🗑️ Take one email address out of every email entry in the activity log
+ *    (#129). The entries stay (what was sent, and when), the address goes.
+ *
+ * Called by eraseUserAccount() INSIDE its transaction, so the address is gone
+ * exactly when the account is. It reads the matching rows first and then
+ * changes them one by one by their number, so no range of the log is locked
+ * and other pages can keep writing to it.
+ *
+ * ⚠️ What it does NOT do: an email still being sent at that very moment can
+ * write one more entry afterwards; the retention clean-up removes it later.
+ *
+ * @param string $address The address being erased
+ *
+ * @return int How many entries were changed
+ *
+ * @throws \Throwable On a database error (the caller rolls back)
+ */
+function activityLogEraseEmailAddress(string $address): int
+{
+    if ($address === '') {
+        return 0;
+    }
+
+    // 🛡️ "%", "_" and "\" are ordinary characters in an address but special in LIKE.
+    $likePattern = 'To: ' . addcslashes($address, '\\%_') . ' |%';
+
+    $stmt = dbQuery(
+        'SELECT `activityID`, `activityDetail`, `additionalData` FROM `tblActivityLog` '
+        . "WHERE `entityType` = 'email' AND `activityDetail` LIKE ?",
+        's',
+        [$likePattern]
+    );
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $changed = 0;
+
+    foreach ($rows as $row) {
+        $storedData = null;
+
+        if ($row['additionalData'] !== null) {
+            $storedData = (string) $row['additionalData'];
+        }
+
+        $replacement = activityLogEntryWithoutAddress((string) $row['activityDetail'], $storedData, $address);
+
+        if ($replacement === null) {
+            continue;
+        }
+
+        $updateStmt = dbQuery(
+            'UPDATE `tblActivityLog` SET `activityDetail` = ?, `additionalData` = ? WHERE `activityID` = ?',
+            'ssi',
+            [$replacement['detail'], $replacement['additionalData'], (int) $row['activityID']]
+        );
+        $updateStmt->close();
+        $changed++;
+    }
+
+    return $changed;
 }

@@ -1100,6 +1100,7 @@ if (!defined('CUERCODE_EMAIL_QUEUE_GATEWAY_KEYS')) {
         'clearGivenUp',     // 🧹 #122: clear given-up emails' details after 24 hours
         'purgeFinished',    // 🗑️ #122: delete old sent/skipped records
         'purgeGivenUp',     // 🗑️ #122: delete old given-up records
+        'purgeEmailLog',    // 🗑️ #129: delete old email entries from the activity log
     ]);
 }
 
@@ -1767,6 +1768,7 @@ function emptyEmailQueueRunResult(): array
         'unsendable'           => 0,  // 🛑 #122: claimed emails skipped because their details were removed or their link is missing
         'detailsCleared'       => 0,  // 🧹 #122: given-up emails whose stored details were cleared
         'purged'               => 0,  // 🗑️ #122: old finished records deleted
+        'logPurged'            => 0,  // 🗑️ #129: old email entries deleted from the activity log
         'housekeepingFailures' => 0,  // ⚠️ #122/#123: clean-up steps that failed (database error)
     ];
 }
@@ -2159,6 +2161,11 @@ function formatEmailQueueTidyLines(array $result): array
     $purged         = 0;
     $detailsCleared = 0;
     $failures       = 0;
+    $logPurged      = 0;
+
+    if (isset($result['logPurged'])) {
+        $logPurged = (int) $result['logPurged'];
+    }
 
     if (isset($result['expired'])) {
         $expired = (int) $result['expired'];
@@ -2187,6 +2194,10 @@ function formatEmailQueueTidyLines(array $result): array
     if ($purged > 0 || $detailsCleared > 0) {
         $lines[] = 'Tidied up: deleted ' . $purged . ' old email record(s) and removed the stored details of '
             . $detailsCleared . ' given-up email(s).';
+    }
+
+    if ($logPurged > 0) {
+        $lines[] = 'Tidied up: removed ' . $logPurged . ' old email entries from the activity log.';
     }
 
     if ($failures > 0) {
@@ -2249,13 +2260,14 @@ function validateEmailQueueGateway(array $gateway): void
  * waiting rows (by design).
  *
  * @param array $gateway              The queue gateway (skipExpired, clearGivenUp,
- *                                    purgeFinished and purgeGivenUp are used).
+ *                                    purgeFinished, purgeGivenUp and
+ *                                    purgeEmailLog are used).
  * @param array $linkLifetimes        Seconds by template key (normalised).
  * @param int   $retentionDays        Days to keep sent/skipped records.
  * @param int   $givenUpRetentionDays Days to keep given-up records.
  * @param int   $tidyLimit            Most rows per statement.
  *
- * @return array{expired: int, detailsCleared: int, purged: int, failures: int}
+ * @return array{expired: int, detailsCleared: int, purged: int, logPurged: int, failures: int}
  */
 function runEmailQueueHousekeeping(array $gateway, array $linkLifetimes, int $retentionDays, int $givenUpRetentionDays, int $tidyLimit): array
 {
@@ -2263,6 +2275,7 @@ function runEmailQueueHousekeeping(array $gateway, array $linkLifetimes, int $re
         'expired'        => 0,
         'detailsCleared' => 0,
         'purged'         => 0,
+        'logPurged'      => 0,
         'failures'       => 0,
     ];
 
@@ -2321,6 +2334,20 @@ function runEmailQueueHousekeeping(array $gateway, array $linkLifetimes, int $re
         }
     }
 
+    // 4️⃣ #129: the activity log's email entries name the recipient, so they are
+    //    kept no longer than the queue records: the same two periods.
+    try {
+        $changed = $gateway['purgeEmailLog']($retentionDays, $givenUpRetentionDays, $tidyLimit);
+    } catch (\Throwable $e) {
+        $changed = null;
+    }
+
+    if (is_int($changed) && $changed >= 0) {
+        $counts['logPurged'] = $changed;
+    } else {
+        $counts['failures']++;
+    }
+
     return $counts;
 }
 
@@ -2345,7 +2372,8 @@ function runEmailQueueHousekeeping(array $gateway, array $linkLifetimes, int $re
  *   skipExpired(string $templateKey, int $maxAgeSeconds, string $note, int $limit): ?int,
  *   clearGivenUp(int $olderThanHours, int $limit): ?int,
  *   purgeFinished(int $olderThanDays, int $limit): ?int,
- *   purgeGivenUp(int $olderThanDays, int $limit): ?int.
+ *   purgeGivenUp(int $olderThanDays, int $limit): ?int,
+ *   purgeEmailLog(int $olderThanDays, int $failedOlderThanDays, int $limit): ?int.
  *
  * 🧹 #122/#123: while it holds the lock, and before anything is claimed, it
  * runs the clean-up (runEmailQueueHousekeeping()). Then every claimed email
@@ -2609,6 +2637,7 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
             $result['expired']              = $result['expired'] + $housekeeping['expired'];
             $result['detailsCleared']       = $housekeeping['detailsCleared'];
             $result['purged']               = $housekeeping['purged'];
+            $result['logPurged']            = $housekeeping['logPurged'];
             $result['housekeepingFailures'] = $housekeeping['failures'];
         }
 
@@ -3812,6 +3841,61 @@ function purgeGivenUpEmailQueueRows(int $olderThanDays, int $limit): ?int
 }
 
 /**
+ * 🗑️ S: delete old email entries from the ACTIVITY LOG (#129).
+ *
+ * logEmailAttempt() writes the recipient's address into tblActivityLog. Those
+ * entries are kept no longer than the email records themselves: queued, sent
+ * and skipped entries for the sent/skipped period, failed ones for the
+ * (longer) given-up period.
+ *
+ * ⚠️ This deletes data, and that cannot be undone. It ONLY ever matches rows
+ * with entityType 'email' and one of the four email activity types. Nothing
+ * else in the activity log is touched.
+ *
+ * 📌 No ORDER BY, so the database can go straight to these activity types
+ * (idx_activity_type) instead of walking every old row of the log - see
+ * skipExpiredEmailQueueRows() for the same choice.
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param int $olderThanDays       Age limit for queued, sent and skipped entries.
+ * @param int $failedOlderThanDays Age limit for failed entries.
+ * @param int $limit               Most rows each of the two statements deletes.
+ *
+ * @return int|null How many rows were deleted, or null if either statement failed.
+ */
+function purgeOldEmailActivityRows(int $olderThanDays, int $failedOlderThanDays, int $limit): ?int
+{
+    $finished = emailQueueChangeRows(
+        'DELETE FROM `tblActivityLog` '
+        . "WHERE `activityType` IN ('email_queued', 'email_sent', 'email_skipped') "
+        . "AND `entityType` = 'email' "
+        . 'AND `createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY) '
+        . 'LIMIT ?',
+        'ii',
+        [$olderThanDays, $limit],
+        'Email activity-log clean-up failed'
+    );
+
+    $failed = emailQueueChangeRows(
+        'DELETE FROM `tblActivityLog` '
+        . "WHERE `activityType` = 'email_failed' "
+        . "AND `entityType` = 'email' "
+        . 'AND `createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY) '
+        . 'LIMIT ?',
+        'ii',
+        [$failedOlderThanDays, $limit],
+        'Email activity-log clean-up (failed entries) failed'
+    );
+
+    if ($finished === null || $failed === null) {
+        return null;
+    }
+
+    return $finished + $failed;
+}
+
+/**
  * 🔌 The production gateway: each queue operation mapped to its real
  * database function, by name (plain strings, so they are easy to search for).
  *
@@ -3840,6 +3924,7 @@ function emailQueueDatabaseGateway(): array
         'clearGivenUp'  => 'clearGivenUpEmailQueueDetails',
         'purgeFinished' => 'purgeFinishedEmailQueueRows',
         'purgeGivenUp'  => 'purgeGivenUpEmailQueueRows',
+        'purgeEmailLog' => 'purgeOldEmailActivityRows',
     ];
 }
 
@@ -4167,7 +4252,7 @@ function emailQueueRunnerCheck(array $settings, array $gateway, callable $out, c
     $lines[] = 'Clean-up: one-time links are removed as soon as an email is sent or skipped, and '
         . CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS . ' hours after it is given up; sent and skipped records are deleted after '
         . $retentionDays . ' days and given-up ones after ' . $givenUpRetentionDays
-        . ' days. This also runs while sending is switched off.';
+        . ' days. Email entries in the activity log are deleted after the same two periods. This also runs while sending is switched off.';
 
     // ⚠️ Settings that are present but not valid - their NAMES only, never values.
     if (isset($housekeeping['invalidSettings']) && is_array($housekeeping['invalidSettings']) && count($housekeeping['invalidSettings']) > 0) {

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Email addresses in the activity log are no longer kept for ever (#129, 2026-11-28)
+
+- **Deleted after a set period:** the activity log's email entries (they name the recipient) are now removed by the email queue runner's clean-up: queued, sent and skipped ones after the "sent and skipped email records" period (default 30 days), failed ones after the "given-up" period (default 90). These are the two settings a Global Admin already edits on `/admin/settings/`; their wording says they now cover the log too. Other activity-log entries are not touched. No database upgrade.
+- **Removed when an account is erased:** in the same step as the erase, the address in those entries becomes `[address removed]`, and sent or skipped email records keep their status and times but lose the address, name and details.
+- **Privacy page:** section 7 now states the periods actually in force, and the erasure part says the address is removed from email records and the log. The wording still needs the legal review (#38).
+- **Needs the cron job:** nothing is deleted on a server where the queue runner never runs.
+- Shown failing first (9 unit checks; 6 real-database checks in `email_queue_real_mysql.php` and 5 in `account_recovery_real_mysql.php` on MySQL 8.0.36), then passing on MySQL 8.0.36 and MariaDB 10.6.
+
 ### Fixed - Links, sign-ins, lock-outs and API keys expire at the right moment in any site time zone (#158, #130, 2026-11-28)
 
 - **The fault:** the database stores times in UTC, but PHP read them in the site's own time zone (`site_timezone`). With any zone other than UTC, emailed links, signed-in sessions, account lock-outs and API keys ended hours early or late (an ended session could stay signed in for the length of the offset; a new link could be refused at once). The seeded value is UTC, so a normal install was not affected.

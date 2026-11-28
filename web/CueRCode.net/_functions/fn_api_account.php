@@ -1799,6 +1799,8 @@ function buildErasedAccountEmail(int $userID): string
  *   - ALL saved QR codes are soft-deleted (tblQRCodes.deletedAt = NOW()) -
  *     the SAME reversible mechanism DELETE /api/v1/qrcodes/{uuid} already
  *     uses elsewhere in this codebase, not a hard delete.
+ *   - #129: the address is replaced in tblEmailQueue records (all but one
+ *     being sent at that moment) and in the activity log's email entries.
  *   - tblSubscriptions/tblPayments rows are DELIBERATELY left untouched:
  *     they carry no PII of their own beyond the (now-anonymized) userID
  *     foreign key, and this codebase's existing FK posture already treats
@@ -2109,8 +2111,7 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
         // (queued, or given up but still able to be re-sent): it is marked skipped, and its
         // link, name and address are removed. An email being sent at this
         // very moment is left to finish; already-sent emails are removed by
-        // the queue's normal clean-up. The activity log's copies of
-        // addresses are issue #129.
+        // the queue's normal clean-up.
         $erasedEmailAddress = (string) $lockedRow['email'];
         $queueStmt = dbQuery(
             "UPDATE `tblEmailQueue` SET `status` = 'skipped', `paramsJSON` = NULL, `toName` = NULL, `toAddress` = ?, "
@@ -2120,6 +2121,22 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
             [$anonymizedEmail, $erasedEmailAddress]
         );
         $queueStmt->close();
+
+        // 📧 #129: records of emails already sent (or skipped) keep their
+        // status and times for support, but lose the address, name and details.
+        $finishedStmt = dbQuery(
+            'UPDATE `tblEmailQueue` SET `toAddress` = ?, `toName` = NULL, `paramsJSON` = NULL, `updatedAt` = `updatedAt` '
+            . "WHERE `toAddress` = ? AND `status` IN ('sent', 'skipped', 'failed')",
+            'ss',
+            [$anonymizedEmail, $erasedEmailAddress]
+        );
+        $finishedStmt->close();
+
+        // 📋 #129: ...and the address is taken out of the activity log's email
+        // entries (fn_activity_log.php; loaded here in case this file was
+        // loaded on its own - require_once does nothing twice).
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_activity_log.php';
+        activityLogEraseEmailAddress($erasedEmailAddress);
 
         // 📚 Soft-delete ALL saved QR codes (same mechanism as
         // DELETE /api/v1/qrcodes/{uuid} - tblQRCodes.deletedAt).

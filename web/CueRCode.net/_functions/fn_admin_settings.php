@@ -251,7 +251,7 @@ function adminSettingsSections(): array
             'saveLabel' => 'Save email record periods',
             'title' => 'Email records',
             'icon'  => 'fa-solid fa-broom',
-            'intro' => 'How long the record of each sent or given-up email is kept before it is deleted. Whole days, 1 to 3650. The privacy page must say the same (task #38).',
+            'intro' => 'How long the record of each sent or given-up email is kept before it is deleted. The same two periods apply to the email activity-log entries, which name the recipient. Whole days, 1 to 3650. The privacy page shows the periods set here.',
         ],
         'signin' => [
             'saveLabel' => 'Save sign-in provider settings',
@@ -405,14 +405,14 @@ function adminSettingsRegistry(): array
     $fields[] = adminSettingsField([
         'key' => 'email_queue_retention_days', 'section' => 'email-records', 'kind' => 'int', 'group' => 'email', 'type' => 'integer',
         'label' => 'Keep sent and skipped email records for (days)',
-        'help' => 'Whole days, 1 to 3650. The default is 30.',
+        'help' => 'Whole days, 1 to 3650. The default is 30. Also covers activity-log entries for queued, sent and skipped emails.',
         'min' => 1, 'max' => 3650,
         'description' => 'Days to keep a sent or skipped email record',
     ]);
     $fields[] = adminSettingsField([
         'key' => 'email_queue_failed_retention_days', 'section' => 'email-records', 'kind' => 'int', 'group' => 'email', 'type' => 'integer',
         'label' => 'Keep given-up (failed) email records for (days)',
-        'help' => 'Whole days, 1 to 3650. The default is 90. Longer, because support is asked about these.',
+        'help' => 'Whole days, 1 to 3650. The default is 90. Longer, because support is asked about these. Also covers activity-log entries for failed emails.',
         'min' => 1, 'max' => 3650,
         'description' => 'Days to keep a given-up email record',
     ]);
