@@ -52,6 +52,18 @@
  * id has, and its look-up does not return the QR id, so without our own code
  * a lost answer could never be found.
  *
+ * A LINK COUNTS ONLY ON A CONFIRMED SHORT DOMAIN (review H1, 2026-11-28):
+ * Go2My.Link may make a link on another short domain (its fallback g2my.link
+ * when the organisation's own domain is not verified), and then the printed
+ * QRmy.Link/<code> would not work. Only a reply that carries the short
+ * address can show the domain: the create reply does; Go2My.Link's look-up
+ * (GET /urls/{code}) does NOT today (asked for on Go2My.Link issue #276). So
+ * a link found by a look-up is never "working" until the look-up gives its
+ * short address. Until then it is "domain_unconfirmed": the link exists on
+ * Go2My.Link (remoteExists), it is never printed, never tried again, and an
+ * admin must look. go2mylinkSyncStateFor() turns every result into the one
+ * tblQRRedirects.syncState word to store.
+ *
  * SAFETY RULES KEPT HERE:
  *   - The API key goes only in the Authorization header. It is never logged,
  *     never put in a message, an address or a body, and never returned.
@@ -425,7 +437,9 @@ function go2mylinkReasonFacts(string $reason): array
         'timeout'            => [CUERCODE_GO2MYLINK_MEMBER_UNREACHABLE, 'Go2My.Link did not answer in time, or the connection dropped part-way.', 503],
         'tls_failed'         => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link\'s security certificate could not be checked, so nothing was sent. Check the certificate on the API address.', 503],
         'bad_reply'          => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link gave an answer CueRCode did not expect (not the usual shape, too large, or a redirect).', 502],
-        'wrong_short_domain' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link made the link on a different short domain from the one this site prints in codes. Make the short-link address on the settings page the CueRCode organisation\'s default short domain on Go2My.Link.', 503],
+        'wrong_short_domain' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link made the link on a different short domain from the one this site prints in codes. The link exists on Go2My.Link, but it is not printed and is not tried again. Make the short-link address on the settings page the CueRCode organisation\'s default short domain on Go2My.Link (and verify that domain there), then deal with this code by hand.', 503],
+        'domain_unconfirmed' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but its look-up does not say which short domain the link is on, so CueRCode cannot confirm that the printed address would work. The code is held: it is not printed and is not tried again. Check the link on the Go2My.Link dashboard. (Go2My.Link has been asked to include the short address in its look-up: Go2My.Link issue #276.)', 503],
+        'link_switched_off'  => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but it is switched off there, so it is not printed. CueRCode cannot switch a link back on; look at it on the Go2My.Link dashboard.', 409],
     ];
 
     if (!isset($facts[$reason])) {
@@ -444,8 +458,9 @@ function go2mylinkReasonFacts(string $reason): array
  *
  * @param string               $reason         One of go2mylinkReasonFacts()'s keys
  * @param bool                 $outcomeUnknown True when Go2My.Link may have done what was asked
- * @param array<string, mixed> $extra          httpStatus, retryAfter, field, data
- * @return array{ok: bool, reason: string, message: string, adminMessage: string, httpCode: int, httpStatus: int, retryAfter: int, field: string, outcomeUnknown: bool, data: array}
+ * @param array<string, mixed> $extra          httpStatus, retryAfter, field, data, remoteExists
+ *                                             (true = Go2My.Link is KNOWN to hold a link for this code or QR id)
+ * @return array{ok: bool, reason: string, message: string, adminMessage: string, httpCode: int, httpStatus: int, retryAfter: int, field: string, outcomeUnknown: bool, remoteExists: bool, data: array}
  */
 function go2mylinkFailure(string $reason, bool $outcomeUnknown, array $extra = []): array
 {
@@ -461,6 +476,7 @@ function go2mylinkFailure(string $reason, bool $outcomeUnknown, array $extra = [
         'retryAfter'     => 0,
         'field'          => '',
         'outcomeUnknown' => $outcomeUnknown,
+        'remoteExists'   => false,
         'data'           => [],
     ];
 
@@ -474,6 +490,9 @@ function go2mylinkFailure(string $reason, bool $outcomeUnknown, array $extra = [
     }
     if (isset($extra['data']) && is_array($extra['data'])) {
         $result['data'] = $extra['data'];
+    }
+    if (isset($extra['remoteExists']) && $extra['remoteExists'] === true) {
+        $result['remoteExists'] = true;
     }
     if ($reason === 'rate_limited' && $result['retryAfter'] > 0) {
         $result['adminMessage'] .= ' It asks for a wait of ' . $result['retryAfter'] . ' seconds.';
@@ -493,7 +512,7 @@ function go2mylinkFailure(string $reason, bool $outcomeUnknown, array $extra = [
  *
  * @param array<string, mixed> $data
  * @param int                  $httpStatus
- * @return array{ok: bool, reason: string, message: string, adminMessage: string, httpCode: int, httpStatus: int, retryAfter: int, field: string, outcomeUnknown: bool, data: array}
+ * @return array{ok: bool, reason: string, message: string, adminMessage: string, httpCode: int, httpStatus: int, retryAfter: int, field: string, outcomeUnknown: bool, remoteExists: bool, data: array}
  */
 function go2mylinkSuccess(array $data, int $httpStatus): array
 {
@@ -507,8 +526,46 @@ function go2mylinkSuccess(array $data, int $httpStatus): array
         'retryAfter'     => 0,
         'field'          => '',
         'outcomeUnknown' => false,
+        'remoteExists'   => true,
         'data'           => $data,
     ];
+}
+
+/**
+ * 🔄 The tblQRRedirects.syncState word for a create result (review H1, L6).
+ *    PURE. WP4c stores this, with the reason word in lastSyncError:
+ *
+ *   active      - Go2My.Link has the link AND its short domain is confirmed:
+ *                 the only state whose code may be printed;
+ *   unconfirmed - Go2My.Link holds a link that must NOT be printed (another
+ *                 short domain, a domain the look-up could not confirm, a
+ *                 link switched off there, or this QR id linked under a code
+ *                 CueRCode does not know). Never retried automatically; an
+ *                 admin must look;
+ *   pending     - not known whether Go2My.Link made it (the tidy step looks
+ *                 it up later);
+ *   failed      - nothing was made (a new try, perhaps with a new code, may
+ *                 follow).
+ *
+ *   (A fifth word, unlinked, is the column's starting value: Go2My.Link not
+ *   asked yet, including every code from before upgrade 0007.)
+ *
+ * @param array $result A result from go2mylinkCreateLink() or go2mylinkCreateLinkSafely()
+ * @return string
+ */
+function go2mylinkSyncStateFor(array $result): string
+{
+    if (isset($result['ok']) && $result['ok'] === true) {
+        return 'active';
+    }
+    if (isset($result['remoteExists']) && $result['remoteExists'] === true) {
+        return 'unconfirmed';
+    }
+    if (isset($result['outcomeUnknown']) && $result['outcomeUnknown'] === true) {
+        return 'pending';
+    }
+
+    return 'failed';
 }
 
 // ==============================================================================
@@ -841,6 +898,8 @@ function go2mylinkResultFromReply(array $reply, array $expected, bool $mayChange
     }
     if ($status === 409) {
         if ($remoteField === 'qr_external_uuid') {
+            // 🔗 Go2My.Link holds a link for this QR id (under some code).
+            $extra['remoteExists'] = true;
             return go2mylinkFailure('already_linked', false, $extra);
         }
         return go2mylinkFailure('code_taken', false, $extra);
@@ -877,8 +936,13 @@ function go2mylinkResultFromReply(array $reply, array $expected, bool $mayChange
  * 🔗 One link from Go2My.Link's link shape (_g2ml_apiUrlsFormatRow()), or
  *    null when it is not that shape. PURE.
  *
+ *    shortUrl is the link's full short address when the reply carries one
+ *    (short_url), otherwise ''. Go2My.Link's look-up does not send it today
+ *    (asked for on Go2My.Link issue #276); without it the short domain
+ *    cannot be confirmed (review H1).
+ *
  * @param array<string, mixed> $data
- * @return array{shortCode: string, destinationUrl: string, isActive: bool, clickCount: int}|null
+ * @return array{shortCode: string, destinationUrl: string, isActive: bool, clickCount: int, shortUrl: string}|null
  */
 function go2mylinkLinkFromData(array $data): ?array
 {
@@ -895,12 +959,38 @@ function go2mylinkLinkFromData(array $data): ?array
         return null;
     }
 
+    $shortUrl = '';
+    if (isset($data['short_url']) && is_string($data['short_url'])) {
+        $shortUrl = $data['short_url'];
+    }
+
     return [
         'shortCode'      => $data['short_code'],
         'destinationUrl' => $data['destination_url'],
         'isActive'       => $data['is_active'],
         'clickCount'     => $data['click_count'],
+        'shortUrl'       => $shortUrl,
     ];
+}
+
+/**
+ * 🌐 Is this short address exactly the short-link address this site prints
+ *    plus the code? https, the same host (without regard to capitals), and
+ *    the path "/<code>". PURE.
+ *
+ * @param string $shortUrl      From Go2My.Link
+ * @param string $shortCode     The code it should end in
+ * @param string $shortLinkBase dynamic_redirect_base_url
+ * @return bool
+ */
+function go2mylinkShortUrlIsOurs(string $shortUrl, string $shortCode, string $shortLinkBase): bool
+{
+    if (stripos($shortUrl, 'https://') !== 0 || parse_url($shortUrl, PHP_URL_PATH) !== '/' . $shortCode) {
+        return false;
+    }
+    $host = go2mylinkHostOf($shortUrl);
+
+    return ($host !== '' && $host === go2mylinkHostOf($shortLinkBase));
 }
 
 /**
@@ -1002,7 +1092,7 @@ function go2mylinkCreateLink(array $link, #[\SensitiveParameter] array $options 
     //    prints (QRmy.Link, or alpha.QRmy.Link on alpha). A link made on any
     //    other short domain is reported, never used.
     if (go2mylinkHostOf($data['short_url']) !== go2mylinkHostOf((string) $settings['shortLinkBase'])) {
-        $elsewhere = go2mylinkFailure('wrong_short_domain', false, ['httpStatus' => $result['httpStatus'], 'data' => $made]);
+        $elsewhere = go2mylinkFailure('wrong_short_domain', false, ['httpStatus' => $result['httpStatus'], 'data' => $made, 'remoteExists' => true]);
         go2mylinkLogFailure($options, 'create', $elsewhere);
         return $elsewhere;
     }
@@ -1106,27 +1196,35 @@ function go2mylinkUpdateDestination(string $shortCode, string $destinationUrl, #
  *    the chosen code on its tblQRRedirects row, so:
  *
  *   - created                         -> success;
+ *   - created on another short domain -> wrong_short_domain (remoteExists):
+ *                                        never printed, never tried again;
  *   - the answer was lost (time limit, dropped connection, a 500, an odd
- *     success reply)                  -> look the code up: found = success
- *                                        (recovered); not found = try ONCE
- *                                        more with the same code and QR id;
+ *     success reply)                  -> look the code up: found = see
+ *                                        below; not found = try ONCE more
+ *                                        with the same code and QR id;
  *                                        look-up lost too = "not known yet"
  *                                        (outcomeUnknown), for the tidy step;
- *   - "this QR is already linked"     -> look the code up: found = it is ours
- *                                        from an earlier try (success); not
- *                                        found = already_linked (an admin
- *                                        must look);
+ *   - "this QR is already linked"     -> look the code up: found = see
+ *                                        below; not found = already_linked
+ *                                        (remoteExists; an admin must look);
  *   - "code taken"                    -> handed straight back: the caller
  *                                        stores a NEW code, then calls again;
  *   - anything else                   -> handed back as it is.
  *
+ * A FOUND link (recovery) is a success only when ALL of these hold (review
+ * H1 and L1); otherwise the result says why and remoteExists is true:
+ *   - it is switched on (else link_switched_off);
+ *   - the look-up gave its short address (else domain_unconfirmed: true of
+ *     every look-up today, Go2My.Link issue #276) and that address is this
+ *     site's short-link address plus the code (else wrong_short_domain);
+ *   - it goes to our destination; if not, our destination is sent again
+ *     (PUT) and only a confirmed change counts (destinationResent).
  * A found link is ours: the code is unique in tblQRRedirects and was stored
- * before it was sent. If its destination differs from ours, that is reported
- * (destinationMatches) for the daily comparison (L5).
+ * before it was sent.
  *
  * @param array{redirectID: int, redirectUUID: string, destinationUrl: string, shortCode: string} $link
  * @param array<string, mixed> $options
- * @return array Result; data on success: shortCode, shortUrl, codeKept, recovered (and, when recovered, remoteDestination, destinationMatches)
+ * @return array Result; data on success: shortCode, shortUrl, codeKept, recovered (and, when recovered, remoteDestination, destinationMatches, destinationResent)
  */
 function go2mylinkCreateLinkSafely(array $link, #[\SensitiveParameter] array $options = []): array
 {
@@ -1142,15 +1240,51 @@ function go2mylinkCreateLinkSafely(array $link, #[\SensitiveParameter] array $op
     $shortCode = (string) $link['shortCode'];
     $settings  = go2mylinkSettingsFromOptions($options);
 
-    // 🧩 What a found link means.
-    $recovered = static function (array $found) use ($link, $shortCode, $settings): array {
+    // 🧩 What a found link means (review H1, L1): only a switched-on link
+    //    on the CONFIRMED short domain, going to our destination, counts.
+    $recovered = static function (array $found) use ($link, $shortCode, $settings, $options): array {
+        $foundLink = $found['data'];
+        $held      = ['httpStatus' => $found['httpStatus'], 'remoteExists' => true, 'data' => ['shortCode' => $shortCode, 'remoteDestination' => $foundLink['destinationUrl']]];
+
+        $reason = '';
+        if ($foundLink['isActive'] !== true) {
+            $reason = 'link_switched_off';
+        } elseif ($foundLink['shortUrl'] === '') {
+            // 🚧 Go2My.Link's look-up does not give the short address today
+            //    (Go2My.Link issue #276), so the domain cannot be confirmed.
+            $reason = 'domain_unconfirmed';
+        } elseif (!go2mylinkShortUrlIsOurs($foundLink['shortUrl'], $foundLink['shortCode'], (string) $settings['shortLinkBase'])) {
+            $reason = 'wrong_short_domain';
+        }
+        if ($reason !== '') {
+            $notUsed = go2mylinkFailure($reason, false, $held);
+            go2mylinkLogFailure($options, 'create', $notUsed);
+            return $notUsed;
+        }
+
+        // ✏️ Pointing somewhere else: send our destination again; only a
+        //    confirmed change counts.
+        $resent = false;
+        if ($foundLink['destinationUrl'] !== $link['destinationUrl']) {
+            $change = go2mylinkUpdateDestination($foundLink['shortCode'], (string) $link['destinationUrl'], $options);
+            if (!$change['ok'] || $change['data']['destinationUrl'] !== $link['destinationUrl']) {
+                if ($change['ok']) {
+                    $change = go2mylinkFailure('bad_reply', true, ['httpStatus' => $change['httpStatus']]);
+                }
+                $change['remoteExists'] = true;
+                return $change;
+            }
+            $resent = true;
+        }
+
         return go2mylinkSuccess([
-            'shortCode'          => $shortCode,
-            'shortUrl'           => rtrim((string) $settings['shortLinkBase'], '/') . '/' . $shortCode,
+            'shortCode'          => $foundLink['shortCode'],
+            'shortUrl'           => $foundLink['shortUrl'],
             'codeKept'           => true,
             'recovered'          => true,
-            'remoteDestination'  => $found['data']['destinationUrl'],
-            'destinationMatches' => ($found['data']['destinationUrl'] === $link['destinationUrl']),
+            'remoteDestination'  => $foundLink['destinationUrl'],
+            'destinationMatches' => true,
+            'destinationResent'  => $resent,
         ], $found['httpStatus']);
     };
 
@@ -1162,7 +1296,7 @@ function go2mylinkCreateLinkSafely(array $link, #[\SensitiveParameter] array $op
     if ($lookup['reason'] !== 'not_found') {
         // 🤷 Cannot tell: leave it "not known yet" for the tidy step.
         if ($first['reason'] === 'already_linked') {
-            return go2mylinkFailure($lookup['reason'], true, ['httpStatus' => $lookup['httpStatus']]);
+            return go2mylinkFailure($lookup['reason'], true, ['httpStatus' => $lookup['httpStatus'], 'remoteExists' => true]);
         }
         return $first;
     }

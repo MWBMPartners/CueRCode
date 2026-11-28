@@ -11,8 +11,11 @@
  *      approach needs (plan .claude/plans/first-launch-plan.md, WP4a):
  *        - shortCode: the code printed after QRmy.Link/ (unique; CueRCode
  *          chooses it and stores it BEFORE asking Go2My.Link, lead choice L1);
- *        - syncState: pending (asked, not confirmed), active (Go2My.Link has
- *          the link) or failed;
+ *        - syncState: unlinked (not asked yet - every existing code), pending
+ *          (asked, answer not known), active (Go2My.Link has the link on the
+ *          confirmed short domain), unconfirmed (Go2My.Link holds a link that
+ *          must not be printed; an admin must look) or failed - a short word,
+ *          not an ENUM, so a later upgrade can add states (review L6);
  *        - lastSyncError: the reason the last call failed, as one of the
  *          fixed reason words in _functions/fn_go2mylink.php - never
  *          Go2My.Link's own text and never anything secret;
@@ -95,8 +98,11 @@ return [
             'type'  => 'add_column',
             'table' => 'tblQRRedirects',
             'name'  => 'syncState',
-            'sql'   => 'ALTER TABLE `tblQRRedirects` ADD COLUMN `syncState` ENUM(\'pending\',\'active\',\'failed\') NOT NULL DEFAULT \'pending\''
-                . ' COMMENT \'🔄 pending = Go2My.Link asked but not confirmed; active = Go2My.Link has the link; failed = it could not be made\''
+            // A short word checked by the code (not an ENUM: an upgrade may
+            // only ever add, and could never widen an ENUM's list later).
+            // Existing codes start as "unlinked" (review L6), never "pending".
+            'sql'   => 'ALTER TABLE `tblQRRedirects` ADD COLUMN `syncState` VARCHAR(16) NOT NULL DEFAULT \'unlinked\''
+                . ' COMMENT \'🔄 unlinked = Go2My.Link not asked yet (every code from before upgrade 0007); pending = asked, answer not known; active = Go2My.Link has the link on the confirmed short domain (the only state that may be printed); unconfirmed = Go2My.Link holds a link that must not be printed (other or unconfirmed short domain, switched off, or the QR linked under another code) - an admin must look; failed = not made. go2mylinkSyncStateFor() sets it\''
                 . ' AFTER `shortCode`',
         ],
         [

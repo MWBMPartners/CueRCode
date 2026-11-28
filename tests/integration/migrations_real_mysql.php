@@ -1955,13 +1955,13 @@ foreach ($itQColumns as $itQColumn) {
 }
 itCheck('Q 0007 dynamic QR', $itQShape === [
     'shortCode varchar 50 YES none',
-    'syncState enum 7 NO pending',
+    'syncState varchar 16 NO unlinked',
     'lastSyncError varchar 64 YES none',
     'suspendedAt datetime  YES none',
     'suspendedByUserID int  YES none',
     'suspensionNote varchar 1000 YES none',
 ], 'the six new tblQRRedirects columns, in order, with their types: ' . json_encode($itQShape));
-itCheck('Q 0007 dynamic QR', itValue($itQ, "SELECT CONCAT(IFNULL(`shortCode`, 'NULL'), '|', `syncState`) FROM `tblQRRedirects`") === 'NULL|pending', 'the existing dynamic code has no short code yet and is "pending"');
+itCheck('Q 0007 dynamic QR', itValue($itQ, "SELECT CONCAT(IFNULL(`shortCode`, 'NULL'), '|', `syncState`) FROM `tblQRRedirects`") === 'NULL|unlinked', 'L6: the existing dynamic code has no short code yet and is "unlinked" (Go2My.Link was never asked), not "pending"');
 
 $itQSettings = itValue($itQ, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`, '|', `settingGroup`, '|', `settingType`, '|', `isSensitive`, '|', `isEditable`) ORDER BY `settingKey` SEPARATOR ';') FROM `tblSettings`"
     . " WHERE `settingKey` IN ('go2mylink_api_base_url', 'go2mylink_api_key', 'go2mylink_timeout_seconds', 'link_safety_providers', 'link_safety_webrisk_api_key', 'abuse_auto_suspend_reports', 'abuse_auto_suspend_window_hours', 'abuse_takedown_promise', 'abuse_mailbox')");
@@ -1974,7 +1974,8 @@ itCheck('Q 0007 dynamic QR', itQExec($itQ, "INSERT INTO `tblQRRedirects` (`redir
 itCheck('Q 0007 dynamic QR', itQExec($itQ, "INSERT INTO `tblQRRedirects` (`redirectUUID`, `destinationURL`) VALUES ('5fa85f64-5717-4562-b3fc-2c963f66afa5', 'https://example.com/c')") === 'ok' && itQExec($itQ, "INSERT INTO `tblQRRedirects` (`redirectUUID`, `destinationURL`) VALUES ('6fa85f64-5717-4562-b3fc-2c963f66afa6', 'https://example.com/d')") === 'ok', 'any number of codes may still be waiting for a short code (NULL is not a clash)');
 // (install.sql changes this connection's SQL mode; the real site always uses strict mode, db_connect.php.)
 $itQ->query("SET SESSION SQL_MODE = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
-itCheck('Q 0007 dynamic QR', itQExec($itQ, "UPDATE `tblQRRedirects` SET `syncState` = 'unknown' WHERE `redirectID` = 1") !== 'ok', 'syncState accepts only pending, active or failed (strict mode, as the site runs)');
+itCheck('Q 0007 dynamic QR', itQExec($itQ, "UPDATE `tblQRRedirects` SET `syncState` = 'unconfirmed' WHERE `redirectID` = 1") === 'ok' && itQExec($itQ, "UPDATE `tblQRRedirects` SET `syncState` = 'a-word-too-long-x' WHERE `redirectID` = 1") !== 'ok', 'L6: syncState takes a new word such as "unconfirmed" with no upgrade, and refuses one longer than 16 characters (strict mode, as the site runs)');
+itQExec($itQ, "UPDATE `tblQRRedirects` SET `syncState` = 'active' WHERE `redirectID` = 1");
 
 // Q3. An abuse report: the email encrypted, the address only hashed; counting different people.
 $itQRedirectID = (int) itValue($itQ, "SELECT `redirectID` FROM `tblQRRedirects` WHERE `shortCode` = 'Ab3dE9x'");

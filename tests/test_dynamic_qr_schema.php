@@ -111,7 +111,11 @@ assertContains('`reporterEmailEncrypted` TEXT NULL', $dqAllSql, 'tblAbuseReports
 assertContains('`reporterAddressHash` CHAR(64) NOT NULL', $dqAllSql, 'tblAbuseReports keeps only a 64-character hash of the reporter address');
 assertFalse((bool) preg_match('/`(reporterIP|requestIP|reporterEmail)`/', $dqAllSql), 'tblAbuseReports has no column for a plain address or a plain email');
 assertContains('PRIMARY KEY (`userID`, `limitKey`)', $dqAllSql, 'tblUserLimitOverrides: one number per person per limit');
-assertContains("ENUM('pending','active','failed') NOT NULL DEFAULT 'pending'", $dqAllSql, 'syncState: pending, active or failed');
+assertContains("`syncState` VARCHAR(16) NOT NULL DEFAULT 'unlinked'", $dqAllSql, 'L6: syncState is a short word (not an ENUM an upgrade could never widen), and a code from before 0007 starts as "unlinked", not "pending"');
+assertFalse(str_contains($dqAllSql, 'ENUM('), 'L6: upgrade 0007 adds no ENUM column');
+foreach (['unlinked', 'pending', 'active', 'unconfirmed', 'failed'] as $dqState) {
+    assertContains($dqState, $dqAllSql, 'L6: the syncState description names "' . $dqState . '"');
+}
 
 // 🔤 Every name back-quoted inside the two new tables (the runner checks the
 //    table and step names itself; this checks every column and key part).

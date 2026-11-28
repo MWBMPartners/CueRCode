@@ -22,6 +22,8 @@
  *   every case: https://127.0.0.1:<port>/<scenario>/api/v1/<route>
  *     ok          behaves like a working Go2My.Link (links are kept in memory)
  *     slowcreate  like ok, but a create is SAVED and the answer comes late
+ *     slowurl     like slowcreate, but the look-up also gives short_url (what
+ *                 Go2My.Link issue #276 asks for; the real look-up does not)
  *     notkept     like ok, but ignores the code CueRCode chose (the setting
  *                 cuercode.allow_external_shortcode switched off)
  *     wrongdomain like ok, but new links use another short domain
@@ -362,7 +364,11 @@ while (true) {
             standinSend($standinClient, 404, standinError(404, 'No such short URL in this account.'));
             continue;
         }
-        standinSend($standinClient, 200, standinSuccess(standinRow($standinLinks[strtolower($standinCode)])));
+        $standinFound = standinRow($standinLinks[strtolower($standinCode)]);
+        if ($standinScenario === 'slowurl') {
+            $standinFound['short_url'] = 'https://QRmy.Link/' . $standinFound['short_code'];
+        }
+        standinSend($standinClient, 200, standinSuccess($standinFound));
         continue;
     }
 
@@ -421,7 +427,7 @@ while (true) {
         if ($standinScenario === 'wrongdomain') {
             $standinDomain = 'g2my.link';
         }
-        if ($standinScenario === 'slowcreate') {
+        if ($standinScenario === 'slowcreate' || $standinScenario === 'slowurl') {
             sleep(3);
         }
         standinSend($standinClient, 201, standinSuccess(['short_code' => $standinNewCode, 'short_url' => 'https://' . $standinDomain . '/' . $standinNewCode, 'qr_code_external_uuid' => (string) $standinDecoded['qr_external_uuid']]));

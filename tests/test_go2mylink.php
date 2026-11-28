@@ -245,7 +245,9 @@ assertEquals('https://example.com/new', $g2Result['data']['destinationUrl'], 'ch
 $g2Seen = [];
 $g2Result = go2mylinkLookupLink('Ab3dE9x', $g2Opts($g2Script([$g2Reply(200, $g2Ok($g2Row))], $g2Seen)));
 assertTrue($g2Result['ok'] && $g2Seen[0]['method'] === 'GET' && $g2Seen[0]['url'] === 'https://go2my.link/api/v1/urls/Ab3dE9x' && $g2Seen[0]['body'] === null, 'look up: GET /api/v1/urls/{code} with no body');
-assertEquals(['shortCode' => 'Ab3dE9x', 'destinationUrl' => 'https://example.com/menu', 'isActive' => true, 'clickCount' => 12], $g2Result['data'], 'look up: code, destination, switched on, scans');
+assertEquals(['shortCode' => 'Ab3dE9x', 'destinationUrl' => 'https://example.com/menu', 'isActive' => true, 'clickCount' => 12, 'shortUrl' => ''], $g2Result['data'], 'look up: code, destination, switched on, scans; no short address, because Go2My.Link\'s look-up does not send one (asked for on its issue #276)');
+$g2Result = go2mylinkLookupLink('Ab3dE9x', $g2Opts($g2Script([$g2Reply(200, $g2Ok(array_merge($g2Row, ['short_url' => 'https://QRmy.Link/Ab3dE9x'])))], $g2Seen)));
+assertEquals('https://QRmy.Link/Ab3dE9x', $g2Result['data']['shortUrl'], 'look up: a short address in the reply (once Go2My.Link sends one) is passed on');
 
 $g2Seen = [];
 $g2Result = go2mylinkScanTotal('Ab3dE9x', $g2Opts($g2Script([$g2Reply(200, $g2Ok($g2Row))], $g2Seen)));
@@ -324,6 +326,7 @@ assertTrue($g2Result['ok'] && $g2Result['data']['shortCode'] === 'Zz99abc' && $g
 // 🌐 201 but on another short domain: never printed.
 $g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Ok(['short_code' => 'Ab3dE9x', 'short_url' => 'https://g2my.link/Ab3dE9x', 'qr_code_external_uuid' => $g2Link['redirectUUID']]))], $g2Seen)));
 assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'wrong_short_domain' && $g2Result['outcomeUnknown'] === false && $g2Result['data']['shortCode'] === 'Ab3dE9x', 'create: a link made on another short domain (not dynamic_redirect_base_url) is reported, with its code, and never treated as success');
+assertTrue($g2Result['remoteExists'] === true, 'H1: ...and it says the link DOES exist on Go2My.Link (so the caller records it and never tries again)');
 $g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Ok(['short_code' => 'Ab3dE9x', 'short_url' => 'https://qrmy.link/Ab3dE9x', 'qr_code_external_uuid' => $g2Link['redirectUUID']]))], $g2Seen)));
 assertTrue($g2Result['ok'], 'create: the short domain is compared without regard to capitals (qrmy.link = QRmy.Link)');
 $g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Ok(['short_code' => 'Ab3dE9x', 'short_url' => 'https://QRmy.Link/Other12', 'qr_code_external_uuid' => $g2Link['redirectUUID']]))], $g2Seen)));
@@ -349,10 +352,27 @@ $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Created)], $g2Seen)));
 assertTrue($g2Result['ok'] && $g2Methods($g2Seen) === 'POST urls', 'safe create: a normal create is one call');
 
+// 🔗 What Go2My.Link's look-up would send once it gives the short address
+//    (asked for on Go2My.Link issue #276): the same row with short_url.
+$g2RowUrl = array_merge($g2Row, ['short_url' => 'https://QRmy.Link/Ab3dE9x']);
+
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok($g2Row))], $g2Seen)));
-assertTrue($g2Result['ok'] && $g2Result['data']['recovered'] === true && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'safe create: the answer was lost, the code is looked up and found: success, nothing made twice (' . $g2Methods($g2Seen) . ')');
-assertEquals('https://QRmy.Link/Ab3dE9x', $g2Result['data']['shortUrl'], 'safe create: a recovered link\'s address is built from the short-link address and the code');
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'domain_unconfirmed' && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'H1: the answer was lost and the code is found, but the look-up does not say which short domain it is on: NOT a success, and nothing made twice (' . $g2Result['reason'] . ', ' . $g2Methods($g2Seen) . ')');
+assertTrue($g2Result['remoteExists'] === true && $g2Result['outcomeUnknown'] === false, 'H1: ...it says the link exists on Go2My.Link, so it is never tried again');
+assertEquals('unconfirmed', go2mylinkSyncStateFor($g2Result), 'H1: ...and it is held as "unconfirmed" (never printed, an admin must look)');
+assertContains('#276', $g2Result['adminMessage'], 'H1: the admin message says why (Go2My.Link issue #276)');
+assertFalse(isset($g2Result['data']['shortUrl']), 'H1: no short address is offered for printing');
+
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok($g2RowUrl))], $g2Seen)));
+assertTrue($g2Result['ok'] && $g2Result['data']['recovered'] === true && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'safe create: lost answer, found, and the look-up confirms the short domain: success, nothing made twice (' . $g2Methods($g2Seen) . ')');
+assertEquals('https://QRmy.Link/Ab3dE9x', $g2Result['data']['shortUrl'], 'safe create: a recovered link\'s address is the one Go2My.Link confirmed');
+assertEquals('active', go2mylinkSyncStateFor($g2Result), 'safe create: a confirmed link is "active"');
+
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok(array_merge($g2Row, ['short_url' => 'https://g2my.link/Ab3dE9x'])))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'wrong_short_domain' && $g2Result['remoteExists'] === true, 'H1: a found link the look-up places on another short domain is wrong_short_domain, never a success');
 
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(404, $g2Err(404, 'No such short URL in this account.')), $g2Reply(201, $g2Created)], $g2Seen)));
@@ -362,34 +382,56 @@ assertEquals($g2Seen[0]['body'], $g2Seen[2]['body'], 'safe create: the second tr
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Fail(28, 'timed out')], $g2Seen)));
 assertTrue(!$g2Result['ok'] && $g2Result['outcomeUnknown'] === true && $g2Result['reason'] === 'timeout' && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'safe create: lost answer AND lost look-up: "not known yet" (outcomeUnknown), not "failed", and no blind second create');
+assertEquals('pending', go2mylinkSyncStateFor($g2Result), 'safe create: "not known yet" is "pending"');
 
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(404, $g2Err(404, 'No such short URL in this account.')), $g2Fail(28, 'timed out')], $g2Seen)));
 assertTrue(!$g2Result['ok'] && $g2Result['outcomeUnknown'] === true && count($g2Seen) === 3, 'safe create: the second try is also lost: still "not known yet", at most one retry');
 
 $g2Seen = [];
-$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(409, $g2Err(409, 'That QR code is already linked to a short URL.', 'qr_external_uuid')), $g2Reply(200, $g2Ok($g2Row))], $g2Seen)));
-assertTrue($g2Result['ok'] && $g2Result['data']['recovered'] === true && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'safe create: "QR already linked" and our code exists: it is ours from an earlier try - success');
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(409, $g2Err(409, 'That QR code is already linked to a short URL.', 'qr_external_uuid')), $g2Reply(200, $g2Ok($g2RowUrl))], $g2Seen)));
+assertTrue($g2Result['ok'] && $g2Result['data']['recovered'] === true && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'safe create: "QR already linked" and our code exists on the confirmed domain: it is ours from an earlier try - success');
 
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(409, $g2Err(409, 'That QR code is already linked to a short URL.', 'qr_external_uuid')), $g2Reply(404, $g2Err(404, 'No such short URL in this account.'))], $g2Seen)));
-assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'already_linked' && $g2Result['outcomeUnknown'] === false, 'safe create: "QR already linked" under a code we do not know: needs an admin (already_linked)');
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'already_linked' && $g2Result['outcomeUnknown'] === false && $g2Result['remoteExists'] === true, 'safe create: "QR already linked" under a code we do not know: needs an admin (already_linked; a link does exist on Go2My.Link)');
+assertEquals('unconfirmed', go2mylinkSyncStateFor($g2Result), 'safe create: ...held as "unconfirmed", never retried');
+
+// 🔁 H1, the reviewer's case: Go2My.Link made the link on another short
+//    domain; the same row is tried again later.
+$g2Wrong = $g2Ok(['short_code' => 'Ab3dE9x', 'short_url' => 'https://g2my.link/Ab3dE9x', 'qr_code_external_uuid' => $g2Link['redirectUUID']]);
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Wrong)], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'wrong_short_domain' && $g2Result['remoteExists'] === true && count($g2Seen) === 1, 'H1: first try on another short domain: refused, and it says the link exists on Go2My.Link');
+assertEquals('unconfirmed', go2mylinkSyncStateFor($g2Result), 'H1: ...held as "unconfirmed"');
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(409, $g2Err(409, 'That QR code is already linked to a short URL.', 'qr_external_uuid')), $g2Reply(200, $g2Ok($g2Row))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['remoteExists'] === true && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'H1: tried again, the same row is NOT "recovered" onto QRmy.Link: ' . $g2Result['reason']);
 
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(409, $g2Err(409, 'That alias is already taken. Please choose another.', 'custom_code'))], $g2Seen)));
 assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'code_taken' && count($g2Seen) === 1, 'safe create: code taken: handed back at once so the caller stores a NEW code before trying again');
+assertEquals('failed', go2mylinkSyncStateFor($g2Result), 'safe create: code taken is "failed" (nothing was made)');
 
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(7, 'Failed to connect')], $g2Seen)));
 assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'unreachable' && $g2Result['outcomeUnknown'] === false && count($g2Seen) === 1, 'safe create: could not connect at all: nothing was sent, so no look-up is needed');
 
 $g2Seen = [];
-$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(500, $g2Err(500, 'An unexpected error occurred.')), $g2Reply(200, $g2Ok($g2Row))], $g2Seen)));
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(500, $g2Err(500, 'An unexpected error occurred.')), $g2Reply(200, $g2Ok($g2RowUrl))], $g2Seen)));
 assertTrue($g2Result['ok'] && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x', 'safe create: a 500 may have saved the link, so it is looked up');
 
+// 🧭 L1: a found link that is switched off, or points somewhere else.
 $g2Seen = [];
-$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok(array_merge($g2Row, ['destination_url' => 'https://example.com/other'])))], $g2Seen)));
-assertTrue($g2Result['ok'] && $g2Result['data']['remoteDestination'] === 'https://example.com/other' && $g2Result['data']['destinationMatches'] === false, 'safe create: a found link whose destination differs is still ours (our own unique code), and the difference is reported for the daily check (L5)');
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok(array_merge($g2RowUrl, ['is_active' => false])))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'link_switched_off' && $g2Result['remoteExists'] === true, 'L1: a found link that is switched off on Go2My.Link is not a success: ' . $g2Result['reason']);
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok(array_merge($g2RowUrl, ['destination_url' => 'https://example.com/other']))), $g2Reply(200, $g2Ok($g2RowUrl))], $g2Seen)));
+assertTrue($g2Result['ok'] && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x, PUT urls/Ab3dE9x' && $g2Result['data']['destinationMatches'] === true && $g2Result['data']['destinationResent'] === true, 'L1: a found link that points elsewhere gets our destination sent again before it counts (' . $g2Methods($g2Seen) . ')');
+assertEquals(['destination_url' => 'https://example.com/menu'], json_decode((string) $g2Seen[2]['body'], true), 'L1: ...the destination sent is ours');
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out'), $g2Reply(200, $g2Ok(array_merge($g2RowUrl, ['destination_url' => 'https://example.com/other']))), $g2Reply(422, $g2Err(422, 'x', 'destination_url'))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'rejected' && $g2Result['remoteExists'] === true, 'L1: ...and if that change is refused, it is not a success (the link exists, pointing elsewhere)');
 
 // ==============================================================================
 // ✅ Section 7: "Test connection" changes nothing
@@ -567,14 +609,24 @@ if ($g2Port > 0) {
     foreach ($g2Log as $g2Entry) {
         $g2Seq[] = $g2Entry['method'] . ' ' . $g2Entry['route'];
     }
-    assertTrue($g2Result['ok'] && $g2Result['data']['recovered'] === true, 'real HTTPS: a create whose answer was too late is found by its code: success (' . $g2Result['reason'] . ')');
+    assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'domain_unconfirmed' && $g2Result['remoteExists'] === true, 'real HTTPS, H1: a create whose answer was too late is found by its code, but Go2My.Link\'s look-up does not give its short domain, so it is held, never printed (' . $g2Result['reason'] . ')');
     assertEquals(['POST urls', 'GET urls/Slow777'], $g2Seq, 'real HTTPS: ...one create and one look-up, never a second create');
+
+    // 🔁 The same once Go2My.Link's look-up gives the short address (issue #276).
+    $g2ClearLog();
+    $g2Result = go2mylinkCreateLinkSafely(array_merge($g2Link, ['redirectUUID' => '8fa85f64-5717-4562-b3fc-2c963f66afa8', 'shortCode' => 'Slow888']), $g2Real('slowurl'));
+    sleep(2);
+    assertTrue($g2Result['ok'] && $g2Result['data']['recovered'] === true && $g2Result['data']['shortUrl'] === 'https://QRmy.Link/Slow888', 'real HTTPS: with the short address in the look-up, a late create is confirmed and recovered (' . $g2Result['reason'] . ')');
 
     // ⚙️ Go2My.Link ignores the chosen code / makes it on the wrong domain.
     $g2Result = go2mylinkCreateLink(array_merge($g2Link, ['redirectUUID' => '7fa85f64-5717-4562-b3fc-2c963f66afa7', 'shortCode' => 'Keep777']), $g2Real('notkept'));
     assertTrue($g2Result['ok'] && $g2Result['data']['codeKept'] === false && $g2Result['data']['shortCode'] !== 'Keep777', 'real HTTPS: Go2My.Link\'s own code is reported when it ignores ours');
     $g2Result = go2mylinkCreateLink(array_merge($g2Link, ['redirectUUID' => '6fa85f64-5717-4562-b3fc-2c963f66afa6', 'shortCode' => 'Dom7777']), $g2Real('wrongdomain'));
-    assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'wrong_short_domain', 'real HTTPS: a link made on another short domain is reported, never used');
+    assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'wrong_short_domain' && $g2Result['remoteExists'] === true, 'real HTTPS: a link made on another short domain is reported, never used');
+    // 🔁 H1, the reviewer's reproduction: the same row tried again.
+    $g2Result = go2mylinkCreateLinkSafely(array_merge($g2Link, ['redirectUUID' => '6fa85f64-5717-4562-b3fc-2c963f66afa6', 'shortCode' => 'Dom7777']), $g2Real('wrongdomain'));
+    assertTrue(!$g2Result['ok'] && $g2Result['remoteExists'] === true, 'real HTTPS, H1: the same row tried again is NOT accepted as a QRmy.Link link: ' . $g2Result['reason']);
+    assertFalse(isset($g2Result['data']['shortUrl']) && str_contains((string) $g2Result['data']['shortUrl'], 'QRmy.Link'), 'real HTTPS, H1: ...and no QRmy.Link address is offered for printing');
 
     // 🔌 Test connection for real: it passes, and nothing was created or switched off.
     $g2ClearLog();
