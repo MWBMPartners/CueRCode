@@ -8,13 +8,12 @@
 # .github/workflows/deploy.yml so the two can never drift apart (#155,
 # decision 0025: nothing is uploaded unless the test suite passes).
 #
-# ⚠️ WHAT THIS DOES NOT RUN (Codex finding 3.2 of the 7n Phase 2 review):
-#    the real-database tests in tests/integration/. They need a MySQL or
-#    MariaDB server, so tests/run.php leaves them out (it runs only
-#    tests/test_*.php). A failing integration test therefore does NOT stop a
-#    deploy today; they are run by hand on throwaway databases before a
-#    change is committed (tests/README.md). Whether the deploy should run
-#    them too is an open question for the owner.
+# ⚠️ WHAT THIS DOES NOT RUN: the real-database tests in tests/integration/.
+#    They need a MySQL or MariaDB server, so tests/run.php leaves them out (it
+#    runs only tests/test_*.php). They have their own shared script,
+#    tools/ci/run-integration-tests.sh, which ci.yml and deploy.yml run in a
+#    separate job against throwaway servers; a failure there also stops a
+#    deploy (decision 0040, #174).
 #
 # It fails when:
 #   1. tests/run.php is missing (a deploy must never skip the tests silently),

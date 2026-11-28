@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database check for the admin SETTINGS editor (7n Phase 1C)
+ * 🧪 CueRCode - Real-database check for the admin SETTINGS editor (7n Phase 1C)
  * ==============================================================================
  *
  * Path: tests/integration/admin_settings_real_mysql.php

@@ -40,6 +40,31 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
+## The real-database tests run automatically (decision 0040, #174)
+
+`run.php` never opens a database, so the scripts in `tests/integration/` are
+run separately: GitHub runs every `tests/integration/*_real_mysql.php` in the
+`integration` job of `ci.yml` (pull requests and pushes) and of `deploy.yml`
+(the upload waits for it), on throwaway **MySQL 8.0.36**, **MySQL 8.4** and
+**MariaDB 10.6** servers, with PHP 8.4. Both use one script:
+
+```bash
+CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=3306 \
+CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
+  bash tools/ci/run-integration-tests.sh
+```
+
+It refuses (through `tools/ci/integration_db_guard.php`) any server that is
+not on this machine or that holds a database other than the server's own and
+`cuercode_it_` ones, gives each script its own `cuercode_it_ci_<script>`
+database, and fails when a required script is missing, none ran, any failed,
+deprecation text appeared or part of a script could not run. To run it by hand
+the same way GitHub does, start an empty throwaway server (for example
+`docker run -d --rm --name cuercode-it-ci -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 127.0.0.1:3306:3306 mysql:8.4`;
+for MariaDB `-e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 mariadb:10.6`), run the
+command above, then `docker stop cuercode-it-ci`. The sections below describe
+each script and how to run one on its own.
+
 ## Current suite (2026-11-28, Codex review fixes of task 7n Phase 2: the table below was re-measured; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
@@ -64,7 +89,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_core.php` | 146 |
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
-| `test_deploy_test_gate.php` | 32 |
+| `test_deploy_test_gate.php` | 88 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
@@ -101,9 +126,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9009** |
+| **Total** | **9065** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Real-database tests in the deploy gate (#174, decision 0040, 2026-11-28)** added 56 checks to `test_deploy_test_gate.php` (the shared script `tools/ci/run-integration-tests.sh` with stand-in scripts, the server guard, and 13 weakenings of `deploy.yml`'s new job). Run against the code before the change, 24 of them failed. Suite: **9065** in 55 files on PHP 8.5.12. The shared script then ran all eight real-database scripts inside a Linux PHP 8.4.27 container (non-root) against throwaway MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28: every one passed on each.
 
 **Merged security review of the no-JavaScript route (#163, 2026-11-28)** added `test_no_script_route_review_fixes.php` (76 assertions: findings M1, L1, L3, L4, L5, L6, I2, I3, I4, I5 and upgrade 0005's byte-for-byte compare; the route helper is driven with stand-ins for its gate, its "give the place back" step, the queued-email counter and the minimum time, so the check is on what the helper does, not on a function name). First run against the old code it failed 37 of 57 (the rest stopped on functions that did not exist yet). `test_human_check_fallbacks.php` lost 3 checks (the pages no longer read the limits themselves; the helper's own checks replace them) and `test_human_check.php` now looks for 0005's byte-for-byte compare. Suite: **9009** assertions in 55 files on PHP 8.5.12, all passing. `tests/integration/human_check_real_mysql.php` grew to 171 checks in 16 scenarios (new M, N, P, Q; K, I and J changed): run against the old code (commit 17eeda7) 39 of them failed, in K, M, N, P, Q, I and J. `migrations_real_mysql.php` grew to 200 (O: a stored "NONE", or a description differing only in capitals or a trailing space, is kept; failed on the old code on both servers). Every protection the review found untested was then removed in a scratch copy, one at a time (19 removals, including the new ones), and each made at least one test fail; 18 were caught by the real-database run, the "do not ask a provider freshly tested down" skip only by the unit tests (the real run has no provider to time). On throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28** all eight scripts in `tests/integration/` passed: human check 171, migrations 200, account recovery 192, admin access 167, admin plans 144, admin settings 232, email queue 77, resend verification 32 on each.
 
@@ -179,13 +206,13 @@ database, a second installer while one holds the lock). That harness lived in
 the session scratchpad and is not part of the suite; the same behaviour is
 covered by the scripts above.
 
-## Optional real-database check (email queue)
+## Real-database check (email queue)
 
 `tests/test_email_queue_runner.php` proves the email queue runner's logic
 with an in-memory stand-in for the queue table. The real SQL, the real MySQL
 named lock, and two real runner processes working on one queue at the same
-time can only be proven against a real database, so there is a separate,
-optional script for that: `tests/integration/email_queue_real_mysql.php`.
+time can only be proven against a real database, so there is a separate
+script for that (run automatically, see above): `tests/integration/email_queue_real_mysql.php`.
 `run.php` does not run it (it only picks up `tests/test_*.php`), but CI still
 syntax-checks it.
 
@@ -231,7 +258,7 @@ code 0 means every scenario passed. For MariaDB, use
 all scenarios passed on MySQL 8.4.11, MySQL 8.0.46, MariaDB 10.11.19 and
 MariaDB 10.6.28.
 
-## Optional real-database check (database upgrades)
+## Real-database check (database upgrades)
 
 `tests/test_migrations.php` proves the database upgrade runner's ("migrations")
 LOGIC without a database, using a stand-in "does this already exist?" checker.
@@ -239,7 +266,7 @@ The real `INFORMATION_SCHEMA` questions, the real named lock, a real
 `install.sql` run twice, a real upgrade of a database built by the OLD
 (pre-task-7n) `install.sql`, and the real command-line tool
 (`_includes/cli/migrate.php`) end to end can only be proven against a real
-server, so there is a separate, optional script for that:
+server, so there is a separate script for that (run automatically, see above):
 `tests/integration/migrations_real_mysql.php`. `run.php` does not run it (it
 only picks up `tests/test_*.php`), but CI still syntax-checks it.
 
@@ -308,7 +335,7 @@ prints PASS/FAIL per scenario. Exit code 0 means every scenario passed. Last
 run 2026-11-23 (task 7n Phase 1A part 2 code review fixes, #113 item 5, #70):
 all scenarios passed on MySQL 8.0.46.
 
-## Optional real-database check (admin settings editor)
+## Real-database check (admin settings editor)
 
 `tests/test_admin_settings.php` (count in the table above; no database) proves the
 settings editor's decisions. `tests/integration/admin_settings_real_mysql.php`
@@ -334,7 +361,7 @@ docker stop cuercode-it-settings
 
 Run 2026-11-25 (after the final review: test buttons record each press before counting it, `.started` rows, optional limits show their default, odd stored numbers, internal-only discovery names): 216/216 on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28. (Earlier the same day, after the second independent review: 213/213 on MySQL 8.0.36, 8.4.11 and MariaDB 10.6.28.)
 
-## Optional real-database check (admin plans and prices)
+## Real-database check (admin plans and prices)
 
 `tests/test_admin_plans.php` proves the plans editor's decisions. `tests/integration/admin_plans_real_mysql.php`
 (144 checks, scenarios A-M) proves the rest on a throwaway database: the 0004 starting data; making a plan
@@ -356,7 +383,7 @@ CUERCODE_IT_DB_NAME=cuercode_it_p2c CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS
 docker stop cuercode-it-plans
 ```
 
-## Optional real-database check (Global Admin access)
+## Real-database check (Global Admin access)
 
 `tests/test_admin_access.php` proves the admin access DECISIONS without a
 database. `tests/integration/admin_access_real_mysql.php` proves the rest
@@ -419,12 +446,14 @@ tests/
 ├── bootstrap.php      # test-only constants + requireFn() loader (NEVER opens a DB)
 ├── lib/
 │   └── assert.php     # tiny assertion library + global results collector
-├── integration/       # OPTIONAL checks that need a real (throwaway) database - NOT run by run.php
+├── integration/       # checks that need a real (throwaway) database - NOT run by run.php; run by tools/ci/run-integration-tests.sh
 │   ├── account_recovery_real_mysql.php
 │   ├── admin_access_real_mysql.php
 │   ├── admin_plans_real_mysql.php
 │   ├── admin_settings_real_mysql.php
 │   ├── email_queue_real_mysql.php
+│   ├── human_check_http_router.php   # the web server's router for human_check (not a test itself)
+│   ├── human_check_real_mysql.php
 │   ├── migrations_real_mysql.php
 │   └── resend_verification_real_mysql.php
 └── test_*.php         # individual characterization test files (added per cycle)
@@ -527,7 +556,7 @@ boundaries when deciding what to test:
   predicates (`test_qrcodes.php`). Their **DB/render-dependent parts** remain
   out of scope for this dependency-free harness.
 
-## Optional real-database check (new verification link, #128)
+## Real-database check (new verification link, #128)
 
 `tests/test_resend_verification.php` proves the decisions, settings and page
 wiring without a database. `tests/integration/resend_verification_real_mysql.php`
@@ -547,7 +576,7 @@ CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
 docker stop p128-resend-mysql
 ```
 
-## Optional real-database check (decisions 0013 and 0014)
+## Real-database check (decisions 0013 and 0014)
 
 `tests/test_account_recovery.php` and `tests/test_client_ip.php` prove the
 decisions and the visitor-address rules without a database.

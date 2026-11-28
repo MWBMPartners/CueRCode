@@ -9,8 +9,10 @@
 #   2. The dependency-free test suite (php tests/run.php) on all three versions.
 #      The QR/PDF/barcode libraries are committed in _libraries/ (decision 0011);
 #      a pin check verifies them instead of downloading anything.
-#   3. Site polish check (php tools/check_site_polish.php, #137).
-#   4. Secret scan via the gitleaks CLI (the org-licensed gitleaks *action*
+#   3. The real-database tests (tests/integration/, decision 0040) against
+#      throwaway MySQL 8.0, MySQL 8.4 and MariaDB 10.6 servers.
+#   4. Site polish check (php tools/check_site_polish.php, #137).
+#   5. Secret scan via the gitleaks CLI (the org-licensed gitleaks *action*
 #      silently no-ops on private repos without a licence — the CLI does not).
 #
 # @copyright 2025-2026 MWBM Partners Ltd. All rights reserved.
@@ -173,6 +175,89 @@ jobs:
       - name: Run test suite
         if: steps.suite.outputs.present == 'true'
         run: bash tools/ci/run-tests.sh
+
+  # ---------------------------------------------------------------------------
+  # 🗄️ Real-database tests (#174, decision 0040) — BLOCKING. Every script in
+  #     tests/integration/ against a throwaway MySQL 8.0, MySQL 8.4 and
+  #     MariaDB 10.6 server that GitHub starts for this job and deletes after
+  #     it. The same job is in deploy.yml, where it blocks the upload. PHP 8.4
+  #     only: the lowest supported version (decision 0002); 8.6 stays
+  #     report-only in the jobs above (decision 0005).
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Real-database tests (${{ matrix.database }})
+    runs-on: ubuntu-latest
+    # ⏱️ A hung job must not hold the queue for the 6-hour default.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        database:
+          - 'mysql:8.0.36'
+          - 'mysql:8.4'
+          - 'mariadb:10.6'
+    services:
+      # 🧪 Throwaway server: made for this job, empty, removed afterwards. The
+      #    MYSQL_ name is read by the MySQL image, the MARIADB_ one by MariaDB.
+      database:
+        image: ${{ matrix.database }}
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+        ports:
+          - '127.0.0.1:3306:3306'
+    steps:
+      # 📜 Full history: migrations_real_mysql.php builds an "old" database
+      #    from install.sql as it was in commit 76b1af7 (git show).
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # 🔎 Same three situations as the test suite job above: present → run;
+      #    script gone but tests/integration/ still there → fail; neither on
+      #    this branch → skip with a notice, unless this pull request's target
+      #    branch has the script (then this pull request removes it → fail).
+      - name: Check the real-database tests are present on this branch
+        id: suite
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -f tools/ci/run-integration-tests.sh ]; then
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          elif [ -d tests/integration ]; then
+            echo "::error::tools/ci/run-integration-tests.sh is missing but tests/integration/ exists - the real-database tests cannot run."
+            exit 1
+          else
+            if [ -n "${BASE_REF}" ]; then
+              if ! git fetch --no-tags --depth=1 origin "refs/heads/${BASE_REF}"; then
+                echo "::error::The target branch '${BASE_REF}' could not be fetched to check whether it has the real-database tests. Re-run the check."
+                exit 1
+              fi
+              if git cat-file -e FETCH_HEAD:tools/ci/run-integration-tests.sh 2>/dev/null; then
+                echo "::error::The target branch '${BASE_REF}' has the real-database tests, but this pull request removes them."
+                exit 1
+              fi
+            fi
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::The real-database tests are not on this branch yet - skipped (they arrive via promotion)."
+          fi
+
+      - name: Set up PHP 8.4
+        if: steps.suite.outputs.present == 'true'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: gd, mbstring, zip, fileinfo, bcmath, mysqli, intl, curl
+          coverage: none
+          ini-values: error_reporting=-1, display_errors=On, log_errors=Off
+
+      # One shared script (also used by deploy.yml). It refuses any server
+      # that is not this machine's throwaway one, and fails if a script is
+      # missing, if none ran, or if any failed.
+      - name: Run the real-database tests
+        if: steps.suite.outputs.present == 'true'
+        run: bash tools/ci/run-integration-tests.sh
 
   # ---------------------------------------------------------------------------
   # 🔍 Site polish check (#137) — BLOCKING. Source-only checks for the small

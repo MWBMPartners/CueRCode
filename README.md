@@ -220,7 +220,7 @@ php tests/run.php
 
 runs the full dependency-free characterization suite - 6405 assertions across 45 test files (PHP 8.5.12, 2026-11-25), no database or Composer required.
 
-There is also an optional real-database check for the email queue runner (`tests/integration/email_queue_real_mysql.php`), run against a throwaway MySQL or MariaDB container - see [tests/README.md](tests/README.md).
+The real-database tests in `tests/integration/` need a MySQL or MariaDB server. GitHub runs them on every pull request, every push to a tier branch and before every deploy, on throwaway MySQL 8.0, MySQL 8.4 and MariaDB 10.6 servers (`bash tools/ci/run-integration-tests.sh`, decision 0040); a failure stops the upload. To run one by hand against a throwaway Docker container, see [tests/README.md](tests/README.md).
 
 ## 📄 License
 

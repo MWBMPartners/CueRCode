@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database check for "new verification link" (#128)
+ * 🧪 CueRCode - Real-database check for "new verification link" (#128)
  * ==============================================================================
  *
  * Path: tests/integration/resend_verification_real_mysql.php

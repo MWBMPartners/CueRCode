@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database check for the admin PLANS AND PRICES editor (7n Phase 2, slice 2c)
+ * 🧪 CueRCode - Real-database check for the admin PLANS AND PRICES editor (7n Phase 2, slice 2c)
  * ==============================================================================
  *
  * Path: tests/integration/admin_plans_real_mysql.php

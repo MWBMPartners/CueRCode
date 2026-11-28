@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database check for decisions 0013 and 0014
+ * 🧪 CueRCode - Real-database check for decisions 0013 and 0014
  * ==============================================================================
  *
  * Path: tests/integration/account_recovery_real_mysql.php

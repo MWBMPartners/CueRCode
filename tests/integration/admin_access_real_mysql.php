@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database check for Global Admin access (7n Phase 1B)
+ * 🧪 CueRCode - Real-database check for Global Admin access (7n Phase 1B)
  * ==============================================================================
  *
  * Path: tests/integration/admin_access_real_mysql.php
@@ -1185,6 +1185,14 @@ foreach ($aiChecks as $aiScenario => $aiPassed) {
 // 🟡 Say plainly what did NOT run on this machine.
 foreach ($aiSkipped as $aiSkippedWhat) {
     echo '  NOT RUN: ' . $aiSkippedWhat . PHP_EOL;
+}
+
+// 🚦 Decision 0040 (#174): the automatic runs (tools/ci/run-integration-tests.sh)
+//    set CUERCODE_IT_REQUIRE_ALL=1, where a part that could not run is a
+//    failure, never a quiet pass.
+if ($aiSkipped !== [] && getenv('CUERCODE_IT_REQUIRE_ALL') === '1') {
+    echo '  FAIL: CUERCODE_IT_REQUIRE_ALL=1 and part of this script could not run here.' . PHP_EOL;
+    $aiAllPassed = false;
 }
 
 if ($aiAllPassed) {

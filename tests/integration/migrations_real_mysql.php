@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database check for the database upgrade runner
+ * 🧪 CueRCode - Real-database check for the database upgrade runner
  * ==============================================================================
  *
  * Path: tests/integration/migrations_real_mysql.php
@@ -127,7 +127,7 @@
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php at the
  * top level), because it needs a database. CI still syntax-checks it.
  *
- * How to run it (Docker example; see tests/README.md, "Optional real-database
+ * How to run it (Docker example; see tests/README.md, "Real-database
  * check (database upgrades)" for the full write-up):
  *
  *     CUERCODE_IT_DB_HOST=127.0.0.1 CUERCODE_IT_DB_PORT=33113 \
@@ -174,7 +174,7 @@
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.0.0
  * @since       2026-11-23 (task 7n Phase 1A part 2, #113 item 5, #70)
- * @see         tests/README.md - "Optional real-database check (database upgrades)"
+ * @see         tests/README.md - "Real-database check (database upgrades)"
  * @see         tests/test_migrations.php - the DB-independent unit tests
  * @see         web/CueRCode.net/_functions/fn_migrations.php - the runner
  * @see         web/CueRCode.net/_includes/cli/migrate.php - the command-line tool

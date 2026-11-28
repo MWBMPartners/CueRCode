@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database check for the email queue runner (#112)
+ * 🧪 CueRCode - Real-database check for the email queue runner (#112)
  * ==============================================================================
  *
  * Path: tests/integration/email_queue_real_mysql.php
@@ -52,7 +52,7 @@
  * @copyright   2025–2026 MWBM Partners Ltd
  * @version     1.1.0
  * @since       2026-09-25 (#112)
- * @see         tests/README.md - "Optional real-database check (email queue)"
+ * @see         tests/README.md - "Real-database check (email queue)"
  * @see         web/CueRCode.net/_functions/fn_email.php - runEmailQueueBatch() and the queue SQL
  */
 

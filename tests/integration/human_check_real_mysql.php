@@ -1,7 +1,7 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - OPTIONAL real-database and real-HTTP check of the human check (#163)
+ * 🧪 CueRCode - Real-database and real-HTTP check of the human check (#163)
  * ==============================================================================
  *
  * Path: tests/integration/human_check_real_mysql.php

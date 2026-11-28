@@ -119,10 +119,10 @@ jobs:
   # ===========================================================================
   # (#155, decision 0025) Runs the same script as ci.yml. 8.4 and 8.5 block the
   # deploy; 8.6 is report-only for now (decision 0005). The real-database tests
-  # in tests/integration/ are NOT run here (they need a database server; see
-  # tools/ci/run-tests.sh), so they cannot block an upload. This job is repeated
-  # here instead of calling ci.yml, because ci.yml cancels an earlier run of the
-  # same branch and a called copy would collide with the one the push starts.
+  # in tests/integration/ run in the `integration` job below. This job is
+  # repeated here instead of calling ci.yml, because ci.yml cancels an earlier
+  # run of the same branch and a called copy would collide with the one the
+  # push starts.
   tests:
     name: Test suite (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
@@ -153,11 +153,62 @@ jobs:
       - name: Run test suite
         run: bash tools/ci/run-tests.sh
 
+  # ===========================================================================
+  # 🗄️ Gate: the real-database tests must pass BEFORE anything is uploaded
+  # ===========================================================================
+  # (#174, decision 0040) Every script in tests/integration/ against a
+  # throwaway MySQL 8.0, MySQL 8.4 and MariaDB 10.6 server that GitHub starts
+  # for this job and deletes after it. Same job and same shared script as
+  # ci.yml. Every database blocks: there is no continue-on-error here, and the
+  # shared script fails (never skips) when a script is missing.
+  integration:
+    name: Real-database tests (${{ matrix.database }})
+    runs-on: ubuntu-latest
+    if: ${{ vars.SFTP_ENABLED == 'true' }}
+    # ⏱️ A hung job must not hold the queue for the 6-hour default.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        database:
+          - 'mysql:8.0.36'
+          - 'mysql:8.4'
+          - 'mariadb:10.6'
+    services:
+      # 🧪 Throwaway server: made for this job, empty, removed afterwards.
+      database:
+        image: ${{ matrix.database }}
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+        ports:
+          - '127.0.0.1:3306:3306'
+    steps:
+      # 📜 Full history: migrations_real_mysql.php reads an old install.sql
+      #    from git history (commit 76b1af7).
+      - name: Checkout code (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: gd, mbstring, zip, fileinfo, bcmath, mysqli, intl, curl
+          coverage: none
+          ini-values: error_reporting=-1, display_errors=On, log_errors=Off
+
+      # A missing script must fail the deploy, never skip silently.
+      - name: Run the real-database tests
+        run: bash tools/ci/run-integration-tests.sh
+
   deploy:
     runs-on: ubuntu-latest
-    # 🚦 Nothing is uploaded unless the PHP checks AND the test suite passed. A
-    #    failure on the 8.6 jobs alone does not block (continue-on-error).
-    needs: [php-checks, tests]
+    # 🚦 Nothing is uploaded unless the PHP checks, the test suite AND the
+    #    real-database tests passed. A failure on the 8.6 jobs alone does not
+    #    block (continue-on-error).
+    needs: [php-checks, tests, integration]
 
     # =========================================================================
     # 🔒 Only run if SFTP deployment is explicitly enabled

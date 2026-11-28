@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - The real-database tests run automatically and block a deploy (#174, decision 0040, 2026-11-28)
+
+- **Every script in `tests/integration/` now runs on GitHub** on every pull request and push to a tier branch (`ci.yml`) and before every upload (`deploy.yml`, which now waits for it as well as for the PHP checks and the unit tests). Each run uses three throwaway database servers that GitHub starts and deletes: MySQL 8.0.36, MySQL 8.4 and MariaDB 10.6. A failure on any of them stops the upload.
+- **One shared script, `tools/ci/run-integration-tests.sh`,** used by both. It fails when a required script is missing, when none ran, when any fails or prints deprecation text, or when part of one could not run. Before anything runs, `tools/ci/integration_db_guard.php` refuses any server that is not on the same machine or that holds a database other than the server's own and test ones, so it can never touch a real site.
+- **Proved locally the way GitHub runs it:** the shared script inside a Linux PHP 8.4.27 container as a normal (non-root) user, on the network of a throwaway database container: all eight scripts passed on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6. MySQL 8.4 showed no new faults. Not yet seen running on GitHub itself.
+- `tests/test_deploy_test_gate.php` fails if the new job is weakened (any `continue-on-error`, `|| true`, a skipped step, a dropped database, the shared script replaced, a shallow checkout, or the upload no longer waiting for it) and proves the script's own failure cases.
+
 ### Fixes - Merged security review of the human check's no-JavaScript route (#163, 2026-11-28)
 
 From `.claude/plans/163-merged-review-report.md` (one Medium, six Low, five Info). Each fix was first shown failing on the old code (unit tests on PHP 8.5.12; real-database and real-HTTP checks on MySQL 8.0.36 and MariaDB 10.6), and each protection the review found untested was then removed in a scratch copy to show a test now fails. Upgrade 0005 was changed in place again (still never applied anywhere or pushed): rebuild any developer database that applied an earlier version.
