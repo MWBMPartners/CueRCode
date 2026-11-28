@@ -163,29 +163,38 @@ function requireCsrfOrApiKey(): void
  * with an API key: the routes that use this create accounts, sign people in
  * or send emails, so an API key must not be a way round it.
  *
+ * "human_check_provider" may name which CONFIGURED provider made the token
+ * (the website's script sends it when it had to use a fallback provider);
+ * naming one that is not set up is refused.
+ *
  * Refusals: 400 HUMAN_CHECK_REQUIRED (no token), 403 HUMAN_CHECK_FAILED
  * (failed, expired, already used, or made on another website), 503
- * HUMAN_CHECK_UNAVAILABLE (the provider could not be reached, unless a
- * Global Admin chose to let people through, or our keys are wrong).
+ * HUMAN_CHECK_UNAVAILABLE (the provider could not be reached, our keys are
+ * wrong or cannot be read, or the token could not be recorded). Decision
+ * 0037: on 'login' only, while EVERY configured provider is down by the
+ * server's own test, the sign-in goes ahead without the check (logged).
  *
- * @param array $requestBody The parsed JSON request body
+ * @param array  $requestBody The parsed JSON request body
+ * @param string $purpose     login | register | forgot (only 'login' can use the outage rule)
  *
- * @return void (terminates via errorResponse() on refusal)
+ * @return array The check's result (terminates via errorResponse() on refusal)
  *
  * @see fn_human_check.php - humanCheckVerifyRequest()
  */
-function requireHumanCheckForApi(array $requestBody): void
+function requireHumanCheckForApi(array $requestBody, string $purpose): array
 {
     if (!function_exists('humanCheckVerifyRequest')) {
         // 🛑 The check file is missing: refuse rather than silently skip it.
         errorResponse('The human check could not be completed just now. Please try again in a few minutes.', 503, 'HUMAN_CHECK_UNAVAILABLE');
     }
 
-    $check = humanCheckVerifyRequest($requestBody);
+    $check = humanCheckVerifyRequest($requestBody, ['purpose' => $purpose]);
 
     if (!$check['ok']) {
         errorResponse($check['message'], $check['httpCode'], $check['errorCode']);
     }
+
+    return $check;
 }
 
 // ==============================================================================
@@ -263,7 +272,7 @@ function handleAuthRegister(array $requestBody): void
 
     // 🤖 #163: the human check, after the cheap field checks (a token works
     //    only once) and before an account is made or an email is queued.
-    requireHumanCheckForApi($requestBody);
+    requireHumanCheckForApi($requestBody, 'register');
 
     $result = registerUser($email, $password, $displayName);
 
@@ -313,9 +322,12 @@ function handleAuthLogin(array $requestBody): void
     }
 
     // 🤖 #163: the human check, before any password is tried.
-    requireHumanCheckForApi($requestBody);
+    $humanCheck = requireHumanCheckForApi($requestBody, 'login');
 
     $result = loginUser($email, $password, $clientIP, $userAgent);
+
+    // 📝 Decision 0037: a sign-in let through during an outage is noted.
+    humanCheckNoteOutageSignIn($humanCheck, $result);
 
     if (!$result['success']) {
         errorResponse($result['message'], $result['httpCode'], (string) $result['errorCode']);
@@ -430,7 +442,7 @@ function handleAuthRequestPasswordReset(array $requestBody): void
     }
 
     // 🤖 #163: the human check, before any email is looked up or queued.
-    requireHumanCheckForApi($requestBody);
+    requireHumanCheckForApi($requestBody, 'forgot');
 
     $result = requestPasswordReset($email, $clientIP);
 

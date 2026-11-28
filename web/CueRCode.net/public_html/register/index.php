@@ -17,9 +17,18 @@
  *
  * 🤖 HUMAN CHECK (#163): once the fields are fine, humanCheckVerifyRequest()
  * (fn_human_check.php) must pass before registerUser() runs - the same call
- * the JSON route makes. Off until a Global Admin enters a provider's keys.
- * With JavaScript off the widget cannot be drawn, so the form is refused
- * with a note saying the check needs JavaScript.
+ * the JSON route makes, rate limited per visitor address before the provider
+ * is asked. Off until a Global Admin enters a provider's keys. Sign-up is
+ * never let through during a provider outage (decision 0037).
+ *
+ * ✉️ NO JAVASCRIPT (decision 0038): the widget's <noscript> part offers
+ * "Create my account without JavaScript". That route passes the strict
+ * limits of noScriptRouteGate() (per visitor address, per email address,
+ * site-wide) instead of the widget; the account is then made exactly as
+ * usual and stays waiting until its emailed verification link is used (which
+ * asks for the password, decision 0013). The answer is the same generic one
+ * whether or not an account exists or a limit stopped the email, and takes
+ * at least the same minimum time.
  *
  * ANTI-ENUMERATION: registerUser() ALWAYS returns an identical generic
  * success shape regardless of whether the email was new or already
@@ -60,6 +69,7 @@ $registerResult  = null;
 $formErrors      = [];
 $postedEmail     = '';
 $postedDisplay   = '';
+$emailRouteUsed  = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_submit'])) {
     // 🛡️ Validate CSRF token (classic form POST - $_POST, not the JSON API's
@@ -107,16 +117,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_submit'])) {
         }
     }
 
-    // 🤖 #163: the human check, after the cheap checks (a token works once)
-    //    and before an account is made or an email is queued.
-    if (empty($formErrors)) {
-        $humanCheck = humanCheckVerifyRequest($_POST);
+    if (empty($formErrors) && humanCheckEmailRouteChosen($_POST) && humanCheckIsOn()) {
+        // ✉️ Decision 0038: no JavaScript - the route's strict limits instead
+        //    of the widget; the emailed verification link confirms. The same
+        //    answer and minimum time whatever happens.
+        $emailRouteUsed = true;
+        $routeStartedAt = hrtime(true);
+        $routeGate      = noScriptRouteGate('register', $postedEmail, getClientIP());
+        if ($routeGate['allowed']) {
+            if ($postedDisplay !== '') {
+                $routeDisplayName = $postedDisplay;
+            } else {
+                $routeDisplayName = null;
+            }
+            $registerResult = registerUser($postedEmail, $password, $routeDisplayName);
+        } else {
+            $registerResult = registerUserGenericResult();
+        }
+        padResponseToMinimumDuration($routeStartedAt, CUERCODE_NO_SCRIPT_MIN_RESPONSE_MICROSECONDS);
+    } elseif (empty($formErrors)) {
+        // 🤖 #163: the human check, after the cheap checks (a token works
+        //    once) and before an account is made or an email is queued.
+        $humanCheck = humanCheckVerifyRequest($_POST, ['purpose' => 'register', 'formRateLimit' => true]);
         if (!$humanCheck['ok']) {
             $formErrors[] = $humanCheck['message'];
         }
     }
 
-    if (empty($formErrors) && function_exists('registerUser')) {
+    if (empty($formErrors) && !$emailRouteUsed && function_exists('registerUser')) {
         $displayNameArg = $postedDisplay !== '' ? $postedDisplay : null;
         $registerResult = registerUser($postedEmail, $password, $displayNameArg);
     }
@@ -180,6 +208,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <div class="alert alert-success" role="status">
                                     <i class="fa-solid fa-envelope-circle-check me-1" aria-hidden="true"></i>
                                     <?php echo htmlspecialchars($registerResult['message'], ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php if ($emailRouteUsed) { ?>
+                                    <p class="mt-2 mb-0"><?php echo htmlspecialchars(CUERCODE_NO_SCRIPT_ROUTE_NOTE, ENT_QUOTES, 'UTF-8'); ?></p>
+                                    <?php } ?>
                                 </div>
                                 <p class="text-center mb-0">
                                     <a href="/login/">Return to sign in</a>
@@ -256,8 +287,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                            autocomplete="new-password" required minlength="8" maxlength="256">
                                 </div>
 
-                                <?php /* 🤖 Human check (#163) - empty while it is off */ ?>
-                                <?php echo humanCheckWidgetHtml(); ?>
+                                <?php /* 🤖 Human check (#163) - empty while it is off; its
+                                     <noscript> part offers the email route (0038) */ ?>
+                                <?php echo humanCheckWidgetHtml(null, 'register'); ?>
 
                                 <div class="d-grid">
                                     <button type="submit" class="btn btn-primary btn-lg" id="register-submit-btn">

@@ -100,11 +100,12 @@ if (function_exists('getConfig')) {
 // 📅 Dynamic copyright year for the footer notice on this page.
 $currentYear = date('Y');
 
-// 🤖 #163: the human-check provider in use right now (or null while the check
-//    is off), so section 5.1 always names the right company. Never a key.
-$privacyHumanCheck = null;
-if (function_exists('humanCheckActive')) {
-    $privacyHumanCheck = humanCheckActive();
+// 🤖 #163: the human-check providers in use right now, in order (empty while
+//    the check is off), so sections 4.4, 5.1 and 6 always name the right
+//    companies. Never a key.
+$privacyHumanChecks = [];
+if (function_exists('humanCheckProvidersInUse')) {
+    $privacyHumanChecks = humanCheckProvidersInUse();
 }
 
 $pageTitle       = 'Privacy & Data Protection Policy';
@@ -325,6 +326,18 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             Global Privacy Control (GPC) where required by law.
                         </p>
 
+                        <?php if ($privacyHumanChecks !== []) { ?>
+                        <?php /* 🤖 4.4 Cookies set by the human-check provider (#163) */ ?>
+                        <h3 class="h6 mt-3 mb-2">4.4 Cookies Set by the Human Check</h3>
+                        <p>
+                            When you open one of our account forms, the human-check provider described in
+                            <a href="#human-check">section 5.1</a> may set its own cookies or similar storage
+                            in your browser, which it says are needed for the check to work (for example,
+                            Google reCAPTCHA sets a cookie named <code>_GRECAPTCHA</code>). Those are set and
+                            controlled by that company, under its own privacy policy, not by us.
+                        </p>
+                        <?php } ?>
+
                         <?php /* ============================================================
                              5. How we share information
                              ============================================================ */ ?>
@@ -353,14 +366,21 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </li>
                         </ul>
 
-                        <?php /* 🤖 5.1 Human check (#163) - names the provider in use, from the settings */ ?>
+                        <?php /* 🤖 5.1 Human check (#163) - names the providers in use, from the settings */ ?>
                         <h3 id="human-check" class="h6 mt-3 mb-2">5.1 The Human Check on Our Account Forms</h3>
-                        <?php if ($privacyHumanCheck !== null) { ?>
+                        <?php if ($privacyHumanChecks !== []) { ?>
                         <p>
                             To stop automated programs creating accounts, guessing passwords or sending
                             unwanted emails, the forms to create an account, sign in, reset a password and
                             ask for a new verification link include a short &ldquo;human check&rdquo;
-                            provided by <strong><?php echo htmlspecialchars($privacyHumanCheck['name'], ENT_QUOTES, 'UTF-8'); ?></strong>.
+                            provided by <strong><?php echo htmlspecialchars($privacyHumanChecks[0]['name'], ENT_QUOTES, 'UTF-8'); ?></strong><?php if (count($privacyHumanChecks) > 1) { ?>
+                            (or, if it cannot be reached, by <?php
+                                $privacyFallbackNames = [];
+                                foreach (array_slice($privacyHumanChecks, 1) as $privacyFallback) {
+                                    $privacyFallbackNames[] = htmlspecialchars($privacyFallback['name'], ENT_QUOTES, 'UTF-8');
+                                }
+                                echo implode(' or ', $privacyFallbackNames);
+                            ?>)<?php } ?>.
                             When you open one of these forms, your browser loads the check from that
                             company, which receives the technical information a browser normally sends (such
                             as your IP address, browser type and the page address) and may set cookies or
@@ -368,8 +388,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             form, our server sends that company only the one-time answer from the check, so
                             it can confirm it; we do not send it your email address or anything you typed.
                             We use the check on the basis of our legitimate interest in keeping the Service
-                            secure. How that company handles the information is described in
-                            <a href="<?php echo htmlspecialchars($privacyHumanCheck['privacyUrl'], ENT_QUOTES, 'UTF-8'); ?>" rel="noopener">its privacy policy</a>.
+                            secure. If your browser does not run JavaScript, the forms offer a way to confirm
+                            by email instead, which involves no human-check provider. How each company handles
+                            the information is described in its privacy policy:
+                            <?php foreach ($privacyHumanChecks as $privacyIndex => $privacyProvider) { ?><?php if ($privacyIndex > 0) { ?>, <?php } ?><a href="<?php echo htmlspecialchars($privacyProvider['privacyUrl'], ENT_QUOTES, 'UTF-8'); ?>" rel="noopener"><?php echo htmlspecialchars($privacyProvider['name'], ENT_QUOTES, 'UTF-8'); ?></a><?php } ?>.
                         </p>
                         <?php } else { ?>
                         <p>
@@ -393,6 +415,19 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             standard contracts and security assessments required under China&rsquo;s PIPL).
                             You may contact us for details of the safeguards in place.
                         </p>
+                        <?php if ($privacyHumanChecks !== []) { ?>
+                        <p>
+                            The human-check providers named in <a href="#human-check">section 5.1</a> are run by
+                            companies based in the United States
+                            (<?php
+                                $privacyCompanies = [];
+                                foreach ($privacyHumanChecks as $privacyProvider) {
+                                    $privacyCompanies[] = htmlspecialchars($privacyProvider['company'], ENT_QUOTES, 'UTF-8');
+                                }
+                                echo implode(', ', $privacyCompanies);
+                            ?>), so the technical information your browser sends them may be processed there.
+                        </p>
+                        <?php } ?>
 
                         <?php /* ============================================================
                              7. Retention

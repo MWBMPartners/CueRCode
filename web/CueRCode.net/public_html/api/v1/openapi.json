@@ -1485,7 +1485,7 @@
                     "Accounts"
                 ],
                 "summary": "Log in and establish a session",
-                "description": "Authenticate by email + password and, on success, start a session. Every failure (wrong password, no such account, locked account, unverified/pending account, suspended account) returns the identical 401 response - none of these states are distinguishable from the outside. Failed attempts count towards an account lockout (by default 5 failed attempts, locking the account for 15 minutes - both are configurable server settings). Requires a valid CSRF token (website) or API key. **Human check:** while the site's human check is switched on, the body must also carry `human_check_token` (see the `HumanCheckToken` schema) - API-key callers included; otherwise 400 `HUMAN_CHECK_REQUIRED`, 403 `HUMAN_CHECK_FAILED` or 503 `HUMAN_CHECK_UNAVAILABLE`, and no password is tried. Note: the session itself is established purely via a `Set-Cookie` response header - it is not returned as a field in the JSON body; subsequent same-origin requests rely on the browser resending that cookie automatically.",
+                "description": "Authenticate by email + password and, on success, start a session. Every failure (wrong password, no such account, locked account, unverified/pending account, suspended account) returns the identical 401 response - none of these states are distinguishable from the outside. Failed attempts count towards an account lockout (by default 5 failed attempts, locking the account for 15 minutes - both are configurable server settings). Requires a valid CSRF token (website) or API key. **Human check:** while the site's human check is switched on, the body must also carry `human_check_token` (see the `HumanCheckToken` schema) - API-key callers included; otherwise 400 `HUMAN_CHECK_REQUIRED`, 403 `HUMAN_CHECK_FAILED` or 503 `HUMAN_CHECK_UNAVAILABLE`, and no password is tried. Decision 0037: only while EVERY human-check provider the site has set up cannot be reached (judged by a test call the server makes itself, never by anything in the request), a sign-in without a token goes ahead - the password and the lock-out still apply - and the site records it in its activity log. Note: the session itself is established purely via a `Set-Cookie` response header - it is not returned as a field in the JSON body; subsequent same-origin requests rely on the browser resending that cookie automatically.",
                 "operationId": "authLogin",
                 "security": [
                     {
@@ -5378,14 +5378,27 @@
                     },
                     "human_check_token": {
                         "$ref": "#/components/schemas/HumanCheckToken"
+                    },
+                    "human_check_provider": {
+                        "$ref": "#/components/schemas/HumanCheckProvider"
                     }
                 }
             },
             "HumanCheckToken": {
                 "type": "string",
                 "maxLength": 4096,
-                "description": "The one-time answer from the human check (Cloudflare Turnstile, Google reCAPTCHA version 2 or hCaptcha - whichever the site has switched on). Required on `/auth/register`, `/auth/login` and `/auth/request-password-reset` while the check is on, for every caller including one with an API key; ignored while it is off (no provider keys entered). It is the value the provider's widget gives the page (`turnstile.getResponse()`, `grecaptcha.getResponse()` or `hcaptcha.getResponse()`), and it works once: get a new one for every request. Missing: 400 HUMAN_CHECK_REQUIRED. Failed, expired, already used or solved on another website: 403 HUMAN_CHECK_FAILED. The provider could not be reached (unless the site lets people through then): 503 HUMAN_CHECK_UNAVAILABLE.",
+                "description": "The one-time answer from the human check (Cloudflare Turnstile, Google reCAPTCHA version 2 or hCaptcha - whichever the site has switched on). Required on `/auth/register`, `/auth/login` and `/auth/request-password-reset` while the check is on, for every caller including one with an API key; ignored while it is off (no provider keys entered). It is the value the provider's widget gives the page (`turnstile.getResponse()`, `grecaptcha.getResponse()` or `hcaptcha.getResponse()`), and it works once: get a new one for every request. Missing: 400 HUMAN_CHECK_REQUIRED. Failed, expired, already used (each token is accepted once; the server remembers it) or solved on a website that is not one of this site's own names: 403 HUMAN_CHECK_FAILED. The provider could not be reached, the site's keys are wrong or cannot be read, or the token could not be recorded: 503 HUMAN_CHECK_UNAVAILABLE (try again, or use the next provider the site offers). Only on `/auth/login`, and only while EVERY provider the site has set up cannot be reached by the server's own test call (decision 0037), the sign-in goes ahead without a token - the password and the account lock-out still apply; the other two routes are refused then.",
                 "example": "0.AbCdEf...one-time-token"
+            },
+            "HumanCheckProvider": {
+                "type": "string",
+                "enum": [
+                    "turnstile",
+                    "recaptcha",
+                    "hcaptcha"
+                ],
+                "description": "Which of the site's set-up human-check providers made `human_check_token`. Optional: when it is left out (or empty) the site's first provider is assumed. The website's own script sends it when it had to use a fallback provider because the first could not be loaded. Naming a provider the site has not set up is refused with 403 HUMAN_CHECK_FAILED, and that provider is never asked.",
+                "example": "turnstile"
             },
             "LoginRequest": {
                 "type": "object",
@@ -5408,6 +5421,9 @@
                     },
                     "human_check_token": {
                         "$ref": "#/components/schemas/HumanCheckToken"
+                    },
+                    "human_check_provider": {
+                        "$ref": "#/components/schemas/HumanCheckProvider"
                     }
                 }
             },
@@ -5446,6 +5462,9 @@
                     },
                     "human_check_token": {
                         "$ref": "#/components/schemas/HumanCheckToken"
+                    },
+                    "human_check_provider": {
+                        "$ref": "#/components/schemas/HumanCheckProvider"
                     }
                 }
             },

@@ -19,9 +19,21 @@
  *
  * 🤖 HUMAN CHECK (#163): humanCheckVerifyRequest() (fn_human_check.php) must
  * pass before loginUser() tries the password - the same call the JSON route
- * makes. Off until a Global Admin enters a provider's keys. If the provider
- * cannot be reached and that locks out the only Global Admin, the check can
- * be switched off on the server: php _includes/cli/human_check.php off
+ * makes, rate limited per visitor address before the provider is asked. Off
+ * until a Global Admin enters a provider's keys. Decision 0037: if EVERY
+ * configured provider is down (by the server's own test), sign-in is let
+ * through without the check and recorded in the activity log; the password,
+ * the wrong-password lock-out and the limits still apply. If the check ever
+ * locks out the only Global Admin it can be switched off on the server:
+ * php _includes/cli/human_check.php off
+ *
+ * ✉️ NO JAVASCRIPT (decision 0038): the widget's <noscript> part has a
+ * "Sign in by email confirmation instead" button. It goes through
+ * noScriptSignInStart() (fn_no_script_route.php): strict limits, then the
+ * correct password, then an emailed single-use link. This page then shows
+ * "check your email" with a Continue button: after the link is approved in
+ * ANOTHER browser, Continue signs THIS browser in (opening the link in THIS
+ * browser signs it in directly, after a button press).
  *
  * OPEN-REDIRECT PROTECTION: an optional `?next=` query parameter controls the
  * post-login destination. Only a same-site, root-relative path (starting with
@@ -36,6 +48,8 @@
  * @since       Phase 2 (Epic E3 stage 2b, #52/#14)
  * @see         _functions/fn_auth.php - loginUser()
  * @see         _functions/fn_human_check.php - humanCheckVerifyRequest(), humanCheckWidgetHtml()
+ * @see         _functions/fn_no_script_route.php - noScriptSignInStart(), noScriptSignInContinue()
+ * @see         public_html/login/confirm/index.php - the page the email links to
  * @see         public_html/assets/js/cuercode-account.js
  */
 
@@ -110,8 +124,10 @@ if (function_exists('currentUser') && currentUser() !== null) {
 // 📤 Handle Non-JS Form POST (Graceful Degradation)
 // ==============================================================================
 
-$loginError  = null;
-$postedEmail = '';
+$loginError          = null;
+$postedEmail         = '';
+$emailSignInNotice   = '';
+$emailSignInStarted  = false;
 
 // 📌 GDPR/CCPA erasure landing flag (#37/#52) - public_html/account/index.php's
 // no-JS "Delete my account" flow redirects here with `?erased=1` after a
@@ -139,19 +155,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
 
     $password = isset($_POST['password']) ? (string) $_POST['password'] : '';
 
+    $humanCheck = ['ok' => false, 'reason' => ''];
+
     if (!$csrfValid) {
         $loginError = 'Your session has expired. Please reload the page and try again.';
     } elseif ($postedEmail === '' || $password === '') {
         $loginError = 'Email and password are both required.';
+    } elseif (humanCheckEmailRouteChosen($_POST) && humanCheckIsOn()) {
+        // ✉️ Decision 0038: no JavaScript - limits, then the password, then
+        //    an emailed single-use link. Nobody is signed in on this request.
+        $emailSignInStarted = true;
+        if (isset($_SERVER['HTTP_USER_AGENT']) && is_string($_SERVER['HTTP_USER_AGENT'])) {
+            $emailUserAgent = $_SERVER['HTTP_USER_AGENT'];
+        } else {
+            $emailUserAgent = '';
+        }
+        $emailSignIn = noScriptSignInStart($postedEmail, $password, getClientIP(), $emailUserAgent, $nextUrl);
+        if ($emailSignIn['outcome'] === 'sent') {
+            $emailSignInNotice = $emailSignIn['message'];
+        } else {
+            $loginError = $emailSignIn['message'];
+        }
     } else {
         // 🤖 #163: the human check, before any password is tried.
-        $humanCheck = humanCheckVerifyRequest($_POST);
+        $humanCheck = humanCheckVerifyRequest($_POST, ['purpose' => 'login', 'formRateLimit' => true]);
         if (!$humanCheck['ok']) {
             $loginError = $humanCheck['message'];
         }
     }
 
-    if ($loginError === null && function_exists('loginUser')) {
+    if ($loginError === null && !$emailSignInStarted && function_exists('loginUser')) {
         // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
         //    every page by bootstrap.php.
         $clientIp = getClientIP();
@@ -160,12 +193,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
         $result = loginUser($postedEmail, $password, $clientIp, $userAgent);
 
         if ($result['success']) {
+            // 📝 Decision 0037: a sign-in let through during an outage is noted.
+            humanCheckNoteOutageSignIn($humanCheck, $result);
             header('Location: ' . $nextUrl);
             exit;
         }
 
         $loginError = $result['message'];
     }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['login_email_continue']) || isset($_POST['login_email_cancel']))) {
+    // ✉️ Decision 0038: "Continue" (after the emailed link was approved in
+    //    another browser) or "Start again".
+    $emailCsrf = '';
+    if (isset($_POST['csrf_token']) && is_string($_POST['csrf_token'])) {
+        $emailCsrf = $_POST['csrf_token'];
+    }
+
+    if (!validateCSRFToken($emailCsrf)) {
+        $loginError = 'Your session has expired. Please reload the page and try again.';
+    } elseif (isset($_POST['login_email_cancel'])) {
+        noScriptSignInForget();
+    } else {
+        if (isset($_SERVER['HTTP_USER_AGENT']) && is_string($_SERVER['HTTP_USER_AGENT'])) {
+            $emailUserAgent = $_SERVER['HTTP_USER_AGENT'];
+        } else {
+            $emailUserAgent = '';
+        }
+        $emailContinue = noScriptSignInContinue(getClientIP(), $emailUserAgent);
+        if ($emailContinue['outcome'] === 'signed_in') {
+            header('Location: ' . $emailContinue['next']);
+            exit;
+        }
+        if ($emailContinue['outcome'] === 'waiting') {
+            $emailSignInNotice = 'The sign-in has not been approved yet. Open the link in the email we sent, press the button on that page, then press Continue here.';
+        } else {
+            $loginError = 'That email sign-in has expired or is no longer valid. Please sign in again.';
+        }
+    }
+}
+
+// ✉️ Decision 0038: this browser is waiting for its emailed sign-in link.
+$emailSignInPending = (noScriptSignInPending() !== null);
+if ($nextUrl !== '/account/') {
+    $emailFormAction = '/login/?next=' . rawurlencode($nextUrl);
+} else {
+    $emailFormAction = '/login/';
 }
 
 // ==============================================================================
@@ -234,6 +306,28 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <?php /* 🔔 Live region for JS-driven (AJAX) error/status messages */ ?>
                             <div id="login-ajax-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
 
+                            <?php if ($emailSignInPending) { ?>
+                            <?php /* ✉️ Decision 0038: waiting for the emailed sign-in link. */ ?>
+                            <div class="alert alert-info" role="status" id="login-email-pending">
+                                <p class="mb-2">
+                                    <i class="fa-solid fa-envelope-open-text me-1" aria-hidden="true"></i>
+                                    <?php if ($emailSignInNotice !== '') { ?>
+                                    <?php echo htmlspecialchars($emailSignInNotice, ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php } else { ?>
+                                    We have emailed you a sign-in link. Open it and press the button on that page.
+                                    <?php } ?>
+                                </p>
+                                <p class="mb-2">If you open the link on another device, press Continue here afterwards to finish signing in on this browser.</p>
+                                <form method="POST" action="<?php echo htmlspecialchars($emailFormAction, ENT_QUOTES, 'UTF-8'); ?>" class="d-flex flex-wrap gap-2 mb-0">
+                                    <?php echo csrfField(); ?>
+                                    <button type="submit" class="btn btn-primary" name="login_email_continue" value="1">
+                                        <i class="fa-solid fa-right-to-bracket me-1" aria-hidden="true"></i> Continue
+                                    </button>
+                                    <button type="submit" class="btn btn-outline-secondary" name="login_email_cancel" value="1">Start again</button>
+                                </form>
+                            </div>
+                            <?php } ?>
+
                             <form method="POST" action="/login/<?php echo $nextUrl !== '/account/' ? '?next=' . rawurlencode($nextUrl) : ''; ?>" id="login-form" novalidate
                                   data-next-url="<?php echo htmlspecialchars($nextUrl, ENT_QUOTES, 'UTF-8'); ?>">
                                 <?php echo csrfField(); ?>
@@ -252,8 +346,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                            autocomplete="current-password" required maxlength="256">
                                 </div>
 
-                                <?php /* 🤖 Human check (#163) - empty while it is off */ ?>
-                                <?php echo humanCheckWidgetHtml(); ?>
+                                <?php /* 🤖 Human check (#163) - empty while it is off; its
+                                     <noscript> part offers the email route (0038) */ ?>
+                                <?php echo humanCheckWidgetHtml(null, 'login'); ?>
 
                                 <div class="mb-4 text-end">
                                     <a href="/forgot-password/" class="small">Forgot password?</a>

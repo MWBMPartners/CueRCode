@@ -179,6 +179,54 @@ function getConfig(string $key, mixed $default = null): mixed
 }
 
 // ==============================================================================
+// 🔍 configStoredValueState() - Is anything stored in a setting's row? (#163 review M2)
+// ==============================================================================
+
+/**
+ * 🔍 Say whether a setting's row holds anything, WITHOUT decrypting it.
+ *
+ * getConfig() hands back the caller's default in three different cases: the
+ * row is missing, the database read failed, or an encrypted value could not
+ * be decrypted (for example after ENCRYPTION_KEY changed). A caller that must
+ * tell "never entered" apart from "entered but unreadable" (the human-check
+ * keys, review finding M2) asks this afterwards. Only the length of the stored
+ * text is read, so no secret is ever loaded or decrypted here.
+ *
+ * @param string $key The setting key
+ *
+ * @return string 'missing' (no row) | 'empty' (row with no value) |
+ *                'present' (row with a stored value) | 'error' (the question failed)
+ */
+function configStoredValueState(string $key): string
+{
+    if (!function_exists('dbQuery')) {
+        return 'error';
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT CHAR_LENGTH(`settingValue`) AS `storedLength` FROM `tblSettings` WHERE `settingKey` = ? LIMIT 1',
+            's',
+            [$key]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        return 'error';
+    }
+
+    if ($row === null) {
+        return 'missing';
+    }
+
+    if ($row['storedLength'] === null || (int) $row['storedLength'] === 0) {
+        return 'empty';
+    }
+
+    return 'present';
+}
+
+// ==============================================================================
 // ✏️ setConfig() - Update or insert a configuration setting
 // ==============================================================================
 

@@ -205,7 +205,8 @@ if ($settingsSecondsLeft > 0) {
 // 🤖 #163: what the human check is doing now, in plain words (never a key).
 $settingsHumanCheckLines = [];
 if (function_exists('humanCheckStatusLines')) {
-    $settingsHumanCheckLines = humanCheckStatusLines(humanCheckReadSettings());
+    $settingsHumanCheckSettings = humanCheckReadSettings();
+    $settingsHumanCheckLines    = humanCheckStatusLines($settingsHumanCheckSettings, humanCheckCachedStates($settingsHumanCheckSettings));
 }
 
 $settingsSsoCallbacks = [];

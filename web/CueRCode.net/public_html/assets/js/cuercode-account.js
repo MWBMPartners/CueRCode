@@ -138,12 +138,38 @@
     }
 
     /**
-     * 🔁 Reset a form's human-check widget after an answer (a token works once).
+     * 🏷️ Which configured provider made the token ('' when the check is off).
      *
      * @param {jQuery} $form
+     * @returns {string}
      */
-    function humanCheckReset($form) {
-        if (window.CueRCodeHumanCheck && typeof window.CueRCodeHumanCheck.reset === 'function') {
+    function humanCheckProvider($form) {
+        if (window.CueRCodeHumanCheck && typeof window.CueRCodeHumanCheck.tokenProvider === 'function') {
+            return window.CueRCodeHumanCheck.tokenProvider($form);
+        }
+        return '';
+    }
+
+    /**
+     * 🔁 Reset a form's human-check widget after an answer (a token works
+     *    once). Decision 0037: when the server says the check "could not be
+     *    completed", the next configured provider is drawn instead.
+     *
+     * @param {jQuery} $form
+     * @param {Object} [xhr] The finished request, if any
+     */
+    function humanCheckReset($form, xhr) {
+        if (!window.CueRCodeHumanCheck) {
+            return;
+        }
+        var code = '';
+        if (xhr && xhr.responseJSON && typeof xhr.responseJSON.error_code === 'string') {
+            code = xhr.responseJSON.error_code;
+        }
+        if (code === 'HUMAN_CHECK_UNAVAILABLE' && typeof window.CueRCodeHumanCheck.next === 'function' && window.CueRCodeHumanCheck.next()) {
+            return;
+        }
+        if (typeof window.CueRCodeHumanCheck.reset === 'function') {
             window.CueRCodeHumanCheck.reset($form);
         }
     }
@@ -241,7 +267,8 @@
                     email: email,
                     password: password,
                     display_name: displayName || undefined,
-                    human_check_token: humanCheckToken($form)
+                    human_check_token: humanCheckToken($form),
+                    human_check_provider: humanCheckProvider($form)
                 }),
                 success: function (response) {
                     $form.find('input, button').prop('disabled', true);
@@ -253,9 +280,9 @@
                     }
                     showAjaxAlert('register-ajax-alert', extractErrorMessage(xhr, 'Registration failed. Please try again.'), 'danger');
                 },
-                complete: function () {
+                complete: function (xhr) {
                     setButtonBusy($btn, false, '');
-                    humanCheckReset($form);
+                    humanCheckReset($form, xhr);
                 }
             });
         });
@@ -291,7 +318,7 @@
                 url: CUERCODE_API_BASE + '/auth/login',
                 method: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({ email: email, password: password, human_check_token: humanCheckToken($form) }),
+                data: JSON.stringify({ email: email, password: password, human_check_token: humanCheckToken($form), human_check_provider: humanCheckProvider($form) }),
                 success: function () {
                     /* ✅ Full navigation (not a fetch) - the server has
                        already rotated the session; a real page load ensures
@@ -304,9 +331,9 @@
                     }
                     showAjaxAlert('login-ajax-alert', extractErrorMessage(xhr, 'Sign in failed. Please try again.'), 'danger');
                 },
-                complete: function () {
+                complete: function (xhr) {
                     setButtonBusy($btn, false, '');
-                    humanCheckReset($form);
+                    humanCheckReset($form, xhr);
                 }
             });
         });
@@ -399,7 +426,7 @@
                 url: CUERCODE_API_BASE + '/auth/request-password-reset',
                 method: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({ email: email, human_check_token: humanCheckToken($form) }),
+                data: JSON.stringify({ email: email, human_check_token: humanCheckToken($form), human_check_provider: humanCheckProvider($form) }),
                 success: function (response) {
                     $form.hide();
                     /* 🔐 Always the identical anti-enumeration message from
@@ -412,9 +439,9 @@
                     }
                     showAjaxAlert('forgot-ajax-alert', extractErrorMessage(xhr, 'Please enter a valid email address.'), 'danger');
                 },
-                complete: function () {
+                complete: function (xhr) {
                     setButtonBusy($btn, false, '');
-                    humanCheckReset($form);
+                    humanCheckReset($form, xhr);
                 }
             });
         });

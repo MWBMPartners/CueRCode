@@ -117,15 +117,37 @@ function hcJsonReply(array $data, int $status = 200): array
  * @param array<string, mixed> $input
  * @param array<string, mixed> $reply
  * @param array<int, array>    $calls
- * @param string               $host Expected host name
+ * @param string               $host    The site's own host name
+ * @param string               $health  What the server's own test call says (up | down | misconfigured)
+ * @param string               $purpose Which form (login | register | forgot | resend | '')
  * @return array
  */
-function hcRun(array $settings, array $input, array $reply, array &$calls, string $host = 'cuercode.net'): array
+function hcRun(array $settings, array $input, array $reply, array &$calls, string $host = 'cuercode.net', string $health = 'up', string $purpose = ''): array
 {
+    // ♻️ A fresh "accepted tokens" record for each run (review M1 is tested in
+    //    tests/test_human_check_review_fixes.php).
+    $claims = [];
     return humanCheckVerifyRequest($input, [
         'configGetter' => hcGetter($settings),
+        'storedState'  => static function (string $key): string {
+            return 'missing';
+        },
         'transport'    => hcTransport($reply, $calls),
-        'expectedHost' => $host,
+        'allowedHosts' => [$host],
+        'purpose'      => $purpose,
+        'tokenClaimer' => static function (string $hash, string $provider) use (&$claims): string {
+            if (isset($claims[$hash])) {
+                return 'reused';
+            }
+            $claims[$hash] = true;
+            return 'claimed';
+        },
+        // 🩺 The server's own test call (decision 0037), as a stand-in.
+        'health'       => static function (string $provider, int $maxAgeSeconds) use ($health): string {
+            return $health;
+        },
+        'outageLogger' => static function (string $event, array $details): void {
+        },
     ]);
 }
 
@@ -172,11 +194,11 @@ assertEquals('turnstile', humanCheckChooseProvider('friendlycaptcha', $hcAll), '
 
 $hcDefaults = humanCheckReadSettings(hcGetter([]));
 assertEquals('auto', $hcDefaults['choice'], 'settings: the choice defaults to automatic');
-assertEquals('refuse', $hcDefaults['whenUnreachable'], 'settings: a provider that cannot be reached means REFUSE by default');
+assertEquals('signin_only', $hcDefaults['whenUnreachable'], 'settings: every provider down means "let only sign-in through" by default (decision 0037)');
 assertEquals(5, $hcDefaults['timeout'], 'settings: the waiting time defaults to 5 seconds');
 assertEquals('', $hcDefaults['keys']['turnstile']['secret'], 'settings: no keys by default');
-assertEquals('allow', humanCheckReadSettings(hcGetter(['bot_protection_when_unreachable' => 'allow']))['whenUnreachable'], 'settings: "allow" is read');
-assertEquals('refuse', humanCheckReadSettings(hcGetter(['bot_protection_when_unreachable' => 'maybe']))['whenUnreachable'], 'settings: anything else means refuse');
+assertEquals('refuse', humanCheckReadSettings(hcGetter(['bot_protection_when_unreachable' => 'refuse']))['whenUnreachable'], 'settings: "refuse" is read');
+assertEquals('signin_only', humanCheckReadSettings(hcGetter(['bot_protection_when_unreachable' => 'maybe']))['whenUnreachable'], 'settings: anything else means the default');
 assertEquals(9, humanCheckReadSettings(hcGetter(['bot_protection_timeout_seconds' => '9']))['timeout'], 'settings: a waiting time stored as text is read');
 assertEquals(5, humanCheckReadSettings(hcGetter(['bot_protection_timeout_seconds' => '99']))['timeout'], 'settings: a waiting time outside 2 to 15 seconds means the default');
 assertEquals(5, humanCheckReadSettings(hcGetter(['bot_protection_timeout_seconds' => '1']))['timeout'], 'settings: a waiting time below 2 seconds means the default');
@@ -226,18 +248,22 @@ foreach ($hcFacts as $hcProvider => $hcFact) {
     assertEquals('HUMAN_CHECK_FAILED', $hcResult['errorCode'], $hcLabel . 'error code HUMAN_CHECK_FAILED');
     assertTrue($hcResult['message'] !== '', $hcLabel . 'with a plain message');
 
-    // 🌐 Unreachable: no reply at all.
+    // 🌐 Unreachable: no reply at all, and the server's own test agrees.
     $hcCalls  = [];
-    $hcResult = hcRun($hcSettings, $hcInput, ['ok' => false, 'status' => 0, 'body' => '', 'error' => 'Could not resolve host'], $hcCalls);
-    assertFalse($hcResult['ok'], $hcLabel . 'provider unreachable: refused (the default)');
+    $hcResult = hcRun($hcSettings, $hcInput, ['ok' => false, 'status' => 0, 'body' => '', 'error' => 'Could not resolve host'], $hcCalls, 'cuercode.net', 'down');
+    assertFalse($hcResult['ok'], $hcLabel . 'provider unreachable: refused');
     assertEquals('unavailable', $hcResult['reason'], $hcLabel . 'reason "unavailable"');
     assertEquals(503, $hcResult['httpCode'], $hcLabel . 'refused with 503 (try again later)');
     assertEquals('HUMAN_CHECK_UNAVAILABLE', $hcResult['errorCode'], $hcLabel . 'error code HUMAN_CHECK_UNAVAILABLE');
 
     $hcCalls  = [];
-    $hcResult = hcRun(hcKeysFor($hcProvider, ['bot_protection_when_unreachable' => 'allow']), $hcInput, ['ok' => false, 'status' => 0, 'body' => '', 'error' => 'timed out'], $hcCalls);
-    assertTrue($hcResult['ok'], $hcLabel . 'provider unreachable with "let people through" chosen: allowed');
-    assertEquals('unavailable_allowed', $hcResult['reason'], $hcLabel . 'reason "unavailable_allowed"');
+    $hcResult = hcRun($hcSettings, $hcInput, ['ok' => false, 'status' => 0, 'body' => '', 'error' => 'timed out'], $hcCalls, 'cuercode.net', 'down', 'login');
+    assertTrue($hcResult['ok'], $hcLabel . 'every provider down, SIGN-IN: let through (decision 0037)');
+    assertEquals('outage_signin', $hcResult['reason'], $hcLabel . 'reason "outage_signin"');
+
+    $hcCalls  = [];
+    $hcResult = hcRun($hcSettings, $hcInput, ['ok' => false, 'status' => 0, 'body' => '', 'error' => 'timed out'], $hcCalls, 'cuercode.net', 'up', 'login');
+    assertEquals('failed', $hcResult['reason'], $hcLabel . 'no reply for this token but the server\'s own test says the provider is up: failed (never the outage rule)');
 
     // 🌐 Unreachable: an error page, a reply that is not JSON, a strange shape.
     foreach ([
@@ -248,9 +274,11 @@ foreach ($hcFacts as $hcProvider => $hcFact) {
         'no "success" at all'             => hcJsonReply(['hostname' => 'cuercode.net']),
     ] as $hcWhat => $hcReply) {
         $hcCalls  = [];
-        $hcResult = hcRun($hcSettings, $hcInput, $hcReply, $hcCalls);
-        assertEquals('unavailable', $hcResult['reason'], $hcLabel . $hcWhat . ' counts as "could not check"');
+        $hcResult = hcRun($hcSettings, $hcInput, $hcReply, $hcCalls, 'cuercode.net', 'down');
+        assertEquals('unavailable', $hcResult['reason'], $hcLabel . $hcWhat . ' with the provider down counts as "could not check"');
         assertFalse($hcResult['ok'], $hcLabel . $hcWhat . ' is refused');
+        $hcCalls  = [];
+        assertEquals('failed', hcRun($hcSettings, $hcInput, $hcReply, $hcCalls)['reason'], $hcLabel . $hcWhat . ' with the provider up (by our own test) is a failed check');
     }
 
     // 🕳️ Missing token: never asks the provider.
@@ -316,11 +344,11 @@ foreach ($hcFacts as $hcProvider => $hcFact) {
         assertContains('expired', $hcResult['message'], $hcLabel . $hcCode . ': the message says it expired');
     }
 
-    // 🔧 Our own keys are wrong: refused, even when "let people through" is chosen.
+    // 🔧 Our own keys are wrong: refused, even at sign-in (never the outage rule).
     foreach (['invalid-input-secret', 'missing-input-secret'] as $hcCode) {
         $hcCalls  = [];
-        $hcResult = hcRun(hcKeysFor($hcProvider, ['bot_protection_when_unreachable' => 'allow']), $hcInput, hcJsonReply(['success' => false, 'error-codes' => [$hcCode]]), $hcCalls);
-        assertFalse($hcResult['ok'], $hcLabel . $hcCode . ' (our secret key is wrong) is refused even with "let people through"');
+        $hcResult = hcRun($hcSettings, $hcInput, hcJsonReply(['success' => false, 'error-codes' => [$hcCode]]), $hcCalls, 'cuercode.net', 'up', 'login');
+        assertFalse($hcResult['ok'], $hcLabel . $hcCode . ' (our secret key is wrong) is refused, even at sign-in');
         assertEquals('misconfigured', $hcResult['reason'], $hcLabel . $hcCode . ': reason "misconfigured"');
         assertEquals(503, $hcResult['httpCode'], $hcLabel . $hcCode . ': 503');
     }
@@ -343,12 +371,16 @@ foreach ($hcFacts as $hcProvider => $hcFact) {
 
 // 🔁 Turnstile's "internal-error" is the provider's own fault: "could not check".
 $hcCalls = [];
-assertEquals('unavailable', hcRun(hcKeysFor('turnstile'), ['cf-turnstile-response' => 'x'], hcJsonReply(['success' => false, 'error-codes' => ['internal-error']]), $hcCalls)['reason'], 'Turnstile internal-error counts as "could not check"');
+assertEquals('unavailable', hcRun(hcKeysFor('turnstile'), ['cf-turnstile-response' => 'x'], hcJsonReply(['success' => false, 'error-codes' => ['internal-error']]), $hcCalls, 'cuercode.net', 'down')['reason'], 'Turnstile internal-error (and our own test says down) counts as "could not check"');
 
-// 🧭 The one call uses the provider chosen by the settings, never another one's field.
+// 🧭 A provider's own field counts only for a provider that is set up.
+$hcCalls = [];
+$hcResult = hcRun(hcKeysFor('turnstile'), ['h-captcha-response' => 'from-hcaptcha'], hcJsonReply(['success' => true]), $hcCalls);
+assertEquals('missing_token', $hcResult['reason'], 'with only Turnstile set up, an hCaptcha field does not count');
 $hcCalls = [];
 $hcResult = hcRun(array_merge(hcKeysFor('turnstile'), hcKeysFor('hcaptcha')), ['h-captcha-response' => 'from-hcaptcha'], hcJsonReply(['success' => true]), $hcCalls);
-assertEquals('missing_token', $hcResult['reason'], 'with Turnstile in use, an hCaptcha field does not count as a Turnstile token');
+assertEquals('hcaptcha', $hcResult['provider'], 'with Turnstile AND hCaptcha set up, an hCaptcha token (the fallback, decision 0037) is checked with hCaptcha');
+assertEquals(humanCheckProviders()['hcaptcha']['verifyUrl'], $hcCalls[0]['url'], '... at hCaptcha\'s own checking address');
 
 // ==============================================================================
 // 🏠 Section 4: host names
@@ -358,8 +390,8 @@ assertEquals('www.example.com', humanCheckNormaliseHost('WWW.Example.com:8443'),
 assertEquals('example.com', humanCheckNormaliseHost(' example.com. '), 'host: spaces and a final dot removed');
 assertEquals('[::1]', humanCheckNormaliseHost('[::1]:8080'), 'host: a bracketed address keeps its brackets, loses its port');
 assertEquals('', humanCheckNormaliseHost("bad\nhost"), 'host: a line break makes it unusable (empty)');
-assertEquals('alpha.cuercode.net', humanCheckExpectedHost(['HTTP_HOST' => 'Alpha.CueRCode.net'], 'https://cuercode.net'), 'host: the request\'s own host name is expected');
-assertEquals('cuercode.net', humanCheckExpectedHost([], 'https://cuercode.net/'), 'host: with no request host, the website address setting is used');
+assertTrue(in_array('alpha.example.org', humanCheckAllowedHosts('https://Alpha.Example.org/'), true), 'host: the website address setting\'s own host is allowed (review L2: never the request\'s Host header)');
+assertTrue(in_array('cuercode.net', humanCheckAllowedHosts(''), true), 'host: with no website address setting, the product domains are still allowed');
 
 // ==============================================================================
 // 🧱 Section 5: the widget
@@ -410,6 +442,29 @@ assertContains('test key', strtolower(implode("\n", humanCheckStatusLines(humanC
 // 🔒 Section 7: no way round it - every page and route makes the call
 // ==============================================================================
 
+/**
+ * ✂️ PHP source without comments (token_get_all), so a call that is only
+ *    commented out is not counted (review finding L3).
+ *
+ * @param string $source
+ * @return string
+ */
+function hcCodeOnly(string $source): string
+{
+    $code = '';
+    foreach (token_get_all($source) as $token) {
+        if (is_array($token)) {
+            if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                continue;
+            }
+            $code .= $token[1];
+            continue;
+        }
+        $code .= $token;
+    }
+    return $code;
+}
+
 $hcPages = [
     'register'            => 'registerUser(',
     'login'               => 'loginUser(',
@@ -417,18 +472,18 @@ $hcPages = [
     'resend-verification' => 'requestNewVerificationLink(',
 ];
 foreach ($hcPages as $hcPage => $hcEngineCall) {
-    $hcSource = (string) file_get_contents($hcSiteRoot . 'public_html' . $hcDs . $hcPage . $hcDs . 'index.php');
-    $hcCheckAt  = strpos($hcSource, 'humanCheckVerifyRequest($_POST)');
+    $hcSource = hcCodeOnly((string) file_get_contents($hcSiteRoot . 'public_html' . $hcDs . $hcPage . $hcDs . 'index.php'));
+    $hcCheckAt  = strpos($hcSource, 'humanCheckVerifyRequest($_POST, [');
     $hcCsrfAt   = strpos($hcSource, 'validateCSRFToken(');
     $hcEngineAt = strrpos($hcSource, $hcEngineCall);
     assertTrue($hcCheckAt !== false, '/' . $hcPage . '/: the page checks the human check');
     assertTrue($hcCheckAt !== false && $hcCsrfAt !== false && $hcCsrfAt < $hcCheckAt, '/' . $hcPage . '/: after the security token');
     assertTrue($hcCheckAt !== false && $hcEngineAt !== false && $hcCheckAt < $hcEngineAt, '/' . $hcPage . '/: before anything is done with the email address');
-    assertContains('humanCheckWidgetHtml()', $hcSource, '/' . $hcPage . '/: the page draws the widget');
+    assertContains('humanCheckWidgetHtml(null, \'', $hcSource, '/' . $hcPage . '/: the page draws the widget (with its form\'s email route)');
     assertContains('/assets/js/cuercode-human-check.js', $hcSource, '/' . $hcPage . '/: the page loads the widget script');
 }
 
-$hcApi = (string) file_get_contents($hcSiteRoot . '_functions' . $hcDs . 'fn_api_accounts.php');
+$hcApi = hcCodeOnly((string) file_get_contents($hcSiteRoot . '_functions' . $hcDs . 'fn_api_accounts.php'));
 
 /**
  * ✂️ The body of one function in a source file (from its name to the next "function ").
@@ -456,7 +511,7 @@ foreach ([
     'handleAuthRequestPasswordReset' => 'requestPasswordReset(',
 ] as $hcHandler => $hcEngineCall) {
     $hcBody = hcFunctionBody($hcApi, $hcHandler);
-    $hcCheckAt  = strpos($hcBody, 'requireHumanCheckForApi($requestBody)');
+    $hcCheckAt  = strpos($hcBody, 'requireHumanCheckForApi($requestBody, \'');
     $hcEngineAt = strpos($hcBody, $hcEngineCall);
     assertTrue($hcCheckAt !== false, 'API ' . $hcHandler . ': checks the human check');
     assertTrue($hcCheckAt !== false && $hcEngineAt !== false && $hcCheckAt < $hcEngineAt, 'API ' . $hcHandler . ': before the engine is called');
@@ -466,7 +521,7 @@ foreach (['handleAuthLogout', 'handleAuthVerifyEmail', 'handleAuthResetPassword'
     assertFalse(str_contains(hcFunctionBody($hcApi, $hcHandler), 'requireHumanCheckForApi('), 'API ' . $hcHandler . ': deliberately exempt (needs a signed-in session or an emailed secret link)');
 }
 $hcGuard = hcFunctionBody($hcApi, 'requireHumanCheckForApi');
-assertContains('humanCheckVerifyRequest($requestBody)', $hcGuard, 'API guard: uses the same one call as the pages');
+assertContains('humanCheckVerifyRequest($requestBody, [\'purpose\' => $purpose])', $hcGuard, 'API guard: uses the same one call as the pages, saying which form it is');
 assertFalse(str_contains($hcGuard, 'HTTP_X_API_KEY'), 'API guard: an API key does NOT skip the check');
 assertContains('errorResponse(', $hcGuard, 'API guard: a refusal ends the request');
 
@@ -478,7 +533,8 @@ assertEquals(['register', 'login', 'logout', 'verify-email', 'request-password-r
 // 🌐 The website's own script sends the token on the three JSON routes and resets the widget.
 $hcAccountJs = (string) file_get_contents($hcSiteRoot . 'public_html' . $hcDs . 'assets' . $hcDs . 'js' . $hcDs . 'cuercode-account.js');
 assertEquals(3, substr_count($hcAccountJs, 'human_check_token: humanCheckToken($form)'), 'account script: register, sign in and forgot password send the token');
-assertTrue(substr_count($hcAccountJs, 'humanCheckReset($form)') >= 3, 'account script: the widget is reset after each answer (a token works once)');
+assertTrue(substr_count($hcAccountJs, 'humanCheckReset($form, xhr)') >= 3, 'account script: the widget is reset after each answer (a token works once), or moved to the next provider');
+assertEquals(3, substr_count($hcAccountJs, 'human_check_provider: humanCheckProvider($form)'), 'account script: the three JSON routes say which configured provider made the token');
 $hcWidgetJs = (string) file_get_contents($hcSiteRoot . 'public_html' . $hcDs . 'assets' . $hcDs . 'js' . $hcDs . 'cuercode-human-check.js');
 foreach ($hcFacts as $hcProvider => $hcFact) {
     assertContains("'" . $hcProvider . "'", $hcWidgetJs, 'widget script: knows ' . $hcFact['name']);
@@ -509,7 +565,11 @@ assertContains('Header set Content-Security-Policy "' . $hcExpectedCsp . '"', $h
 // ==============================================================================
 
 $hcPrivacy = (string) file_get_contents($hcSiteRoot . 'public_html' . $hcDs . 'privacy.php');
-assertContains('humanCheckActive()', $hcPrivacy, 'privacy page: asks which provider is in use');
+assertContains('humanCheckProvidersInUse()', $hcPrivacy, 'privacy page: asks which providers are in use');
+assertContains('_GRECAPTCHA', $hcPrivacy, 'privacy page: says the provider may set its own cookie (review: section 4)');
+assertContains('based in the United States', $hcPrivacy, 'privacy page: says the providers are US companies (review: section 6)');
+assertEquals([], humanCheckProvidersInUse(humanCheckReadSettings(hcGetter([]))), 'privacy helper: no providers while the check is off');
+assertEquals(['Cloudflare Turnstile', 'hCaptcha'], array_column(humanCheckProvidersInUse(humanCheckReadSettings(hcGetter(array_merge(hcKeysFor('turnstile'), hcKeysFor('hcaptcha'))))), 'name'), 'privacy helper: every provider in use, in order, and never a key');
 assertContains('id="human-check"', $hcPrivacy, 'privacy page: has a human-check section');
 foreach ($hcFacts as $hcFact) {
     assertTrue(str_starts_with($hcFact['privacyUrl'], 'https://'), $hcFact['name'] . ': a privacy policy address to link to');
@@ -528,6 +588,10 @@ $hcMigrationText = (string) file_get_contents($hcMigrationPath);
 assertContains("SET `settingValue` = \\'auto\\'", $hcMigrationText, 'migration 0005: switches the untouched "none" to automatic');
 assertContains("AND `settingValue` = \\'none\\'", $hcMigrationText, '... only while it is still "none"');
 assertContains('NOT EXISTS (SELECT 1 FROM `tblAdminAuditLog`', $hcMigrationText, '... and only if no admin (or the command line) ever changed it');
-foreach (['bot_protection_when_unreachable', 'bot_protection_timeout_seconds'] as $hcNewKey) {
+foreach (['bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour'] as $hcNewKey) {
     assertContains("\\'" . $hcNewKey . "\\'", $hcMigrationText, 'migration 0005 adds ' . $hcNewKey);
+}
+assertContains("\\'signin_only\\'", $hcMigrationText, 'migration 0005: the outage rule starts as decision 0037 (signin_only)');
+foreach (['tblHumanCheckTokens', 'tblHumanCheckState', 'tblNoScriptRequests', 'tblEmailSignInRequests'] as $hcNewTable) {
+    assertContains('CREATE TABLE IF NOT EXISTS `' . $hcNewTable . '`', $hcMigrationText, 'migration 0005 adds ' . $hcNewTable);
 }

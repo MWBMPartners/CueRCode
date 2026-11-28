@@ -161,7 +161,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         ['code' => '429', 'label' => 'Too Many Requests', 'kind' => 'success', 'note' => 'Rate limit exceeded - see Section 4 below for the Retry-After/X-RateLimit-* headers.'],
                                         ['code' => '500', 'label' => 'Internal Server Error', 'kind' => 'success', 'note' => 'An unexpected server-side failure.'],
                                         ['code' => '501', 'label' => 'Not Implemented', 'kind' => 'success', 'note' => 'Bulk ZIP generation is unavailable because the server is missing the PHP zip extension.'],
-                                        ['code' => '503', 'label' => 'Service Unavailable', 'kind' => 'success', 'note' => '/health reports "degraded" when the database is unreachable. HUMAN_CHECK_UNAVAILABLE: the human-check provider could not be reached - try again in a few minutes.'],
+                                        ['code' => '503', 'label' => 'Service Unavailable', 'kind' => 'success', 'note' => '/health reports "degraded" when the database is unreachable. HUMAN_CHECK_UNAVAILABLE: the human check could not be completed (the provider could not be reached, or the site\'s set-up needs attention) - try again in a few minutes.'],
                                     ];
                                     foreach ($statusRows as $statusRow) {
                                         $code  = $statusRow['code'];

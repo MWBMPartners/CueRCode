@@ -86,10 +86,16 @@ if (!function_exists('clientIpParseRangeList')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
 }
 
-// 🤖 The human-check waiting-time limits (#163) live in ONE place, so this
-//    editor and the code that uses them cannot disagree. Pure on loading.
+// 🤖 The human-check waiting-time limits, outage rules and form limit (#163)
+//    live in ONE place, so this editor and the code that uses them cannot
+//    disagree. Pure on loading.
 if (!defined('CUERCODE_HUMAN_CHECK_MIN_TIMEOUT')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_human_check.php';
+}
+
+// ✉️ The no-JavaScript route's limits (decision 0038), from ONE place. Pure on loading.
+if (!function_exists('noScriptRouteBounds')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_no_script_route.php';
 }
 
 // 💷 Currency facts and the currency-list reader (billing_currencies, task 7n
@@ -257,7 +263,7 @@ function adminSettingsSections(): array
             'saveLabel' => 'Save human check settings',
             'title' => 'Human check (bot protection)',
             'icon'  => 'fa-solid fa-robot',
-            'intro' => 'A short check that a visitor is a person, on the forms to create an account, sign in, reset a password and ask for a new verification link (and the same JSON routes). It stays off until a provider\'s site key AND secret key are both entered. On "Automatic", the first provider with both keys is used, in the order Cloudflare Turnstile, Google reCAPTCHA, hCaptcha. Get the keys from the provider\'s own dashboard and add this site\'s address there. The privacy page names the provider in use. If the check ever locks everyone out (including you), run php _includes/cli/human_check.php off on the server.',
+            'intro' => 'A short check that a visitor is a person, on the forms to create an account, sign in, reset a password and ask for a new verification link (and the same JSON routes). It stays off until a provider\'s site key AND secret key are both entered. On "Automatic", every provider with both keys is used, in the order Cloudflare Turnstile, Google reCAPTCHA, hCaptcha: the next one takes over while one is down. Get the keys from the provider\'s own dashboard and add this site\'s address there. The privacy page names the providers in use. If the check ever locks everyone out (including you), run php _includes/cli/human_check.php off on the server.',
         ],
         'paypal' => [
             'saveLabel' => 'Save PayPal settings',
@@ -469,13 +475,10 @@ function adminSettingsRegistry(): array
     ]);
     $fields[] = adminSettingsField([
         'key' => 'bot_protection_when_unreachable', 'section' => 'bot', 'kind' => 'choice', 'group' => 'security', 'type' => 'string',
-        'label' => 'If the provider cannot be reached',
-        'help' => 'Refuse is safer: while the provider is down, these forms (including sign in) say "try again in a few minutes". Let people through keeps the forms working but without the check while it is down. Either way it is written to the error log. Wrong keys are always refused.',
-        'options' => [
-            'refuse' => 'Refuse the form (recommended)',
-            'allow'  => 'Let people through without the check',
-        ],
-        'description' => 'Human check: what happens when the provider cannot be reached - refuse (forms say try again later) or allow (people are let through). Always logged.',
+        'label' => 'If every provider cannot be reached',
+        'help' => 'While one provider is down the next one with keys is used. This choice only matters when EVERY provider with keys is down, judged by a test call the server makes itself (nothing a visitor sends can cause it). Decision 0037: let only sign-in through - the password, the wrong-password lock-out and the limits still apply - and record it in the activity log; sign-up, forgot password and new links are refused. Wrong or unreadable keys are always refused.',
+        'options' => humanCheckOutageModes(),
+        'description' => 'Human check: what happens when EVERY configured provider cannot be reached (by a test call the server makes itself) - signin_only (decision 0037: only sign-in is let through, recorded in the activity log) or refuse (every form is refused).',
     ]);
     $fields[] = adminSettingsField([
         'key' => 'bot_protection_timeout_seconds', 'section' => 'bot', 'kind' => 'int', 'group' => 'security', 'type' => 'integer',
@@ -498,6 +501,34 @@ function adminSettingsRegistry(): array
             'label' => $botLabel,
             'help' => 'From the provider\'s dashboard. Stored encrypted and never shown again.',
             'description' => $botLabel,
+        ]);
+    }
+
+    // ⏱️ #163: the limits that go with the human check (after the keys; the
+    //    no-JavaScript route's limits are the last group of the section).
+    $formLimitBounds = humanCheckFormLimitBounds();
+    $fields[] = adminSettingsField([
+        'key' => 'human_check_form_ip_per_hour', 'section' => 'bot', 'kind' => 'int', 'group' => 'security', 'type' => 'integer',
+        'label' => 'Most form sends with a human check from one visitor address in an hour',
+        'help' => 'Counted before the provider is asked, across the four account forms, so a script cannot make this server call the provider without limit. Whole numbers, ' . $formLimitBounds['min'] . ' to ' . $formLimitBounds['max'] . '. The default is ' . $formLimitBounds['default'] . '.',
+        'min' => $formLimitBounds['min'], 'max' => $formLimitBounds['max'],
+        'description' => 'Human check: the most times one visitor address may send the four account forms with a token in an hour, before the provider is asked. Whole number 1-1000; anything else means the default of 30.',
+    ]);
+    $noScriptBounds = noScriptRouteBounds();
+    $noScriptWords  = [
+        'ip_per_hour'   => ['Most uses from one visitor address in an hour', 'Whatever the email address, all four forms together.'],
+        'email_per_day' => ['Most uses for one email address in 24 hours', 'Whoever sends them, so nobody can fill one person\'s inbox.'],
+        'site_per_hour' => ['Most uses for the whole site in an hour', 'A ceiling on all the emails this route can cause.'],
+    ];
+    foreach ($noScriptWords as $noScriptSuffix => $noScriptText) {
+        $noScriptBound = $noScriptBounds[$noScriptSuffix];
+        $fields[] = adminSettingsField([
+            'key' => 'no_script_route_' . $noScriptSuffix, 'section' => 'bot', 'subgroup' => 'Without JavaScript: the email-confirmed route (decision 0038)',
+            'kind' => 'int', 'group' => 'security', 'type' => 'integer',
+            'label' => $noScriptText[0],
+            'help' => $noScriptText[1] . ' Visitors without JavaScript cannot see the human check, so they confirm by email instead; these limits stop that from being used to send unlimited email or try passwords. Whole numbers, ' . $noScriptBound['min'] . ' to ' . $noScriptBound['max'] . '. The default is ' . $noScriptBound['default'] . '. A smaller number is stricter.',
+            'min' => $noScriptBound['min'], 'max' => $noScriptBound['max'],
+            'description' => 'No-JavaScript email route (decision 0038): ' . strtolower($noScriptText[0]) . '.',
         ]);
     }
 

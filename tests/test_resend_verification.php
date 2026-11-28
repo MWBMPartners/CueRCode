@@ -210,7 +210,7 @@ assertContains('validateCSRFToken(', $rvPage, 'Page: the POST checks the CSRF to
 assertContains('method="POST"', $rvPage, 'Page: a normal POST form (works without JavaScript)');
 // 🤖 #163: the only script is the human-check widget (drawn only while the check
 //    is on); the form itself is a normal POST that works without JavaScript.
-assertContains("$pageJS          = ['/assets/js/cuercode-human-check.js'];", $rvPage, 'Page: needs no JavaScript of its own (only the human-check widget script)');
+assertContains('$pageJS          = [\'/assets/js/cuercode-human-check.js\'];', $rvPage, 'Page: needs no JavaScript of its own (only the human-check widget script)');
 assertContains('for="resend-email"', $rvPage, 'Page: the email box has a label');
 assertContains('role="status"', $rvPage, 'Page: the answer is announced to screen readers');
 assertContains('$pageNoIndex     = true;', $rvPage, 'Page: kept out of search results');

@@ -24,7 +24,13 @@
  *
  * 🤖 Human check (#163): humanCheckVerifyRequest() (fn_human_check.php) must
  *    pass before requestPasswordReset() runs - the same call the JSON route
- *    makes. Its refusal message is about the check only, never the account.
+ *    makes, rate limited per visitor address before the provider is asked.
+ *    Its refusal message is about the check only, never the account. Never
+ *    let through during a provider outage (decision 0037).
+ * ✉️ No JavaScript (decision 0038): "Send the reset link without
+ *    JavaScript" passes the strict limits of noScriptRouteGate() instead of
+ *    the widget; the reset link itself is the confirmation. Same answer and
+ *    minimum time whatever happens.
  *
  * @package     CueRCode
  * @subpackage  Pages / Account
@@ -48,6 +54,7 @@ require_once __DIR__ . '/../../_includes/bootstrap.php';
 $requestedReset = false;
 $formError      = null;
 $postedEmail    = '';
+$emailRouteUsed = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['forgot_submit'])) {
     if (isset($_POST['csrf_token'])) {
@@ -70,15 +77,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['forgot_submit'])) {
         $formError = 'Your session has expired. Please reload the page and try again.';
     } elseif ($postedEmail === '' || !function_exists('validateEmail') || !validateEmail($postedEmail)) {
         $formError = 'Please enter a valid email address.';
+    } elseif (humanCheckEmailRouteChosen($_POST) && humanCheckIsOn()) {
+        // ✉️ Decision 0038: no JavaScript - the route's strict limits instead
+        //    of the widget. The same answer and minimum time whatever happens.
+        $emailRouteUsed = true;
+        $routeStartedAt = hrtime(true);
+        $routeGate      = noScriptRouteGate('forgot', $postedEmail, getClientIP());
+        if ($routeGate['allowed'] && function_exists('requestPasswordReset')) {
+            requestPasswordReset($postedEmail, getClientIP());
+        }
+        padResponseToMinimumDuration($routeStartedAt, CUERCODE_NO_SCRIPT_MIN_RESPONSE_MICROSECONDS);
+        $requestedReset = true;
     } else {
         // 🤖 #163: the human check, before any email is looked up or queued.
-        $humanCheck = humanCheckVerifyRequest($_POST);
+        $humanCheck = humanCheckVerifyRequest($_POST, ['purpose' => 'forgot', 'formRateLimit' => true]);
         if (!$humanCheck['ok']) {
             $formError = $humanCheck['message'];
         }
     }
 
-    if ($formError === null && function_exists('requestPasswordReset')) {
+    if ($formError === null && !$emailRouteUsed && function_exists('requestPasswordReset')) {
         // 🌍 Decision 0014: getClientIP() (fn_client_ip.php) is loaded on
         //    every page by bootstrap.php.
         $clientIp = getClientIP();
@@ -126,6 +144,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <i class="fa-solid fa-circle-check me-1" aria-hidden="true"></i>
                                     If that account exists, a password reset link has been sent to it.
                                     Please check your inbox (and spam folder).
+                                    <?php if ($emailRouteUsed) { ?>
+                                    <p class="mt-2 mb-0"><?php echo htmlspecialchars(CUERCODE_NO_SCRIPT_ROUTE_NOTE, ENT_QUOTES, 'UTF-8'); ?></p>
+                                    <?php } ?>
                                 </div>
                                 <p class="text-center mb-0">
                                     <a href="/login/">Return to sign in</a>
@@ -159,8 +180,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                            autocomplete="email" required maxlength="254">
                                 </div>
 
-                                <?php /* 🤖 Human check (#163) - empty while it is off */ ?>
-                                <?php echo humanCheckWidgetHtml(); ?>
+                                <?php /* 🤖 Human check (#163) - empty while it is off; its
+                                     <noscript> part offers the email route (0038) */ ?>
+                                <?php echo humanCheckWidgetHtml(null, 'forgot'); ?>
 
                                 <div class="d-grid">
                                     <button type="submit" class="btn btn-primary btn-lg" id="forgot-submit-btn">

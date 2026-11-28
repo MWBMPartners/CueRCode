@@ -138,11 +138,17 @@ assertFalse($asValidate('bot_protection_provider', 'friendlycaptcha')['ok'], 'bo
 // 🤖 #163: "auto" comes first (the recommended choice) and "none" means off.
 assertEquals('auto', array_key_first($asRegistry['bot_protection_provider']['options']), 'human check: "Automatic" is the first choice shown');
 assertContains('Off', $asRegistry['bot_protection_provider']['options']['none'], 'human check: "none" is labelled as off');
-assertTrue($asValidate('bot_protection_when_unreachable', 'refuse')['ok'] && $asValidate('bot_protection_when_unreachable', 'allow')['ok'], 'human check: when unreachable, refuse or allow');
+assertTrue($asValidate('bot_protection_when_unreachable', 'signin_only')['ok'] && $asValidate('bot_protection_when_unreachable', 'refuse')['ok'], 'human check: every provider down: let only sign-in through (decision 0037) or refuse');
+assertFalse($asValidate('bot_protection_when_unreachable', 'allow')['ok'], 'human check: "let every form through" is no longer offered (decision 0037 rules it out)');
+assertEquals('signin_only', array_key_first($asRegistry['bot_protection_when_unreachable']['options']), 'human check: decision 0037 is the first (recommended) choice');
 assertFalse($asValidate('bot_protection_when_unreachable', 'maybe')['ok'], 'human check: when unreachable refuses anything else');
+assertTrue($asValidate('human_check_form_ip_per_hour', '1')['ok'] && $asValidate('human_check_form_ip_per_hour', '1000')['ok'], 'human check: the form limit is 1 to 1000');
+assertFalse($asValidate('human_check_form_ip_per_hour', '0')['ok'] || $asValidate('human_check_form_ip_per_hour', '1001')['ok'], 'human check: a form limit outside 1 to 1000 is refused');
+assertFalse($asValidate('no_script_route_email_per_day', '21')['ok'], 'no-JavaScript route: more than 20 emails a day to one address is refused');
+assertTrue($asValidate('no_script_route_site_per_hour', '30')['ok'], 'no-JavaScript route: the site-wide limit can be set');
 assertTrue($asValidate('bot_protection_timeout_seconds', '2')['ok'] && $asValidate('bot_protection_timeout_seconds', '15')['ok'], 'human check: waiting time 2 to 15 seconds');
 assertFalse($asValidate('bot_protection_timeout_seconds', '1')['ok'] || $asValidate('bot_protection_timeout_seconds', '16')['ok'], 'human check: waiting time outside 2 to 15 is refused');
-assertEquals(['bot_protection_provider', 'bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key'], array_keys(adminSettingsFieldsForSection('bot')), 'human check: the section shows the choice, the two behaviour settings, then the keys in provider order');
+assertEquals(['bot_protection_provider', 'bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour'], array_keys(adminSettingsFieldsForSection('bot')), 'human check: the section shows the choice, the two behaviour settings, the keys in provider order, the form limit, then the no-JavaScript route limits (#163)');
 
 // 🔘 Switches.
 assertEquals('1', $asValidate('email_enabled', '1')['value'], 'a switch: 1 is on');
@@ -1018,11 +1024,11 @@ foreach (['verification_resend', 'password_reset_request'] as $asPrefix) {
         assertEquals($asBound['max'], $asCodeLimits[$asKeyMap[$asSuffix]], $asLimitKey . ': the code pulls a too-big saved number back to the same top value the editor allows');
     }
 }
-assertEquals(['verification_resend', 'password_reset_request'], array_values(array_unique(array_map(static function (string $asK): string {
+assertEquals(['human_check_form', 'no_script_route', 'verification_resend', 'password_reset_request'], array_values(array_unique(array_map(static function (string $asK): string {
     return (string) preg_replace('/_(min_gap_seconds|daily_cap|ip_per_hour)$/', '', $asK);
 }, array_filter(array_keys($asRegistry), static function (string $asK): bool {
     return (bool) preg_match('/_(min_gap_seconds|daily_cap|ip_per_hour)$/', $asK);
-})))), 'exactly the two forms\' limits are in the editor');
+})))), 'exactly the two emailed-link forms\' limits, the human check\'s form limit and the no-JavaScript route limit (#163) are the per-hour limits in the editor');
 
 // ==============================================================================
 // ✅ Section 10: Website address - wording guard and warning logic
