@@ -19,7 +19,7 @@
  *   C. Ordinary settings: retention periods, VAT mode (read back by the
  *      pricing page's own getConfig() call), unchanged saves leave no audit
  *      row, out-of-range values are refused.
- *   D. Locked keys: the charging switches, dynamic_qr_enabled, caches and
+ *   D. Locked keys: the charging switches (and dynamic_qr_enabled refused without a passing connection test, #166), caches and
  *      not-editable rows cannot be changed even by hand-made requests (the
  *      section processor never reads them; adminSaveSetting() refuses them by
  *      name); a row whose "secret" flag does not match is refused.
@@ -666,12 +666,16 @@ adminSaveSetting(['key' => 'admin_display_timezone'], 'Europe/London', $asAdmin)
 // ==============================================================================
 echo PHP_EOL . 'D. Locked keys' . PHP_EOL;
 $asAuditBefore = asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`');
-foreach (['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_payg_enabled', 'dynamic_qr_enabled', 'graph_token_cache', 'sso_microsoft_discovery_cache', 'app_version', 'app_phase', 'api_version', 'encryption_algorithm', 'site_name', 'debug_mode', 'no_such_setting'] as $asLocked) {
+foreach (['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_payg_enabled', 'graph_token_cache', 'sso_microsoft_discovery_cache', 'app_version', 'app_phase', 'api_version', 'encryption_algorithm', 'site_name', 'debug_mode', 'no_such_setting'] as $asLocked) {
     $asBefore = asSetting($asServer, $asLocked);
     $asResult = adminSaveSetting(['key' => $asLocked, 'kind' => 'bool', 'isEditable' => true], '1', $asAdmin);
     $asAfter = asSetting($asServer, $asLocked);
     asCheck('D', $asResult['ok'] === false && $asResult['outcome'] === 'refused' && $asBefore === $asAfter, $asLocked . ': refused and unchanged');
 }
+// 🔗 #166: dynamic_qr_enabled is no longer locked, but it is refused until a
+//    connection test has passed (no test has run in this script yet).
+$asResult = adminSaveSetting(['key' => 'dynamic_qr_enabled'], '1', $asAdmin);
+asCheck('D', $asResult['ok'] === false && $asResult['outcome'] === 'refused' && str_contains($asResult['message'], 'Test connection') && asSetting($asServer, 'dynamic_qr_enabled')['settingValue'] === '0', 'dynamic_qr_enabled: refused (no passing connection test) and unchanged');
 asCheck('D', asCount($asServer, 'SELECT COUNT(*) FROM `tblAdminAuditLog`') === $asAuditBefore, 'refused saves wrote no audit rows');
 
 // 🧪 A hand-made request for the prices section that also tries the locked switches.
@@ -1135,7 +1139,10 @@ asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 10, 'al
 asCheck('J', str_contains($asPage['html'], 'Save PayPal settings') && str_contains($asPage['html'], 'Save prices, VAT and refunds') && str_contains($asPage['html'], 'Save email settings') && !str_contains($asPage['html'], 'Save email (microsoft'), 'each section has its own button words');
 asCheck('J', str_contains($asPage['html'], '(required)') && str_contains($asPage['html'], 'data-admin-confirm-check="Remove this stored secret?"'), 'required boxes say so and the Remove tick asks for confirmation');
 asCheck('J', str_contains($asPage['html'], 'name="f[password_reset_request_daily_cap]"') && str_contains($asPage['html'], 'name="f[verification_resend_min_gap_seconds]"'), 'the emailed-link limits are on the page');
-asCheck('J', str_contains($asPage['html'], 'Off (locked)') && !str_contains($asPage['html'], 'name="f[billing_payg_enabled]"') && !str_contains($asPage['html'], 'name="f[dynamic_qr_enabled]"'), 'the charging switches show "Off (locked)" and have no input');
+asCheck('J', str_contains($asPage['html'], 'Off (locked)') && !str_contains($asPage['html'], 'name="f[billing_payg_enabled]"'), 'the charging switches show "Off (locked)" and have no input');
+$asDynamicStart = strpos($asPage['html'], 'id="section-dynamic"');
+$asSwitchAt     = strpos($asPage['html'], 'name="f[dynamic_qr_enabled]"');
+asCheck('J', $asDynamicStart !== false && $asSwitchAt !== false && $asSwitchAt > $asDynamicStart && str_contains($asPage['html'], 'name="confirm[dynamic_qr_enabled]"'), '#166: the dynamic-codes switch is in the Dynamic QR section, with its confirming tick');
 asCheck('J', str_contains($asPage['html'], 'Check Microsoft connection') && str_contains($asPage['html'], 'Send me a test email'), 'both test buttons are on the page');
 $asMainStart = strpos($asPage['html'], 'id="section-email"');
 $asMainEnd   = strrpos($asPage['html'], '</datalist>');

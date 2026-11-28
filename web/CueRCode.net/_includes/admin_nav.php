@@ -59,6 +59,7 @@ $adminNavLinks = [
     'settings' => ['Settings',          '/admin/settings/', 'fa-solid fa-gear'],
     'plans'    => ['Plans and prices',  '/admin/plans/',    'fa-solid fa-tags'],
     'pricing-preview' => ['Pricing page preview', '/admin/pricing-preview/', 'fa-solid fa-eye'],
+    'limits'   => ['People\'s own limits', '/admin/limits/',  'fa-solid fa-user-gear'],
     'upgrades' => ['Database upgrades', '/admin/upgrades/', 'fa-solid fa-database'],
     'reauth'   => ['Confirm password',  '/admin/reauth/',   'fa-solid fa-key'],
 ];

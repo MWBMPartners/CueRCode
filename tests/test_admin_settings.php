@@ -18,7 +18,7 @@
  *   3. The registry: every key exists in seed_data.sql or migration 0002
  *      with the SAME type and sensitivity; no locked key is in it; every
  *      seeded secret is either in it or deliberately left out.
- *   4. Locked keys: the three charging switches, dynamic_qr_enabled, every
+ *   4. Locked keys: the three charging switches (dynamic_qr_enabled is on its own section since #166), every
  *      "*_cache" key and the fixed rows are refused by name.
  *   5. adminSettingsProcessSection(): a hand-made request cannot reach a
  *      locked key or another section's key; missing boxes are left alone;
@@ -348,9 +348,9 @@ assertContains('12 months', $asRegistry['abuse_report_retention_days']['help'] ?
 
 // 🔗 #165: the dynamic QR (Go2My.Link) section.
 assertEquals(
-    ['go2mylink_api_base_url', 'go2mylink_api_key', 'go2mylink_timeout_seconds', 'dynamic_redirect_base_url', 'link_safety_webrisk_api_key'],
+    ['go2mylink_api_base_url', 'go2mylink_api_key', 'go2mylink_timeout_seconds', 'dynamic_redirect_base_url', 'dynamic_qr_enabled', 'link_safety_webrisk_api_key'],
     array_keys(adminSettingsFieldsForSection('dynamic')),
-    '#165: the dynamic QR section: API address, API key, waiting time, short-link address, then the Web Risk key'
+    '#165, #166: the dynamic QR section: API address, API key, waiting time, short-link address, the switch (AFTER the connection settings, so a save that changes them is recorded first), then the Web Risk key'
 );
 assertEquals('go2mylink_key', $asRegistry['go2mylink_api_key']['secretFormat'], '#165: the Go2My.Link key is checked against Go2My.Link\'s key shape');
 assertTrue(adminSettingsFieldIsSecret($asRegistry['go2mylink_api_key']) && adminSettingsFieldIsSecret($asRegistry['link_safety_webrisk_api_key']), '#165: both keys are secrets (stored encrypted, never shown)');
@@ -372,7 +372,28 @@ foreach (['https://QRmy.Link/r', 'http://QRmy.Link', 'https://10.0.0.1', ''] as 
     assertFalse($asValidate('dynamic_redirect_base_url', $asBadBase)['ok'], '#165: the short-link address refuses ' . var_export($asBadBase, true));
 }
 assertFalse(adminSettingsKeyIsLocked('dynamic_redirect_base_url'), '#165: the short-link address can be set');
-assertTrue(adminSettingsKeyIsLocked('dynamic_qr_enabled'), '#165: dynamic QR itself stays locked off');
+assertFalse(adminSettingsKeyIsLocked('dynamic_qr_enabled'), '#166: the dynamic QR switch is on the screen (no longer locked)');
+assertTrue($asRegistry['dynamic_qr_enabled']['kind'] === 'bool' && $asRegistry['dynamic_qr_enabled']['confirmText'] !== '', '#166: it is an on/off switch that asks for a confirming tick to switch on');
+
+// 🔗 #166: switching dynamic codes ON needs a passing connection test.
+assertEquals(60, CUERCODE_ADMIN_DYNAMIC_SWITCH_TEST_MINUTES, '#166: a passing test lets the switch go on for 60 minutes');
+assertContains('Test connection', adminSettingsDynamicSwitchDecision(null, 0), '#166: never tested: refused, and told to press Test connection');
+assertContains('did not pass', adminSettingsDynamicSwitchDecision(['outcome' => 'failed', 'ageMinutes' => 1], 0), '#166: the last test failed: refused');
+assertEquals('', adminSettingsDynamicSwitchDecision(['outcome' => 'success', 'ageMinutes' => 0], 0), '#166: passed just now, nothing changed since: allowed');
+assertEquals('', adminSettingsDynamicSwitchDecision(['outcome' => 'success', 'ageMinutes' => 60], 0), '#166: passed 60 minutes ago: still allowed');
+assertContains('more than 60 minutes', adminSettingsDynamicSwitchDecision(['outcome' => 'success', 'ageMinutes' => 61], 0), '#166: passed 61 minutes ago: refused');
+assertContains('changed after', adminSettingsDynamicSwitchDecision(['outcome' => 'success', 'ageMinutes' => 5], 1), '#166: a watched setting changed after the test: refused');
+assertTrue(adminSettingsDynamicSwitchDecision(['outcome' => 'success', 'ageMinutes' => -1], 0) !== '', '#166: a test time in the future (clock trouble) is not trusted');
+assertTrue(adminSettingsDynamicSwitchSameSaveProblem([['key' => 'go2mylink_api_key', 'action' => 'set', 'value' => 'x'], ['key' => 'dynamic_qr_enabled', 'action' => 'update', 'value' => '1']]) !== '', '#166: switching on in the same save as a new key is refused (the test was for the old key)');
+assertEquals('', adminSettingsDynamicSwitchSameSaveProblem([['key' => 'dynamic_qr_enabled', 'action' => 'update', 'value' => '1']]), '#166: switching on alone is not refused by this rule');
+assertEquals('', adminSettingsDynamicSwitchSameSaveProblem([['key' => 'go2mylink_api_key', 'action' => 'set', 'value' => 'x'], ['key' => 'dynamic_qr_enabled', 'action' => 'update', 'value' => '0']]), '#166: switching OFF together with any change is always fine');
+$asSwitchSave = adminSettingsProcessSection('dynamic', ['f' => ['dynamic_redirect_base_url' => 'https://alpha.qrmy.link', 'dynamic_qr_enabled' => '1'], 'confirm' => ['dynamic_qr_enabled' => '1']], [
+    'dynamic_redirect_base_url' => ['exists' => true, 'hasValue' => true, 'value' => 'https://qrmy.link', 'updatedAt' => null],
+    'dynamic_qr_enabled'        => ['exists' => true, 'hasValue' => true, 'value' => '0', 'updatedAt' => null],
+]);
+assertTrue(isset($asSwitchSave['errors']['dynamic_qr_enabled']), '#166: the section save shows that as a problem on the switch, and saves nothing');
+$asSwitchAlone = adminSettingsProcessSection('dynamic', ['f' => ['dynamic_qr_enabled' => '1']], ['dynamic_qr_enabled' => ['exists' => true, 'hasValue' => true, 'value' => '0', 'updatedAt' => null]]);
+assertTrue(isset($asSwitchAlone['errors']['dynamic_qr_enabled']) && str_contains($asSwitchAlone['errors']['dynamic_qr_enabled'], 'Tick the box'), '#166: switching on needs the confirming tick (checked by the server)');
 assertEquals(10, CUERCODE_ADMIN_TEST_GO2MYLINK_MAX, '#165: at most 10 Go2My.Link connection checks per 10 minutes');
 
 // 🔐 Every seeded secret is on the screen, or deliberately not (runtime caches, SIGNula, inert).
@@ -399,13 +420,13 @@ assertTrue($asRegistry['email_enabled']['confirmText'] !== '', 'turning email on
 // ==============================================================================
 // ✅ Section 4: locked keys
 // ==============================================================================
-foreach (['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_payg_enabled', 'dynamic_qr_enabled', 'graph_token_cache', 'sso_microsoft_discovery_cache', 'sso_google_jwks_cache', 'anything_cache', 'app_version', 'app_phase', 'api_version', 'encryption_algorithm'] as $asLocked) {
+foreach (['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_payg_enabled', 'graph_token_cache', 'sso_microsoft_discovery_cache', 'sso_google_jwks_cache', 'anything_cache', 'app_version', 'app_phase', 'api_version', 'encryption_algorithm'] as $asLocked) {
     assertTrue(adminSettingsKeyIsLocked($asLocked), $asLocked . ' is locked');
 }
 foreach (['email_enabled', 'billing_vat_mode', 'cache', 'cache_ttl_seconds', 'sso_enabled'] as $asOpen) {
     assertFalse(adminSettingsKeyIsLocked($asOpen), $asOpen . ' is not locked');
 }
-assertEquals(['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_payg_enabled', 'dynamic_qr_enabled'], array_keys(adminSettingsChargingSwitches()), 'the page lists the four locked switches');
+assertEquals(['billing_price_points_enabled', 'billing_discounts_enabled', 'billing_payg_enabled'], array_keys(adminSettingsChargingSwitches()), 'the page lists the three locked charging switches (dynamic QR moved to its own section, #166)');
 foreach (array_keys(adminSettingsChargingSwitches()) as $asSwitch) {
     assertFalse(isset($asRegistry[$asSwitch]), $asSwitch . ' is not in the registry (so it can never be saved)');
 }

@@ -32,9 +32,15 @@
  *    last-changed time. The audit log records only "set", "replaced" or
  *    "cleared". Error messages never repeat what was typed.
  *
- * 🔒 LOCKED: the three charging switches, dynamic_qr_enabled, every
- *    "*_cache" row and the rows marked not-editable can never be changed from
- *    here, even by a hand-made request (adminSettingsKeyIsLocked()).
+ * 🔒 LOCKED: the three charging switches, every "*_cache" row and the rows
+ *    marked not-editable can never be changed from here, even by a hand-made
+ *    request (adminSettingsKeyIsLocked()).
+ *
+ * 🔗 dynamic_qr_enabled (WP4c, #166) is on this screen, off by default, and
+ *    can only be switched ON after "Test connection" has passed in the last
+ *    hour with no change to the Go2My.Link settings since
+ *    (adminSettingsDynamicSwitchOnProblem(), checked inside adminSaveSetting()
+ *    so no save path can skip it). Switching it off is always allowed.
  *
  * House rules kept here: full multi-line PHP (no ??, ternaries, arrow
  * functions, match or first-class callables), MySQLi prepared statements only
@@ -178,6 +184,16 @@ if (!defined('CUERCODE_ADMIN_TEST_STARTED_SUFFIX')) {
     define('CUERCODE_ADMIN_TEST_STARTED_SUFFIX', '.started');
 }
 
+/** @var int Minutes a passing Go2My.Link "Test connection" lets dynamic codes be switched on (WP4c, #166). */
+if (!defined('CUERCODE_ADMIN_DYNAMIC_SWITCH_TEST_MINUTES')) {
+    define('CUERCODE_ADMIN_DYNAMIC_SWITCH_TEST_MINUTES', 60);
+}
+
+/** @var array<int, string> The settings a passing connection test vouches for: a change to any of them after the test means testing again. */
+if (!defined('CUERCODE_ADMIN_DYNAMIC_SWITCH_WATCHED_KEYS')) {
+    define('CUERCODE_ADMIN_DYNAMIC_SWITCH_WATCHED_KEYS', ['go2mylink_api_base_url', 'go2mylink_api_key', 'go2mylink_timeout_seconds', 'dynamic_redirect_base_url', 'site_url']);
+}
+
 /** @var string $_SESSION key holding the times of recent test emails. */
 if (!defined('CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY')) {
     define('CUERCODE_ADMIN_TEST_EMAIL_SESSION_KEY', 'cuercode_admin_test_email_times');
@@ -198,7 +214,6 @@ function adminSettingsLockedKeys(): array
         'billing_price_points_enabled',
         'billing_discounts_enabled',
         'billing_payg_enabled',
-        'dynamic_qr_enabled',
         'graph_token_cache',
         'app_version',
         'app_phase',
@@ -238,7 +253,6 @@ function adminSettingsChargingSwitches(): array
         'billing_price_points_enabled' => 'Prices from the price list',
         'billing_discounts_enabled'    => 'Discount codes',
         'billing_payg_enabled'         => 'Pay-as-you-go credits',
-        'dynamic_qr_enabled'           => 'Dynamic QR codes',
     ];
 }
 
@@ -288,7 +302,7 @@ function adminSettingsSections(): array
             'saveLabel' => 'Save dynamic QR settings',
             'title' => 'Dynamic QR codes (Go2My.Link)',
             'icon'  => 'fa-solid fa-arrows-rotate',
-            'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it creates and changes no link on Go2My.Link (Go2My.Link still records the calls in its request log and counts them towards the key\'s request limit). Dynamic codes stay switched off for everyone until the rest of the feature is built and checked.',
+            'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it creates and changes no link on Go2My.Link (Go2My.Link still records the calls in its request log and counts them towards the key\'s request limit). Dynamic codes stay switched off until you switch them on below, which is only possible within an hour of a passing "Test connection" with no change to these settings since. The screens where members make and manage their codes are still being built; until then codes can be made through the API only.',
         ],
         'paypal' => [
             'saveLabel' => 'Save PayPal settings',
@@ -617,6 +631,16 @@ function adminSettingsRegistry(): array
         'help' => 'https://QRmy.Link for real codes; https://alpha.QRmy.Link on the alpha test database (decision 0030). An alpha or beta copy of the site that can be recognised (its folder, or an address starting alpha. or beta.) refuses to make codes on the live https://QRmy.Link. It must be the CueRCode organisation\'s default short domain on Go2My.Link: a link Go2My.Link makes on any other domain, or one whose domain cannot be confirmed, is held and never printed. Only the website name, no path.',
         'allowEmpty' => false, 'maxLength' => 253,
         'description' => 'The short-link address printed in dynamic codes ({address}/{short code}); must be the CueRCode organisation\'s default short domain on Go2My.Link',
+    ]);
+    // 🔗 WP4c (#166): the master switch. AFTER the connection settings, so a
+    //    save that changes them is recorded first and the switch-on check
+    //    (adminSettingsDynamicSwitchOnProblem()) sees it.
+    $fields[] = adminSettingsField([
+        'key' => 'dynamic_qr_enabled', 'section' => 'dynamic', 'kind' => 'bool', 'group' => 'redirects', 'type' => 'boolean',
+        'label' => 'Dynamic codes switched on',
+        'help' => 'Off by default. While on, signed-in members with a confirmed email can make dynamic codes (up to their plan\'s limit, or their own raised number) and change, switch off and switch on their own. It can only be switched on within ' . CUERCODE_ADMIN_DYNAMIC_SWITCH_TEST_MINUTES . ' minutes of a passing "Test connection", with no change to the Go2My.Link settings or the website address since. Switching it off stops new codes and changes at once; codes already printed keep working, because Go2My.Link answers the scans.',
+        'confirmText' => 'I understand that members can then make dynamic codes that print a short address on the address above.',
+        'description' => 'Master switch for dynamic QR codes (WP4c, #166): 0 = no code can be made or changed; can only be switched on after a passing Go2My.Link connection test',
     ]);
     $fields[] = adminSettingsField([
         'key' => 'link_safety_webrisk_api_key', 'section' => 'dynamic', 'subgroup' => 'Link-safety check (Google Web Risk)', 'kind' => 'secret', 'group' => 'link_safety', 'type' => 'string',
@@ -1600,6 +1624,15 @@ function adminSettingsProcessSection(string $sectionId, #[\SensitiveParameter] a
         ];
     }
 
+    // 🔗 WP4c (#166): dynamic codes are switched on in a save of their own,
+    //    after the connection settings have been saved AND tested.
+    if ($sectionId === 'dynamic' && !isset($outcome['errors']['dynamic_qr_enabled'])) {
+        $switchProblem = adminSettingsDynamicSwitchSameSaveProblem($outcome['changes']);
+        if ($switchProblem !== '') {
+            $outcome['errors']['dynamic_qr_enabled'] = $switchProblem;
+        }
+    }
+
     // 🔑 Review M2 (#165): the saved Go2My.Link key is never sent to a
     //    website it was not entered for. Moving the API address to another
     //    website while a key is saved needs the key typed again (or removed)
@@ -1701,6 +1734,118 @@ function adminSettingsGo2MyLinkKeyMustBeRetyped(#[\SensitiveParameter] array $ch
     }
 
     return 'The API address now points at a different website (' . $newHost . '). So that the saved key is never sent there, type the API key for that website here, or tick "Remove", in the same save.';
+}
+
+/**
+ * 🔗 WP4c (#166): does this save switch dynamic codes ON while also changing
+ *    a setting the connection test vouches for? Then it is refused: the
+ *    test passed for the OLD settings. PURE.
+ *
+ * @param array<int, array<string, mixed>> $changes From adminSettingsProcessSection()
+ * @return string '' when fine, otherwise the message for the switch
+ */
+function adminSettingsDynamicSwitchSameSaveProblem(#[\SensitiveParameter] array $changes): string
+{
+    $switchingOn = false;
+    $watchedChanged = false;
+    foreach ($changes as $change) {
+        if ($change['key'] === 'dynamic_qr_enabled' && $change['action'] === 'update' && $change['value'] === '1') {
+            $switchingOn = true;
+        }
+        if (in_array($change['key'], CUERCODE_ADMIN_DYNAMIC_SWITCH_WATCHED_KEYS, true)) {
+            $watchedChanged = true;
+        }
+    }
+
+    if ($switchingOn && $watchedChanged) {
+        return 'Save the Go2My.Link settings first, press "Test connection", and switch dynamic codes on in a separate save once it has passed.';
+    }
+
+    return '';
+}
+
+/**
+ * 🔗 WP4c (#166): may dynamic codes be switched on now? PURE: decided from
+ *    the latest connection test's result and what changed after it.
+ *
+ * @param array|null $lastTest       ['outcome' => 'success'|'failed', 'ageMinutes' => int], or null when never run
+ * @param int        $changedSince   Watched settings changed after that test
+ * @param int        $maxAgeMinutes  How recent the test must be
+ * @return string '' when allowed, otherwise the reason, in plain words
+ */
+function adminSettingsDynamicSwitchDecision(?array $lastTest, int $changedSince, int $maxAgeMinutes = CUERCODE_ADMIN_DYNAMIC_SWITCH_TEST_MINUTES): string
+{
+    if ($lastTest === null) {
+        return 'Dynamic codes can only be switched on after "Test connection" has passed. Press it first.';
+    }
+
+    if (!isset($lastTest['outcome']) || $lastTest['outcome'] !== 'success') {
+        return 'The last "Test connection" did not pass, so dynamic codes stay off. Fix the Go2My.Link settings and test again.';
+    }
+
+    if (!isset($lastTest['ageMinutes']) || !is_int($lastTest['ageMinutes']) || $lastTest['ageMinutes'] < 0 || $lastTest['ageMinutes'] > $maxAgeMinutes) {
+        return 'The last passing "Test connection" is more than ' . $maxAgeMinutes . ' minutes old. Press it again, then switch dynamic codes on.';
+    }
+
+    if ($changedSince > 0) {
+        return 'The Go2My.Link settings or the website address changed after the last "Test connection". Press it again, then switch dynamic codes on.';
+    }
+
+    return '';
+}
+
+/**
+ * 🔗 WP4c (#166): the switch-on check, read from the admin change log: the
+ *    latest finished Go2My.Link connection test (by any admin; refused and
+ *    "started" rows do not count) must have passed in the last hour, and no
+ *    watched setting may have been changed after it. Called by
+ *    adminSaveSetting() inside its transaction, so a change saved earlier in
+ *    the same section save is seen.
+ *
+ * @return string '' when allowed, otherwise the reason
+ */
+function adminSettingsDynamicSwitchOnProblem(): string
+{
+    if (!function_exists('dbQuery')) {
+        return 'The admin change log could not be read, so dynamic codes stay off.';
+    }
+
+    try {
+        $testStmt = dbQuery(
+            "SELECT `auditID`, `outcome`, TIMESTAMPDIFF(MINUTE, `createdAt`, NOW()) AS `ageMinutes` FROM `tblAdminAuditLog` "
+            . "WHERE `action` = 'setting.test_go2mylink' AND `outcome` IN ('success', 'failed') ORDER BY `auditID` DESC LIMIT 1",
+            '',
+            []
+        );
+        $testRow = $testStmt->get_result()->fetch_assoc();
+        $testStmt->close();
+
+        $lastTest = null;
+        $changed  = 0;
+        if (is_array($testRow)) {
+            $lastTest = ['outcome' => (string) $testRow['outcome'], 'ageMinutes' => (int) $testRow['ageMinutes']];
+
+            $watched      = CUERCODE_ADMIN_DYNAMIC_SWITCH_WATCHED_KEYS;
+            $placeholders = implode(', ', array_fill(0, count($watched), '?'));
+            $changeStmt   = dbQuery(
+                "SELECT COUNT(*) AS `changed` FROM `tblAdminAuditLog` WHERE `auditID` > ? AND `entityType` = 'setting' "
+                . "AND `outcome` = 'success' AND `action` IN ('setting.update', 'setting.secret_set', 'setting.secret_replace', 'setting.secret_clear') "
+                . 'AND `entityKey` IN (' . $placeholders . ')',
+                'i' . str_repeat('s', count($watched)),
+                array_merge([(int) $testRow['auditID']], $watched)
+            );
+            $changeRow = $changeStmt->get_result()->fetch_assoc();
+            $changeStmt->close();
+            $changed = (int) $changeRow['changed'];
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'The dynamic-code switch check could not read the admin change log', get_class($e));
+        }
+        return 'The admin change log could not be read, so dynamic codes stay off. Please try again.';
+    }
+
+    return adminSettingsDynamicSwitchDecision($lastTest, $changed);
 }
 
 // ==============================================================================
@@ -2200,6 +2345,15 @@ function adminSaveSetting(array $spec, #[\SensitiveParameter] mixed $newValue, a
         }
     } elseif ($value === '' && !$state['hasValue']) {
         return $leave(['ok' => true, 'outcome' => 'unchanged', 'message' => '', 'afterSave' => '', 'auditAction' => '']);
+    }
+
+    // 🔗 7b. WP4c (#166): dynamic codes are switched ON only after a passing
+    //      connection test (whatever page or tool asks; off is always fine).
+    if ($key === 'dynamic_qr_enabled' && $value === '1') {
+        $switchProblem = adminSettingsDynamicSwitchOnProblem();
+        if ($switchProblem !== '') {
+            return $refuse($switchProblem);
+        }
     }
 
     // 🧾 8. The audit entry (what changed, with secrets reduced to a marker).

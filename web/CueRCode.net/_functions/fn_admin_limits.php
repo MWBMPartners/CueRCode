@@ -20,8 +20,9 @@
  *   Any limit that some plan has can be set this way (not only
  *   dynamic_codes), so no commercial rule is fixed in code; a name no plan
  *   has is refused. The function checks itself that the caller is a working
- *   Global Admin. The screen that calls it is WP4c/WP4d (#166, #167);
- *   nothing on the site calls it yet.
+ *   Global Admin. The screen that calls it is /admin/limits/ (WP4c, #166),
+ *   which also uses adminLimitsFindPerson() and adminLimitsListOverrides()
+ *   below to show who has their own number.
  *
  * House rules: full multi-line PHP; MySQLi prepared statements (through
  * dbQuery()); back-quoted SQL names. Loading defines functions only.
@@ -255,4 +256,144 @@ function adminSetUserLimitOverride(array $admin, int $userID, string $limitKey, 
     }
 
     return ['ok' => true, 'message' => 'Saved: this person\'s own limit is now ' . $checked['value'] . '.'];
+}
+
+// ==============================================================================
+// 👀 What the /admin/limits/ screen shows (WP4c, #166)
+// ==============================================================================
+
+/**
+ * 👤 One person, for the limits screen: their plan's number, their own
+ *    number (with the reason, who set it and when), the number that applies
+ *    (limitFor(): the higher of the two, decision 0045; the plan's alone
+ *    while a payment is overdue) and how many dynamic codes count against it.
+ *
+ * @param int    $userID
+ * @param string $limitKey A plan limit, for example dynamic_codes
+ * @return array|null Null when the person is not found or the database could not be read
+ */
+function adminLimitsFindPerson(int $userID, string $limitKey = 'dynamic_codes'): ?array
+{
+    try {
+        $userStmt = dbQuery(
+            'SELECT `userID`, `email`, `displayName`, `status`, `emailVerifiedAt`, `createdAt` FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
+            'i',
+            [$userID]
+        );
+        $user = $userStmt->get_result()->fetch_assoc();
+        $userStmt->close();
+    } catch (\Throwable $e) {
+        return null;
+    }
+    if (!is_array($user)) {
+        return null;
+    }
+
+    $own = null;
+    if (adminTableExists('tblUserLimitOverrides')) {
+        try {
+            $ownStmt = dbQuery(
+                'SELECT `o`.`limitValue`, `o`.`reason`, `o`.`updatedAt`, `s`.`email` AS `setByEmail` FROM `tblUserLimitOverrides` AS `o` '
+                . 'LEFT JOIN `tblUsers` AS `s` ON `s`.`userID` = `o`.`setByUserID` WHERE `o`.`userID` = ? AND `o`.`limitKey` = ? LIMIT 1',
+                'is',
+                [$userID, $limitKey]
+            );
+            $ownRow = $ownStmt->get_result()->fetch_assoc();
+            $ownStmt->close();
+        } catch (\Throwable $e) {
+            return null;
+        }
+        if (is_array($ownRow)) {
+            $own = $ownRow;
+        }
+    }
+
+    $plan = effectivePlanForGating($userID);
+    $planNumber = 0;
+    if (array_key_exists($limitKey, $plan['limits'])) {
+        $planNumber = (int) $plan['limits'][$limitKey];
+    }
+
+    // 🧹 Read fresh: an earlier read in this request may be cached.
+    featuresCacheStore('clear', 'limit_override:' . $userID . ':' . $limitKey);
+
+    $held = null;
+    if ($limitKey === 'dynamic_codes' && function_exists('dynamicQrCountHeldCodes')) {
+        $held = dynamicQrCountHeldCodes($userID);
+    }
+
+    return [
+        'user'       => $user,
+        'planName'   => (string) $plan['planName'],
+        'pastDue'    => ($plan['subscriptionStatus'] === 'past_due'),
+        'planNumber' => $planNumber,
+        'own'        => $own,
+        'applies'    => limitFor($limitKey, $userID),
+        'held'       => $held,
+    ];
+}
+
+/**
+ * 🔎 Find a person by their email address, typed exactly (fn_email_match.php).
+ *
+ * @param string $email As typed
+ * @return int|null The userID, or null when not found (or not one address)
+ */
+function adminLimitsFindUserIdByEmail(string $email): ?int
+{
+    $email = adminNormaliseEmail($email);
+    if ($email === '') {
+        return null;
+    }
+
+    $rows = adminCliFindAccounts($email);
+    if (!is_array($rows) || count($rows) !== 1) {
+        return null;
+    }
+
+    return (int) $rows[0]['userID'];
+}
+
+/**
+ * 📋 Everyone with their own number for this limit, newest change first
+ *    (at most 200), with the reason and when it was set.
+ *
+ * @param string $limitKey
+ * @return array<int, array<string, mixed>>|null Null when it could not be read
+ */
+function adminLimitsListOverrides(string $limitKey = 'dynamic_codes'): ?array
+{
+    if (!adminTableExists('tblUserLimitOverrides')) {
+        return [];
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT `o`.`userID`, `o`.`limitValue`, `o`.`reason`, `o`.`updatedAt`, `u`.`email` FROM `tblUserLimitOverrides` AS `o` '
+            . 'INNER JOIN `tblUsers` AS `u` ON `u`.`userID` = `o`.`userID` WHERE `o`.`limitKey` = ? ORDER BY `o`.`updatedAt` DESC, `o`.`userID` LIMIT 200',
+            's',
+            [$limitKey]
+        );
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+    } catch (\Throwable $e) {
+        return null;
+    }
+
+    return $rows;
+}
+
+/**
+ * 🔢 A limit number in plain words: "no limit" for -1. PURE.
+ *
+ * @param int $number
+ * @return string
+ */
+function adminLimitsNumberText(int $number): string
+{
+    if ($number === -1) {
+        return 'no limit';
+    }
+
+    return (string) $number;
 }
