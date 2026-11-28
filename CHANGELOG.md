@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Upgrade 0006 refuses a money column whose default, unsigned flag or description was changed by hand (second Codex review, 2026-11-28)
+
+- Each step of upgrade 0006 rewrites a money column with `MODIFY COLUMN`, which also sets the column's default, drops an "unsigned" flag and replaces its description. The safety check compared only the width and "may it be empty". So a column given a default of 5.00 by hand came out with 0.000, an UNSIGNED one quietly allowed negative amounts again, and a hand-written description was lost.
+- Now the check also refuses (does not run, does not record the upgrade) a column that is UNSIGNED, has a different default, or has a description other than the one the step names in its new `expectComment` field. That is install.sql's own description, the only one these columns have ever had. The refusal message names these reasons. Upgrade 0006 was changed in place: it has never been pushed or applied outside the tests.
+- Shown failing first on MySQL 8.4 (new P7-P9 in `migrations_real_mysql.php`): with the old code the three columns were changed. With the new code they are refused and left exactly as they were. Every other migration scenario still passes. 20 new or changed checks in `tests/test_migrations.php`.
+
 ### Fixed - The Free plan keeps its sign-up button when prices cannot be read (second Codex review, decision 0041, 2026-11-28)
 
 - If the price list could not be read, every plan was marked "Price unavailable", including the Free plan. Its "Create free account" link was then replaced by a disabled "Coming soon" button, although decision 0041 says the Free plan can never have a price. The Free plan is now handled apart from the price list, both where the list is read (`listPublicPlansForDisplay()`) and where the cards are built (`pricingDisplayRowsFromPlans()`), so it stays "Free" with its working sign-up link. Every other plan still says "Price unavailable", as before.

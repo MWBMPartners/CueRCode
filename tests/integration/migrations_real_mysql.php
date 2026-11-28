@@ -108,7 +108,9 @@
  *   0005 again changes nothing; a stored value or description that differs
  *   from the starting one only by capitals or a trailing space is kept byte
  *   for byte (added 2026-11-28, merged review of #163).
- *   Scenario P (#176, decision 0042). Upgrade 0006 on a database at 0005:
+ *   Scenario P (#176, decision 0042). Upgrade 0006 on a database at 0005
+ *   (P7-P9, second Codex review: a column with a hand-set default, made
+ *   UNSIGNED, or with its own description is refused and left alone):
  *   every money column becomes DECIMAL(15,3), NOT NULL and defaults kept,
  *   every stored amount (the largest and smallest old values included) the
  *   same; KWD 1.234 and 999,999,999,999 stored exactly; run again it skips
@@ -1808,7 +1810,9 @@ $itP = itAt0005($itEnv, $itPort, $itDbP, $itInstallSql, $itSeedSql, $itDir0005);
 $itP->query('ALTER TABLE `tblDiscounts` MODIFY COLUMN `value` DECIMAL(10,2) NULL');
 $itNullP = migrationRun($itP, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck('P 0006 money columns', $itNullP['status'] === 'failed' && itMoneyColumnTypes($itP, [['tblDiscounts', 'value']]) === ['decimal(10,2)|YES|none'], 'a money column made NULL-able by hand is refused and left alone (0006 never changes whether a column may be empty): ' . json_encode([$itNullP['status'], itMoneyColumnTypes($itP, [['tblDiscounts', 'value']])]));
-$itP->query('ALTER TABLE `tblDiscounts` MODIFY COLUMN `value` DECIMAL(10,2) NOT NULL');
+// 🧾 Put right exactly: NOT NULL again, with its own description (second
+//    Codex review: a column without it would be refused, see P9).
+$itP->query("ALTER TABLE `tblDiscounts` MODIFY COLUMN `value` DECIMAL(10,2) NOT NULL COMMENT '🔢 The percentage (e.g. 25.00) or fixed amount this discount removes, per `discountType`'");
 $itFixedP = migrationRun($itP, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck('P 0006 money columns', $itFixedP['status'] === 'ok' && itSchemaSnapshot($itP) === $itSchemaA, 'once the column is put right, the next run finishes and the result is the fresh install\'s');
 itDropDb($itEnv, $itPort, $itDbP);
@@ -1817,10 +1821,32 @@ itDropDb($itEnv, $itPort, $itDbP);
 //     but with only 10 whole digits (DECIMAL(13,3), set by hand) is NOT
 //     "already done": its step runs and widens it to DECIMAL(15,3).
 $itP = itAt0005($itEnv, $itPort, $itDbP, $itInstallSql, $itSeedSql, $itDir0005);
-$itP->query('ALTER TABLE `tblPayments` MODIFY COLUMN `amount` DECIMAL(13,3) NOT NULL');
+$itP->query("ALTER TABLE `tblPayments` MODIFY COLUMN `amount` DECIMAL(13,3) NOT NULL COMMENT '💷 Amount captured/refunded, denominated in `currency`'");
 $itShortP = migrationRun($itP, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck('P 0006 money columns', $itShortP['status'] === 'ok' && isset($itShortP['migrations'][0]['stepsRun']) && $itShortP['migrations'][0]['stepsRun'] === 6 && itMoneyColumnTypes($itP, [['tblPayments', 'amount']]) === ['decimal(15,3)|NO|none'] && itSchemaSnapshot($itP) === $itSchemaA, 'a column at DECIMAL(13,3) (three decimals, only 10 whole digits) is not skipped as done: its step runs and it becomes DECIMAL(15,3) (third-round review, Low 3 A): ' . json_encode([$itShortP['migrations'], itMoneyColumnTypes($itP, [['tblPayments', 'amount']])]));
 itDropDb($itEnv, $itPort, $itDbP);
+
+// P7-P9. Second Codex review: each MODIFY also sets the column's default, its
+//     "unsigned" flag and its description. A column where someone changed
+//     one of them by hand is refused and left exactly as it was.
+$itHandChanges = [
+    'P7 a hand-set default (5.00)'      => ['tblSubscriptionPlans', 'priceMonthly', "ALTER TABLE `tblSubscriptionPlans` MODIFY COLUMN `priceMonthly` DECIMAL(10,2) NOT NULL DEFAULT 5.00 COMMENT '💷 Monthly price in `currency` (0.00 for the anonymous/free tiers) - admin-editable config, not code'", 1],
+    'P8 UNSIGNED (no negative amounts)' => ['tblPayments', 'amount', "ALTER TABLE `tblPayments` MODIFY COLUMN `amount` DECIMAL(10,2) UNSIGNED NOT NULL COMMENT '💷 Amount captured/refunded, denominated in `currency`'", 5],
+    'P9 its own description'            => ['tblPlanPricePoints', 'amount', "ALTER TABLE `tblPlanPricePoints` MODIFY COLUMN `amount` DECIMAL(10,2) NOT NULL COMMENT 'Our own note about this column'", 3],
+];
+foreach ($itHandChanges as $itHandLabel => [$itHandTable, $itHandColumn, $itHandSql, $itHandStep]) {
+    $itP = itAt0005($itEnv, $itPort, $itDbP, $itInstallSql, $itSeedSql, $itDir0005);
+    $itP->query($itHandSql);
+    $itHandBefore = itValue($itP, "SELECT CONCAT_WS('|', `COLUMN_TYPE`, IFNULL(`COLUMN_DEFAULT`, 'none'), `COLUMN_COMMENT`) FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = '" . $itHandTable . "' AND `COLUMN_NAME` = '" . $itHandColumn . "'");
+    $itHandRun = migrationRun($itP, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+    $itHandProblem = '';
+    if (isset($itHandRun['migrations'][0]['problems'][0])) {
+        $itHandProblem = (string) $itHandRun['migrations'][0]['problems'][0];
+    }
+    $itHandAfter = itValue($itP, "SELECT CONCAT_WS('|', `COLUMN_TYPE`, IFNULL(`COLUMN_DEFAULT`, 'none'), `COLUMN_COMMENT`) FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = '" . $itHandTable . "' AND `COLUMN_NAME` = '" . $itHandColumn . "'");
+    itCheck('P 0006 money columns', $itHandRun['status'] === 'failed' && str_contains($itHandProblem, 'step ' . $itHandStep) && str_contains($itHandProblem, 'was not run') && $itHandAfter === $itHandBefore && itNumber($itP, "SELECT COUNT(*) FROM `tblSchemaMigrations` WHERE `migrationKey` = '0006_three_decimal_money_columns'") === 0, 'second Codex review, ' . $itHandLabel . ': ' . $itHandTable . '.' . $itHandColumn . ' is refused at its step, left exactly as it was (' . $itHandAfter . ') and 0006 is not recorded: ' . $itHandProblem);
+    itDropDb($itEnv, $itPort, $itDbP);
+}
 
 foreach ((array) glob($itDir0005 . '*') as $itTempFile) {
     @unlink((string) $itTempFile);

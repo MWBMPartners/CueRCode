@@ -31,8 +31,13 @@
  * way with the same "may it be empty" (otherwise it is REFUSED and nothing
  * of it runs). So a run that stopped after three columns does the other
  * three next time, and a column someone widened by hand is never narrowed.
- * Each MODIFY repeats the column's NOT NULL, default and description, so
- * nothing else about the column changes.
+ * Each MODIFY repeats the column's NOT NULL and default, and gives it its new
+ * description. Second Codex review: because the MODIFY replaces those, a step
+ * is also REFUSED when the live column is UNSIGNED, has a different default,
+ * or has a description other than the one in its expectComment (install.sql's
+ * own, the only one these columns have ever had), so nothing set by hand is
+ * lost. (Changed in place: this upgrade has never been pushed or applied
+ * outside the tests.)
  *
  * ⚠️ This file is DATA, not code: it only returns an array. It is read by
  *    _functions/fn_migrations.php, which checks every step before it runs.
@@ -57,6 +62,7 @@ return [
             'type'  => 'widen_decimal_column',
             'table' => 'tblSubscriptionPlans',
             'name'  => 'priceMonthly',
+            'expectComment' => '💷 Monthly price in `currency` (0.00 for the anonymous/free tiers) - admin-editable config, not code',
             'sql'   => 'ALTER TABLE `tblSubscriptionPlans` MODIFY COLUMN `priceMonthly` DECIMAL(15,3) NOT NULL DEFAULT 0.000'
                 . ' COMMENT \'💷 Monthly price in `currency`, up to 3 decimal places (0 for the anonymous/free tiers) - admin-editable config, not code\'',
         ],
@@ -64,6 +70,7 @@ return [
             'type'  => 'widen_decimal_column',
             'table' => 'tblSubscriptionPlans',
             'name'  => 'priceYearly',
+            'expectComment' => '💷 Yearly price in `currency` (0.00 for the anonymous/free tiers) - admin-editable config, not code',
             'sql'   => 'ALTER TABLE `tblSubscriptionPlans` MODIFY COLUMN `priceYearly` DECIMAL(15,3) NOT NULL DEFAULT 0.000'
                 . ' COMMENT \'💷 Yearly price in `currency`, up to 3 decimal places (0 for the anonymous/free tiers) - admin-editable config, not code\'',
         ],
@@ -71,6 +78,7 @@ return [
             'type'  => 'widen_decimal_column',
             'table' => 'tblPlanPricePoints',
             'name'  => 'amount',
+            'expectComment' => '💷 Price in `currency` for this specific price point',
             'sql'   => 'ALTER TABLE `tblPlanPricePoints` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL'
                 . ' COMMENT \'💷 Price in `currency` for this specific price point, up to 3 decimal places\'',
         ],
@@ -78,6 +86,7 @@ return [
             'type'  => 'widen_decimal_column',
             'table' => 'tblDiscounts',
             'name'  => 'value',
+            'expectComment' => '🔢 The percentage (e.g. 25.00) or fixed amount this discount removes, per `discountType`',
             'sql'   => 'ALTER TABLE `tblDiscounts` MODIFY COLUMN `value` DECIMAL(15,3) NOT NULL'
                 . ' COMMENT \'🔢 The percentage (e.g. 25) or fixed amount (up to 3 decimal places) this discount removes, per `discountType`\'',
         ],
@@ -85,6 +94,7 @@ return [
             'type'  => 'widen_decimal_column',
             'table' => 'tblPayments',
             'name'  => 'amount',
+            'expectComment' => '💷 Amount captured/refunded, denominated in `currency`',
             'sql'   => 'ALTER TABLE `tblPayments` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL'
                 . ' COMMENT \'💷 Amount captured/refunded, denominated in `currency`, up to 3 decimal places\'',
         ],
@@ -92,6 +102,7 @@ return [
             'type'  => 'widen_decimal_column',
             'table' => 'tblOneOffPurchases',
             'name'  => 'amount',
+            'expectComment' => '💷 Amount captured/refunded, denominated in `currency`',
             'sql'   => 'ALTER TABLE `tblOneOffPurchases` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL'
                 . ' COMMENT \'💷 Amount captured/refunded, denominated in `currency`, up to 3 decimal places\'',
         ],

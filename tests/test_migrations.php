@@ -1308,9 +1308,31 @@ $migWiden = [
     'table' => 'tblExample',
     'name'  => 'amount',
     'sql'   => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL DEFAULT 0.000 COMMENT \'Price, up to 3 decimal places\'',
+    // 🧾 Second Codex review: the description the column must have NOW.
+    'expectComment' => '💷 Price, 2 decimal places',
 ];
 assertEquals([], migrationValidateStep($migWiden, 1), '0042: a widen_decimal_column step is valid');
-assertEquals(['precision' => 15, 'scale' => 3, 'notNull' => true], migrationWidenTargetOfStep($migWiden), '0042: its target is read from the SQL');
+assertEquals(['precision' => 15, 'scale' => 3, 'notNull' => true, 'default' => '0.000'], migrationWidenTargetOfStep($migWiden), '0042: its target is read from the SQL (with the default it sets, second Codex review)');
+
+// 🧾 Second Codex review: each MODIFY also sets the column's default, its
+//    "unsigned" flag (always off: the step's DECIMAL never says UNSIGNED) and
+//    its description. So a widen step must state the description the column
+//    has now, and the runner refuses a column that differs in any of them.
+$migNoExpect = $migWiden;
+unset($migNoExpect['expectComment']);
+assertTrue($migRefusedWith($migNoExpect, 'expectComment'), 'Codex 2: a widen step without expectComment (the description the column has now) is refused');
+assertTrue($migRefusedWith(array_merge($migWiden, ['expectComment' => 42]), 'expectComment'), 'Codex 2: expectComment must be text');
+assertTrue($migRefusedWith(array_merge($migGoodSteps['add_column'], ['expectComment' => 'x']), 'expectComment'), 'Codex 2: only a widen step may have expectComment');
+$migSafeSql = migrationStepSafetyQuery($migWiden);
+assertContains('COLUMN_TYPE', $migSafeSql['sql'], 'Codex 2: the safety question looks at the column type ...');
+assertContains('%unsigned%', implode('|', array_map('strval', $migSafeSql['params'])), 'Codex 2: ... and refuses an UNSIGNED column (the MODIFY would drop "unsigned")');
+assertContains('CAST(COLUMN_DEFAULT AS DECIMAL(65,30)) = CAST(? AS DECIMAL(65,30))', $migSafeSql['sql'], 'Codex 2: a step that sets DEFAULT 0.000 needs a column whose default is that same number now');
+assertTrue(in_array('0.000', $migSafeSql['params'], true), 'Codex 2: ... the number is the step\'s own');
+assertContains('CAST(COLUMN_COMMENT AS BINARY) = CAST(? AS BINARY)', $migSafeSql['sql'], 'Codex 2: the description must be exactly the expected one');
+assertTrue(in_array('💷 Price, 2 decimal places', $migSafeSql['params'], true) && in_array('? Price, 2 decimal places', $migSafeSql['params'], true), 'Codex 2: ... as written, or as MySQL and MariaDB show it (each emoji as "?", measured on all three servers)');
+$migNoDefault = array_merge($migWiden, ['sql' => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL COMMENT \'x\'']);
+assertContains("(COLUMN_DEFAULT IS NULL OR COLUMN_DEFAULT = 'NULL')", migrationStepSafetyQuery($migNoDefault)['sql'], 'Codex 2: a step with no DEFAULT needs a column with no default now (MariaDB shows none as the text NULL)');
+assertEquals(substr_count($migSafeSql['sql'], '?'), strlen($migSafeSql['types']), 'Codex 2: placeholders match bound types');
 foreach ([
     'no DEFAULT, no COMMENT'    => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL',
     'a COMMENT only'            => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL COMMENT \'x\'',
@@ -1364,7 +1386,7 @@ assertEquals('refuse', migrationDecideStep($migWiden, $migWidenChecker(false, fa
 $migWidenDone = migrationStepExistsQuery($migWiden);
 $migWidenSafe = migrationStepSafetyQuery($migWiden);
 assertEquals(['tblExample', 'amount', 3, 12], $migWidenDone['params'], '0042: the "done" question asks for at least 3 decimal places and 12 whole digits');
-assertEquals(['tblExample', 'amount', 3, 12, 'NO'], $migWidenSafe['params'], '0042: the "safe" question asks for at most 3 and 12, and NOT NULL as now');
+assertEquals(['tblExample', 'amount', 3, 12, 'NO'], array_slice($migWidenSafe['params'], 0, 5), '0042: the "safe" question asks for at most 3 and 12, and NOT NULL as now');
 foreach ([$migWidenDone, $migWidenSafe] as $migWidenQuery) {
     assertContains('TABLE_SCHEMA = DATABASE()', $migWidenQuery['sql'], '0042: limited to the current database');
     assertContains("DATA_TYPE = 'decimal'", $migWidenQuery['sql'], '0042: only a DECIMAL column counts');
@@ -1381,7 +1403,19 @@ assertTrue(is_array($mig0006), '0042: upgrade 0006 is there and loads');
 $mig0006Columns = [];
 foreach ((array) ($mig0006['steps'] ?? []) as $mig0006Step) {
     $mig0006Target = migrationWidenTargetOfStep($mig0006Step);
-    assertEquals(['precision' => 15, 'scale' => 3, 'notNull' => true], $mig0006Target, '0042: 0006 widens ' . $mig0006Step['table'] . '.' . $mig0006Step['name'] . ' to DECIMAL(15,3) NOT NULL');
+    assertEquals(['precision' => 15, 'scale' => 3, 'notNull' => true], array_slice((array) $mig0006Target, 0, 3), '0042: 0006 widens ' . $mig0006Step['table'] . '.' . $mig0006Step['name'] . ' to DECIMAL(15,3) NOT NULL');
+    // 🧾 Second Codex review: the description 0006 expects is install.sql's own.
+    $mig0006Table = preg_quote((string) $mig0006Step['table'], '/');
+    $mig0006Name  = preg_quote((string) $mig0006Step['name'], '/');
+    $mig0006Block = '';
+    if (preg_match('/CREATE TABLE IF NOT EXISTS `' . $mig0006Table . '` \((.*?)\n\) ENGINE/s', $migRealInstallSql, $mig0006TableMatch) === 1) {
+        $mig0006Block = $mig0006TableMatch[1];
+    }
+    $mig0006Installed = null;
+    if (preg_match('/^\s*`' . $mig0006Name . '`\s+DECIMAL\(10,2\)[^\n]*?COMMENT \'((?:[^\'\\\\]|\\\\.)*)\'/m', $mig0006Block, $mig0006CommentMatch) === 1) {
+        $mig0006Installed = $mig0006CommentMatch[1];
+    }
+    assertTrue($mig0006Installed !== null && ($mig0006Step['expectComment'] ?? null) === $mig0006Installed, 'Codex 2: 0006 expects ' . $mig0006Step['table'] . '.' . $mig0006Step['name'] . ' to have install.sql\'s own description (' . json_encode($mig0006Step['expectComment'] ?? null, JSON_UNESCAPED_UNICODE) . ')');
     $mig0006Columns[] = $mig0006Step['table'] . '.' . $mig0006Step['name'];
 }
 // 📋 Exactly the DECIMAL columns install.sql has - none missed, none extra.

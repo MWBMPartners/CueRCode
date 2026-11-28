@@ -464,13 +464,14 @@ function migrationStepTypes(): array
  * @param string $squashed The step SQL, quoted text blanked, spaces squashed
  * @param string $table    The step's table
  * @param string $name     The step's column
- * @return array{precision: int, scale: int, notNull: bool}|null Null when the shape is wrong
+ * @return array{precision: int, scale: int, notNull: bool, default: string|null}|null Null when the shape is wrong.
+ *         default: the number the step sets as the column's default, or null when it sets none (or DEFAULT NULL)
  */
 function migrationWidenTarget(string $squashed, string $table, string $name): ?array
 {
     $pattern = '/^ALTER TABLE ' . preg_quote('`' . $table . '`', '/') . ' MODIFY COLUMN ' . preg_quote('`' . $name . '`', '/')
         . ' DECIMAL ?\( ?([0-9]{1,2}) ?, ?([0-9]{1,2}) ?\) (NOT NULL|NULL)'
-        . '(?: DEFAULT (?:[0-9]{1,20}(?:\.[0-9]{1,30})?|NULL))?'
+        . '(?: DEFAULT ([0-9]{1,20}(?:\.[0-9]{1,30})?|NULL))?'
         . "(?: COMMENT ' ?')? ?$/i";
     $found = [];
     if (preg_match($pattern, $squashed, $found) !== 1) {
@@ -485,7 +486,14 @@ function migrationWidenTarget(string $squashed, string $table, string $name): ?a
         return null;
     }
 
-    return ['precision' => $precision, 'scale' => $scale, 'notNull' => (strtoupper($found[3]) === 'NOT NULL')];
+    // 🧾 Second Codex review: the default the MODIFY will set (it always
+    //    sets one: a number, or none).
+    $default = null;
+    if (isset($found[4]) && $found[4] !== '' && strtoupper($found[4]) !== 'NULL') {
+        $default = $found[4];
+    }
+
+    return ['precision' => $precision, 'scale' => $scale, 'notNull' => (strtoupper($found[3]) === 'NOT NULL'), 'default' => $default];
 }
 
 /**
@@ -505,7 +513,8 @@ function migrationValidateStep(mixed $step, int $index): array
     }
 
     // 🧾 Only known fields - a typo such as 'tabel' must not slip through.
-    $allowedFields = ['type', 'table', 'name', 'sql', 'label'];
+    // 🧾 expectComment: widen_decimal_column only (second Codex review).
+    $allowedFields = ['type', 'table', 'name', 'sql', 'label', 'expectComment'];
     foreach (array_keys($step) as $fieldName) {
         if (!is_string($fieldName) || !in_array($fieldName, $allowedFields, true)) {
             $errors[] = $label . ': unknown field "' . (string) $fieldName . '"';
@@ -519,6 +528,10 @@ function migrationValidateStep(mixed $step, int $index): array
         return $errors;
     }
     $type = $step['type'];
+
+    if ($type !== 'widen_decimal_column' && array_key_exists('expectComment', $step)) {
+        $errors[] = $label . ': only a widen_decimal_column step has expectComment';
+    }
 
     // 🧱 Table name: a plain database name.
     if (!isset($step['table']) || !is_string($step['table']) || preg_match('/^[A-Za-z0-9_]{1,64}$/D', $step['table']) !== 1) {
@@ -651,6 +664,12 @@ function migrationValidateStep(mixed $step, int $index): array
             $errors[] = $label . ': an update_if_unchanged step needs a WHERE that only matches rows still at their old seeded value';
         }
     } elseif ($type === 'widen_decimal_column') {
+        // 🧾 Second Codex review: the MODIFY replaces the column's
+        //    description, so the step must say which one the column has now;
+        //    the runner refuses a column with any other.
+        if (!isset($step['expectComment']) || !is_string($step['expectComment']) || strlen($step['expectComment']) > 1024 || str_contains($step['expectComment'], "\0")) {
+            $errors[] = $label . ': a widen_decimal_column step needs expectComment: the description the column has now (text, up to 1024 bytes)';
+        }
         if (migrationWidenTarget($squashed, $table, $name) === null) {
             $errors[] = $label . ': a widen_decimal_column step must be ALTER TABLE `' . $table . '` MODIFY COLUMN `' . $name . '` DECIMAL(precision,scale) NOT NULL (or NULL) ...';
         }
@@ -1004,6 +1023,18 @@ function migrationWidenTargetOfStep(array $step): ?array
  * it never turns a column that refuses empty values into one that allows
  * them (or the other way round).
  *
+ * 🧾 Second Codex review (2026-11-28): the MODIFY also REPLACES the column's
+ * default, its "unsigned" flag and its description. So the live column must
+ * also:
+ *   - not be UNSIGNED (the step's DECIMAL never says UNSIGNED, so the MODIFY
+ *     would quietly allow negative amounts again);
+ *   - have the default the step sets now (the same number, or none), so a
+ *     default someone set by hand is never replaced with zero;
+ *   - have exactly the description the step names in expectComment, as
+ *     written or as MySQL and MariaDB report it (each 4-byte character such
+ *     as an emoji shown as "?" - measured on MySQL 8.0, 8.4 and MariaDB 10.6).
+ * Otherwise the step is refused and nothing of it runs.
+ *
  * @param array $step A valid step
  * @return array{sql: string, types: string, params: array<int, mixed>}|null
  */
@@ -1019,12 +1050,37 @@ function migrationStepSafetyQuery(array $step): ?array
         $nullable = 'NO';
     }
 
-    return [
-        'sql'    => 'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
-            . ' AND DATA_TYPE = \'decimal\' AND NUMERIC_SCALE <= ? AND (NUMERIC_PRECISION - NUMERIC_SCALE) <= ? AND IS_NULLABLE = ?',
-        'types'  => 'ssiis',
-        'params' => [$step['table'], $step['name'], $target['scale'], $target['precision'] - $target['scale'], $nullable],
-    ];
+    $sql = 'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        . ' AND DATA_TYPE = \'decimal\' AND NUMERIC_SCALE <= ? AND (NUMERIC_PRECISION - NUMERIC_SCALE) <= ? AND IS_NULLABLE = ?'
+        . ' AND LOWER(COLUMN_TYPE) NOT LIKE ?';
+    $types  = 'ssiiss';
+    $params = [$step['table'], $step['name'], $target['scale'], $target['precision'] - $target['scale'], $nullable, '%unsigned%'];
+
+    // 🔢 The default: the same number as the step sets, or none at all
+    //    (MySQL reports "no default" as NULL, MariaDB as the text NULL).
+    if ($target['default'] !== null) {
+        $sql    .= ' AND COLUMN_DEFAULT IS NOT NULL AND COLUMN_DEFAULT <> \'NULL\' AND CAST(COLUMN_DEFAULT AS DECIMAL(65,30)) = CAST(? AS DECIMAL(65,30))';
+        $types  .= 's';
+        $params[] = $target['default'];
+    } else {
+        $sql .= " AND (COLUMN_DEFAULT IS NULL OR COLUMN_DEFAULT = 'NULL')";
+    }
+
+    // 📝 The description, byte for byte (as written, or as the server shows it).
+    $expected = '';
+    if (isset($step['expectComment']) && is_string($step['expectComment'])) {
+        $expected = $step['expectComment'];
+    }
+    $shown    = preg_replace('/[\x{10000}-\x{10FFFF}]/u', '?', $expected);
+    if (!is_string($shown)) {
+        $shown = $expected;
+    }
+    $sql    .= ' AND (CAST(COLUMN_COMMENT AS BINARY) = CAST(? AS BINARY) OR CAST(COLUMN_COMMENT AS BINARY) = CAST(? AS BINARY))';
+    $types  .= 'ss';
+    $params[] = $expected;
+    $params[] = $shown;
+
+    return ['sql' => $sql, 'types' => $types, 'params' => $params];
 }
 
 /**
@@ -3429,14 +3485,16 @@ function migrationRunLocked(\mysqli $db, string $mode, bool $isApply, string $ap
             if ($decision === 'refuse') {
                 // 🛡️ Decision 0042: the live column is not what the step can
                 //    safely widen (missing, not a DECIMAL, already wider in
-                //    one way, or a different "may be empty"). Nothing of it
-                //    runs and the upgrade is not recorded, in a dry run too.
+                //    one way, or a different "may be empty"; since the second
+                //    Codex review also UNSIGNED, another default or another
+                //    description). Nothing of it runs and the upgrade is not
+                //    recorded, in a dry run too.
                 $result['migrations'][] = [
                     'key'          => $pendingKey,
                     'outcome'      => 'failed',
                     'stepsRun'     => $stepsRun,
                     'stepsSkipped' => $stepsSkipped,
-                    'problems'     => ['step ' . $position . ' (' . migrationDescribeStep($step) . ') was not run: the column is not a DECIMAL it can only make wider (it would lose digits, or change whether it may be empty). Check the column by hand.'],
+                    'problems'     => ['step ' . $position . ' (' . migrationDescribeStep($step) . ') was not run: the column is not the DECIMAL it expects to make wider. It would lose digits or change whether it may be empty, or the column is UNSIGNED, has a different default or has a different description, which the change would replace. Check the column by hand.'],
                 ];
                 $result['status'] = 'failed';
                 $result['error']  = $pendingKey . ' step ' . $position . ' was refused.';
