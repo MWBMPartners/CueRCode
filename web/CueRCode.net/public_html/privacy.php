@@ -116,6 +116,11 @@ if (function_exists('humanCheckProvidersInUse')) {
     $privacyHumanChecks = humanCheckProvidersInUse();
 }
 
+// 🛡️ #168: how long a "this destination is harmful" answer is kept (the
+//    admin setting the daily dynamic-code job uses).
+require_once CUERCODE_FUNCTIONS_DIR . 'fn_url_reputation.php';
+$privacyLinkSafetyDays = urlReputationHitsRetentionDays();
+
 $pageTitle       = 'Privacy & Data Protection Policy';
 $pageDescription = 'Privacy, Data Protection & Cookies Policy for ' . $siteName
     . ' - how we collect, use, protect and share data, and your rights under '
@@ -162,7 +167,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <li><a href="#data-collected">2. Information we collect</a></li>
                                 <li><a href="#purposes">3. Purposes &amp; lawful bases</a></li>
                                 <li><a href="#cookies">4. Cookies, localStorage &amp; similar technologies</a></li>
-                                <li><a href="#sharing">5. How we share information</a> (including <a href="#human-check">5.1 the human check</a>)</li>
+                                <li><a href="#sharing">5. How we share information</a> (including <a href="#human-check">5.1 the human check</a> and <a href="#link-safety">5.2 checking where dynamic QR codes lead</a>)</li>
                                 <li><a href="#transfers">6. International data transfers</a></li>
                                 <li><a href="#retention">7. Data retention</a></li>
                                 <li><a href="#security">8. Data security</a></li>
@@ -410,6 +415,27 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         </p>
                         <?php } ?>
 
+                        <?php /* 🛡️ 5.2 The link-safety check for dynamic QR codes (#168).
+                             Factual wording; the legal review (#38) adds the rest. */ ?>
+                        <h3 id="link-safety" class="h6 mt-3 mb-2">5.2 Dynamic QR Codes: Checking Where They Lead</h3>
+                        <p>
+                            A dynamic QR code sends the people who scan it on to a web address chosen by the
+                            code&rsquo;s owner, and the owner can change that address later. To protect the
+                            people who scan our codes, we ask <strong>Google Web Risk</strong>, a service run by
+                            Google, whether the address is on Google&rsquo;s lists of known harmful pages
+                            (phishing, malware and unwanted software). We ask when a code is made, whenever its
+                            address changes or it is switched back on, and once a day while it is in use. We
+                            send Google only that web address &mdash; never your email address, your name or
+                            anything about the people who scan the code.
+                        </p>
+                        <p>
+                            If Google lists the address, we refuse it, or we suspend the code (people who scan
+                            it then see a neutral page) and tell its owner. We keep a record of each such
+                            answer &mdash; the address, the account it belongs to and the time &mdash; for
+                            <?php echo (int) $privacyLinkSafetyDays; ?>&nbsp;days. How Google handles the
+                            information is described in <a href="https://policies.google.com/privacy" rel="noopener">Google&rsquo;s privacy policy</a>.
+                        </p>
+
                         <?php /* ============================================================
                              6. International transfers
                              ============================================================ */ ?>
@@ -436,6 +462,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             ?>), so the technical information your browser sends them may be processed there.
                         </p>
                         <?php } ?>
+                        <p>
+                            Google Web Risk (<a href="#link-safety">section 5.2</a>) is run by Google LLC in
+                            the United States, so the web addresses of dynamic QR codes that we send it may be
+                            processed there.
+                        </p>
 
                         <?php /* ============================================================
                              7. Retention
@@ -449,6 +480,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <li>QR code content submitted by anonymous users is retained only as long as needed to generate and deliver the requested output;</li>
                             <li>Saved QR codes and account data are retained for the life of your account and for a limited period afterwards;</li>
                             <li id="retention-logs">Our error log, which can include your internet address, the name of your browser and the address of the page you were on (never your email address, and never the code from a one-time link), is deleted after <?php echo (int) $privacyEmailPeriods['errorLogRetentionDays']; ?>&nbsp;days; the internet address and browser name stored with other entries in our activity log are removed after <?php echo (int) $privacyEmailPeriods['visitorDetailsRetentionDays']; ?>&nbsp;days (the entry itself, saying what happened and when, is kept), by a scheduled clean-up. Our record of changes made by administrators keeps the administrator's internet address;</li>
+                            <li id="retention-link-safety">The record of a dynamic QR code&rsquo;s web address that Google Web Risk listed as harmful (the address, the account and the time, <a href="#link-safety">section 5.2</a>) is deleted after <?php echo (int) $privacyLinkSafetyDays; ?>&nbsp;days by a scheduled clean-up;</li>
                             <li id="retention-email">Records of the emails we send you, and the matching entries in our activity log (both include your email address), are deleted after <?php echo (int) $privacyEmailPeriods['retentionDays']; ?>&nbsp;days for emails that were sent or deliberately not sent, and after <?php echo (int) $privacyEmailPeriods['givenUpRetentionDays']; ?>&nbsp;days for emails that could not be delivered, by a scheduled clean-up;</li>
                             <li>Records we must keep for legal, tax or accounting reasons are retained for the period required by law.</li>
                         </ul>

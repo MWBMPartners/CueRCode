@@ -60,7 +60,15 @@
  *      switched-off page says "disabled by its owner").
  *  11. The link-safety check is ONE hook, dynamicQrCheckDestinationSafety()
  *      (fn_redirects.php), called on create and on every change of where a
- *      code sends people. Its check is WP4e (#168); until then it allows all.
+ *      code sends people (WP4e, #168): "unsafe" refuses with 422
+ *      DESTINATION_UNSAFE; a provider that cannot answer lets it through,
+ *      logged, and the daily job checks it again. The answer is kept on the
+ *      row (safetyVerdict, safetyCheckedAt, upgrade 0008).
+ *  12. A code suspended WHILE its owner's change was being sent to
+ *      Go2My.Link (the owner's change may have landed after the takedown):
+ *      the change is refused (409 REDIRECT_SUSPENDED) and the takedown is
+ *      sent again at once (fn_dynamic_qr_takedown.php), while this request
+ *      still holds the owner's lock.
  *
  * House rules: full multi-line PHP (no ??, ternaries or arrow functions),
  * MySQLi prepared statements through dbQuery(), every SQL name in back-quotes.
@@ -105,6 +113,10 @@ if (!function_exists('dynamicQrRowIsPrintable')) {
 }
 if (!function_exists('go2mylinkCreateLinkSafely')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_go2mylink.php';
+}
+// 🛡️ The link-safety check behind the one hook (WP4e, #168).
+if (!function_exists('urlReputationCheck')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_url_reputation.php';
 }
 
 // ==============================================================================
@@ -557,6 +569,140 @@ function dynamicQrLinkImage(int $redirectId, string $qrUuid): bool
 }
 
 // ==============================================================================
+// 🛡️ The link-safety answer on the row (WP4e, #168; upgrade 0008)
+// ==============================================================================
+
+/**
+ * ⚙️ The options for the link-safety hook: a test's stand-ins under
+ *    'linkSafety' (none on the site), plus who asked and which code, which
+ *    are recorded with an "unsafe" answer.
+ *
+ * @param array<string, mixed> $options    The flow's options
+ * @param int|null             $userId
+ * @param int|null             $redirectId
+ * @return array<string, mixed>
+ */
+function dynamicQrSafetyOptions(#[\SensitiveParameter] array $options, ?int $userId, ?int $redirectId): array
+{
+    $safetyOptions = [];
+    if (isset($options['linkSafety']) && is_array($options['linkSafety'])) {
+        $safetyOptions = $options['linkSafety'];
+    }
+    if ($userId !== null) {
+        $safetyOptions['userID'] = $userId;
+    }
+    if ($redirectId !== null) {
+        $safetyOptions['redirectID'] = $redirectId;
+    }
+
+    return $safetyOptions;
+}
+
+/**
+ * 🏷️ The verdict word of a hook answer, or null when there was no check. PURE.
+ *
+ * @param array|null $safety From dynamicQrCheckDestinationSafety()
+ * @return string|null
+ */
+function dynamicQrSafetyVerdictOf(?array $safety): ?string
+{
+    if ($safety === null) {
+        return null;
+    }
+
+    return (string) $safety['verdict'];
+}
+
+/**
+ * 🔎 Do tblQRRedirects' upgrade-0008 columns exist yet? Remembered once they do.
+ *
+ * @param bool $forget True to ask again (tests, after an upgrade)
+ * @return bool
+ */
+function dynamicQrUpgrade0008Ready(bool $forget = false): bool
+{
+    static $ready = false;
+
+    if ($forget) {
+        $ready = false;
+    }
+    if ($ready) {
+        return true;
+    }
+    if (!function_exists('dbQuery')) {
+        return false;
+    }
+
+    try {
+        $stmt = dbQuery(
+            'SELECT COUNT(*) AS `found` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ? AND `COLUMN_NAME` IN (?, ?)',
+            'sss',
+            ['tblQRRedirects', 'safetyVerdict', 'suspensionAppliedAt']
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    } catch (\Throwable $e) {
+        return false;
+    }
+
+    $ready = (is_array($row) && (int) $row['found'] === 2);
+
+    return $ready;
+}
+
+/**
+ * 🛡️ Keep what the link-safety check said on the row (best effort: before
+ *    upgrade 0008 there is no column, and nothing is lost but the note).
+ *
+ * @param int    $redirectId
+ * @param string $verdict safe, unsafe or unchecked
+ * @return void
+ */
+function dynamicQrNoteSafety(int $redirectId, string $verdict): void
+{
+    if (!in_array($verdict, ['safe', 'unsafe', 'unchecked'], true) || !dynamicQrUpgrade0008Ready()) {
+        return;
+    }
+
+    try {
+        $stmt = dbQuery(
+            'UPDATE `tblQRRedirects` SET `safetyVerdict` = ?, `safetyCheckedAt` = UTC_TIMESTAMP() WHERE `redirectID` = ?',
+            'si',
+            [$verdict, $redirectId]
+        );
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('warning', 'Dynamic code safety note could not be saved', 'redirectID: ' . $redirectId . ' | ' . get_class($e));
+        }
+    }
+}
+
+/**
+ * 🚫 Rule 12: a code was suspended while its owner's change was on its way to
+ *    Go2My.Link. Mark the takedown as not yet applied and send it again now.
+ *    Called ONLY while the owner's lock is held (by dynamicQrApplyChange()).
+ *    If it cannot be sent now, the email-queue cron job sends it.
+ *
+ * @param int                  $redirectId
+ * @param array<string, mixed> $go2Options
+ * @return void
+ */
+function dynamicQrTakedownAfterOwnerRace(int $redirectId, #[\SensitiveParameter] array $go2Options): void
+{
+    if (!function_exists('dynamicQrApplySuspensionLocked')) {
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_dynamic_qr_takedown.php';
+    }
+
+    if (function_exists('logError')) {
+        logError('warning', 'Dynamic code suspended while its owner\'s change was being sent: the takedown is sent again', 'redirectID: ' . $redirectId);
+    }
+
+    dynamicQrMarkSuspensionUnapplied($redirectId);
+    dynamicQrApplySuspensionLocked($redirectId, $go2Options);
+}
+
+// ==============================================================================
 // 👁️ What a member is shown about a code
 // ==============================================================================
 
@@ -675,10 +821,11 @@ function createDynamicRedirectForOwner(int $ownerUserId, string $destinationUrl,
     // 🔤 Stored and sent in the form Go2My.Link stores (#181 Low 3).
     $destination = go2mylinkEncodeDestination($checked['normalized']);
 
-    // 🛡️ 4. The link-safety hook (WP4e, #168).
-    $safety = dynamicQrCheckDestinationSafety($destination, 'create');
+    // 🛡️ 4. The link-safety hook (WP4e, #168): "unsafe" refuses; a provider
+    //    that cannot answer lets it through (logged; checked again daily).
+    $safety = dynamicQrCheckDestinationSafety($destination, 'create', dynamicQrSafetyOptions($options, $ownerUserId, null));
     if ($safety['allowed'] !== true) {
-        return dynamicQrOutcome(false, ['httpCode' => 422, 'errorCode' => 'DESTINATION_UNSAFE', 'message' => 'This destination was refused by the link-safety check, so no dynamic code was made.']);
+        return dynamicQrOutcome(false, ['httpCode' => 422, 'errorCode' => 'DESTINATION_UNSAFE', 'message' => $safety['message'] . ' No dynamic code was made.']);
     }
 
     // 🔒 5. Feature, limit, count and the new "pending" row, under the lock.
@@ -743,13 +890,16 @@ function createDynamicRedirectForOwner(int $ownerUserId, string $destinationUrl,
 
     $saved = dynamicQrSaveCreateState((int) $row['redirectID'], $state, $reason, $shortCode);
 
+    // 🛡️ What the link-safety check said, kept on the row (upgrade 0008).
+    dynamicQrNoteSafety((int) $row['redirectID'], $safety['verdict']);
+
     if (function_exists('logActivity')) {
         logActivity(
             'dynamic_code_created',
             'Dynamic code ' . (string) $row['redirectUUID'] . ': ' . $state,
             'redirect',
             (int) $row['redirectID'],
-            ['uuid' => (string) $row['redirectUUID'], 'state' => $state, 'reason' => $reason, 'stateSaved' => $saved]
+            ['uuid' => (string) $row['redirectUUID'], 'state' => $state, 'reason' => $reason, 'stateSaved' => $saved, 'safety' => $safety['verdict'], 'safetyReason' => $safety['reason']]
         );
     }
 
@@ -931,7 +1081,7 @@ function dynamicQrChangeForOwner(int $callerUserId, string $uuid, array $body, #
 
     $outcome = null;
     try {
-        $outcome = dynamicQrApplyChange($callerUserId, (int) $row['redirectID'], $body, dynamicQrGo2Options($options));
+        $outcome = dynamicQrApplyChange($callerUserId, (int) $row['redirectID'], $body, dynamicQrGo2Options($options), $options);
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
             logError('error', 'Dynamic code change failed', 'redirectID: ' . (int) $row['redirectID'] . ' | ' . get_class($e));
@@ -966,9 +1116,10 @@ function dynamicQrOwnerOf(array $row): ?int
  * @param int                  $redirectId
  * @param array<string, mixed> $body
  * @param array<string, mixed> $go2Options
+ * @param array<string, mixed> $options    The flow's options ('linkSafety' for tests)
  * @return array Outcome
  */
-function dynamicQrApplyChange(int $callerUserId, int $redirectId, array $body, #[\SensitiveParameter] array $go2Options): array
+function dynamicQrApplyChange(int $callerUserId, int $redirectId, array $body, #[\SensitiveParameter] array $go2Options, #[\SensitiveParameter] array $options = []): array
 {
     // 🔁 Read again under the lock (it may have been suspended meanwhile).
     $row = fetchRedirectRowById($redirectId);
@@ -997,10 +1148,11 @@ function dynamicQrApplyChange(int $callerUserId, int $redirectId, array $body, #
     }
 
     // 🛡️ The link-safety hook, on the destination about to go live (#168).
+    $safety = null;
     if ($plan['checkDestination'] !== '') {
-        $safety = dynamicQrCheckDestinationSafety($plan['checkDestination'], 'change');
+        $safety = dynamicQrCheckDestinationSafety($plan['checkDestination'], 'change', dynamicQrSafetyOptions($options, $callerUserId, $redirectId));
         if ($safety['allowed'] !== true) {
-            return dynamicQrOutcome(false, ['httpCode' => 422, 'errorCode' => 'DESTINATION_UNSAFE', 'message' => 'This destination was refused by the link-safety check, so nothing was changed.']);
+            return dynamicQrOutcome(false, ['httpCode' => 422, 'errorCode' => 'DESTINATION_UNSAFE', 'message' => $safety['message'] . ' Nothing was changed.']);
         }
     }
 
@@ -1075,11 +1227,31 @@ function dynamicQrApplyChange(int $callerUserId, int $redirectId, array $body, #
         $types,
         $values
     );
+    $changedRows = (int) $stmt->affected_rows;
     $stmt->close();
 
     $fresh = fetchRedirectRowById($redirectId);
     if ($fresh === null) {
         return dynamicQrOutcome(false, ['httpCode' => 500, 'errorCode' => 'UPDATE_FAILED', 'message' => 'The dynamic code could not be changed. Please try again.']);
+    }
+
+    // 🚫 Rule 12: suspended while this change was on its way to Go2My.Link.
+    //    The owner's change may have landed AFTER the takedown, so the
+    //    takedown is sent again now - this request still holds the owner's
+    //    lock, so nothing else can change the link meanwhile.
+    if ($changedRows !== 1) {
+        if (dynamicQrRowIsSuspended($fresh)) {
+            if ($plan['remoteTarget'] !== null) {
+                dynamicQrTakedownAfterOwnerRace($redirectId, $go2Options);
+            }
+            return dynamicQrOutcome(false, ['httpCode' => 409, 'errorCode' => 'REDIRECT_SUSPENDED', 'message' => 'This dynamic code has been suspended and cannot be changed. Contact support if you believe this is a mistake.']);
+        }
+        return dynamicQrOutcome(false, ['httpCode' => 500, 'errorCode' => 'UPDATE_FAILED', 'message' => 'The dynamic code could not be changed. Please try again.']);
+    }
+
+    // 🛡️ What the link-safety check said about the destination now live.
+    if ($safety !== null) {
+        dynamicQrNoteSafety($redirectId, $safety['verdict']);
     }
 
     // 📝 The change, with the old and new values (design section 1.4).
@@ -1103,6 +1275,7 @@ function dynamicQrApplyChange(int $callerUserId, int $redirectId, array $body, #
                 'newDestination'      => $newDestination,
                 'newIsActive'         => $plan['newActive'],
                 'sentToGo2MyLink'     => ($plan['remoteTarget'] !== null),
+                'safety'              => dynamicQrSafetyVerdictOf($safety),
             ]
         );
     }

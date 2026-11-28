@@ -35,7 +35,9 @@
  *   - dynamicQr*()                  - WP4c (#166): which codes may be drawn,
  *     who may change them, the change planner, the tidy step's choice, the
  *     member answers for Go2My.Link failures, the drawing permission and
- *     the one link-safety hook (dynamicQrCheckDestinationSafety(), #168)
+ *     the one link-safety hook (dynamicQrCheckDestinationSafety(), #168 -
+ *     the only function here that is not pure: it asks the provider through
+ *     fn_url_reputation.php, loaded when it is first called)
  *
  * @package     CueRCode
  * @subpackage  Redirects
@@ -817,30 +819,60 @@ function dynamicQrPrepareDestination(string $typed): string
 
 /**
  * 🛡️ THE link-safety hook: the ONE place a dynamic code's destination is
- *    checked against a link-safety service before it can go live. It is
- *    called in exactly two places (a source test counts them): when a code
- *    is made (createDynamicRedirectForOwner()) and on every change of where
- *    a code sends people (dynamicQrChangeForOwner(): a new destination, or
- *    switching a code back on).
+ *    checked against a link-safety service (WP4e, #168; decisions 0029 and
+ *    0035: Google Web Risk now, a second provider later). Every check goes
+ *    through here (a source test counts the callers):
+ *      - 'create'  : a code is made (createDynamicRedirectForOwner());
+ *      - 'change'  : where a code sends people changes - a new destination,
+ *                    or switching it back on (dynamicQrChangeForOwner());
+ *      - 'restore' : an admin lifts a suspension (dynamicQrRestore());
+ *      - 'recheck' : the daily job checks every code in use again
+ *                    (dynamicQrRecheckSafety()).
  *
- *    ⏳ NOT BUILT YET: the check itself is WP4e (#168, decisions 0029 and
- *    0035: Google Web Risk now, a second provider later). Until then every
- *    destination is allowed and the answer says "not_checked_yet". #168
- *    replaces the body of this function only; its name, parameters and
- *    answer stay the same, so the two callers need no change. (An "unsafe"
- *    answer is refused with 422 DESTINATION_UNSAFE; an unreachable provider
- *    lets the destination through and is logged, design section 2.3.)
+ *    The answer, from urlReputationCheck() (fn_url_reputation.php):
+ *      - allowed false, verdict "unsafe": a provider lists the address. The
+ *        callers refuse with 422 DESTINATION_UNSAFE (the daily job suspends);
+ *      - allowed true, verdict "safe": every provider asked said it is not listed;
+ *      - allowed true, verdict "unchecked": a provider could not answer, or
+ *        none is set up - let through and logged (bounded), design section
+ *        2.3 ("fail-open"); the daily job checks it again.
  *
- * @param string $destinationUrl The destination, already through validateRedirectDestination()
- * @param string $occasion       'create' or 'change'
- * @return array{allowed: bool, reason: string, message: string}
+ *    ⚠️ The ONE function in this file that is not pure: it asks the provider
+ *    (fn_url_reputation.php is loaded here, at call time, so loading this
+ *    file stays pure).
+ *
+ * @param string               $destinationUrl The destination, already through validateRedirectDestination()
+ * @param string               $occasion       'create', 'change', 'restore' or 'recheck'
+ * @param array<string, mixed> $options        Passed to urlReputationCheck(): 'redirectID' and 'userID'
+ *                                             (recorded with a hit), and the tests' stand-ins
+ * @return array{allowed: bool, verdict: string, reason: string, message: string, provider: string, threatTypes: array<int, string>}
  */
-function dynamicQrCheckDestinationSafety(string $destinationUrl, string $occasion): array
+function dynamicQrCheckDestinationSafety(string $destinationUrl, string $occasion, #[\SensitiveParameter] array $options = []): array
 {
-    // 📌 Both are read so #168 has them; nothing is decided from them yet.
-    unset($destinationUrl, $occasion);
+    if (!function_exists('urlReputationCheck')) {
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_url_reputation.php';
+    }
 
-    return ['allowed' => true, 'reason' => 'not_checked_yet', 'message' => ''];
+    $check = urlReputationCheck($destinationUrl, $occasion, $options);
+
+    $message = '';
+    if ($check['allowed'] !== true) {
+        $providerName = 'a link-safety service';
+        $providers    = urlReputationProviders();
+        if (isset($providers[$check['provider']])) {
+            $providerName = $providers[$check['provider']]['name'];
+        }
+        $message = 'This destination is listed as harmful (for example phishing or malware) by ' . $providerName . ', so it cannot be used for a dynamic code.';
+    }
+
+    return [
+        'allowed'     => ($check['allowed'] === true),
+        'verdict'     => (string) $check['verdict'],
+        'reason'      => (string) $check['reason'],
+        'message'     => $message,
+        'provider'    => (string) $check['provider'],
+        'threatTypes' => $check['threatTypes'],
+    ];
 }
 
 /**

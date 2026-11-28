@@ -332,13 +332,15 @@ foreach ($asRegistry as $asKey => $asField) {
 assertEquals(
     [
         'error_log_retention_days', 'activity_visitor_details_retention_days', 'abuse_report_retention_days',
+        'link_safety_hits_retention_days',
         'no_script_route_password_per_day',
+        'link_safety_timeout_seconds',
         'trusted_proxy_ips',
         'verification_resend_min_gap_seconds', 'verification_resend_daily_cap', 'verification_resend_ip_per_hour',
         'password_reset_request_min_gap_seconds', 'password_reset_request_daily_cap', 'password_reset_request_ip_per_hour',
     ],
     $asOptionalKeys,
-    'only the two #179 log periods, the abuse-report period (decision 0046), trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
+    'only the two #179 log periods, the abuse-report period (decision 0046), the link-safety record period and waiting time (#168), trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
 );
 assertEquals(10, count(adminSettingsSections()), 'there are ten sections (plan §7.2, plus the website address section, #113 B9, and dynamic QR codes, #165)');
 
@@ -348,10 +350,19 @@ assertContains('12 months', $asRegistry['abuse_report_retention_days']['help'] ?
 
 // 🔗 #165: the dynamic QR (Go2My.Link) section.
 assertEquals(
-    ['go2mylink_api_base_url', 'go2mylink_api_key', 'go2mylink_timeout_seconds', 'dynamic_redirect_base_url', 'dynamic_qr_enabled', 'link_safety_webrisk_api_key'],
+    ['go2mylink_api_base_url', 'go2mylink_api_key', 'go2mylink_timeout_seconds', 'dynamic_redirect_base_url', 'dynamic_qr_enabled', 'link_safety_providers', 'link_safety_webrisk_api_key', 'link_safety_timeout_seconds'],
     array_keys(adminSettingsFieldsForSection('dynamic')),
-    '#165, #166: the dynamic QR section: API address, API key, waiting time, short-link address, the switch (AFTER the connection settings, so a save that changes them is recorded first), then the Web Risk key'
+    '#165, #166, #168: the dynamic QR section: API address, API key, waiting time, short-link address, the switch (AFTER the connection settings, so a save that changes them is recorded first), then the link-safety providers, the Web Risk key and its waiting time'
 );
+// 🛡️ #168: the providers list - known names only, never empty (decision 0029).
+$asProviders = adminSettingsValidateValue($asRegistry['link_safety_providers'], ' WebRisk ');
+assertTrue($asProviders['ok'] && $asProviders['value'] === 'webrisk', '#168: the providers list is tidied to "webrisk"');
+$asProviders = adminSettingsValidateValue($asRegistry['link_safety_providers'], 'webrisk, safebrowsing');
+assertTrue(!$asProviders['ok'] && str_contains($asProviders['error'], 'safebrowsing'), '#168: an unknown provider is refused by name (decision 0029 rules out Safe Browsing)');
+$asProviders = adminSettingsValidateValue($asRegistry['link_safety_providers'], '');
+assertFalse($asProviders['ok'], '#168: the providers list cannot be emptied (decision 0029: no dynamic codes without an automatic check)');
+assertTrue($asRegistry['link_safety_timeout_seconds']['min'] === 2 && $asRegistry['link_safety_timeout_seconds']['max'] === 15 && $asRegistry['link_safety_timeout_seconds']['default'] === 5, '#168: the link-safety waiting time is 2 to 15 seconds, 5 by default');
+assertTrue($asRegistry['link_safety_hits_retention_days']['section'] === 'email-records' && $asRegistry['link_safety_hits_retention_days']['default'] === 90, '#168: the link-safety records are kept 90 days by default, on the Email records section');
 assertEquals('go2mylink_key', $asRegistry['go2mylink_api_key']['secretFormat'], '#165: the Go2My.Link key is checked against Go2My.Link\'s key shape');
 assertTrue(adminSettingsFieldIsSecret($asRegistry['go2mylink_api_key']) && adminSettingsFieldIsSecret($asRegistry['link_safety_webrisk_api_key']), '#165: both keys are secrets (stored encrypted, never shown)');
 $asG2Key = 'g2ml_AbC-_9xY_' . str_repeat('Q', 40) . '-_z';

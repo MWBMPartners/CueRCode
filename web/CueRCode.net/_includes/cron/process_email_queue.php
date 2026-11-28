@@ -63,6 +63,10 @@
  *
  *     CUERCODE_SITE_COPY=live /usr/local/php84/bin/php /home/<user>/<path>/CueRCode.net/_includes/cron/process_email_queue.php --quiet
  *
+ * It also sends again every takedown (suspended dynamic code) that Go2My.Link
+ * has not confirmed yet (WP4e, #168, Step 10 below), under the same
+ * CUERCODE_SITE_COPY rule.
+ *
  * It also runs the queue clean-up (#122/#123) - see fn_email.php
  * runEmailQueueHousekeeping(): one-time links are removed once an email is
  * sent, emails whose link has expired are skipped, and old records are
@@ -255,6 +259,43 @@ if ($parsedArguments['check'] !== true) {
         fwrite(STDERR, 'CueRCode dynamic codes: the tidy step stopped (' . get_class($exception) . ') - see the error log.' . PHP_EOL);
         if (function_exists('logError')) {
             logError('error', 'Dynamic code tidy step crashed', get_class($exception));
+        }
+        if ($exitCode === CUERCODE_EMAIL_RUNNER_EXIT_OK) {
+            $exitCode = CUERCODE_EMAIL_RUNNER_EXIT_DATABASE;
+        }
+    }
+}
+
+// ==============================================================================
+// 🚫 Step 10 (WP4e, #168): takedowns Go2My.Link has not confirmed yet
+// ==============================================================================
+// A suspended code is marked here first and then Go2My.Link is told to point
+// its short address at the neutral /unavailable/ page. If Go2My.Link could
+// not be reached, the owner's lock was busy, or an owner's change landed
+// after the takedown, the takedown waits here and is sent again
+// (dynamicQrApplyPendingSuspensions(), fn_dynamic_qr_takedown.php; at most 25
+// a run). Not on --check. Like Step 9 it only calls Go2My.Link when this run
+// declares its copy (CUERCODE_SITE_COPY). A database problem can turn a clean
+// exit into 3; it never hides an email problem.
+// ==============================================================================
+if ($parsedArguments['check'] !== true) {
+    try {
+        require_once CUERCODE_FUNCTIONS_DIR . 'fn_dynamic_qr_takedown.php';
+        $takedownStep = dynamicQrApplyPendingSuspensions();
+        foreach (dynamicQrApplyPendingLines($takedownStep) as $takedownLine) {
+            if ($takedownStep['ok'] !== true || $takedownStep['skipped'] === 'copy_unknown') {
+                fwrite(STDERR, $takedownLine . PHP_EOL);
+            } elseif ($parsedArguments['quiet'] !== true) {
+                fwrite(STDOUT, $takedownLine . PHP_EOL);
+            }
+        }
+        if ($takedownStep['ok'] !== true && $exitCode === CUERCODE_EMAIL_RUNNER_EXIT_OK) {
+            $exitCode = CUERCODE_EMAIL_RUNNER_EXIT_DATABASE;
+        }
+    } catch (\Throwable $exception) {
+        fwrite(STDERR, 'CueRCode takedowns: the step stopped (' . get_class($exception) . ') - see the error log.' . PHP_EOL);
+        if (function_exists('logError')) {
+            logError('error', 'Takedown step crashed', get_class($exception));
         }
         if ($exitCode === CUERCODE_EMAIL_RUNNER_EXIT_OK) {
             $exitCode = CUERCODE_EMAIL_RUNNER_EXIT_DATABASE;

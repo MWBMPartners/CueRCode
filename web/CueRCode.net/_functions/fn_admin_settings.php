@@ -116,6 +116,12 @@ if (!function_exists('go2mylinkTestConnection')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_go2mylink.php';
 }
 
+// 🛡️ #168: the link-safety providers, their waiting-time limits and the
+//    keeping period of the link-safety records. Pure on loading.
+if (!function_exists('urlReputationParseProviderList')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_url_reputation.php';
+}
+
 // 🗑️ #179 and decision 0046: the error-log, visitor-details and abuse-report
 //    periods' defaults (CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT and friends) live in
 //    fn_email.php with the clean-up that uses them. That file defines
@@ -302,7 +308,7 @@ function adminSettingsSections(): array
             'saveLabel' => 'Save dynamic QR settings',
             'title' => 'Dynamic QR codes (Go2My.Link)',
             'icon'  => 'fa-solid fa-arrows-rotate',
-            'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it creates and changes no link on Go2My.Link (Go2My.Link still records the calls in its request log and counts them towards the key\'s request limit). Dynamic codes stay switched off until you switch them on below, which is only possible within an hour of a passing "Test connection" with no change to these settings since. The screens where members make and manage their codes are still being built; until then codes can be made through the API only.',
+            'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it creates and changes no link on Go2My.Link (Go2My.Link still records the calls in its request log and counts them towards the key\'s request limit). Dynamic codes stay switched off until you switch them on below, which is only possible within an hour of a passing "Test connection" with no change to these settings since, and once the Google Web Risk key is saved (the link-safety check, decision 0029). The screens where members make and manage their codes are still being built; until then codes can be made through the API only.',
         ],
         'paypal' => [
             'saveLabel' => 'Save PayPal settings',
@@ -480,6 +486,14 @@ function adminSettingsRegistry(): array
         'min' => 1, 'max' => 3650, 'rowOptional' => true, 'default' => CUERCODE_ABUSE_REPORT_RETENTION_DAYS_DEFAULT,
         'description' => 'Days a dealt-with abuse report keeps the reporter email, description and address fingerprint (decision 0046)',
     ]);
+    // 🛡️ #168: the record of every "unsafe" answer from a link-safety provider.
+    $fields[] = adminSettingsField([
+        'key' => CUERCODE_SETTING_LINK_SAFETY_HITS_RETENTION_DAYS, 'section' => 'email-records', 'kind' => 'int', 'group' => 'link_safety', 'type' => 'integer',
+        'label' => 'Keep the record of destinations found harmful for (days)',
+        'help' => 'Whole days, 1 to 3650. The default is ' . CUERCODE_URL_REPUTATION_HITS_RETENTION_DAYS_DEFAULT . '. Each time the link-safety check finds a destination harmful, the address, the account that asked and the time are kept for the admins; the daily dynamic-code job deletes them after this many days.',
+        'min' => 1, 'max' => 3650, 'rowOptional' => true, 'default' => CUERCODE_URL_REPUTATION_HITS_RETENTION_DAYS_DEFAULT,
+        'description' => 'Days a record of a destination found harmful by the link-safety check is kept (#168)',
+    ]);
 
     // ------------------------------------------------------------ 3. Sign in
     $fields[] = adminSettingsField([
@@ -642,11 +656,27 @@ function adminSettingsRegistry(): array
         'confirmText' => 'I understand that members can then make dynamic codes that print a short address on the address above.',
         'description' => 'Master switch for dynamic QR codes (WP4c, #166): 0 = no code can be made or changed; can only be switched on after a passing Go2My.Link connection test',
     ]);
+    // 🛡️ #168 (decisions 0029, 0035): the link-safety check. Dynamic codes
+    //    can only be switched on once a provider in the list has a key.
+    $fields[] = adminSettingsField([
+        'key' => 'link_safety_providers', 'section' => 'dynamic', 'subgroup' => 'Link-safety check (Google Web Risk)', 'kind' => 'provider_list', 'group' => 'link_safety', 'type' => 'string',
+        'label' => 'Link-safety providers to ask, in order',
+        'help' => 'Known so far: webrisk (Google Web Risk). A second paid provider is to be added later (decision 0035); names are separated by commas. A provider without a key is skipped. Every destination is checked when a code is made, changed or switched back on, and every code in use is checked again each day: one that is listed as harmful is refused, or suspended. When no provider can answer, the destination is let through, the problem is logged, and the daily check tries again.',
+        'allowEmpty' => false, 'maxLength' => 100,
+        'description' => 'Link-safety check: the providers asked about a destination, in order, separated by commas. Known so far: webrisk (Google Web Risk). A second paid provider is to be added later (decisions 0029 and 0035). A provider with no key is skipped.',
+    ]);
     $fields[] = adminSettingsField([
         'key' => 'link_safety_webrisk_api_key', 'section' => 'dynamic', 'subgroup' => 'Link-safety check (Google Web Risk)', 'kind' => 'secret', 'group' => 'link_safety', 'type' => 'string',
         'label' => 'Google Web Risk API key',
-        'help' => 'From a Google Cloud project with the Web Risk API switched on; restrict the key to that API. Saved now, used when the link-safety check is built (#168). Stored encrypted and never shown again.',
+        'help' => 'From a Google Cloud project with billing and the Web Risk API switched on; restrict the key to that API. Only the web address of each destination is sent to Google, never anything about the visitor. Stored encrypted, sent only in a request header, and never shown again. Dynamic codes cannot be switched on without it (decision 0029).',
         'description' => 'Google Web Risk API key (restricted to the Web Risk API) - stored encrypted and never shown back',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => CUERCODE_SETTING_LINK_SAFETY_TIMEOUT, 'section' => 'dynamic', 'subgroup' => 'Link-safety check (Google Web Risk)', 'kind' => 'int', 'group' => 'link_safety', 'type' => 'integer',
+        'label' => 'How long to wait for the link-safety provider (seconds)',
+        'help' => 'Whole seconds, ' . CUERCODE_URL_REPUTATION_MIN_TIMEOUT . ' to ' . CUERCODE_URL_REPUTATION_MAX_TIMEOUT . '. The default is ' . CUERCODE_URL_REPUTATION_DEFAULT_TIMEOUT . '. After this the destination is let through unchecked (and checked again by the daily job).',
+        'min' => CUERCODE_URL_REPUTATION_MIN_TIMEOUT, 'max' => CUERCODE_URL_REPUTATION_MAX_TIMEOUT, 'rowOptional' => true, 'default' => CUERCODE_URL_REPUTATION_DEFAULT_TIMEOUT,
+        'description' => 'Link-safety check: seconds to wait for a provider. Whole number 2-15; anything else means the default of 5. (#168)',
     ]);
 
     // ----------------------------------------------------------------- 5. PayPal
@@ -1376,6 +1406,16 @@ function adminSettingsValidateValue(array $field, #[\SensitiveParameter] string 
         return ['ok' => true, 'value' => implode(', ', $entries), 'error' => ''];
     }
 
+    if ($kind === 'provider_list') {
+        // 🛡️ #168: link_safety_providers - known providers only, each once,
+        //    stored as "webrisk" or "webrisk,other" (lower case, commas).
+        $parsed = urlReputationParseProviderList($text);
+        if (!$parsed['ok']) {
+            return ['ok' => false, 'value' => '', 'error' => $parsed['error']];
+        }
+        return ['ok' => true, 'value' => implode(',', $parsed['providers']), 'error' => ''];
+    }
+
     if ($kind === 'currency_list') {
         // 💱 billing_currencies: known codes only, each once, stored as
         //    "GBP,USD,EUR" (upper case, commas, no spaces).
@@ -1463,6 +1503,13 @@ function adminSettingsCanonicalCurrent(array $field, ?string $raw): string
         $parsed = moneyParseCurrencyList($raw);
         if ($parsed['ok']) {
             return implode(',', $parsed['codes']);
+        }
+    }
+
+    if ($kind === 'provider_list') {
+        $parsed = urlReputationParseProviderList($raw);
+        if ($parsed['ok']) {
+            return implode(',', $parsed['providers']);
         }
     }
 
@@ -1845,7 +1892,18 @@ function adminSettingsDynamicSwitchOnProblem(): string
         return 'The admin change log could not be read, so dynamic codes stay off. Please try again.';
     }
 
-    return adminSettingsDynamicSwitchDecision($lastTest, $changed);
+    $decision = adminSettingsDynamicSwitchDecision($lastTest, $changed);
+    if ($decision !== '') {
+        return $decision;
+    }
+
+    // 🛡️ Decision 0029 rules out dynamic codes with no automatic check: a
+    //    provider in the list must have a key that can be read (#168).
+    if (!urlReputationHasUsableProvider(urlReputationReadSettings())) {
+        return 'Dynamic codes need the link-safety check (decision 0029): enter the Google Web Risk API key under "Link-safety check" on this page and save it first, then switch dynamic codes on.';
+    }
+
+    return '';
 }
 
 // ==============================================================================
@@ -3234,6 +3292,8 @@ function adminSettingsRenderField(array $field, array $view): string
         $extra = ' autocomplete="off" spellcheck="false" list="timezone-list"';
     } elseif ($kind === 'currency_list') {
         $extra = ' autocomplete="off" spellcheck="false" autocapitalize="characters"';
+    } elseif ($kind === 'provider_list') {
+        $extra = ' autocomplete="off" spellcheck="false" autocapitalize="off"';
     }
 
     if ($kind === 'ip_ranges') {

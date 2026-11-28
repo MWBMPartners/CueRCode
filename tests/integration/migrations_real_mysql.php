@@ -118,6 +118,13 @@
  *   only narrow, or whose "may be empty" was changed, is refused and left
  *   alone; the finished structure is the fresh install's.
  *
+ *   Scenario R (#168, #169, WP4e/WP4f). Upgrade 0008 on a database at
+ *   0007 that holds a suspended code and a report: the five new columns and
+ *   tblLinkSafetyHits; the old suspension still to be sent and the old
+ *   report not counted; the foreign keys keep a hit when its code or person
+ *   is removed; run again it skips every step; stopped half-way it
+ *   finishes; the result is the fresh install's.
+ *
  *   Scenario Q (#164, WP4a). Upgrade 0007 on a database at 0006: the six
  *   new tblQRRedirects columns, tblAbuseReports and tblUserLimitOverrides,
  *   the nine settings (an owner's value set beforehand is kept); the short
@@ -535,6 +542,31 @@ function itWithout0007Pieces(array $itSnapshot): array
 }
 
 /**
+ * ✂️ Take upgrade 0008's pieces out of a schema snapshot (#168, #169): its new
+ *    table, its tblQRRedirects columns and indexes, and its tblAbuseReports
+ *    columns and index, so a database before 0008 can be compared with one
+ *    after it. Scenario R proves the pieces themselves.
+ */
+function itWithout0008Pieces(array $itSnapshot): array
+{
+    unset($itSnapshot['tblLinkSafetyHits']);
+    $itPieces = [
+        'tblQRRedirects'  => ['safetyVerdict', 'safetyCheckedAt', 'suspensionAppliedAt', 'idx_redirect_safety_checked', 'idx_redirect_suspension_sync'],
+        'tblAbuseReports' => ['reporterNetworkHash', 'countedForSuspension', 'idx_abuse_counting'],
+    ];
+    foreach ($itPieces as $itTable => $itNames) {
+        if (!isset($itSnapshot[$itTable])) {
+            continue;
+        }
+        foreach ($itNames as $itName) {
+            $itSnapshot[$itTable] = (string) preg_replace('/^\s*(?:UNIQUE KEY |KEY |CONSTRAINT )?`' . $itName . '` [^\n]*\n/m', '', $itSnapshot[$itTable]);
+        }
+        $itSnapshot[$itTable] = (string) preg_replace('/,\n/', "\n", $itSnapshot[$itTable]);
+    }
+    return $itSnapshot;
+}
+
+/**
  * ✂️ Take migration 0004's new columns, indexes and foreign key out of a
  *    schema snapshot, and drop line-end commas (removing the last line of a
  *    table would otherwise leave a comma behind), so it can be compared with
@@ -792,7 +824,7 @@ $itCliResult = itCli($itDbA, 'status');
 itCheck('A fresh database', $itCliResult['exit'] === 0, 'real CLI: --status exit 0 once up to date');
 
 $itLedgerRows = $itA->query('SELECT `migrationKey`, `appliedBy` FROM `tblSchemaMigrations` ORDER BY `migrationKey`')->fetch_all(MYSQLI_ASSOC);
-itCheck('A fresh database', count($itLedgerRows) === 7, 'tblSchemaMigrations lists all seven migrations (' . count($itLedgerRows) . ')');
+itCheck('A fresh database', count($itLedgerRows) === 8, 'tblSchemaMigrations lists all eight migrations (' . count($itLedgerRows) . ')');
 itCheck('A fresh database', isset($itLedgerRows[0]['migrationKey']) && $itLedgerRows[0]['migrationKey'] === '0001_subscription_price_snapshot_columns', 'ledger: first row is 0001');
 itCheck('A fresh database', isset($itLedgerRows[1]['migrationKey']) && $itLedgerRows[1]['migrationKey'] === '0002_admin_audit_log_and_settings', 'ledger: second row is 0002');
 itCheck('A fresh database', isset($itLedgerRows[2]['migrationKey']) && $itLedgerRows[2]['migrationKey'] === '0003_sessions_valid_from', 'ledger: third row is 0003');
@@ -800,6 +832,7 @@ itCheck('A fresh database', isset($itLedgerRows[3]['migrationKey']) && $itLedger
 itCheck('A fresh database', isset($itLedgerRows[4]['migrationKey']) && $itLedgerRows[4]['migrationKey'] === '0005_human_check_settings', 'ledger: fifth row is 0005 (#163)');
 itCheck('A fresh database', isset($itLedgerRows[5]['migrationKey']) && $itLedgerRows[5]['migrationKey'] === '0006_three_decimal_money_columns', 'ledger: sixth row is 0006 (#176)');
 itCheck('A fresh database', isset($itLedgerRows[6]['migrationKey']) && $itLedgerRows[6]['migrationKey'] === '0007_dynamic_qr_go2mylink', 'ledger: seventh row is 0007 (#164)');
+itCheck('A fresh database', isset($itLedgerRows[7]['migrationKey']) && $itLedgerRows[7]['migrationKey'] === '0008_link_safety_and_takedown', 'ledger: eighth row is 0008 (#168, #169)');
 // 📌 Only 0003's own two tables (0005's tblEmailSignInRequests has a column of the same name, #163).
 $itNewColumns = $itA->query("SELECT `TABLE_NAME`, `COLUMN_NAME`, `COLUMN_TYPE`, `IS_NULLABLE` FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` IN ('tblUsers', 'tblUserSessions') AND `COLUMN_NAME` IN ('sessionsValidFrom', 'sessionsValidFromSeen') ORDER BY `COLUMN_NAME`")->fetch_all(MYSQLI_ASSOC);
 itCheck('A fresh database', $itNewColumns === [
@@ -931,10 +964,12 @@ foreach (['tblUsers', 'tblUserSessions'] as $itTableWithNewColumn) {
 }
 // 💷 ...and 0004's columns, indexes and foreign key (task 7n Phase 2).
 $itSchemaAWithoutNewTables = itWithoutPhase2Pieces($itSchemaAWithoutNewTables);
-// 🔗 ...and 0007's two tables and its tblQRRedirects pieces (#164).
+// 🛡️ ...and 0008's table and pieces (#168, #169), then 0007's two tables
+//    and its tblQRRedirects pieces (#164).
+$itSchemaAWithoutNewTables = itWithout0008Pieces($itSchemaAWithoutNewTables);
 $itSchemaAWithoutNewTables = itWithout0007Pieces($itSchemaAWithoutNewTables);
 // 💷 ...and the six money columns 0006 widened (decision 0042).
-itCheck('B old install.sql upgrades', itWithout0006Pieces($itSchemaAWithoutNewTables) === itWithout0006Pieces(itWithoutPhase2Pieces($itOldSchema)), 'apart from the brand-new tables (two from 0002, four from 0005, two from 0007), 0003\'s two new columns, 0004\'s new pieces, 0006\'s six widened money columns and 0007\'s tblQRRedirects pieces, the finished schema matches exactly what the OLD install.sql produced (nothing else moved or changed)');
+itCheck('B old install.sql upgrades', itWithout0006Pieces($itSchemaAWithoutNewTables) === itWithout0006Pieces(itWithoutPhase2Pieces($itOldSchema)), 'apart from the brand-new tables (two from 0002, four from 0005, two from 0007, one from 0008), 0003\'s two new columns, 0004\'s new pieces, 0006\'s six widened money columns and the tblQRRedirects pieces of 0007 and 0008, the finished schema matches exactly what the OLD install.sql produced (nothing else moved or changed)');
 
 // ==============================================================================
 // 🅲 Scenario C: owner-edited setting values are never overwritten by a re-run
@@ -1318,16 +1353,17 @@ $itTo0003 = migrationRun($itN, 'apply', 'test', $itDir0003, migrationDefaultInst
 itCheck('N upgrade from 0003', $itTo0003['status'] === 'ok' && count($itTo0003['migrations']) === 3, 'setup: the database is brought to migration 0003 (three applied)');
 itCheck('N upgrade from 0003', $itN->query("SHOW COLUMNS FROM `tblSubscriptionPlans` LIKE 'planKind'")->num_rows === 0 && itValue($itN, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '4.99', 'setup: at 0003 there is no planKind column and Pro is at the placeholder £4.99');
 $itStatusN = migrationRun($itN, 'status', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('N upgrade from 0003', $itStatusN['pending'] === ['0004_plans_prices_currencies', '0005_human_check_settings', '0006_three_decimal_money_columns', '0007_dynamic_qr_go2mylink'] && migrationExitCodeForResult('status', $itStatusN) === 3, 'the status check shows exactly 0004, 0005, 0006 and 0007 waiting (exit code 3)');
+itCheck('N upgrade from 0003', $itStatusN['pending'] === ['0004_plans_prices_currencies', '0005_human_check_settings', '0006_three_decimal_money_columns', '0007_dynamic_qr_go2mylink', '0008_link_safety_and_takedown'] && migrationExitCodeForResult('status', $itStatusN) === 3, 'the status check shows exactly 0004, 0005, 0006, 0007 and 0008 waiting (exit code 3)');
 $itUpN = migrationRun($itN, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck(
     'N upgrade from 0003',
-    $itUpN['status'] === 'ok' && count($itUpN['migrations']) === 4 && $itUpN['migrations'][0]['key'] === '0004_plans_prices_currencies'
+    $itUpN['status'] === 'ok' && count($itUpN['migrations']) === 5 && $itUpN['migrations'][0]['key'] === '0004_plans_prices_currencies'
         && $itUpN['migrations'][0]['outcome'] === 'applied' && $itUpN['migrations'][0]['stepsRun'] === 31 && $itUpN['migrations'][0]['stepsSkipped'] === 0
         && $itUpN['migrations'][1]['key'] === '0005_human_check_settings' && $itUpN['migrations'][1]['outcome'] === 'applied' && $itUpN['migrations'][1]['stepsRun'] === 12
         && $itUpN['migrations'][2]['key'] === '0006_three_decimal_money_columns' && $itUpN['migrations'][2]['outcome'] === 'applied' && $itUpN['migrations'][2]['stepsRun'] === 6
-        && $itUpN['migrations'][3]['key'] === '0007_dynamic_qr_go2mylink' && $itUpN['migrations'][3]['outcome'] === 'applied' && $itUpN['migrations'][3]['stepsRun'] === 21,
-    'the upgrade applies 0004 (all 31 steps), 0005 (all 12 steps: 2 updates, 6 settings, 4 tables) then 0006 (6 columns) and 0007 (21 steps): ' . json_encode($itUpN['migrations'])
+        && $itUpN['migrations'][3]['key'] === '0007_dynamic_qr_go2mylink' && $itUpN['migrations'][3]['outcome'] === 'applied' && $itUpN['migrations'][3]['stepsRun'] === 21
+        && $itUpN['migrations'][4]['key'] === '0008_link_safety_and_takedown' && $itUpN['migrations'][4]['outcome'] === 'applied' && $itUpN['migrations'][4]['stepsRun'] === 9,
+    'the upgrade applies 0004 (all 31 steps), 0005 (all 12 steps: 2 updates, 6 settings, 4 tables) then 0006 (6 columns), 0007 (21 steps) and 0008 (9 steps): ' . json_encode($itUpN['migrations'])
 );
 // 📝 Decision 0022 (#161): the starting descriptions mark unbuilt features as coming soon.
 itCheck('N upgrade from 0003', itValue($itN, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === 'For individuals who need dynamic QR codes, analytics and automation (all coming soon).', '#161: the starting Pro description now marks the unbuilt features as coming soon');
@@ -1430,7 +1466,7 @@ $itAuditProviderSql = "INSERT INTO `tblAdminAuditLog` (`actorType`, `actorLabel`
 $itO = itAt0004($itEnv, $itPort, $itDbO, $itInstallSql, $itSeedSql, $itDir0004);
 itCheck('O 0005 human check', itValue($itO, $itProviderSql) === 'none' && itNumber($itO, "SELECT COUNT(*) FROM `tblSchemaMigrations`") === 4, 'setup: at 0004 the provider is the starting "none"');
 $itUpO = migrationRun($itO, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('O 0005 human check', $itUpO['status'] === 'ok' && count($itUpO['migrations']) === 3 && $itUpO['migrations'][0]['key'] === '0005_human_check_settings' && $itUpO['migrations'][0]['stepsRun'] === 12 && $itUpO['migrations'][1]['key'] === '0006_three_decimal_money_columns', '0005 applies, all 12 steps (then 0006 and 0007): ' . json_encode($itUpO['migrations']));
+itCheck('O 0005 human check', $itUpO['status'] === 'ok' && count($itUpO['migrations']) === 4 && $itUpO['migrations'][0]['key'] === '0005_human_check_settings' && $itUpO['migrations'][0]['stepsRun'] === 12 && $itUpO['migrations'][1]['key'] === '0006_three_decimal_money_columns', '0005 applies, all 12 steps (then 0006, 0007 and 0008): ' . json_encode($itUpO['migrations']));
 itCheck('O 0005 human check', itValue($itO, $itProviderSql) === 'auto', 'untouched "none" becomes "auto" (off until keys are entered)');
 itCheck('O 0005 human check', migrationDbSeedDataState($itO)['state'] === 'complete', 'the installer\'s starting-data check still reads "complete"');
 $itSettingsAfterO = itValue($itO, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`, '|', `description`) ORDER BY `settingKey` SEPARATOR ';') FROM `tblSettings` WHERE `settingGroup` = 'security'");
@@ -1797,7 +1833,7 @@ $itMoneySql = "SELECT CONCAT((SELECT GROUP_CONCAT(CONCAT(`planKey`, '=', CAST(`p
     . " ';', (SELECT GROUP_CONCAT(CONCAT(`discountID`, '=', CAST(`value` * 1000 AS SIGNED)) ORDER BY `discountID`) FROM `tblDiscounts`))";
 $itMoneyBefore = itValue($itP, $itMoneySql);
 $itUpP = migrationRun($itP, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('P 0006 money columns', $itUpP['status'] === 'ok' && count($itUpP['migrations']) === 2 && $itUpP['migrations'][0]['key'] === '0006_three_decimal_money_columns' && $itUpP['migrations'][0]['stepsRun'] === 6, '0006 applies, all 6 steps (then 0007): ' . json_encode($itUpP['migrations']));
+itCheck('P 0006 money columns', $itUpP['status'] === 'ok' && count($itUpP['migrations']) === 3 && $itUpP['migrations'][0]['key'] === '0006_three_decimal_money_columns' && $itUpP['migrations'][0]['stepsRun'] === 6, '0006 applies, all 6 steps (then 0007 and 0008): ' . json_encode($itUpP['migrations']));
 itCheck('P 0006 money columns', itMoneyColumnTypes($itP, $itMoneyColumns) === ['decimal(15,3)|NO|0.000', 'decimal(15,3)|NO|0.000', 'decimal(15,3)|NO|none', 'decimal(15,3)|NO|none', 'decimal(15,3)|NO|none', 'decimal(15,3)|NO|none'], 'every money column is DECIMAL(15,3), still NOT NULL, the price defaults 0.000: ' . json_encode(itMoneyColumnTypes($itP, $itMoneyColumns)));
 itCheck('P 0006 money columns', itValue($itP, "SELECT CONCAT(`priceMonthly`, '/', `priceYearly`) FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'") === '99999999.990/0.010' && itValue($itP, "SELECT `value` FROM `tblDiscounts` WHERE `code` = 'IT-P'") === '12.500', 'the largest old value 99,999,999.99, the smallest 0.01 and a 12.50% discount are kept exactly');
 itCheck('P 0006 money columns', $itMoneyBefore !== '' && itValue($itP, $itMoneySql) === $itMoneyBefore, 'every plan price, price point and discount is exactly the same amount as before: ' . $itMoneyBefore);
@@ -1939,7 +1975,7 @@ itCheck('Q 0007 dynamic QR', $itQ->query("SHOW TABLES LIKE 'tblAbuseReports'")->
 itQExec($itQ, "INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('abuse', 'abuse_mailbox', 'reports@example.com', 'email', 0, 1, 'owner')");
 itQExec($itQ, "INSERT INTO `tblQRRedirects` (`redirectUUID`, `destinationURL`) VALUES ('3fa85f64-5717-4562-b3fc-2c963f66afa6', 'https://example.com/old')");
 $itUpQ = migrationRun($itQ, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('Q 0007 dynamic QR', $itUpQ['status'] === 'ok' && count($itUpQ['migrations']) === 1 && $itUpQ['migrations'][0]['key'] === '0007_dynamic_qr_go2mylink' && $itUpQ['migrations'][0]['stepsRun'] === 21, '0007 applies, all 21 steps: ' . json_encode($itUpQ['migrations']));
+itCheck('Q 0007 dynamic QR', $itUpQ['status'] === 'ok' && count($itUpQ['migrations']) === 2 && $itUpQ['migrations'][0]['key'] === '0007_dynamic_qr_go2mylink' && $itUpQ['migrations'][0]['stepsRun'] === 21, '0007 applies, all 21 steps (then 0008): ' . json_encode($itUpQ['migrations']));
 itCheck('Q 0007 dynamic QR', str_starts_with(itValue($itQ, "SELECT `description` FROM `tblSettings` WHERE `settingKey` = 'dynamic_redirect_base_url'"), 'The short-link address printed in dynamic codes ({address}/{short code})'), 'L11: the seeded "/r/{uuid}" description of the short-link address is replaced');
 
 $itQColumns = $itQ->query(
@@ -2044,9 +2080,98 @@ foreach ((array) glob($itDir0006 . '*') as $itTempFile) {
 @rmdir($itDir0006);
 
 // ==============================================================================
+// 🇷 Scenario R (#168, #169): upgrade 0008 - link safety, takedowns and abuse
+//    counting. On a database at 0007 that already holds a suspended code and
+//    a report: the new columns and table appear, nothing existing changes
+//    (the suspension still has to be sent, the report counts for nothing
+//    until it is known to have passed the human check); the foreign keys do
+//    what they say; run again it changes nothing; stopped half-way it
+//    finishes; the result is the fresh install's
+// ==============================================================================
+echo PHP_EOL . 'Scenario R: upgrade 0008 (link safety and takedowns) on a database at 0007' . PHP_EOL;
+
+$itDbR     = $itBaseName . '_r';
+$itDir0007 = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cuercode_it_mig0007_' . bin2hex(random_bytes(6)) . DIRECTORY_SEPARATOR;
+mkdir($itDir0007, 0700);
+foreach (['0001_subscription_price_snapshot_columns', '0002_admin_audit_log_and_settings', '0003_sessions_valid_from', '0004_plans_prices_currencies', '0005_human_check_settings', '0006_three_decimal_money_columns', '0007_dynamic_qr_go2mylink'] as $itKey0007) {
+    copy(migrationDefaultDirectory() . $itKey0007 . '.php', $itDir0007 . $itKey0007 . '.php');
+}
+
+// R1. Upgrade a database at 0007 holding a suspended code and a report.
+$itR = itFreshDb($itEnv, $itPort, $itDbR);
+itRunSqlFile($itR, $itInstallSql);
+itRunSqlFile($itR, $itSeedSql);
+migrationRun($itR, 'apply', 'test', $itDir0007, migrationDefaultInstallSqlPath());
+itCheck('R 0008 link safety', $itR->query("SHOW TABLES LIKE 'tblLinkSafetyHits'")->num_rows === 0 && $itR->query("SHOW COLUMNS FROM `tblQRRedirects` LIKE 'suspensionAppliedAt'")->num_rows === 0, 'setup: at 0007 there is no tblLinkSafetyHits and no tblQRRedirects.suspensionAppliedAt');
+itQExec($itR, "INSERT INTO `tblQRRedirects` (`redirectUUID`, `destinationURL`, `shortCode`, `syncState`, `suspendedAt`, `suspensionNote`) VALUES ('3fa85f64-5717-4562-b3fc-2c963f66afa6', 'https://example.com/old', 'Ab3dE9x', 'active', UTC_TIMESTAMP(), 'Before 0008')");
+$itRRedirectID = (int) itValue($itR, "SELECT `redirectID` FROM `tblQRRedirects` WHERE `shortCode` = 'Ab3dE9x'");
+itQExec($itR, 'INSERT INTO `tblAbuseReports` (`redirectID`, `shortCode`, `category`, `reporterAddressHash`) VALUES (?, ?, ?, ?)', 'isss', [$itRRedirectID, 'Ab3dE9x', 'phishing', abuseReporterAddressHash('198.51.100.7')]);
+$itUpR = migrationRun($itR, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('R 0008 link safety', $itUpR['status'] === 'ok' && count($itUpR['migrations']) === 1 && $itUpR['migrations'][0]['key'] === '0008_link_safety_and_takedown' && $itUpR['migrations'][0]['stepsRun'] === 9, '0008 applies, all 9 steps: ' . json_encode($itUpR['migrations']));
+
+$itRColumns = $itR->query(
+    "SELECT `TABLE_NAME`, `COLUMN_NAME`, `DATA_TYPE`, `CHARACTER_MAXIMUM_LENGTH`, `IS_NULLABLE`, `COLUMN_DEFAULT` FROM `information_schema`.`COLUMNS`"
+    . " WHERE `TABLE_SCHEMA` = DATABASE() AND ((`TABLE_NAME` = 'tblQRRedirects' AND `COLUMN_NAME` IN ('safetyVerdict', 'safetyCheckedAt', 'suspensionAppliedAt'))"
+    . " OR (`TABLE_NAME` = 'tblAbuseReports' AND `COLUMN_NAME` IN ('reporterNetworkHash', 'countedForSuspension'))) ORDER BY `TABLE_NAME`, `ORDINAL_POSITION`"
+)->fetch_all(MYSQLI_ASSOC);
+$itRShape = [];
+foreach ($itRColumns as $itRColumn) {
+    $itRDefault = 'none';
+    if ($itRColumn['COLUMN_DEFAULT'] !== null && $itRColumn['COLUMN_DEFAULT'] !== 'NULL') {
+        $itRDefault = trim((string) $itRColumn['COLUMN_DEFAULT'], "'");
+    }
+    $itRShape[] = $itRColumn['TABLE_NAME'] . '.' . $itRColumn['COLUMN_NAME'] . ' ' . $itRColumn['DATA_TYPE'] . ' ' . (string) $itRColumn['CHARACTER_MAXIMUM_LENGTH'] . ' ' . $itRColumn['IS_NULLABLE'] . ' ' . $itRDefault;
+}
+itCheck('R 0008 link safety', $itRShape === [
+    'tblAbuseReports.reporterNetworkHash char 64 YES none',
+    'tblAbuseReports.countedForSuspension tinyint  NO 0',
+    'tblQRRedirects.safetyVerdict varchar 16 YES none',
+    'tblQRRedirects.safetyCheckedAt datetime  YES none',
+    'tblQRRedirects.suspensionAppliedAt datetime  YES none',
+], 'the five new columns, with their types: ' . json_encode($itRShape));
+itCheck('R 0008 link safety', itValue($itR, "SELECT CONCAT(IFNULL(`suspensionAppliedAt`, 'NULL'), '|', IFNULL(`safetyVerdict`, 'NULL'), '|', `suspensionNote`) FROM `tblQRRedirects` WHERE `redirectID` = " . $itRRedirectID) === 'NULL|NULL|Before 0008', 'the code suspended before 0008 is kept; its takedown counts as still to be sent (the cron job sends it), and it was never checked');
+itCheck('R 0008 link safety', itValue($itR, "SELECT CONCAT(`countedForSuspension`, '|', IFNULL(`reporterNetworkHash`, 'NULL')) FROM `tblAbuseReports`") === '0|NULL', 'the report from before 0008 counts for nothing automatically (it is not known to have passed the human check)');
+itCheck('R 0008 link safety', itValue($itR, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'dynamic_qr_enabled'") === '0', 'dynamic QR is still switched off');
+
+// R2. A hit is kept with its code and person; removing them keeps the hit.
+itQExec($itR, "INSERT INTO `tblUsers` (`email`, `emailVerifiedAt`, `passwordHash`, `displayName`, `status`) VALUES ('r-person@example.com', '2026-11-01 09:00:00', 'x', 'R person', 'active')");
+$itRPersonID = (int) itValue($itR, "SELECT `userID` FROM `tblUsers` WHERE `email` = 'r-person@example.com'");
+itCheck('R 0008 link safety', itQExec($itR, 'INSERT INTO `tblLinkSafetyHits` (`urlHash`, `destinationURL`, `provider`, `threatTypes`, `occasion`, `redirectID`, `userID`, `expiresAt`) VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())', 'sssssii', [hash('sha256', 'https://example.com/old'), 'https://example.com/old', 'webrisk', 'MALWARE', 'recheck', $itRRedirectID, $itRPersonID]) === 'ok', 'a link-safety hit can be stored with its code and person');
+itCheck('R 0008 link safety', itQExec($itR, 'INSERT INTO `tblLinkSafetyHits` (`urlHash`, `destinationURL`, `provider`, `threatTypes`, `occasion`, `redirectID`, `expiresAt`) VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())', 'sssssi', [hash('sha256', 'x'), 'x', 'webrisk', 'MALWARE', 'create', 999999]) === 'ERR 1452', '...but only for a code that exists (1452)');
+itQExec($itR, 'DELETE FROM `tblUsers` WHERE `userID` = ?', 'i', [$itRPersonID]);
+itQExec($itR, 'DELETE FROM `tblQRRedirects` WHERE `redirectID` = ?', 'i', [$itRRedirectID]);
+itCheck('R 0008 link safety', itValue($itR, "SELECT CONCAT(IFNULL(`redirectID`, 'NULL'), '|', IFNULL(`userID`, 'NULL'), '|', `threatTypes`) FROM `tblLinkSafetyHits`") === 'NULL|NULL|MALWARE', 'removing the code and the person keeps the hit (their links become empty)');
+
+// R3. Run again: nothing changes.
+itQExec($itR, "DELETE FROM `tblSchemaMigrations` WHERE `migrationKey` = '0008_link_safety_and_takedown'");
+$itSchemaBeforeAgainR = itSchemaSnapshot($itR);
+$itAgainR = migrationRun($itR, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('R 0008 link safety', $itAgainR['status'] === 'ok' && $itAgainR['migrations'][0]['stepsSkipped'] === 9 && $itAgainR['migrations'][0]['stepsRun'] === 0 && itSchemaSnapshot($itR) === $itSchemaBeforeAgainR, 'forced to run again: all 9 structure steps are skipped: ' . json_encode($itAgainR['migrations']));
+itCheck('R 0008 link safety', itSchemaSnapshot($itR) === $itSchemaA, 'the upgraded database\'s structure is byte-for-byte the fresh install\'s');
+itDropDb($itEnv, $itPort, $itDbR);
+
+// R4. Stopped half-way (the first three steps done, nothing recorded): the next run finishes.
+$itR = itFreshDb($itEnv, $itPort, $itDbR);
+itRunSqlFile($itR, $itInstallSql);
+itRunSqlFile($itR, $itSeedSql);
+migrationRun($itR, 'apply', 'test', $itDir0007, migrationDefaultInstallSqlPath());
+$itSteps0008 = (require migrationDefaultDirectory() . '0008_link_safety_and_takedown.php')['steps'];
+foreach (array_slice($itSteps0008, 0, 3) as $itHalfStep) {
+    $itR->query($itHalfStep['sql']);
+}
+$itHalfR = migrationRun($itR, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('R 0008 link safety', $itHalfR['status'] === 'ok' && $itHalfR['migrations'][0]['stepsSkipped'] === 3 && $itHalfR['migrations'][0]['stepsRun'] === 6 && itSchemaSnapshot($itR) === $itSchemaA, 'half-applied: the three done steps are skipped, the other 6 run, and the result is the fresh install\'s: ' . json_encode($itHalfR['migrations']));
+itDropDb($itEnv, $itPort, $itDbR);
+
+foreach ((array) glob($itDir0007 . '*') as $itTempFile) {
+    @unlink((string) $itTempFile);
+}
+@rmdir($itDir0007);
+
+// ==============================================================================
 // 🧹 Clean up and report
 // ==============================================================================
-foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2, $itDbM, $itDbN, $itDbN2, $itDbO, $itDbP, $itDbQ] as $itDbToRemove) {
+foreach ([$itDbA, $itDbB, $itDbF, $itDbG, $itDbH, $itDbI, $itDbJ, $itDbK1, $itDbK2, $itDbL, $itDbL2, $itDbM, $itDbN, $itDbN2, $itDbO, $itDbP, $itDbQ, $itDbR] as $itDbToRemove) {
     itDropDb($itEnv, $itPort, $itDbToRemove);
 }
 

@@ -829,9 +829,16 @@ adminSettingsTestGo2MyLink($dqAdmin, $dqFailing);
 $dqSave = adminSaveSetting(['key' => 'dynamic_qr_enabled'], '1', $dqAdmin);
 dqCheck($dqSave['ok'] === false && str_contains($dqSave['message'], 'did not pass'), 'the last test failed: refused');
 adminSettingsTestGo2MyLink($dqAdmin, $dqPassing);
+// 🛡️ #168, decision 0029: no dynamic codes without the link-safety check.
 $dqSave = adminSaveSetting(['key' => 'dynamic_qr_enabled'], '1', $dqAdmin);
 clearConfigCache();
-dqCheck($dqSave['ok'] === true && dynamicQrMasterSwitchOn() === true, 'a passing test just now: switched on');
+dqCheck($dqSave['ok'] === false && str_contains($dqSave['message'], 'link-safety') && dynamicQrMasterSwitchOn() === false, 'a passing test but no Google Web Risk key saved: refused (decision 0029)');
+$dqKeySave = adminSaveSetting(['key' => 'link_safety_webrisk_api_key'], 'AIzaItTestKey' . str_repeat('w', 26), $dqAdmin);
+clearConfigCache();
+dqCheck($dqKeySave['ok'] === true, 'the Web Risk key is saved (stored encrypted)');
+$dqSave = adminSaveSetting(['key' => 'dynamic_qr_enabled'], '1', $dqAdmin);
+clearConfigCache();
+dqCheck($dqSave['ok'] === true && dynamicQrMasterSwitchOn() === true, 'a passing test just now and the key saved: switched on');
 dqCheck(count(dqRows("SELECT `auditID` FROM `tblAdminAuditLog` WHERE `action` = 'setting.update' AND `entityKey` = 'dynamic_qr_enabled'")) === 1, '...and it is in the admin change log');
 $dqSave = adminSaveSetting(['key' => 'dynamic_qr_enabled'], '0', $dqAdmin);
 clearConfigCache();
@@ -854,6 +861,12 @@ $dqProcessed = adminSettingsProcessSection('dynamic', ['f' => ['dynamic_qr_enabl
 $dqSaved = adminSettingsSaveSection($dqAdmin, 'dynamic', adminSettingsSectionFingerprint('dynamic', $dqCurrent), $dqProcessed['changes']);
 clearConfigCache();
 dqCheck($dqProcessed['errors'] === [] && $dqSaved['ok'] === true && dynamicQrMasterSwitchOn() === true, 'switched on through the section save after a fresh passing test');
+// 🧹 The test key is removed again, so nothing later in this script could
+//    ever send a request to Google (the link-safety check then says
+//    "not_configured" and lets destinations through).
+$dqKeyClear = adminSaveSetting(['key' => 'link_safety_webrisk_api_key'], '', $dqAdmin);
+clearConfigCache();
+dqCheck($dqKeyClear['ok'] === true && urlReputationHasUsableProvider(urlReputationReadSettings()) === false && dynamicQrMasterSwitchOn() === true, 'the test Web Risk key is removed (dynamic codes stay on; no later step can call Google)');
 
 // ==============================================================================
 // L. The /admin/limits/ screen

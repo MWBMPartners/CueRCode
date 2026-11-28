@@ -263,13 +263,14 @@ assertEquals(
         'setting.update', 'setting.secret_set', 'setting.secret_replace', 'setting.secret_clear', 'setting.test_graph', 'setting.test_email',
         'setting.test_graph.started', 'setting.test_email.started',
         'setting.test_go2mylink', 'setting.test_go2mylink.started',
+        'dynamic_code.suspend',
         'plan.create', 'plan.update', 'plan.update_reduction', 'plan.new_version', 'plan.retire', 'plan.restore', 'plan.delete',
         'price.create', 'price.update', 'price.retire', 'price.delete', 'entitlement.update', 'apikeys.resync',
         'discount.create', 'discount.update', 'discount.disable', 'discount.eligibility_grant', 'discount.eligibility_revoke',
         'customer.lookup', 'deal.create', 'deal.start', 'deal.update', 'deal.end', 'payg.pack_create', 'payg.pack_update', 'payg.cap_update',
     ],
     adminAuditActionNames(),
-    'audit action names are exactly the plan §6.7 list, plus the two ".started" rows (final review N-2), "schema.migrate.started" (Codex C2-2) and the Go2My.Link "Test connection" pair (#165)'
+    'audit action names are exactly the plan §6.7 list, plus the two ".started" rows (final review N-2), "schema.migrate.started" (Codex C2-2) and the Go2My.Link "Test connection" pair (#165), and dynamic_code.suspend (#168)'
 );
 
 $aaSecret = 'S3cr3t-Value-Do-Not-Log-7f2a';

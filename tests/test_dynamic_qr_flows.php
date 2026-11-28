@@ -18,7 +18,7 @@
  *   4. Destinations on a short-link address are refused (a code must never
  *      send people on to another short link).
  *   5. The switched-off page address (lead choice L2).
- *   6. The one link-safety hook (#168 fills it in later).
+ *   6. The one link-safety hook (#168).
  *   7. The change planner: what a PATCH means, what is sent to Go2My.Link.
  *   8. What the tidy step does with a look-up answer.
  *   9. Go2My.Link failures as plain member answers.
@@ -142,8 +142,11 @@ if (function_exists('dynamicQrUnavailablePageUrl')) {
 // ==============================================================================
 assertTrue(function_exists('dynamicQrCheckDestinationSafety'), 'dynamicQrCheckDestinationSafety() exists (the single hook #168 fills in)');
 if (function_exists('dynamicQrCheckDestinationSafety')) {
+    // 🛡️ #168: with no Web Risk key saved (as in every test), the hook lets
+    //    the destination through, says why, and sends nothing to Google.
+    //    (tests/test_url_reputation.php proves the check itself.)
     $dqSafe = dynamicQrCheckDestinationSafety('https://example.com/menu', 'create');
-    assertEquals(['allowed' => true, 'reason' => 'not_checked_yet', 'message' => ''], $dqSafe, 'until #168 the hook lets every destination through and says it was not checked');
+    assertTrue($dqSafe['allowed'] === true && $dqSafe['verdict'] === 'unchecked' && $dqSafe['reason'] === 'not_configured' && $dqSafe['message'] === '', '#168: with no key saved the hook lets the destination through, "unchecked" (not_configured)');
 }
 
 // ==============================================================================

@@ -39,7 +39,7 @@ set -euo pipefail
 
 # 📋 Every script that must exist. Add a new script's name here in the same
 #    commit that adds the script; a missing one fails the run.
-REQUIRED_SCRIPTS="account_recovery admin_access admin_plans admin_settings dynamic_qr email_queue human_check migrations resend_verification site_timezone"
+REQUIRED_SCRIPTS="account_recovery admin_access admin_plans admin_settings dynamic_qr dynamic_qr_abuse email_queue human_check migrations resend_verification site_timezone"
 
 export CUERCODE_IT_DB_HOST="${CUERCODE_IT_DB_HOST:-127.0.0.1}"
 export CUERCODE_IT_DB_PORT="${CUERCODE_IT_DB_PORT:-3306}"

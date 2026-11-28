@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Link-safety check with Google Web Risk, takedowns and the daily re-check (WP4e #168, 2026-11-28)
+
+Dynamic codes are still switched off by default, so no visitor sees any of this yet.
+
+- **Every destination is checked with Google Web Risk** (decisions 0029 and 0035) when a dynamic code is made, when its destination changes and when it is switched back on, through the one hook `dynamicQrCheckDestinationSafety()`. A destination Google lists as phishing, malware or unwanted software is refused with 422 `DESTINATION_UNSAFE` (nothing saved, nothing sent to Go2My.Link). If Google cannot answer (unreachable, too slow, quota used up, key refused, odd reply) or no key is saved, the destination is let through, kept as "unchecked", and the problem is written to the error log at most once every 10 minutes per reason.
+- **The request follows Google's own documentation** (`uris.search`, the three lists, the address URL-encoded) and the key goes **only in the `x-goog-api-key` header**, never in an address or a log. The same safe transport as Go2My.Link: certificates checked, no redirects, 64 KB at most, a 2-15 second time limit (new setting, 5 by default).
+- **The providers are a list** (`link_safety_providers`, now on `/admin/settings/`, known names only, never empty) so a second paid provider can be added later. **Dynamic codes can no longer be switched on without a Web Risk key** (decision 0029).
+- **Takedowns (lead choice L2):** a suspension is saved on CueRCode first, with its row in the admin change log, then Go2My.Link is pointed at the neutral `/unavailable/` page under the owner's lock; only a confirmed answer counts. A takedown Go2My.Link could not take is sent again by the every-minute email job (new step 10). A change by the owner that was already on its way when the code was suspended is refused and the takedown is sent again at once. The owner and the abuse mailbox are emailed (the destination written so a mail program does not make it a link).
+- **The daily job** `_includes/cron/dynamic_qr_daily.php` (new; one cron line a day) checks every code in use again, at most 200 a run, suspends one whose destination is now listed, stops early if Google does not answer three times in a row, and deletes old link-safety records (90 days by default, a new setting). Both cron steps only call Google or Go2My.Link when the cron line declares `CUERCODE_SITE_COPY`.
+- **Database upgrade 0008:** the safety answer and the takedown confirmation on each code, `tblLinkSafetyHits` (every "unsafe" answer, also the short cache Google asks clients to keep), and two abuse-report columns used by #169.
+- **Privacy page:** a factual section 5.2 on what is sent to Google and how long the record is kept (legal review still owed, #38).
+- Tests: `tests/test_url_reputation.php` (134 checks, with a stand-in Web Risk HTTPS server, `tests/lib/webrisk_standin_server.php`) and `tests/test_dynamic_qr_takedown.php` (52) failed before the code existed and pass now; the new real-database script `tests/integration/dynamic_qr_abuse_real_mysql.php` and scenario R of `migrations_real_mysql.php`. Removing each key protection (key in the address, an unsafe answer allowed, an unreachable provider refusing, unbounded logging, Google's cache rule, the cron copy check, the owner-race re-send, the re-check suspension, a failed takedown marked as done) made a test fail.
+
 ### Added - Dynamic QR codes: create, change, switch off and on (WP4c #166, 2026-11-28)
 
 Dynamic codes stay **switched off** by default, and the member screens are the next package (#167), so no visitor sees any of this yet.

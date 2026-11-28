@@ -317,6 +317,9 @@ function isValidEmailTemplateKey(string $key): bool
         'invitation',
         'receipt',
         'email_sign_in',
+        // 🛡️ WP4e-WP4g (#168-#170): suspensions, reports and the daily
+        //    monitoring email about dynamic codes.
+        'dynamic_qr_notice',
     ];
 
     if (!in_array($key, $allowedKeys, true)) {
