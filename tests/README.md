@@ -65,6 +65,16 @@ for MariaDB `-e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 mariadb:10.6`), run the
 command above, then `docker stop cuercode-it-ci`. The sections below describe
 each script and how to run one on its own.
 
+## Real-database check (site time zone, #158, #130)
+
+`tests/integration/site_timezone_real_mysql.php` runs the real link, session,
+lock-out and API-key checks with PHP's clock in UTC, America/New_York,
+Europe/London, Pacific/Kiritimati and Pacific/Pago_Pago, each half an hour
+before and half an hour after the limit (100 checks). Run it with
+`--load-schema` and the usual `CUERCODE_IT_DB_*` variables; the shared script
+includes it. On 2026-11-28 it failed 23 checks on the old code and passed all
+100 afterwards, on MySQL 8.0.36 and MariaDB 10.6.28 (PHP 8.5.12, macOS).
+
 ## Current suite (2026-11-28, Codex review fixes of task 7n Phase 2: the table below was re-measured; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:

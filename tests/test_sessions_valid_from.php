@@ -98,7 +98,7 @@ $svLogin        = svBody($svAuth, 'loginUser');
 $svCheck        = svBody($svAuth, 'loginUserCheckPassword');
 $svAfter        = svBody($svAuth, 'loginUserAfterPassword');
 assertContains("\$validFromColumn = ', `sessionsValidFrom`';", $svCheck, 'loginUserCheckPassword() reads the mark...');
-assertTrue(strpos($svCheck, '`failedLoginCount`, `lockedUntil`\' . $validFromColumn') !== false, '...in the SAME statement as the password hash');
+assertTrue(strpos($svCheck, '`failedLoginCount`, (`lockedUntil` IS NOT NULL AND `lockedUntil` > NOW()) AS `isLocked`\' . $validFromColumn') !== false, '...in the SAME statement as the password hash');
 assertContains("'sessionsValidFromSeen' => \$sessionsValidFromSeen", $svCheck, '... and hands it back with the row');
 assertContains('$check = loginUserCheckPassword($email, $plainPassword);', $svLogin, 'loginUser() uses that password check');
 assertContains("issueUserSession(\$userID, \$ipAddress, \$userAgent, \$check['sessionsValidFromSeen'])", $svLogin, 'loginUser() passes the mark it read');

@@ -181,6 +181,20 @@ function hashToken(string $rawToken): string
 // 🔢 computeLockoutExpiry() - Pure lockout-window calculation
 // ==============================================================================
 
+// ------------------------------------------------------------------------------
+// ⏱️ Database times are UTC - let the DATABASE compare them (#158, #130)
+// ------------------------------------------------------------------------------
+// Every DATETIME in these tables is written by the database in UTC (the
+// connection sets time_zone = '+00:00'). PHP's own clock follows the
+// `site_timezone` setting, so reading such a value with strtotime() and
+// comparing it with time() is wrong by the zone's offset: links, sessions and
+// lock-outs ended hours early or late. Every "has it ended?" question is
+// therefore asked in SQL (`expiresAt` > NOW() AS `isLive`, `lockedUntil` >
+// NOW() AS `isLocked`), and a new lock-out is written with DATE_ADD(NOW(),
+// ...) so one clock both writes and reads it.
+// tests/test_expiry_clock.php fails if a PHP-side comparison comes back.
+// ------------------------------------------------------------------------------
+
 /**
  * 🔢 Compute the Unix timestamp an account should remain locked until, given
  * the failed-login count immediately AFTER this attempt.
@@ -1396,7 +1410,7 @@ function emailVerificationTokenNeedsPassword(string $rawToken): bool
 
     try {
         $stmt = dbQuery(
-            'SELECT `v`.`tokenHash`, `v`.`expiresAt`, `v`.`usedAt`, `u`.`passwordHash` '
+            'SELECT `v`.`tokenHash`, (`v`.`expiresAt` > NOW()) AS `isLive`, `v`.`usedAt`, `u`.`passwordHash` '
             . 'FROM `tblEmailVerifications` AS `v` '
             . 'INNER JOIN `tblUsers` AS `u` ON `u`.`userID` = `v`.`userID` '
             . 'WHERE `v`.`tokenHash` = ? LIMIT 1',
@@ -1413,8 +1427,10 @@ function emailVerificationTokenNeedsPassword(string $rawToken): bool
         return true;
     }
 
-    $expiresAt = strtotime((string) $row['expiresAt']);
-    if ($expiresAt === false || $expiresAt < time()) {
+    // ⏱️ #158 / #130: the DATABASE says whether the link is still live (see
+    //    the note on database times above computeLockoutExpiry()). A missing
+    //    or NULL answer counts as ended.
+    if (!isset($row['isLive']) || (int) $row['isLive'] !== 1) {
         return true;
     }
 
@@ -1502,7 +1518,7 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
 
     try {
         $stmt = dbQuery(
-            'SELECT `verificationID`, `userID`, `tokenHash`, `expiresAt`, `usedAt` '
+            'SELECT `verificationID`, `userID`, `tokenHash`, (`expiresAt` > NOW()) AS `isLive`, `usedAt` '
             . 'FROM `tblEmailVerifications` WHERE `tokenHash` = ? LIMIT 1',
             's',
             [$tokenHash]
@@ -1526,9 +1542,8 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
         return $alreadyUsedResult;
     }
 
-    $expiresAtTimestamp = strtotime((string) $row['expiresAt']);
-
-    if ($expiresAtTimestamp === false || $expiresAtTimestamp < time()) {
+    // ⏱️ #158 / #130: judged by the database's clock, in UTC.
+    if (!isset($row['isLive']) || (int) $row['isLive'] !== 1) {
         return $invalidResult;
     }
 
@@ -1550,7 +1565,9 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
     // 👤 Decision 0013: the account's password and lock-out state.
     try {
         $accountStmt = dbQuery(
-            'SELECT `passwordHash`, `failedLoginCount`, `lockedUntil` FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
+            'SELECT `passwordHash`, `failedLoginCount`, '
+            . '(`lockedUntil` IS NOT NULL AND `lockedUntil` > NOW()) AS `isLocked` '
+            . 'FROM `tblUsers` WHERE `userID` = ? LIMIT 1',
             'i',
             [$userID]
         );
@@ -1571,11 +1588,8 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
     $passwordGiven      = ($password !== null && $password !== '');
     $failedCount        = (int) $account['failedLoginCount'];
 
-    $accountLocked = false;
-    if ($account['lockedUntil'] !== null) {
-        $lockedUntilTimestamp = strtotime((string) $account['lockedUntil']);
-        $accountLocked = ($lockedUntilTimestamp !== false && $lockedUntilTimestamp > time());
-    }
+    // ⏱️ #158 / #130: "is it still locked?" is answered by the database.
+    $accountLocked = ((int) $account['isLocked'] === 1);
 
     // 🔐 Only check the password when it can matter (Argon2id is slow on purpose).
     //    A password longer than any the site accepts is simply wrong.
@@ -1857,7 +1871,7 @@ function loginUserCheckPassword(string $email, #[\SensitiveParameter] string $pl
     try {
         $stmt = dbQuery(
             'SELECT `userID`, `email`, `passwordHash`, `displayName`, `status`, '
-            . '`failedLoginCount`, `lockedUntil`' . $validFromColumn . ' '
+            . '`failedLoginCount`, (`lockedUntil` IS NOT NULL AND `lockedUntil` > NOW()) AS `isLocked`' . $validFromColumn . ' '
             . 'FROM `tblUsers` WHERE `email` = ? LIMIT 1',
             's',
             [$normalizedEmail]
@@ -1884,13 +1898,8 @@ function loginUserCheckPassword(string $email, #[\SensitiveParameter] string $pl
     $userID = (int) $row['userID'];
     $status = (string) $row['status'];
 
-    $lockedUntilRaw = $row['lockedUntil'];
-    if ($lockedUntilRaw !== null) {
-        $lockedUntilTimestamp = strtotime((string) $lockedUntilRaw);
-    } else {
-        $lockedUntilTimestamp = false;
-    }
-    $isLocked = ($lockedUntilTimestamp !== false && $lockedUntilTimestamp > time());
+    // ⏱️ #158 / #130: "is it still locked?" is answered by the database.
+    $isLocked = ((int) $row['isLocked'] === 1);
 
     // 🔒 Always run verifyPassword() regardless of lock/status state, so a
     // locked/pending/suspended account does not produce a different timing
@@ -2103,9 +2112,9 @@ function recordFailedLogin(int $userID): ?int
     if ($lockoutExpiry !== null) {
         try {
             $lockStmt = dbQuery(
-                'UPDATE `tblUsers` SET `lockedUntil` = FROM_UNIXTIME(?) WHERE `userID` = ?',
+                'UPDATE `tblUsers` SET `lockedUntil` = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE `userID` = ?',
                 'ii',
-                [$lockoutExpiry, $userID]
+                [max(0, $lockoutSeconds), $userID]
             );
             $lockStmt->close();
         } catch (\Throwable $e) {
@@ -2432,7 +2441,7 @@ function currentUser(): ?array
 
     try {
         $stmt = dbQuery(
-            'SELECT `s`.`userID`, `s`.`expiresAt`, `s`.`revokedAt`, `u`.`email`, `u`.`displayName`, `u`.`avatarPath`, `u`.`status`, `u`.`roleID`'
+            'SELECT `s`.`userID`, (`s`.`expiresAt` > NOW()) AS `isLive`, `s`.`revokedAt`, `u`.`email`, `u`.`displayName`, `u`.`avatarPath`, `u`.`status`, `u`.`roleID`'
             . $validFromSql
             . 'FROM `tblUserSessions` AS `s` '
             . 'INNER JOIN `tblUsers` AS `u` ON `u`.`userID` = `s`.`userID` '
@@ -2458,9 +2467,8 @@ function currentUser(): ?array
         return null;
     }
 
-    $expiresAtTimestamp = strtotime((string) $row['expiresAt']);
-
-    if ($expiresAtTimestamp === false || $expiresAtTimestamp < time()) {
+    // ⏱️ #158 / #130: judged by the database's clock, in UTC.
+    if (!isset($row['isLive']) || (int) $row['isLive'] !== 1) {
         return null;
     }
 
@@ -2567,9 +2575,9 @@ function authLockLiveSessionForUser(int $userID, ?string $sessionID = null): boo
     }
 
     // 🎫 2. Then this browser's session row.
-    $sessionSql = 'SELECT `userID`, `expiresAt`, `revokedAt`, NULL AS `sessionsValidFromSeen` FROM `tblUserSessions` WHERE `sessionID` = ? LIMIT 1 FOR UPDATE';
+    $sessionSql = 'SELECT `userID`, (`expiresAt` > NOW()) AS `isLive`, `revokedAt`, NULL AS `sessionsValidFromSeen` FROM `tblUserSessions` WHERE `sessionID` = ? LIMIT 1 FOR UPDATE';
     if ($markReady) {
-        $sessionSql = 'SELECT `userID`, `expiresAt`, `revokedAt`, `sessionsValidFromSeen` FROM `tblUserSessions` WHERE `sessionID` = ? LIMIT 1 FOR UPDATE';
+        $sessionSql = 'SELECT `userID`, (`expiresAt` > NOW()) AS `isLive`, `revokedAt`, `sessionsValidFromSeen` FROM `tblUserSessions` WHERE `sessionID` = ? LIMIT 1 FOR UPDATE';
     }
     $sessionStmt = dbQuery($sessionSql, 's', [$sessionID]);
     $session     = $sessionStmt->get_result()->fetch_assoc();
@@ -2579,8 +2587,8 @@ function authLockLiveSessionForUser(int $userID, ?string $sessionID = null): boo
         return false;
     }
 
-    $expiresAt = strtotime((string) $session['expiresAt']);
-    if ($expiresAt === false || $expiresAt < time()) {
+    // ⏱️ #158 / #130: judged by the database's clock, in UTC.
+    if (!isset($session['isLive']) || (int) $session['isLive'] !== 1) {
         return false;
     }
 
@@ -3227,7 +3235,7 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
 
     try {
         $stmt = dbQuery(
-            'SELECT `resetID`, `userID`, `tokenHash`, `expiresAt`, `usedAt` '
+            'SELECT `resetID`, `userID`, `tokenHash`, (`expiresAt` > NOW()) AS `isLive`, `usedAt` '
             . 'FROM `tblPasswordResets` WHERE `tokenHash` = ? LIMIT 1',
             's',
             [$tokenHash]
@@ -3249,9 +3257,8 @@ function resetPasswordWithToken(string $rawToken, #[\SensitiveParameter] string 
         return $alreadyUsedResult;
     }
 
-    $expiresAtTimestamp = strtotime((string) $row['expiresAt']);
-
-    if ($expiresAtTimestamp === false || $expiresAtTimestamp < time()) {
+    // ⏱️ #158 / #130: judged by the database's clock, in UTC.
+    if (!isset($row['isLive']) || (int) $row['isLive'] !== 1) {
         return $invalidResult;
     }
 

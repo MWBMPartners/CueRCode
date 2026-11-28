@@ -426,7 +426,9 @@ function validateAPIKey(string $apiKey): array
     try {
         $stmt = dbQuery(
             "SELECT `apiKeyID`, `apiKeyHash`, `rateLimitPerMin`, `rateLimitPerDay`, `isActive`, "
-            . "`permissions`, `expiresAt` "
+            . "`permissions`, `expiresAt`, "
+            // ⏱️ #158: the database (UTC) says whether the key has ended.
+            . "(`expiresAt` IS NOT NULL AND `expiresAt` <= NOW()) AS `isExpired` "
             . "FROM `tblAPIKeys` "
             . "WHERE `apiKeyHash` = ? "
             . "LIMIT 1",
@@ -474,19 +476,17 @@ function validateAPIKey(string $apiKey): array
     // but this closes the latent gap for any key an admin or future feature
     // sets expiresAt on (defence in depth - see SECURITY.md).
     // ==================================================================
-    if ($row['expiresAt'] !== null) {
-        $expiresAtTimestamp = strtotime((string) $row['expiresAt']);
-
-        if ($expiresAtTimestamp !== false && $expiresAtTimestamp < time()) {
-            if (function_exists('logError')) {
-                logError(
-                    'warning',
-                    'Expired API key used',
-                    'API Key ID: ' . $row['apiKeyID'] . ' expired at ' . $row['expiresAt'] . '.'
-                );
-            }
-            return $result;
+    // #158: never compare the stored UTC text with PHP's clock, which follows
+    // the site's time zone. A missing answer counts as expired.
+    if ($row['expiresAt'] !== null && (!isset($row['isExpired']) || (int) $row['isExpired'] !== 0)) {
+        if (function_exists('logError')) {
+            logError(
+                'warning',
+                'Expired API key used',
+                'API Key ID: ' . $row['apiKeyID'] . ' expired at ' . $row['expiresAt'] . ' UTC.'
+            );
         }
+        return $result;
     }
 
     // ==================================================================

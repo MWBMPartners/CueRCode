@@ -1506,6 +1506,12 @@ Codex (OpenAI) reviewed the new-install work read-only (29 findings). Each was r
   the container's proxy; route them to the committed vendor copies in
   Playwright. Check widths 320/375/540/768/1024/1366/1920, light and dark.
 
+## ⏱️ Database times are UTC: compare them in SQL (2026-11-28, #158, #130)
+
+The connection sets `time_zone = '+00:00'`, so every `DATETIME` the database writes is UTC. PHP's clock follows the `site_timezone` setting. **Never** read a stored time with `strtotime()` and compare it with `time()`: ask the database (`(`expiresAt` > NOW()) AS `isLive``, `(`lockedUntil` IS NOT NULL AND `lockedUntil` > NOW()) AS `isLocked``) and write future times with `DATE_ADD(NOW(), ...)`. If PHP really must compare (the pricing page does), use a UTC string from `gmdate()`. `tests/test_expiry_clock.php` guards `_functions/`; `tests/integration/site_timezone_real_mysql.php` proves the behaviour in five zones. Session values that PHP both writes and reads (`time()` numbers) are not affected.
+
+Not changed: the "Saved", "Linked", "Created" and "last used" dates on `/account/` still print the stored UTC time without converting it to the site's zone (a display matter; no expiry depends on it).
+
 ## 🧪 Testing
 
 A dependency-free PHP characterization test harness lives under `tests/` at the repo root. It requires no Composer or external packages and can be run on any machine with PHP 8.4+.

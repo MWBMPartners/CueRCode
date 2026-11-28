@@ -38,7 +38,7 @@ set -euo pipefail
 
 # 📋 Every script that must exist. Add a new script's name here in the same
 #    commit that adds the script; a missing one fails the run.
-REQUIRED_SCRIPTS="account_recovery admin_access admin_plans admin_settings email_queue human_check migrations resend_verification"
+REQUIRED_SCRIPTS="account_recovery admin_access admin_plans admin_settings email_queue human_check migrations resend_verification site_timezone"
 
 export CUERCODE_IT_DB_HOST="${CUERCODE_IT_DB_HOST:-127.0.0.1}"
 export CUERCODE_IT_DB_PORT="${CUERCODE_IT_DB_PORT:-3306}"
@@ -88,7 +88,7 @@ for script in tests/integration/*_real_mysql.php; do
       php "${GUARD}" --create="${CUERCODE_IT_DB_NAME}"
       args=(--load-schema)
       ;;
-    account_recovery)
+    account_recovery|site_timezone)
       args=(--load-schema)
       ;;
   esac

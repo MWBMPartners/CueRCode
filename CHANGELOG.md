@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Links, sign-ins, lock-outs and API keys expire at the right moment in any site time zone (#158, #130, 2026-11-28)
+
+- **The fault:** the database stores times in UTC, but PHP read them in the site's own time zone (`site_timezone`). With any zone other than UTC, emailed links, signed-in sessions, account lock-outs and API keys ended hours early or late (an ended session could stay signed in for the length of the offset; a new link could be refused at once). The seeded value is UTC, so a normal install was not affected.
+- **The fix:** every "has this ended?" question is now asked in the database, on the same clock that wrote the time (verification and reset links, the two session checks, both lock-out checks, API key expiry), and a new lock-out is written with the database clock too. No database upgrade and no setting change is needed.
+- Shown failing first (new `tests/integration/site_timezone_real_mysql.php`: 23 of 100 checks failed on the old code on both MySQL 8.0.36 and MariaDB 10.6, across five time zones; and 5 of 6 in the new `tests/test_expiry_clock.php`), then all passing.
+
 ### Added - Prices with three decimal places, and larger prices (#176, decision 0042, 2026-11-28)
 
 **Apply database upgrade 0006 after deploying** (`/admin/upgrades/` or `migrate.php --apply`). Until it is applied the price screens and settings wait for it, as with every upgrade.
