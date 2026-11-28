@@ -440,3 +440,47 @@ $ciRun = ciRunCli($ciCliPath, ['--trusted=0.0.0.0/0', '--remote=198.51.100.1', '
 assertContains('Address the site will use: 198.51.100.1', $ciRun['out'], '0015 CLI: with only a /0 entry, nobody is a trusted forwarder (the faked header is ignored)');
 $ciRun = ciRunCli($ciCliPath, ['--nonsense']);
 assertEquals(2, $ciRun['exit'], 'CLI: an unknown option exits 2');
+
+// ==============================================================================
+// #177: every per-address limit counts an IPv6 address as its /64 network
+// ==============================================================================
+
+assertTrue(function_exists('clientAddressCountingKey'), '#177: there is ONE rule for the address a per-address limit counts under, next to getClientIP()');
+if (function_exists('clientAddressCountingKey')) {
+    assertEquals(clientAddressCountingKey('2001:db8:1:2:3:4:5:6'), clientAddressCountingKey('2001:db8:1:2:ffff:ffff:ffff:1'), '#177: two IPv6 addresses in one /64 network count as one visitor');
+    assertEquals('2001:db8:1:2::/64', clientAddressCountingKey('2001:DB8:1:2::99'), '#177: the key is the /64 network, written the short way');
+    assertTrue(clientAddressCountingKey('2001:db8:1:2::1') !== clientAddressCountingKey('2001:db8:1:3::1'), '#177: different /64 networks count apart');
+    assertEquals('198.51.100.7', clientAddressCountingKey('198.51.100.7'), '#177: an IPv4 address is counted as it is');
+    assertEquals('198.51.100.7', clientAddressCountingKey('::ffff:198.51.100.7'), '#177: an IPv4 address written in IPv6 form is the same IPv4 visitor');
+    assertEquals('unknown', clientAddressCountingKey(' unknown '), '#177: anything else is counted as it is (trimmed)');
+    assertTrue(mb_strlen(clientAddressCountingKey('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')) <= 45, '#177: the key always fits the 45-character columns');
+}
+$ciFunctionsDir = CUERCODE_SITE_ROOT . '_functions' . DIRECTORY_SEPARATOR;
+$ciApiAuth = (string) file_get_contents($ciFunctionsDir . 'fn_api_auth.php');
+$ciAuth    = (string) file_get_contents($ciFunctionsDir . 'fn_auth.php');
+$ciRoute   = (string) file_get_contents($ciFunctionsDir . 'fn_no_script_route.php');
+/**
+ * 🔎 The body of one function in a file's text ('' when it is not there).
+ */
+function ciFunctionBody(string $ciText, string $ciName): string
+{
+    $ciStart = strpos($ciText, 'function ' . $ciName . '(');
+    if ($ciStart === false) {
+        return '';
+    }
+    $ciEnd = strpos($ciText, "\nfunction ", $ciStart + 10);
+    if ($ciEnd === false) {
+        $ciEnd = strlen($ciText);
+    }
+    return substr($ciText, $ciStart, $ciEnd - $ciStart);
+}
+foreach ([
+    'checkRateLimit (the API\'s anonymous limit)'                     => ciFunctionBody($ciApiAuth, 'checkRateLimit'),
+    'recordAPIRequest (the shared request log)'                       => ciFunctionBody($ciApiAuth, 'recordAPIRequest'),
+    'countLinkRequestsFromIp (reset and verification links, form limit)' => ciFunctionBody($ciAuth, 'countLinkRequestsFromIp'),
+    'authRecordThenCountLinkRequest (its lock)'                       => ciFunctionBody($ciAuth, 'authRecordThenCountLinkRequest'),
+    'noScriptRouteGate (the no-JavaScript route)'                     => ciFunctionBody($ciRoute, 'noScriptRouteGate'),
+] as $ciWhere => $ciBody) {
+    assertContains('clientAddressCountingKey(', $ciBody, '#177: ' . $ciWhere . ' counts under the shared key');
+}
+assertFalse(str_contains($ciRoute, 'function noScriptAddressKey('), '#177: the route has no rule of its own any more (one rule for every limit)');

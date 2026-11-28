@@ -68,6 +68,11 @@ if (basename($scriptFilename) === basename(__FILE__)) {
 //    own (the tests and the cron runner do that). require_once does nothing twice.
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
 
+// 🌍 clientAddressCountingKey() (#177: the address a per-address limit counts
+//    under; an IPv6 address as its /64) lives in fn_client_ip.php, which
+//    defines constants and functions only. require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
+
 // ==============================================================================
 // 🔧 Constants
 // ==============================================================================
@@ -830,7 +835,7 @@ function countLinkRequestsFromIp(string $ipAddress, string $endpoint): int
             . 'WHERE `apiKeyID` IS NULL AND `requestIP` = ? AND `endpoint` = ? '
             . 'AND `requestedAt` >= DATE_SUB(NOW(), INTERVAL 1 HOUR)',
             'ss',
-            [mb_substr($ipAddress, 0, 45), $endpoint]
+            [clientAddressCountingKey($ipAddress), $endpoint]
         );
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -892,8 +897,10 @@ function authRecordThenCountLinkRequest(string $ipAddress, string $endpoint): in
         $databaseName = (string) DB_NAME;
     }
 
-    // 🔐 "cuercode_lr:" + 40 hex characters = 52 characters (limit 64).
-    $lockName = 'cuercode_lr:' . substr(hash('sha256', $databaseName . '|' . $endpoint . '|' . mb_substr($ipAddress, 0, 45)), 0, 40);
+    // 🔐 "cuercode_lr:" + 40 hex characters = 52 characters (limit 64). One
+    //    lock per COUNTING key (#177: an IPv6 /64 shares one), so the count is
+    //    exact for the whole network.
+    $lockName = 'cuercode_lr:' . substr(hash('sha256', $databaseName . '|' . $endpoint . '|' . clientAddressCountingKey($ipAddress)), 0, 40);
     $haveLock = false;
 
     try {

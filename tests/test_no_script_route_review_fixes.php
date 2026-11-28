@@ -205,14 +205,12 @@ assertTrue(noScriptEmailHash('target@example.com', 'k') !== noScriptEmailHash('o
 // I5: IPv6 addresses counted per /64 on the route
 // ==============================================================================
 
-assertTrue(function_exists('noScriptAddressKey'), 'I5: there is one rule for the visitor address the route counts under');
-if (function_exists('noScriptAddressKey')) {
-    assertEquals(noScriptAddressKey('2001:db8:1:2:3:4:5:6'), noScriptAddressKey('2001:db8:1:2:ffff:ffff:ffff:1'), 'I5: two IPv6 addresses in one /64 network count as one visitor');
-    assertEquals('2001:db8:1:2::/64', noScriptAddressKey('2001:DB8:1:2::99'), 'I5: the key is the /64 network');
-    assertTrue(noScriptAddressKey('2001:db8:1:2::1') !== noScriptAddressKey('2001:db8:1:3::1'), 'I5: different /64 networks count apart');
-    assertEquals('198.51.100.7', noScriptAddressKey('198.51.100.7'), 'I5: an IPv4 address is counted as it is');
-    assertEquals('198.51.100.7', noScriptAddressKey('::ffff:198.51.100.7'), 'I5: an IPv4 address written in IPv6 form is the same IPv4 visitor');
-    assertEquals('unknown', noScriptAddressKey('unknown'), 'I5: anything else is counted as it is');
+// 📌 #177: the rule moved to fn_client_ip.php (clientAddressCountingKey()) so
+//    every per-address limit uses it; tests/test_client_ip.php proves it, and
+//    that this route uses it.
+assertTrue(function_exists('clientAddressCountingKey') && !function_exists('noScriptAddressKey'), 'I5 / #177: the route counts visitor addresses by the one shared rule (an IPv6 address as its /64)');
+if (function_exists('clientAddressCountingKey')) {
+    assertEquals('2001:db8:1:2::/64', clientAddressCountingKey('2001:DB8:1:2::99'), 'I5: the key is the /64 network');
 }
 
 // ==============================================================================

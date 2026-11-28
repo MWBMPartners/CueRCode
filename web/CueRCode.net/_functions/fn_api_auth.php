@@ -631,7 +631,8 @@ function checkRateLimit(?int $apiKeyId, string $ipAddress, array $limits): array
                 [$apiKeyId]
             );
         } else {
-            // 📌 Anonymous/CSRF request: count by IP address
+            // 📌 Anonymous/CSRF request: count by visitor address (an
+            //    IPv6 address as its /64 network, #177).
             $minuteStmt = dbQuery(
                 "SELECT COUNT(*) AS `requestCount` "
                 . "FROM `tblAPIRateLog` "
@@ -639,7 +640,7 @@ function checkRateLimit(?int $apiKeyId, string $ipAddress, array $limits): array
                 . "AND `requestIP` = ? "
                 . "AND `requestedAt` >= DATE_SUB(NOW(), INTERVAL 1 MINUTE)",
                 's',
-                [$ipAddress]
+                [clientAddressCountingKey($ipAddress)]
             );
         }
 
@@ -692,7 +693,7 @@ function checkRateLimit(?int $apiKeyId, string $ipAddress, array $limits): array
                 . "AND `requestIP` = ? "
                 . "AND `requestedAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
                 's',
-                [$ipAddress]
+                [clientAddressCountingKey($ipAddress)]
             );
         }
 
@@ -734,6 +735,11 @@ function checkRateLimit(?int $apiKeyId, string $ipAddress, array $limits): array
  * called after successful authentication and rate limit checks, before
  * processing the actual request.
  *
+ * 🌍 #177: the address is written as its COUNTING key
+ * (clientAddressCountingKey(): an IPv6 address as its /64 network), because
+ * this log exists only for the per-address limits. Records that say where
+ * something came from keep the real address.
+ *
  * Also triggers periodic cleanup of old rate log entries (approximately
  * once every 100 requests, based on random chance).
  *
@@ -763,7 +769,7 @@ function recordAPIRequest(?int $apiKeyId, string $ipAddress, string $requestPath
             'iss',
             [
                 $apiKeyId,
-                mb_substr($ipAddress, 0, 45),
+                clientAddressCountingKey($ipAddress),
                 mb_substr($requestPath, 0, 255),
             ]
         );

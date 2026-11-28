@@ -945,6 +945,54 @@ function getClientIP(): string
 }
 
 // ==============================================================================
+// 🔢 clientAddressCountingKey() - the address a per-address limit counts (#177)
+// ==============================================================================
+
+/**
+ * 🔢 The visitor address every per-address LIMIT counts under. PURE.
+ *
+ * An IPv6 address counts as its /64 network ("2001:db8:1:2::/64"): one home
+ * or phone connection is normally given a whole /64, so counting single IPv6
+ * addresses would give one visitor billions of fresh allowances (#163 merged
+ * review I5 for the no-JavaScript route; #177 for every other limit: the
+ * emailed-link forms, the human-check form limit and the API's anonymous
+ * limit, through the shared request log tblAPIRateLog). An IPv4 address
+ * written in IPv6 form ("::ffff:198.51.100.7") is that IPv4 address.
+ * Anything else is counted as it is (at most 45 characters).
+ *
+ * 📌 Only for COUNTING. Records that say where something came from (a reset
+ *    link, a session, the activity log, the admin change log) keep the real
+ *    address from getClientIP().
+ *
+ * @param string $ip getClientIP()
+ * @return string At most 45 characters
+ */
+function clientAddressCountingKey(string $ip): string
+{
+    $ip = trim($ip);
+
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+        $packed = inet_pton($ip);
+        if ($packed !== false && strlen($packed) === 16) {
+            // 🔁 ::ffff:a.b.c.d is an IPv4 visitor.
+            if (substr($packed, 0, 12) === str_repeat("\x00", 10) . "\xff\xff") {
+                $ipv4 = inet_ntop(substr($packed, 12));
+                if ($ipv4 !== false) {
+                    return $ipv4;
+                }
+            }
+
+            $network = inet_ntop(substr($packed, 0, 8) . str_repeat("\x00", 8));
+            if ($network !== false) {
+                return $network . '/64';
+            }
+        }
+    }
+
+    return mb_substr($ip, 0, 45);
+}
+
+// ==============================================================================
 // 🩺 clientAddressCheck() - the "Visitor address check" (admin + CLI)
 // ==============================================================================
 

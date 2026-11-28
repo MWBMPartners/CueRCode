@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - Per-address limits count an IPv6 connection once (#177, 2026-11-28)
+
+- **The fault:** the limits on "forgot password", "send a new verification link", the human-check form limit and the API's limit for callers without a key counted each full IPv6 address separately. One home or phone connection is normally given a whole block of IPv6 addresses (a "/64"), so one visitor could pick a fresh address for every request and never reach a limit. The no-JavaScript route already counted the /64.
+- **The fix:** every per-address limit now counts an IPv6 address as its /64 block, by one shared rule (`clientAddressCountingKey()` in `fn_client_ip.php`). IPv4 is unchanged. Records of where something came from (reset links, sessions, the activity log, the admin change log) still keep the real address. No database upgrade; for up to a day after the upload, older counted requests from IPv6 visitors are not added to the new count.
+- Shown failing first on MySQL 8.4 (new scenario V6 in `account_recovery_real_mysql.php`: ten forgot-password requests from ten addresses in one /64 and an eleventh were all let through; the API limit was not reached) and in `tests/test_client_ip.php` (7 failed); then passing.
+
 ### Fixed - Third-round review: test gate and guard findings (Low 2-4, Info 1, 2, 4; 2026-11-28)
 
 - **The deploy gate no longer breaks after a squash or rebase merge (Low 2).** The migrations test read an old `install.sql` from git history (commit 76b1af7), which such a merge removes from the branch. It is now a committed, byte-for-byte copy (`tests/integration/fixtures/install_76b1af7.sql`), refused unless its fingerprint matches and, where history still has the commit, unless it is identical to it.

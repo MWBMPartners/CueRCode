@@ -22,7 +22,7 @@
  *   - per visitor address:  no_script_route_ip_per_hour   (default 5,  1-100)
  *       every use of the route, all four forms together, checked FIRST and
  *       before any password is looked at. An IPv6 address counts as its
- *       whole /64 network (one connection usually has a whole /64).
+ *       whole /64 network (clientAddressCountingKey(), fn_client_ip.php).
  *   - per mailbox:          no_script_route_email_per_day (default 3,  1-20)
  *       EMAILS the route sent to one mailbox in 24 hours, whoever asked.
  *       "+tag" spellings, and dots and googlemail.com for Gmail, count as the
@@ -116,6 +116,12 @@ if (!function_exists('cuercodeClampInt')) {
 //    (kept with the other link lifetimes), live in fn_auth.php. Pure on loading.
 if (!function_exists('loginUserCheckPassword')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_auth.php';
+}
+
+// 🌍 clientAddressCountingKey() (an IPv6 address counts as its /64; #177)
+//    lives in fn_client_ip.php. Pure on loading.
+if (!function_exists('clientAddressCountingKey')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
 }
 
 // 🔧 humanCheckOption() (stand-ins for tests) lives in fn_human_check.php. Pure on loading.
@@ -358,43 +364,6 @@ function noScriptHashKey(): string
 }
 
 /**
- * 🌍 The visitor address the route COUNTS under (merged review I5). PURE.
- *
- * An IPv6 address counts as its /64 network ("2001:db8:1:2::/64"): one home
- * or phone connection is normally given a whole /64, so counting single
- * IPv6 addresses would give one visitor billions of fresh allowances. An
- * IPv4 address written in IPv6 form ("::ffff:198.51.100.7") is that IPv4
- * address. Anything else is counted as it is (at most 45 characters).
- *
- * @param string $ip getClientIP()
- * @return string
- */
-function noScriptAddressKey(string $ip): string
-{
-    $ip = trim($ip);
-
-    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
-        $packed = inet_pton($ip);
-        if ($packed !== false && strlen($packed) === 16) {
-            // 🔁 ::ffff:a.b.c.d is an IPv4 visitor.
-            if (substr($packed, 0, 12) === str_repeat("\x00", 10) . "\xff\xff") {
-                $ipv4 = inet_ntop(substr($packed, 12));
-                if ($ipv4 !== false) {
-                    return $ipv4;
-                }
-            }
-
-            $network = inet_ntop(substr($packed, 0, 8) . str_repeat("\x00", 8));
-            if ($network !== false) {
-                return $network . '/64';
-            }
-        }
-    }
-
-    return mb_substr($ip, 0, 45);
-}
-
-/**
  * 🖥️ A browser identification in plain words, for the approve page (review
  *    L6): "Firefox on Windows", "Safari on iPhone". Only common browsers and
  *    systems are named; anything else is "an unknown browser". PURE.
@@ -513,7 +482,7 @@ function noScriptRouteWithLock(callable $work): array
  * 🔢 Uses of the route from one visitor address (its counting key) in the
  *    last hour.
  *
- * @param string $addressKey noScriptAddressKey()
+ * @param string $addressKey clientAddressCountingKey()
  * @return int
  * @throws \Throwable On a database error
  */
@@ -617,7 +586,7 @@ function noScriptRouteGate(string $purpose, string $email, string $ip, bool $res
 
     $limits      = noScriptRouteSettings();
     $emailHash   = noScriptEmailHash($email);
-    $addressKey  = noScriptAddressKey($ip);
+    $addressKey  = clientAddressCountingKey($ip);
     $purposeText = mb_substr($purpose, 0, 16);
     $overAddress = ['allowed' => false, 'reason' => 'ip', 'requestID' => 0, 'emailReserved' => false, 'passwordCheck' => false];
 

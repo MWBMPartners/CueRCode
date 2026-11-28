@@ -920,6 +920,35 @@ arCheck($arFpLimited($arFp2) === 1, '...and one "refused by the limit" row for t
 arCheck(arCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'password_reset_request_limited' AND (`activityDetail` LIKE '%@%' OR `additionalData` LIKE '%@%')") === 0, 'no limit row holds an email address');
 
 // ==============================================================================
+// V6. #177: every per-address limit counts an IPv6 address as its /64
+// ==============================================================================
+echo PHP_EOL . 'V6. Per-address limits count an IPv6 address as its /64 network (#177)' . PHP_EOL;
+arReset();
+$arV6 = arUser('v6', 'active', $arStrangerPassword, true);
+$arV6Links = static function () use ($arV6): int {
+    return arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arV6]);
+};
+for ($arTry = 1; $arTry <= 10; $arTry++) {
+    requestPasswordReset('ar-v6-unknown-' . $arTry . '@ar.cuercode.invalid', '2001:db8:177:1::' . dechex($arTry * 257));
+}
+$arR = requestPasswordReset('ar-v6@ar.cuercode.invalid', '2001:db8:177:1:ffff:ffff:ffff:9');
+arCheck($arR === $arUnknown && $arV6Links() === 0, '#177: ten forgot-password requests from ten different IPv6 addresses in ONE /64, then an eleventh from yet another in it: refused like one address (the same answer, no link)');
+arCheck(arCount("SELECT COUNT(*) FROM `tblAPIRateLog` WHERE `requestIP` = '2001:db8:177:1::/64' AND `endpoint` = 'auth/request-password-reset'") === 11, '#177: the request log counts them under the /64 network (' . arCount("SELECT COUNT(*) FROM `tblAPIRateLog` WHERE `requestIP` = '2001:db8:177:1::/64'") . ')');
+$arR = requestPasswordReset('ar-v6@ar.cuercode.invalid', '2001:DB8:177:2::1');
+arCheck($arV6Links() === 1, '#177: an address in ANOTHER /64 is another visitor: its link is sent');
+arCheck((string) (arOne('SELECT `requestIP` FROM `tblPasswordResets` WHERE `userID` = ? ORDER BY `resetID` DESC LIMIT 1', 'i', [$arV6])['requestIP'] ?? '') === '2001:DB8:177:2::1', '#177: ...and the reset record keeps the REAL address it came from (the audit record is not the counting key)');
+for ($arTry = 1; $arTry <= 3; $arTry++) {
+    recordAPIRequest(null, '2001:db8:177:3::' . $arTry, 'generate');
+}
+$arRate = checkRateLimit(null, '2001:db8:177:3:abcd::1', ['perMin' => 3, 'perDay' => 100]);
+$arRateOther = checkRateLimit(null, '2001:db8:177:4::1', ['perMin' => 3, 'perDay' => 100]);
+arCheck($arRate['allowed'] === false && $arRateOther['allowed'] === true, '#177: the API\'s anonymous limit (3 a minute here): three calls from three addresses in one /64 use it up for the whole /64; another /64 is not affected');
+recordAPIRequest(null, '198.51.100.177', 'generate');
+arCheck(arCount("SELECT COUNT(*) FROM `tblAPIRateLog` WHERE `requestIP` = '198.51.100.177'") === 1 && arCount("SELECT COUNT(*) FROM `tblAPIRateLog` WHERE `requestIP` = '198.51.100.177/64'") === 0, '#177: an IPv4 address is still recorded as itself');
+arExec("DELETE FROM `tblAPIRateLog` WHERE `endpoint` = 'generate'");
+arReset();
+
+// ==============================================================================
 // V. Nit: what a verification link says when nothing is activated
 // ==============================================================================
 echo PHP_EOL . 'V. Verification link for an active or suspended account' . PHP_EOL;

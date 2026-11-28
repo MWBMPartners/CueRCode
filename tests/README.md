@@ -108,7 +108,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_barcode.php` | 120 |
 | `test_braille.php` | 69 |
 | `test_bulk.php` | 85 |
-| `test_client_ip.php` | 246 |
+| `test_client_ip.php` | 260 |
 | `test_commercial_literals.php` | 9 |
 | `test_core.php` | 146 |
 | `test_credentials_template.php` | 9 |
@@ -134,7 +134,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_login_next_url.php` | 21 |
 | `test_migrations.php` | 559 |
 | `test_money.php` | 709 |
-| `test_no_script_route_review_fixes.php` | 85 |
+| `test_no_script_route_review_fixes.php` | 80 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -152,9 +152,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9310** |
+| **Total** | **9319** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**#177: per-address limits count an IPv6 address as its /64 (2026-11-28)** added 14 checks to `test_client_ip.php` (the shared `clientAddressCountingKey()` rule, and that the request log, the API's anonymous limit, the emailed-link and form limits, their lock and the no-JavaScript route all use it); `test_no_script_route_review_fixes.php` now checks the route uses the shared rule instead of its own (6 checks moved). On the old code 7 of the new unit checks failed. `account_recovery_real_mysql.php` grew to 203 checks with scenario V6 (ten forgot-password requests from ten addresses in one /64, then an eleventh: refused; another /64 is let through and its reset record keeps the real address; the API's anonymous limit is shared by one /64; IPv4 recorded as itself): 4 failed on the old code on MySQL 8.4.13. Suite: **9319** in 58 files.
 
 **Third-round review, Low 2-4 and Info 1, 2, 4 (2026-11-28).** Low 2: `migrations_real_mysql.php` reads the old `install.sql` from the committed copy `tests/integration/fixtures/install_76b1af7.sql` (pinned SHA-256; compared with commit `76b1af7` where history holds it). Shown failing first in a copy of the tree committed on its own (as a squash merge leaves it): the old script refused, exit 2, "invalid object name '76b1af7'"; the new one passed there ("comparison skipped") and in the real clone ("identical to commit 76b1af7"), and refused a copy with one byte added (exit 2). Low 3: new P6 in `migrations_real_mysql.php` (a column already DECIMAL(13,3) is widened, not skipped) and N3b in `admin_plans_real_mysql.php` (with price points switched on, the Free card has none; Business keeps its own). Each failed with its protection removed in a scratch copy (P6: 5 steps run, the column left at decimal(13,3); N3b: the Free card carried 1 price point) and passed without; migrations now 216 checks, admin plans 170. Low 4: 7 checks in `test_deploy_test_gate.php` (`cuercodeItGuardPrivilegeProblems()`, `cuercodeItGuardGrantee()`); on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28 an account granted only `cuercode\_it\_%`, with a `cuercode_live` database on the server, was accepted by the old guard (exit 0) and is refused by the new one (exit 2); root is still accepted. Info 1: 6 checks in `test_money.php` (`moneyMinorFitsStoredPlaces()` with a made-up 4- and 6-decimal currency). Info 2: 8 checks in `test_migrations.php` (INVISIBLE, a computed column, a text default and a word after COMMENT refused; the allowed shapes still valid). Info 4: 13 checks in `test_deploy_test_gate.php` (the runner asks the guard to remove every script's database; a bad name to remove is refused). Suite: **9310** in 58 files.
 
