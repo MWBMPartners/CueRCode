@@ -29,12 +29,12 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0017](0017-codex-round-1-fix-choices-by-the-lead.md) | 2026-11-25 | Lead (owner may overrule): seven small design choices made while fixing the Codex round-1 findings | Current |
 | [0018](0018-seed-marker-present-means-skip-seeding.md) | 2026-11-25 | Lead (owner may overrule): a present seed marker means the installer skips seeding, even if the tables were emptied | Current |
 | [0019](0019-start-later-build-order-before-live-proof.md) | 2026-11-26 | Owner: start the later build order (admin and commerce Phase 2 onwards) now, before the install is proven live | Current |
-| [0020](0020-pricing-page-price-promise-follows-each-plan.md) | 2026-11-26 | Owner: the pricing page states each plan's own price promise | Current |
-| [0021](0021-paid-plan-with-no-price-shows-price-coming-soon.md) | 2026-11-26 | Owner: a paid plan with no price shows "Price coming soon" and no sign-up button | Current |
-| [0022](0022-unbuilt-features-in-plan-descriptions-marked-coming-soon.md) | 2026-11-26 | Owner: starting plan descriptions mark unbuilt features as coming soon | Current |
+| [0020](0020-pricing-page-price-promise-follows-each-plan.md) | 2026-11-26 | Owner: the pricing page states each plan's own price promise | Current; built in 6133451 |
+| [0021](0021-paid-plan-with-no-price-shows-price-coming-soon.md) | 2026-11-26 | Owner: a paid plan with no price shows "Price coming soon" and no sign-up button | Current; built in 5397b27 |
+| [0022](0022-unbuilt-features-in-plan-descriptions-marked-coming-soon.md) | 2026-11-26 | Owner: starting plan descriptions mark unbuilt features as coming soon | Current; built in ea02cc6 |
 | [0023](0023-first-version-is-free-service-plus-dynamic-qr.md) | 2026-11-27 | Owner: the first version is the free service plus dynamic QR codes; nobody is charged | Current (changes the order in 0019) |
-| [0024](0024-bot-check-supports-three-providers-at-first-launch.md) | 2026-11-27 | Owner: the first launch has a human check supporting Turnstile, reCAPTCHA and hCaptcha | Current |
-| [0025](0025-full-test-suite-must-pass-before-deploy.md) | 2026-11-27 | Owner: the full test suite must pass before anything is uploaded | Current |
+| [0024](0024-bot-check-supports-three-providers-at-first-launch.md) | 2026-11-27 | Owner: the first launch has a human check supporting Turnstile, reCAPTCHA and hCaptcha | Current; built in 84e07f7, 37a0c85 |
+| [0025](0025-full-test-suite-must-pass-before-deploy.md) | 2026-11-27 | Owner: the full test suite must pass before anything is uploaded | Current; built in b7ce022 |
 | [0026](0026-ask-before-opening-the-alpha-pull-request.md) | 2026-11-27 | Owner: ask before opening the pull request into `alpha` | Current |
 | [0027](0027-qrmy-link-lives-in-the-main-go2my-link.md) | 2026-11-27 | Owner: QRmy.Link links live in the main Go2My.Link install | Current |
 | [0028](0028-launch-free-service-first-if-go2my-link-is-late.md) | 2026-11-27 | Owner: if Go2My.Link is late, the free service launches first | Current (limits 0023) |
@@ -45,11 +45,11 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0033](0033-first-version-shows-total-scans-only.md) | 2026-11-27 | Owner: first version shows total scans only | Current |
 | [0034](0034-abuse-mailbox-and-one-working-day-promise.md) | 2026-11-27 | Owner: abuse@cuercode.net, one-working-day takedown promise | Current |
 | [0035](0035-web-risk-at-launch-second-provider-later.md) | 2026-11-27 | Owner: launch with Web Risk only; second provider later | Current (defers part of 0029) |
-| [0036](0036-upgrade-0004-corrected-in-place.md) | 2026-11-27 | Lead (owner may overrule): upgrade 0004 corrected in place, once, because it never ran on a live database | Current (unapproved) |
-| [0037](0037-human-check-outage-falls-back-to-other-providers-then-sign-in-only.md) | 2026-11-27 | Owner: human check outage tries other providers, then lets only sign-in through, and logs it | Current |
-| [0038](0038-no-javascript-visitors-get-an-email-confirmed-fallback.md) | 2026-11-27 | Owner: visitors without JavaScript get an email-confirmed fallback with strict limits | Current |
+| [0036](0036-upgrade-0004-corrected-in-place.md) | 2026-11-27 | Lead (owner may overrule): upgrade 0004 corrected in place, once, because it never ran on a live database | Current (unapproved); built in 320505c, 7eceacf |
+| [0037](0037-human-check-outage-falls-back-to-other-providers-then-sign-in-only.md) | 2026-11-27 | Owner: human check outage tries other providers, then lets only sign-in through, and logs it | Current; built in 37a0c85 |
+| [0038](0038-no-javascript-visitors-get-an-email-confirmed-fallback.md) | 2026-11-27 | Owner: visitors without JavaScript get an email-confirmed fallback with strict limits | Current; built in 1141c59, 37a0c85 |
 | [0039](0039-correct-the-csp-sentence-in-project-instructions.md) | 2026-11-27 | Owner: correct the outside-scripts sentence in .claude/CLAUDE.md | Current |
-| [0040](0040-real-database-tests-also-block-a-deploy.md) | 2026-11-28 | Owner: the real-database tests also run automatically and block a deploy | Current |
-| [0041](0041-free-plan-cannot-be-given-a-price.md) | 2026-11-28 | Owner: the Free plan cannot be given a price | Current |
-| [0042](0042-support-three-decimal-currencies-before-launch.md) | 2026-11-28 | Owner: support three-decimal currencies before launch | Current |
+| [0040](0040-real-database-tests-also-block-a-deploy.md) | 2026-11-28 | Owner: the real-database tests also run automatically and block a deploy | Current; built in 4cdb38d |
+| [0041](0041-free-plan-cannot-be-given-a-price.md) | 2026-11-28 | Owner: the Free plan cannot be given a price | Current; built in ef21eb2 |
+| [0042](0042-support-three-decimal-currencies-before-launch.md) | 2026-11-28 | Owner: support three-decimal currencies before launch | Current; built in cbf96eb |
 | [0043](0043-lead-limits-and-retention-defaults.md) | 2026-11-28 | Lead (owner may overrule): starting limits and log keeping periods | Current (unapproved) |
