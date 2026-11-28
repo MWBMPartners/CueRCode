@@ -15,14 +15,15 @@ Owner (2026-11-27): work autonomously until the **first version** can be launche
 - Owner decisions 0023-0039 recorded 2026-11-27. First-launch plan: `.claude/plans/first-launch-plan.md`; dynamic QR issues #164-#172; later second link checker #173.
 - **Not verified anywhere:** real browser pass; DreamHost; real Microsoft mail; real human-check providers; HTTPS/HSTS; MySQL 8.4 for the newest scenarios.
 
-### In flight (watched, this session) — 2026-11-28 about 03:15
-Committed up to `b34d678`; nothing pushed. At `4efdcc2`: unit suite 9259/9259; 9 real-database scripts pass on MySQL 8.0.36 and MariaDB 10.6.
-1. **Opus fix builder:** findings in `.claude/plans/launch-round3-review-report.md`, then #177, #178, #179, and orphaned test web servers.
-2. **Codex review** (background script, waits until 04:52): human check, no-JavaScript route, pricing and CI changes. Default model, effort high.
+### In flight (watched, this session) — 2026-11-28 about 04:20
+Committed up to `550b1ed` (code up to `d5dd065`: unit suite 9377/9377; 9 real-database scripts on MySQL 8.0.36, 8.4.13, MariaDB 10.6.28). Nothing pushed.
+1. **Opus check** of `35e87c2..d5dd065`. Report: `.claude/plans/launch-round4-review-report.md`.
+2. **Codex review** (background script, waits until 04:52): human check, no-JavaScript route, pricing and CI. Default model, effort high.
+3. **Opus builder in a separate worktree:** dynamic QR WP4a and WP4b (#164, #165), from `d5dd065`. Merge only after the current work is pushed, then review it.
 
 ### Next (order)
-1. Opus check of `35e87c2..HEAD` (includes #158/#130, #129, #154) + Codex findings → fix → repeat until clean → push `work-in-progress` (decision 0008) → comment/close #31, #129, #130, #154, #155, #158-#161, #163, #174-#179 → move finished review reports to `.claude/plans/history/`.
-2. Dynamic QR WP4 (database upgrade `0007` still free, #164 onwards) → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
+1. Review findings → fix → repeat until clean → push `work-in-progress` (decision 0008) → comment/close #31, #129, #130, #154, #155, #158-#161, #163, #174-#179 → move finished review reports to `.claude/plans/history/`.
+2. Merge and review WP4a/b → WP4c-j (#166-#172) → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
 - Only GitHub can prove: the database-test jobs and the deploy gate (first push to `alpha`).
 - Model tiers (decision 0001): gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium (money and security = Opus); every check or review = Opus.
 
