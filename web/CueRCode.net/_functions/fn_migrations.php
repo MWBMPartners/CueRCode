@@ -24,7 +24,10 @@
  *     fixed piece of text written by a developer, checked against a short
  *     list of allowed step types, and refused if it contains a destructive
  *     word (DROP, TRUNCATE, RENAME, MODIFY, CHANGE, DELETE FROM). Nothing a
- *     visitor types ever reaches this SQL.
+ *     visitor types ever reaches this SQL. The one exception is MODIFY in a
+ *     widen_decimal_column step (decision 0042): it may only make a DECIMAL
+ *     column WIDER, and the runner checks the live column first and refuses
+ *     the step if it would narrow it or change whether it may be empty.
  *   - Starting rows are inserted with "insert if missing" only, so a value
  *     the owner has already edited in the admin screens is NEVER overwritten
  *     (owner rule: every commercial setting is admin-editable data).
@@ -440,7 +443,43 @@ function migrationStepTypes(): array
         'add_foreign_key'     => ['needsName' => true],
         'insert_if_missing'   => ['needsName' => false],
         'update_if_unchanged' => ['needsName' => false],
+        // 💷 Decision 0042: make a money column hold more digits, never fewer.
+        'widen_decimal_column' => ['needsName' => true],
     ];
+}
+
+/**
+ * 💷 The DECIMAL(precision, scale) a widen_decimal_column step asks for, read
+ *    from its (squashed, quoted-text-blanked) SQL. Pure.
+ *
+ * The step must be exactly
+ *   ALTER TABLE `t` MODIFY COLUMN `c` DECIMAL(p,s) NOT NULL ...   (or NULL ...)
+ * so the precision, the scale and whether the column may be empty are all
+ * stated, and the runner can compare them with the live column.
+ *
+ * @param string $squashed The step SQL, quoted text blanked, spaces squashed
+ * @param string $table    The step's table
+ * @param string $name     The step's column
+ * @return array{precision: int, scale: int, notNull: bool}|null Null when the shape is wrong
+ */
+function migrationWidenTarget(string $squashed, string $table, string $name): ?array
+{
+    $pattern = '/^ALTER TABLE ' . preg_quote('`' . $table . '`', '/') . ' MODIFY COLUMN ' . preg_quote('`' . $name . '`', '/')
+        . ' DECIMAL ?\( ?([0-9]{1,2}) ?, ?([0-9]{1,2}) ?\) (NOT NULL|NULL)\b/i';
+    $found = [];
+    if (preg_match($pattern, $squashed, $found) !== 1) {
+        return null;
+    }
+
+    $precision = (int) $found[1];
+    $scale     = (int) $found[2];
+
+    // 📏 What MySQL and MariaDB accept: precision 1-65, scale 0-30 and below it.
+    if ($precision < 1 || $precision > 65 || $scale > 30 || $scale >= $precision) {
+        return null;
+    }
+
+    return ['precision' => $precision, 'scale' => $scale, 'notNull' => (strtoupper($found[3]) === 'NOT NULL')];
 }
 
 /**
@@ -548,8 +587,12 @@ function migrationValidateStep(mixed $step, int $index): array
         $errors[] = $label . ': only one SQL statement is allowed per step';
     }
 
-    // 🚫 Additive only.
+    // 🚫 Additive only. (A widen_decimal_column step needs the word MODIFY
+    //    for its one change; its shape is checked strictly below.)
     foreach (migrationRefusedWordPatterns() as $wordLabel => $pattern) {
+        if ($type === 'widen_decimal_column' && $wordLabel === 'MODIFY') {
+            continue;
+        }
         if (preg_match($pattern, $trimmed) === 1) {
             $errors[] = $label . ': the word ' . $wordLabel . ' is not allowed (migrations only ever add)';
         }
@@ -601,10 +644,18 @@ function migrationValidateStep(mixed $step, int $index): array
         if (preg_match('/\bWHERE\b/i', $squashed) !== 1) {
             $errors[] = $label . ': an update_if_unchanged step needs a WHERE that only matches rows still at their old seeded value';
         }
+    } elseif ($type === 'widen_decimal_column') {
+        if (migrationWidenTarget($squashed, $table, $name) === null) {
+            $errors[] = $label . ': a widen_decimal_column step must be ALTER TABLE `' . $table . '` MODIFY COLUMN `' . $name . '` DECIMAL(precision,scale) NOT NULL (or NULL) ...';
+        }
+        // 🧭 It may not move the column either (the schemas must stay alike).
+        if (preg_match('/\b(AFTER|FIRST)\b/i', $squashed) === 1) {
+            $errors[] = $label . ': a widen_decimal_column step may not move the column (no AFTER or FIRST)';
+        }
     }
 
     // ☝️ ALTER steps do exactly one thing.
-    if ($type === 'add_column' || $type === 'add_index' || $type === 'add_foreign_key') {
+    if ($type === 'add_column' || $type === 'add_index' || $type === 'add_foreign_key' || $type === 'widen_decimal_column') {
         if (migrationHasTopLevelComma($squashed)) {
             $errors[] = $label . ': an ALTER step may add only one thing (one column, index or foreign key)';
         }
@@ -663,7 +714,7 @@ function migrationStepCouldFillEmptySeedTable(array $step): bool
 {
     $type = (string) $step['type'];
 
-    if (in_array($type, ['create_table', 'add_column', 'add_index', 'add_foreign_key', 'update_if_unchanged'], true)) {
+    if (in_array($type, ['create_table', 'add_column', 'add_index', 'add_foreign_key', 'widen_decimal_column', 'update_if_unchanged'], true)) {
         return false;
     }
 
@@ -894,7 +945,80 @@ function migrationStepExistsQuery(array $step): ?array
         ];
     }
 
+    if ($type === 'widen_decimal_column') {
+        // 💷 Done = already a DECIMAL with at least the asked-for decimal
+        //    places AND at least as many whole-number digits.
+        $target = migrationWidenTargetOfStep($step);
+        if ($target === null) {
+            return null;
+        }
+        return [
+            'sql'    => 'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+                . ' AND DATA_TYPE = \'decimal\' AND NUMERIC_SCALE >= ? AND (NUMERIC_PRECISION - NUMERIC_SCALE) >= ?',
+            'types'  => 'ssii',
+            'params' => [$step['table'], $step['name'], $target['scale'], $target['precision'] - $target['scale']],
+        ];
+    }
+
     return null;
+}
+
+/**
+ * 💷 The target of a (valid) widen_decimal_column step, or null. Pure.
+ *
+ * @param array $step A step
+ * @return array{precision: int, scale: int, notNull: bool}|null
+ */
+function migrationWidenTargetOfStep(array $step): ?array
+{
+    if (!isset($step['type'], $step['table'], $step['name'], $step['sql']) || $step['type'] !== 'widen_decimal_column') {
+        return null;
+    }
+
+    $blankResult = migrationBlankQuotedText((string) $step['sql']);
+    if ($blankResult['ok'] !== true) {
+        return null;
+    }
+    $squashed = preg_replace('/\s+/', ' ', trim($blankResult['text']));
+    if (!is_string($squashed)) {
+        return null;
+    }
+
+    return migrationWidenTarget($squashed, (string) $step['table'], (string) $step['name']);
+}
+
+/**
+ * 🛡️ The read-only question that must answer YES before a step that is not
+ *    done yet may run, or null when a step needs none. Pure. (Decision 0042.)
+ *
+ * Only widen_decimal_column has one: the live column must exist, be a
+ * DECIMAL, have NO MORE decimal places and NO MORE whole-number digits than
+ * the step asks for, and the same "may it be empty" as the step states. So
+ * the step can only ever make the column wider; it never loses a digit, and
+ * it never turns a column that refuses empty values into one that allows
+ * them (or the other way round).
+ *
+ * @param array $step A valid step
+ * @return array{sql: string, types: string, params: array<int, mixed>}|null
+ */
+function migrationStepSafetyQuery(array $step): ?array
+{
+    $target = migrationWidenTargetOfStep($step);
+    if ($target === null) {
+        return null;
+    }
+
+    $nullable = 'YES';
+    if ($target['notNull']) {
+        $nullable = 'NO';
+    }
+
+    return [
+        'sql'    => 'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+            . ' AND DATA_TYPE = \'decimal\' AND NUMERIC_SCALE <= ? AND (NUMERIC_PRECISION - NUMERIC_SCALE) <= ? AND IS_NULLABLE = ?',
+        'types'  => 'ssiis',
+        'params' => [$step['table'], $step['name'], $target['scale'], $target['precision'] - $target['scale'], $nullable],
+    ];
 }
 
 /**
@@ -905,7 +1029,9 @@ function migrationStepExistsQuery(array $step): ?array
  *                                question from migrationStepExistsQuery().
  *                                The real one asks the database; tests pass a
  *                                stand-in.
- * @return string 'run' or 'skip'
+ * @return string 'run', 'skip' or 'refuse' (decision 0042: a widening that
+ *                would narrow the live column, or change whether it may be
+ *                empty, is never run)
  */
 function migrationDecideStep(array $step, callable $existsChecker): string
 {
@@ -918,6 +1044,12 @@ function migrationDecideStep(array $step, callable $existsChecker): string
 
     if ($existsChecker($query) === true) {
         return 'skip';
+    }
+
+    // 🛡️ Not done yet: a step with a safety question runs only on a YES.
+    $safety = migrationStepSafetyQuery($step);
+    if ($safety !== null && $existsChecker($safety) !== true) {
+        return 'refuse';
     }
 
     return 'run';
@@ -3286,6 +3418,23 @@ function migrationRunLocked(\mysqli $db, string $mode, bool $isApply, string $ap
             if ($decision === 'skip') {
                 $stepsSkipped++;
                 continue;
+            }
+
+            if ($decision === 'refuse') {
+                // 🛡️ Decision 0042: the live column is not what the step can
+                //    safely widen (missing, not a DECIMAL, already wider in
+                //    one way, or a different "may be empty"). Nothing of it
+                //    runs and the upgrade is not recorded, in a dry run too.
+                $result['migrations'][] = [
+                    'key'          => $pendingKey,
+                    'outcome'      => 'failed',
+                    'stepsRun'     => $stepsRun,
+                    'stepsSkipped' => $stepsSkipped,
+                    'problems'     => ['step ' . $position . ' (' . migrationDescribeStep($step) . ') was not run: the column is not a DECIMAL it can only make wider (it would lose digits, or change whether it may be empty). Check the column by hand.'],
+                ];
+                $result['status'] = 'failed';
+                $result['error']  = $pendingKey . ' step ' . $position . ' was refused.';
+                return $result;
             }
 
             if (!$isApply) {

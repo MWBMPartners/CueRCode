@@ -76,7 +76,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
 | `test_admin_access.php` | 664 |
-| `test_admin_plans.php` | 641 |
+| `test_admin_plans.php` | 651 |
 | `test_admin_settings.php` | 1346 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
@@ -106,8 +106,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 506 |
-| `test_money.php` | 666 |
+| `test_migrations.php` | 551 |
+| `test_money.php` | 703 |
 | `test_no_script_route_review_fixes.php` | 76 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
@@ -118,17 +118,19 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_php_runtime_guards.php` | 24 |
 | `test_plans_prices_migration.php` | 168 |
 | `test_predefined_logo_png.php` | 264 |
-| `test_pricing.php` | 124 |
+| `test_pricing.php` | 132 |
 | `test_pricing_flex.php` | 51 |
-| `test_pricing_page.php` | 152 |
+| `test_pricing_page.php` | 156 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9088** |
+| **Total** | **9192** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Three decimal places and larger prices (#176, decision 0042, 2026-11-28)** changed and added checks in `test_money.php` (all seven three-decimal currencies offered, the new limit 999,999,999,999 and why it cannot overflow, the DECIMAL(15,3) text such as "6.990" read back, the export text), `test_migrations.php` (the new `widen_decimal_column` step: valid shape, every refused shape, skip/run/refuse decisions, and upgrade 0006 widening exactly the DECIMAL columns install.sql has), `test_admin_plans.php`, `test_pricing.php` and `test_pricing_page.php` (KWD prices, "6.990" in every display path, "From KWD 99"). On the code before the change 36 of them failed, with `test_money.php` and `test_migrations.php` stopping early at a function that did not exist yet. Suite: **9192**. Real databases (Linux PHP 8.4.27 container, non-root): `migrations_real_mysql.php` with the new scenario P and `admin_plans_real_mysql.php` (169 checks) with the new scenario O passed on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28, with every other script; on the old code they failed (on MySQL 8.4: KWD refused, KWD 2.125 not stored, the columns still DECIMAL(10,2), and the migrations script stopping where it loads 0006). The first MariaDB run of scenario P failed one check because MariaDB reports a column's missing default as the text NULL where MySQL gives a real NULL; the test now reads both as "none" (a test fault, not an upgrade fault).
 
 **The Free plan can never have a price (#175, decision 0041, 2026-11-28)** added 21 checks to `test_admin_plans.php` (the Free-plan rule, the reason, the trial-plan list, the copy into the older columns, where each server-side refusal sits, the prices screen, and the starting data, its guard first proved on a bad sample) and 2 to `test_pricing_page.php` (a price older data left on the Free plan is ignored). Against the code before the change 10 of them failed (with only the new one-line `pricingIsFreePlan()` added, so the file could run) and the pricing-page one failed. Suite: **9088**. `admin_plans_real_mysql.php` grew to 157 checks with scenario N: on the old code 6 failed (a monthly and a yearly price were saved on the Free plan, a new version under the key free was made), then the script stopped; on the new code all 157 passed on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28 (Linux PHP 8.4.27 container, non-root).
 
@@ -337,6 +339,17 @@ prints PASS/FAIL per scenario. Exit code 0 means every scenario passed. Last
 run 2026-11-23 (task 7n Phase 1A part 2 code review fixes, #113 item 5, #70):
 all scenarios passed on MySQL 8.0.46.
 
+Since decision 0042 (#176, 2026-11-28) it also runs scenario P, upgrade 0006
+on a database at 0005: every money column becomes DECIMAL(15,3) with its NOT
+NULL and default kept; every stored amount (the largest old value
+99,999,999.99 and the smallest 0.01 included) is exactly the same; KWD 1.234
+and 999,999,999,999 yen are stored exactly; forced to run again it skips all
+six steps; with three columns already widened by hand it does the other
+three; a column someone widened by hand to DECIMAL(20,2) is refused at its
+step and left alone (0006 not recorded, exit code 1); a column made NULL-able
+by hand is refused too, and once put right the next run finishes; the
+finished structure is byte for byte the fresh install's.
+
 ## Real-database check (admin settings editor)
 
 `tests/test_admin_settings.php` (count in the table above; no database) proves the
@@ -366,7 +379,7 @@ Run 2026-11-25 (after the final review: test buttons record each press before co
 ## Real-database check (admin plans and prices)
 
 `tests/test_admin_plans.php` proves the plans editor's decisions. `tests/integration/admin_plans_real_mysql.php`
-(157 checks, scenarios A-N) proves the rest on a throwaway database: the 0004 starting data; making a plan
+(169 checks, scenarios A-O) proves the rest on a throwaway database: the 0004 starting data; making a plan
 (off sale, features copied, audited, duplicate key refused); prices saved exactly as text and mirrored by
 price group; P1 a bought price cannot change or be deleted even when bought after the form was opened, but
 can be retired and replaced (`monthly_gbp_2`); a REAL race - a second process saving while another
@@ -374,7 +387,7 @@ connection holds an uncommitted purchase waits, then is refused (commit) or goes
 admins at once (the second save refused, nothing written); P4/P5/P6; new version; a price of another plan
 refused; one transaction (a trigger refusing the audit row undoes the whole save); changing the main
 currency re-runs the mirror; the pricing page follows sale dates when it loads (L); a price save racing a
-main-currency change, and the trial-plan setting racing a plan delete (M); the Free plan can never have a price (N, decision 0041); the charging switches stay 0.
+main-currency change, and the trial-plan setting racing a plan delete (M); the Free plan can never have a price (N, decision 0041); three-decimal and large prices saved and read back exactly, KWD as the main currency (O, decision 0042); the charging switches stay 0.
 
 ```bash
 docker run -d --rm --name cuercode-it-plans -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \

@@ -6144,7 +6144,9 @@
                         "type": "string"
                     },
                     "amount": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "The amount paid as decimal text, with as many decimal places as the currency uses: 0 (for example JPY \"1200\"), 2 (GBP \"12.50\") or 3 (KWD \"1.234\"). Never a number type, so no rounding happens on the way.",
+                        "example": "12.50"
                     },
                     "currency": {
                         "type": "string"

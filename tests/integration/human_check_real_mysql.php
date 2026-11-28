@@ -415,7 +415,9 @@ foreach ($hcUpgrade['migrations'] as $hcMigrationResult) {
         $hcAppliedKeys[] = $hcMigrationResult['key'];
     }
 }
-hcCheck('A', $hcUpgrade['status'] === 'ok' && count($hcAppliedKeys) === 5 && end($hcAppliedKeys) === '0005_human_check_settings', 'every upgrade applied, 0005 last: ' . implode(', ', $hcAppliedKeys));
+// 📋 Every upgrade file there is (0006 and later ones too), 0005 among them.
+$hcUpgradeFiles = count((array) glob($hcSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'sql' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '[0-9][0-9][0-9][0-9]_*.php'));
+hcCheck('A', $hcUpgrade['status'] === 'ok' && count($hcAppliedKeys) === $hcUpgradeFiles && $hcUpgradeFiles >= 5 && in_array('0005_human_check_settings', $hcAppliedKeys, true), 'every upgrade applied, 0005 among them: ' . implode(', ', $hcAppliedKeys));
 hcCheck('A', hcValue($hcServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'auto', 'the provider setting is "auto"');
 hcCheck('A', humanCheckActive() === null, 'no keys: the check is off');
 $hcOff = humanCheckVerifyRequest([]);

@@ -1299,3 +1299,91 @@ assertEquals(2, $migDescriptionSteps, 'finding 2.P2: both description changes (P
 assertEquals(0, preg_match('/^\s*SET\s+(SESSION\s+)?SQL_MODE\b/im', $migSeedSqlText), 'recheck F7: seed_data.sql sets no SQL mode (only the character set)');
 $migRunnerAndInstaller = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_migrations.php') . $migInstallerSource;
 assertFalse(str_contains($migRunnerAndInstaller, 'seed_data.sql sets its own SQL mode') || str_contains($migRunnerAndInstaller, 'changes both for itself'), 'recheck F7: no comment claims seed_data.sql sets its own SQL mode');
+
+// ==============================================================================
+// 💷 Decision 0042 (#176): the widen_decimal_column step and upgrade 0006
+// ==============================================================================
+$migWiden = [
+    'type'  => 'widen_decimal_column',
+    'table' => 'tblExample',
+    'name'  => 'amount',
+    'sql'   => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL DEFAULT 0.000 COMMENT \'Price, up to 3 decimal places\'',
+];
+assertEquals([], migrationValidateStep($migWiden, 1), '0042: a widen_decimal_column step is valid');
+assertEquals(['precision' => 15, 'scale' => 3, 'notNull' => true], migrationWidenTargetOfStep($migWiden), '0042: its target is read from the SQL');
+assertTrue($migRefusedWith(['type' => 'add_column', 'table' => 'tblExample', 'name' => 'amount', 'sql' => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL'], 'the word MODIFY'), '0042: MODIFY is still refused in every other step type');
+$migWidenBad = [
+    'two columns'        => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL, MODIFY COLUMN `other` DECIMAL(15,3) NOT NULL', 'only one thing'],
+    'not a DECIMAL'      => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` VARCHAR(20) NOT NULL', 'must be ALTER TABLE'],
+    'no NOT NULL/NULL'   => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) DEFAULT 0', 'must be ALTER TABLE'],
+    'scale = precision'  => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(3,3) NOT NULL', 'must be ALTER TABLE'],
+    'precision over 65'  => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(66,3) NOT NULL', 'must be ALTER TABLE'],
+    'moves the column'   => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL AFTER `other`', 'may not move'],
+    'another column'     => ['ALTER TABLE `tblExample` MODIFY COLUMN `other` DECIMAL(15,3) NOT NULL', 'must appear back-quoted'],
+    'a DROP inside'      => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL DROP', 'the word DROP'],
+    'CHANGE instead'     => ['ALTER TABLE `tblExample` CHANGE `amount` `amount` DECIMAL(15,3) NOT NULL', 'the word CHANGE'],
+];
+foreach ($migWidenBad as $migWidenLabel => [$migWidenSql, $migWidenNeedle]) {
+    $migWidenStep = $migWiden;
+    $migWidenStep['sql'] = $migWidenSql;
+    if ($migWidenLabel === 'another column') {
+        $migWidenStep['name'] = 'amount_x';
+    }
+    assertTrue($migRefusedWith($migWidenStep, $migWidenNeedle), '0042: a widen step is refused when ' . $migWidenLabel . ': ' . implode(' | ', migrationValidateStep($migWidenStep, 1)));
+}
+assertFalse(migrationStepCouldFillEmptySeedTable(array_merge($migWiden, ['table' => 'tblSubscriptionPlans'])), '0042: a widen step can never fill an empty starting-data table');
+
+// 🤔 Decide: done (already wide enough) -> skip; safe -> run; anything else -> refuse.
+$migWidenAnswers = [];
+$migWidenChecker = static function (bool $migDone, bool $migSafe) use (&$migWidenAnswers): callable {
+    return static function (array $migQuery) use ($migDone, $migSafe, &$migWidenAnswers): bool {
+        $migWidenAnswers[] = $migQuery;
+        if (str_contains($migQuery['sql'], 'NUMERIC_SCALE >= ?')) {
+            return $migDone;
+        }
+        return $migSafe;
+    };
+};
+assertEquals('skip', migrationDecideStep($migWiden, $migWidenChecker(true, false)), '0042: decide: already at least DECIMAL(15,3) -> skip (re-running changes nothing)');
+assertEquals('run', migrationDecideStep($migWiden, $migWidenChecker(false, true)), '0042: decide: a narrower DECIMAL with the same NOT NULL -> run');
+assertEquals('refuse', migrationDecideStep($migWiden, $migWidenChecker(false, false)), '0042: decide: missing, not a DECIMAL, wider one way, or a different NOT NULL -> refuse');
+$migWidenDone = migrationStepExistsQuery($migWiden);
+$migWidenSafe = migrationStepSafetyQuery($migWiden);
+assertEquals(['tblExample', 'amount', 3, 12], $migWidenDone['params'], '0042: the "done" question asks for at least 3 decimal places and 12 whole digits');
+assertEquals(['tblExample', 'amount', 3, 12, 'NO'], $migWidenSafe['params'], '0042: the "safe" question asks for at most 3 and 12, and NOT NULL as now');
+foreach ([$migWidenDone, $migWidenSafe] as $migWidenQuery) {
+    assertContains('TABLE_SCHEMA = DATABASE()', $migWidenQuery['sql'], '0042: limited to the current database');
+    assertContains("DATA_TYPE = 'decimal'", $migWidenQuery['sql'], '0042: only a DECIMAL column counts');
+    assertEquals(substr_count($migWidenQuery['sql'], '?'), strlen($migWidenQuery['types']), '0042: placeholders match bound types');
+}
+assertEquals(null, migrationStepSafetyQuery($migGoodSteps['add_column']), '0042: other steps have no safety question');
+$migNullable = $migWiden;
+$migNullable['sql'] = 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NULL';
+assertEquals('YES', migrationStepSafetyQuery($migNullable)['params'][4], '0042: a step that says NULL needs a column that allows NULL');
+
+// 🧾 The real upgrade 0006: every money column, DECIMAL(15,3), NOT NULL kept.
+$mig0006 = $migLoaded['migrations']['0006_three_decimal_money_columns']['definition'] ?? null;
+assertTrue(is_array($mig0006), '0042: upgrade 0006 is there and loads');
+$mig0006Columns = [];
+foreach ((array) ($mig0006['steps'] ?? []) as $mig0006Step) {
+    $mig0006Target = migrationWidenTargetOfStep($mig0006Step);
+    assertEquals(['precision' => 15, 'scale' => 3, 'notNull' => true], $mig0006Target, '0042: 0006 widens ' . $mig0006Step['table'] . '.' . $mig0006Step['name'] . ' to DECIMAL(15,3) NOT NULL');
+    $mig0006Columns[] = $mig0006Step['table'] . '.' . $mig0006Step['name'];
+}
+// 📋 Exactly the DECIMAL columns install.sql has - none missed, none extra.
+preg_match_all('/^\s*`([A-Za-z]+)`\s+DECIMAL\(10,2\)/m', $migRealInstallSql, $migDecimalColumns, PREG_OFFSET_CAPTURE);
+$migInstallDecimals = [];
+foreach ($migDecimalColumns[1] as [$migDecimalName, $migDecimalAt]) {
+    preg_match_all('/CREATE TABLE IF NOT EXISTS `([A-Za-z]+)`/', substr($migRealInstallSql, 0, $migDecimalAt), $migTablesBefore);
+    $migInstallDecimals[] = end($migTablesBefore[1]) . '.' . $migDecimalName;
+}
+sort($migInstallDecimals);
+$mig0006Sorted = $mig0006Columns;
+sort($mig0006Sorted);
+assertEquals($migInstallDecimals, $mig0006Sorted, '0042: 0006 widens every DECIMAL(10,2) column in install.sql (' . implode(', ', $migInstallDecimals) . ')');
+foreach ($migLoaded['migrations'] as $migEarlierKey => $migEarlier) {
+    if (strcmp((string) $migEarlierKey, '0006') >= 0) {
+        continue;
+    }
+    assertEquals(0, preg_match('/DECIMAL ?\\(/i', (string) file_get_contents($migEarlier['path'])), '0042: ' . $migEarlierKey . ' adds no DECIMAL column that 0006 would have missed');
+}

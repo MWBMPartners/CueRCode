@@ -17,8 +17,9 @@
  * typed as 6.99 can come back as 6.989999... Rounding that the wrong way
  * gives a customer the wrong price. Whole numbers are always exact, so these
  * functions never create a float at any point (plan §8.1, security check
- * S19). Database DECIMAL(10,2) columns are written and read as TEXT
- * ("6.99"), never as a float.
+ * S19). Database DECIMAL(15,3) columns are written and read as TEXT
+ * ("6.99" written, "6.990" read back), never as a float. (They were
+ * DECIMAL(10,2) until upgrade 0006, decision 0042.)
  *
  * 📌 House rules for this file:
  *   - PURE: no database, no settings, no output. Everything is decided from
@@ -28,9 +29,10 @@
  *     for every current ISO 4217 currency (moneyCurrencyInfo()). Which
  *     currencies are OFFERED is a commercial choice and lives in the
  *     billing_currencies setting (owner rule 2026-10-05: never hard-code a
- *     commercial rule). The seven three-decimal currencies (KWD, BHD ...)
- *     cannot be offered while the price columns hold two decimal places
- *     (moneyStoredDecimalPlaces()).
+ *     commercial rule). Since upgrade 0006 (decision 0042) the price columns
+ *     hold three decimal places (moneyStoredDecimalPlaces()), so every
+ *     current currency, including the seven three-decimal ones (KWD, BHD,
+ *     OMR, JOD, IQD, LYD, TND), can be offered.
  *   - Rounding is "half up" (0.5 goes up), done ONCE, at the end of a
  *     calculation, with whole-number arithmetic.
  *   - A bad argument from code (a negative price, a percentage over 100%, an
@@ -39,12 +41,15 @@
  *     Bad input TYPED BY A PERSON is different: the moneyParse... functions
  *     return null so the form can say what is wrong.
  *
- * 📌 64-bit assumption: the largest amount a person may type is 9,999,999
- *    minor units (99,999.99 in a two-decimal currency) and the largest
- *    percentage is 10,000 basis points (100%), so the biggest product worked
- *    out here is about 10^11, far inside a 64-bit integer (about 9.2 x 10^18).
- *    The overflow checks below use PHP_INT_MAX rather than a fixed number, so
- *    they stay correct on a 32-bit PHP too (they just refuse sooner).
+ * 📌 64-bit assumption: the largest amount a person may type is
+ *    999,999,999,999 minor units (moneyMaxTypedMinor(): 9,999,999,999.99 in a
+ *    two-decimal currency, 999,999,999.999 in a three-decimal one,
+ *    999,999,999,999 in a zero-decimal one - all within the 12 whole-number
+ *    digits of the DECIMAL(15,3) columns) and the largest percentage is
+ *    10,000 basis points (100%), so the biggest product worked out here is
+ *    about 10^16, far inside a 64-bit integer (about 9.2 x 10^18). On a
+ *    32-bit PHP the typing limit drops to 99,999,999 and the overflow checks
+ *    below, which use PHP_INT_MAX rather than a fixed number, refuse sooner.
  *
  * @package     CueRCode
  * @subpackage  Billing
@@ -267,16 +272,17 @@ function moneyCurrencyInfo(): array
  *
  * Every price column (tblSubscriptionPlans.priceMonthly / priceYearly,
  * tblPlanPricePoints.amount, tblDiscounts.value and the payment amounts) is
- * DECIMAL(10,2). A currency with MORE decimal places than this (the seven
- * three-decimal currencies, such as KWD) cannot have its prices saved exactly
- * - MySQL would round 1.234 to 1.23 - so it cannot be offered until those
- * columns are widened (moneyCurrencyCanBeOffered()).
+ * DECIMAL(15,3) since upgrade 0006 (decision 0042; before, DECIMAL(10,2),
+ * which would have rounded KWD 1.234 to 1.23). A currency with MORE decimal
+ * places than this could not have its prices saved exactly, so it could not
+ * be offered (moneyCurrencyCanBeOffered()); no current ISO 4217 currency
+ * has more than three.
  *
  * @return int Decimal places in the price columns
  */
 function moneyStoredDecimalPlaces(): int
 {
-    return 2;
+    return 3;
 }
 
 /**
@@ -298,10 +304,8 @@ function moneyCurrencyKnown(string $currency): bool
  * 💱 May prices be set in this currency? A known code whose decimal places
  *    fit the database price columns (moneyStoredDecimalPlaces()).
  *
- * True for the zero- and two-decimal currencies (GBP, CAD, JPY ...); false
- * for the three-decimal ones (KWD, BHD ...), whose prices could not be saved
- * exactly, and for an unknown code. A three-decimal currency is still KNOWN,
- * so a price already stored in it can be read and shown.
+ * True for every current currency since upgrade 0006 (zero, two and three
+ * decimal places: JPY, GBP, KWD ...); false for an unknown code.
  *
  * @param string $currency The three-letter code
  * @return bool True when it may be offered
@@ -350,7 +354,7 @@ function moneyParseCurrencyList(string $text): array
 
         // 🗄️ Known, but its prices could not be saved exactly (see moneyStoredDecimalPlaces()).
         if (!moneyCurrencyCanBeOffered($code)) {
-            return ['ok' => false, 'codes' => [], 'error' => $code . ' uses three decimal places, but prices are saved with two, so it cannot be offered yet.'];
+            return ['ok' => false, 'codes' => [], 'error' => $code . ' uses ' . moneyMinorUnits($code) . ' decimal places, but prices are saved with ' . moneyStoredDecimalPlaces() . ', so it cannot be offered yet.'];
         }
 
         if (in_array($code, $codes, true)) {
@@ -403,17 +407,28 @@ function moneyMinorPerMajor(string $currency): int
 /**
  * 🧱 The largest amount a person may type for a price, in minor units.
  *
- * 9,999,999 is 99,999.99 in a two-decimal currency. It is well inside the
- * DECIMAL(10,2) database columns (up to 99,999,999.99) and keeps every
- * calculation here far from integer overflow. The same number of minor
- * units is used for every currency (so ¥9,999,999 for yen), which keeps the
- * overflow reasoning identical everywhere.
+ * 999,999,999,999 (decision 0042, #176): 9,999,999,999.99 in a two-decimal
+ * currency, 999,999,999.999 in a three-decimal one and 999,999,999,999 in a
+ * zero-decimal one. Enough for currencies with very small units (a large
+ * yearly price in IDR, VND or LBP runs into the tens of millions); before,
+ * the limit was 9,999,999 minor units, which capped rupiah prices at
+ * 99,999.99. It never overflows a column: the whole-number part has at most
+ * 12 digits, which is what DECIMAL(15,3) holds. It never overflows PHP: the
+ * largest sum worked out here, amount x 10,000 + 5,000 (a percentage
+ * discount), is about 10^16, far below PHP_INT_MAX on 64-bit PHP (about
+ * 9.2 x 10^18). The same number of minor units is used for every currency,
+ * which keeps the overflow reasoning identical everywhere. On a 32-bit PHP
+ * (not a supported host) it is 99,999,999, which fits that integer.
  *
  * @return int Maximum typed amount in minor units
  */
 function moneyMaxTypedMinor(): int
 {
-    return 9999999;
+    if (PHP_INT_SIZE >= 8) {
+        return 999999999999;
+    }
+
+    return 99999999;
 }
 
 // ==============================================================================
@@ -428,10 +443,10 @@ function moneyMaxTypedMinor(): int
  * for pounds; "1200" for yen). Refused (null): commas ("6,99" or "1,000"),
  * a sign ("-1", "+1"), spaces inside (" 6 .99"), exponents ("1e3"), a point
  * with nothing after it ("6."), nothing before it (".99"), more decimals
- * than the currency has ("6.999"), anything above moneyMaxTypedMinor()
- * ("100000.00"), an empty box, an unknown currency, and any amount in a
- * currency that cannot be offered (a three-decimal one such as KWD: what is
- * typed could not be saved exactly - see moneyStoredDecimalPlaces()).
+ * than the currency has ("6.999" for pounds; "1.2345" for dinars), anything
+ * above moneyMaxTypedMinor() ("10000000000.00"), an empty box, an unknown
+ * currency, and any amount in a currency that cannot be offered (see
+ * moneyStoredDecimalPlaces()).
  *
  * Zero ("0" or "0.00") is accepted: it is a valid amount (free). Whether a
  * particular form allows zero is that form's decision.
@@ -452,12 +467,13 @@ function moneyParseToMinor(string $input, string $currency): ?int
     $trimmed = trim($input);
     $places  = moneyMinorUnits($currency);
 
-    // 🧩 Up to 7 whole digits (enough for 9,999,999 in a zero-decimal
-    //    currency), then the decimal part only if the currency has one.
+    // 🧩 Up to 12 whole digits (the columns' limit, and enough for
+    //    999,999,999,999 in a zero-decimal currency), then the decimal part
+    //    only if the currency has one. moneyMaxTypedMinor() then decides.
     if ($places > 0) {
-        $pattern = '/^([0-9]{1,7})(?:\.([0-9]{1,' . $places . '}))?$/D';
+        $pattern = '/^([0-9]{1,12})(?:\.([0-9]{1,' . $places . '}))?$/D';
     } else {
-        $pattern = '/^([0-9]{1,7})$/D';
+        $pattern = '/^([0-9]{1,12})$/D';
     }
 
     $parts = [];
@@ -480,16 +496,18 @@ function moneyParseToMinor(string $input, string $currency): ?int
 }
 
 /**
- * 🗄️ Turn a DECIMAL(10,2) value read from the database ("6.99", or
- *    "1200.00" for a yen price) into whole minor units.
+ * 🗄️ Turn a DECIMAL value read from the database ("6.990", "1200.000" for
+ *    a yen price, "1.234" for a dinar price - or the two-decimal "6.99" of a
+ *    database before upgrade 0006) into whole minor units.
  *
  * MySQLi hands DECIMAL columns back as TEXT, which is exactly what is wanted:
  * casting it to (float) would bring back the rounding problem this file
- * exists to avoid. The database always gives two decimals, so for a
- * currency with fewer decimal places the extra digits must be zeros
- * ("1200.00" is ¥1200; "1200.50" is refused, because half a yen cannot be
- * charged). Up to 8 whole digits are accepted (the column's own limit), so a
- * value entered by hand above the typing limit is still read correctly
+ * exists to avoid. The database gives the column's decimal places (three
+ * since upgrade 0006, decision 0042; two before), so for a currency with
+ * fewer the extra digits must be zeros ("1200.000" is ¥1200; "1200.500" is
+ * refused, because half a yen cannot be charged; "6.990" is £6.99, "6.995"
+ * is refused). Up to 12 whole digits are accepted (the column's own limit),
+ * so a value entered by hand above the typing limit is still read correctly
  * rather than lost. Negative values are refused (prices are never
  * negative).
  *
@@ -507,7 +525,7 @@ function moneyStoredDecimalToMinor(string $stored, string $currency): ?int
     }
 
     $parts = [];
-    if (preg_match('/^([0-9]{1,8})(?:\.([0-9]{1,2}))?$/D', $stored, $parts) !== 1) {
+    if (preg_match('/^([0-9]{1,12})(?:\.([0-9]{1,3}))?$/D', $stored, $parts) !== 1) {
         return null;
     }
 
@@ -559,16 +577,15 @@ function moneyDigitsToMinor(string $wholeDigits, string $fractionDigits, int $pl
 // ==============================================================================
 
 /**
- * 🗄️ Write minor units as the decimal TEXT a DECIMAL(10,2) column is bound
- *    with (699 -> "6.99", 5 -> "0.05", 1200 yen -> "1200").
+ * 🗄️ Write minor units as the decimal TEXT a DECIMAL(15,3) column is bound
+ *    with (699 -> "6.99", 5 -> "0.05", 1200 yen -> "1200", 1234 fils -> "1.234").
  *
  * Always bind the result with the 's' (string) type in a prepared statement,
  * never 'd' (float): MySQL then stores exactly these digits.
  *
- * 🛡️ An amount the column cannot hold exactly is refused loudly: 1234 fils
- *    (KWD 1.234) would be rounded by the database to 1.23. 1230 fils
- *    ("1.230") is fine - the dropped digit is a zero. (Codex finding 1.1:
- *    three-decimal currencies cannot be OFFERED, so this only stops a bug.)
+ * 🛡️ An amount the column cannot hold exactly is refused loudly (a currency
+ *    with more decimal places than the columns, of which there are none
+ *    today: this only stops a bug).
  *
  * @param int    $minor    Amount in minor units (zero or more)
  * @param string $currency A known ISO 4217 code
@@ -588,7 +605,7 @@ function moneyMinorToDecimalString(int $minor, string $currency): string
             $extraFactor = $extraFactor * 10;
         }
         if ($minor % $extraFactor !== 0) {
-            throw new \InvalidArgumentException('This amount cannot be saved exactly: the price columns hold two decimal places.');
+            throw new \InvalidArgumentException('This amount cannot be saved exactly: the price columns hold ' . moneyStoredDecimalPlaces() . ' decimal places.');
         }
     }
 
@@ -624,6 +641,29 @@ function moneyMinorToPlainText(int $minor, string $currency): string
     $fraction = str_pad((string) ($minor % $factor), $places, '0', STR_PAD_LEFT);
 
     return (string) $whole . '.' . $fraction;
+}
+
+/**
+ * 📤 A stored amount as text in its currency's OWN decimal places, for
+ *    output such as the account export ("6.990" GBP -> "6.99", "1200.000"
+ *    JPY -> "1200", "1.234" KWD -> "1.234"). Decision 0042: the columns
+ *    always give three decimal places, which would otherwise show pounds as
+ *    "6.990". A value that cannot be read (unknown currency, not a plain
+ *    amount, digits the currency cannot have) is returned unchanged, never
+ *    rounded or guessed.
+ *
+ * @param string $stored   The column value as MySQLi returned it
+ * @param string $currency ISO 4217 code of the row
+ * @return string The amount as text
+ */
+function moneyStoredDecimalForOutput(string $stored, string $currency): string
+{
+    $minor = moneyStoredDecimalToMinor($stored, $currency);
+    if ($minor === null) {
+        return $stored;
+    }
+
+    return moneyMinorToPlainText($minor, $currency);
 }
 
 /**

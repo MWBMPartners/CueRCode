@@ -628,7 +628,7 @@ function adminPlansTrialPlanChoices(array $planRows): array
                 continue;
             }
             $stored = (string) $row[$column];
-            if (preg_match('/^[0-9]{1,8}(\.[0-9]{1,4})?$/D', $stored) === 1 && trim(str_replace('.', '', $stored), '0') !== '') {
+            if (preg_match('/^[0-9]{1,12}(\.[0-9]{1,4})?$/D', $stored) === 1 && trim(str_replace('.', '', $stored), '0') !== '') {
                 $costsMoney = true;
             }
         }
@@ -2016,8 +2016,8 @@ function adminPlansCurrencySettings(bool $lock = false): array
         }
     }
 
-    // 🌍 A main currency that cannot be offered (unknown, or a three-decimal
-    //    one put in by hand) is replaced by the first offered one.
+    // 🌍 A main currency that cannot be offered (an unknown code put in by
+    //    hand) is replaced by the first offered one.
     if (!moneyCurrencyCanBeOffered($default)) {
         $default = '';
         if ($offered !== []) {

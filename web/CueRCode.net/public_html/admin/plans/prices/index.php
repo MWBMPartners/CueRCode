@@ -415,7 +415,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
 
                                     <fieldset class="border rounded p-3 mb-3">
                                         <legend class="h6 float-none w-auto px-2">Amount in each currency</legend>
-                                        <p class="small text-body-secondary">Digits and a point only, no symbol or commas (for example 12.50). Leave a box empty if there is no price in that currency yet. Prices include VAT when the VAT setting says so.</p>
+                                        <p class="small text-body-secondary">Digits and a point only, no symbol or commas (for example 12.50; up to three decimal places where the currency has them, such as 12.375 dinars). Leave a box empty if there is no price in that currency yet. Prices include VAT when the VAT setting says so.</p>
                                         <?php foreach ($pricesCurrencies['offered'] as $pricesCurrency) { ?>
                                         <?php
                                         $pricesCurrentRow = null;
@@ -443,7 +443,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                         }
                                         echo adminPlansFieldHtml([
                                             'id' => $pricesIdPrefix . 'amount_' . $pricesCurrency, 'name' => 'amount[' . $pricesCurrency . ']', 'kind' => 'money',
-                                            'label' => $pricesCurrencyWords($pricesCurrency), 'value' => $pricesShown, 'maxLength' => 12,
+                                            'label' => $pricesCurrencyWords($pricesCurrency), 'value' => $pricesShown, 'maxLength' => 16,
                                             'help' => $pricesHelp, 'error' => $pricesBoxError('amount_' . $pricesCurrency),
                                         ]);
                                         ?>

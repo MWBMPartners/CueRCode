@@ -71,6 +71,15 @@ assertEquals('$9.90', pricingFormatPrice('9.90', 'USD'), 'pricingFormatPrice: do
 assertEquals('€9.90', pricingFormatPrice('9.9', 'EUR'), 'pricingFormatPrice: euros use fn_money.php\'s symbol');
 assertEquals("CHF\u{00A0}9.90", pricingFormatPrice('9.9', 'CHF'), 'pricingFormatPrice: a currency without its own sign here (CHF) shows its code, never a guessed symbol (Codex finding 1.1: every ISO 4217 currency is known)');
 assertEquals("KWD\u{00A0}1.230", pricingFormatPrice('1.23', 'KWD'), 'pricingFormatPrice: a three-decimal currency is shown with three decimals');
+// 🗄️ Decision 0042: what the DECIMAL(15,3) columns give back.
+assertEquals('£6.99', pricingFormatPrice('6.990', 'GBP'), '0042: pricingFormatPrice: "6.990" pounds is £6.99');
+assertEquals('Free', pricingFormatPrice('0.000', 'GBP'), '0042: pricingFormatPrice: "0.000" is Free');
+assertEquals("KWD\u{00A0}1.234", pricingFormatPrice('1.234', 'KWD'), '0042: pricingFormatPrice: KWD 1.234');
+assertEquals('¥1,200', pricingFormatPrice('1200.000', 'JPY'), '0042: pricingFormatPrice: "1200.000" yen is ¥1,200');
+assertEquals('£9,999,999,999.99', pricingFormatPrice('9999999999.990', 'GBP'), '0042: pricingFormatPrice: the largest typed amount is shown in full');
+assertEquals('', pricingFormatPrice('6.995', 'GBP'), '0042: pricingFormatPrice: a value pounds cannot have gives nothing, never a rounded figure');
+assertEquals("XTS\u{00A0}9.90", pricingFormatPrice('9.900', 'XTS'), '0042: pricingFormatPrice: an unknown code read back with three decimals keeps two');
+assertEquals("XTS\u{00A0}9.905", pricingFormatPrice('9.905', 'XTS'), '0042: ...and a third that is not zero'); 
 assertEquals("XTS\u{00A0}9.90", pricingFormatPrice('9.9', 'XTS'), 'pricingFormatPrice: a code that is not a currency (XTS, the ISO test code) shows its code, with the same unbreakable space');
 assertEquals("?\u{00A0}9.90", pricingFormatPrice('9.9', ''), 'pricingFormatPrice: an empty currency code fails safe to a neutral "?" prefix rather than assuming GBP');
 

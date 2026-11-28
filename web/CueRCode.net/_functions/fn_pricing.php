@@ -818,13 +818,10 @@ function pricingPriceBlock(array $plan, bool $showPrices, string $previewCurrenc
     $hasYearly  = ($yearly !== '' && $yearly !== 'Free');
 
     if ($isContact) {
-        // ✂️ A "from" figure in whole units reads "From £x", without ".00".
-        if (str_ends_with($monthly, '.00')) {
-            $monthly = substr($monthly, 0, -3);
-        }
-        if (str_ends_with($yearly, '.00')) {
-            $yearly = substr($yearly, 0, -3);
-        }
+        // ✂️ A "from" figure in whole units reads "From £x", without ".00"
+        //    (or ".000" for a three-decimal currency, decision 0042).
+        $monthly = (string) preg_replace('/\.0+$/D', '', $monthly);
+        $yearly = (string) preg_replace('/\.0+$/D', '', $yearly);
 
         if ($hasMonthly) {
             $subline = 'Agreed with you to suit your organisation';
@@ -1260,7 +1257,8 @@ function pricingVatNote(string $mode): string
  * Whether a plan whose figure is zero really is free is decided elsewhere (see
  * pricingDisplayRowsFromPlans()): a "Contact us" plan never says "Free".
  *
- * @param string $amount   The decimal TEXT from the database (e.g. a DECIMAL(10,2) column).
+ * @param string $amount   The decimal TEXT from the database (a DECIMAL(15,3) column since
+ *                         upgrade 0006, decision 0042, so "6.990"; "6.99" before it).
  * @param string $currency The ISO 4217 currency code (e.g. 'GBP').
  *
  * @return string The formatted price, 'Free', or ''.
@@ -1270,7 +1268,8 @@ function pricingVatNote(string $mode): string
 function pricingFormatPrice(string $amount, string $currency): string
 {
     $parts = [];
-    if (preg_match('/^([0-9]{1,8})(?:\.([0-9]{1,2}))?$/D', trim($amount), $parts) !== 1) {
+    // 🔢 Up to the columns' 12 whole digits and 3 decimal places (decision 0042).
+    if (preg_match('/^([0-9]{1,12})(?:\.([0-9]{1,3}))?$/D', trim($amount), $parts) !== 1) {
         return '';
     }
 
@@ -1304,7 +1303,14 @@ function pricingFormatPrice(string $amount, string $currency): string
         $pricePrefix = $currencyUpper . "\u{00A0}";
     }
 
-    return $pricePrefix . $parts[1] . '.' . str_pad($fraction, 2, '0', STR_PAD_RIGHT);
+    // ✂️ At least two decimal places, and a third only when it is not a
+    //    zero ("9.900" -> "9.90", "1.234" stays "1.234").
+    $fraction = str_pad($fraction, 2, '0', STR_PAD_RIGHT);
+    if (strlen($fraction) > 2 && substr($fraction, 2) === str_repeat('0', strlen($fraction) - 2)) {
+        $fraction = substr($fraction, 0, 2);
+    }
+
+    return $pricePrefix . $parts[1] . '.' . $fraction;
 }
 
 // ==============================================================================

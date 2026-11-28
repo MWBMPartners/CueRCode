@@ -405,11 +405,12 @@ assertEquals([], $apOut['errors'], 'P1: re-sending the same amount for a bought 
 
 $apOut = $apGroup(['amount' => ['GBP' => '']]);
 assertContains('Retire button', $apOut['errors']['amount_GBP'], 'an empty box never quietly removes a price');
-foreach (['0', '0.00', '6.999', '-1', '1e3', '6,99', '£6.99', '100000.00', ' 6 .99'] as $apBadAmount) {
+foreach (['0', '0.00', '6.999', '-1', '1e3', '6,99', '£6.99', '10000000000.00', ' 6 .99'] as $apBadAmount) {
     $apOut = $apGroup(['amount' => ['USD' => $apBadAmount]]);
     assertTrue(isset($apOut['errors']['amount_USD']), 'group: amount refused ' . var_export($apBadAmount, true));
 }
-assertEquals('99999.99', $apGroup(['amount' => ['GBP' => '6.99', 'USD' => '99999.99']])['operations'][0]['amount'], 'group: the largest amount is accepted exactly');
+assertEquals('9999999999.99', $apGroup(['amount' => ['GBP' => '6.99', 'USD' => '9999999999.99']])['operations'][0]['amount'], '0042: group: the largest amount (9,999,999,999.99) is accepted exactly');
+assertContains('at most $9,999,999,999.99', (string) $apGroup(['amount' => ['GBP' => '6.99', 'USD' => '10000000000']])['errors']['amount_USD'], '0042: group: the refusal states the new largest amount');
 assertEquals('6.90', $apGroup(['amount' => ['GBP' => '6.99', 'USD' => '6.9']])['operations'][0]['amount'], 'group: "6.9" is stored as 6.90');
 $apOut = $apGroup(['amount' => ['JPY' => '1200', 'GBP' => '6.99']]);
 assertEquals([], $apOut['operations'], 'group: a hand-made amount in a currency that is NOT offered is never read');
@@ -553,13 +554,27 @@ assertFalse(moneyParseCurrencyList('GBP,gbp')['ok'], 'moneyParseCurrencyList: th
 assertFalse(moneyParseCurrencyList(',,')['ok'], 'moneyParseCurrencyList: nothing but commas is refused');
 
 // 🌍 Codex finding 1.1: any current ISO 4217 currency the prices can be saved
-//    in may be offered and made the main currency; a three-decimal one may not.
+//    in may be offered and made the main currency - since decision 0042 a
+//    three-decimal one too.
 $apOut = adminSettingsProcessSection('prices', ['f' => ['billing_currencies' => 'GBP,CAD,AUD', 'billing_default_currency' => 'CAD']], $apCurrent);
 assertEquals([], $apOut['errors'], 'finding 1.1: CAD and AUD can be offered, and CAD made the main currency');
-$apOut = adminSettingsProcessSection('prices', ['f' => ['billing_currencies' => 'GBP,KWD']], $apCurrent);
-assertTrue(isset($apOut['errors']['billing_currencies']), 'finding 1.1: a three-decimal currency (KWD) cannot be offered');
+$apOut = adminSettingsProcessSection('prices', ['f' => ['billing_currencies' => 'GBP,KWD,BHD,OMR,JOD,IQD,LYD,TND', 'billing_default_currency' => 'KWD']], $apCurrent);
+assertEquals([], $apOut['errors'], '0042: the seven three-decimal currencies can be offered, and KWD made the main currency');
 assertTrue(isset($apRegistry['billing_default_currency']['options']['CAD']), 'finding 1.1: CAD is in the main-currency list');
-assertFalse(isset($apRegistry['billing_default_currency']['options']['KWD']), 'finding 1.1: KWD is not in the main-currency list (it cannot be offered)');
+assertTrue(isset($apRegistry['billing_default_currency']['options']['KWD']), '0042: KWD is in the main-currency list');
+assertFalse(str_contains($apRegistry['billing_currencies']['help'], 'cannot be offered'), '0042: the help text no longer says three-decimal currencies cannot be offered');
+$apKwdGroup = adminPlansProcessPriceGroup(['amount' => ['GBP' => '6.99', 'KWD' => '2.125'], 'valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0'], 'monthly', ['GBP', 'KWD'], $apRows, [], $apUk);
+assertEquals([['op' => 'create', 'currency' => 'KWD', 'amount' => '2.125']], $apKwdGroup['operations'], '0042: a KWD price of 2.125 is read and saved as exactly 2.125');
+$apKwdBad = adminPlansProcessPriceGroup(['amount' => ['GBP' => '6.99', 'KWD' => '2.1255'], 'valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0'], 'monthly', ['GBP', 'KWD'], $apRows, [], $apUk);
+assertContains('up to 3 decimal places', (string) $apKwdBad['errors']['amount_KWD'], '0042: four decimals in KWD are refused, saying three are allowed');
+// 🔁 A stored three-decimal value ("6.990", as DECIMAL(15,3) returns it) is the
+//    same price as the typed 6.99: unchanged, and a bought one stays frozen.
+assertEquals('unchanged', adminPlansPriceChangeDecision('6.990', 'GBP', 699, true), '0042: stored "6.990" and typed 6.99 are the same price');
+assertEquals('frozen', adminPlansPriceChangeDecision('6.990', 'GBP', 749, true), '0042: a bought "6.990" price cannot become 7.49');
+assertEquals(['pro'], adminPlansTrialPlanChoices([$apTrialRow(['priceMonthly' => '5.490', 'priceYearly' => '0.000'])]), '0042: a paid plan read back with three decimals can still be the trial plan');
+assertEquals(['pro'], adminPlansTrialPlanChoices([$apTrialRow(['priceMonthly' => '99999999999.000', 'priceYearly' => '0.000'])]), '0042: ...also with eleven whole digits');
+$apMirrorThree = adminMirrorDecision(['priceMonthly' => '6.990', 'priceYearly' => '49.990', 'currency' => 'GBP'], ['monthly' => '6.99', 'yearly' => '49.99', 'hasAnyPrice' => true, 'managed' => ['monthly' => true, 'yearly' => true]], 'GBP');
+assertFalse($apMirrorThree['change'], '0042: the mirror sees "6.990" and 6.99 as the same (no needless write)');
 assertFalse(str_contains($apRegistry['billing_currencies']['help'], 'ZWG'), 'finding 1.1: the help text does not list all 155 codes');
 $apCadGroup = adminPlansProcessPriceGroup(['amount' => ['GBP' => '6.99', 'CAD' => '12.50'], 'valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0'], 'monthly', ['GBP', 'CAD'], $apRows, [], $apUk);
 assertEquals([['op' => 'create', 'currency' => 'CAD', 'amount' => '12.50']], $apCadGroup['operations'], 'finding 1.1: the price form reads a CAD price when CAD is offered, and saves it as exactly 12.50');

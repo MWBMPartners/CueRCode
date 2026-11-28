@@ -585,7 +585,8 @@ function adminSettingsRegistry(): array
     //    whether the pricing page shows prices. Group and type match the
     //    migration's rows (tests/test_admin_settings.php checks this).
     // 🌍 Codex finding 1.1: every current ISO 4217 currency whose prices the
-    //    database can hold exactly (not the three-decimal ones such as KWD).
+    //    database can hold exactly - since upgrade 0006 (decision 0042) that is
+    //    all of them, the three-decimal ones such as KWD included.
     $currencyChoices = [];
     foreach (moneyCurrencyInfo() as $currencyCode => $currencyFacts) {
         if (moneyCurrencyCanBeOffered($currencyCode)) {
@@ -595,7 +596,7 @@ function adminSettingsRegistry(): array
     $fields[] = adminSettingsField([
         'key' => 'billing_currencies', 'section' => 'prices', 'subgroup' => 'Currencies, price promise and the pricing page', 'kind' => 'currency_list', 'group' => 'billing', 'type' => 'string',
         'label' => 'Currencies prices can be set in',
-        'help' => 'Three-letter ISO 4217 codes separated by commas, for example GBP,USD,EUR,CAD. Any current currency can be used except the few with three decimal places (such as KWD), which cannot be offered yet. The plan price screen shows one box for each. Removing a currency hides its boxes; prices already saved in it are kept.',
+        'help' => 'Three-letter ISO 4217 codes separated by commas, for example GBP,USD,EUR,CAD. Any current currency can be used, including those with three decimal places (such as KWD) and none (such as JPY). The plan price screen shows one box for each. Removing a currency hides its boxes; prices already saved in it are kept.',
         'allowEmpty' => false, 'maxLength' => 100,
         'description' => 'Currencies prices can be set in: three-letter codes separated by commas, for example GBP,USD,EUR',
     ]);

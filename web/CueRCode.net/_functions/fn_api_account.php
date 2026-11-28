@@ -1612,6 +1612,11 @@ function collectAccountExportData(int $userID): array
         }
         $stmt->close();
 
+        // 💷 Decision 0042: amounts are stored with three decimal places, so
+        //    each is written in its currency's own (pounds "12.50", not
+        //    "12.500"; dinars "1.234"). fn_money.php is pure (functions only).
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_money.php';
+
         foreach ($subscriptionRows as $subRow) {
             $subscriptionId = (int) $subRow['subscriptionID'];
             $payments       = [];
@@ -1628,7 +1633,7 @@ function collectAccountExportData(int $userID): array
                     $payments[] = [
                         'provider'         => (string) $payRow['provider'],
                         'provider_txn_ref' => (string) $payRow['providerTxnRef'],
-                        'amount'           => (string) $payRow['amount'],
+                        'amount'           => moneyStoredDecimalForOutput((string) $payRow['amount'], (string) $payRow['currency']),
                         'currency'         => (string) $payRow['currency'],
                         'status'           => (string) $payRow['status'],
                         'created_at'       => (string) $payRow['createdAt'],

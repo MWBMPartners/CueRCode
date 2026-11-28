@@ -143,6 +143,11 @@ assertEquals(['From', '£150', '/month'], [$ppBlock['prefix'], $ppBlock['headlin
 assertFalse(str_contains(json_encode($ppBlock), 'Free'), 'contact card: a yearly figure of 0.00 is never shown as "Free"');
 assertFalse($ppContact['isZeroPrice'], 'contact card: never treated as a free plan');
 assertEquals('From £150.50', 'From ' . pricingPriceBlock($ppDisplay(['ctaMode' => 'contact', 'priceMonthly' => '150.50']), true)['headline'], 'contact card: pence are kept when there are some');
+// 🗄️ Decision 0042: the three-decimal text the columns now give back.
+assertEquals(['From', '£150', '/month'], array_slice(array_values(pricingPriceBlock($ppDisplay(['ctaMode' => 'contact', 'priceMonthly' => '150.000', 'priceYearly' => '0.000']), true)), 0, 3), '0042: contact card: "150.000" still reads "From £150/month"');
+assertEquals("KWD\u{00A0}99", pricingPriceBlock($ppDisplay(['ctaMode' => 'contact', 'priceMonthly' => '99.000', 'currency' => 'KWD']), true)['headline'], '0042: contact card: a whole number of dinars reads "From KWD 99", without ".000"');
+assertEquals("KWD\u{00A0}99.500", pricingPriceBlock($ppDisplay(['ctaMode' => 'contact', 'priceMonthly' => '99.500', 'currency' => 'KWD']), true)['headline'], '0042: contact card: fils are kept when there are some');
+assertEquals(['£6.99', 'or £49.99 billed yearly'], [pricingPriceBlock($ppDisplay(['priceMonthly' => '6.990', 'priceYearly' => '49.990']), true)['headline'], pricingPriceBlock($ppDisplay(['priceMonthly' => '6.990', 'priceYearly' => '49.990']), true)['subline']], '0042: an ordinary card with "6.990" / "49.990" reads £6.99, or £49.99 billed yearly');
 $ppContactNone = pricingPriceBlock($ppDisplay(['ctaMode' => 'contact']), true);
 assertEquals('Price on request', $ppContactNone['headline'], 'contact card with no price at all: "Price on request", not "Free"');
 assertFalse($ppDisplay(['ctaMode' => 'contact'])['isZeroPrice'], 'contact plan at zero is still not free');
