@@ -16,13 +16,14 @@ Owner (2026-11-27): work autonomously until the **first version** can be launche
 - **Not verified anywhere:** real browser pass; DreamHost; real Microsoft mail; real human-check providers; HTTPS/HSTS; MySQL 8.4 for the newest scenarios.
 
 ### In flight (watched, this session) — 2026-11-28
-1. **Opus fix builder** (main working copy): every finding in `.claude/plans/163-merged-review-report.md` (#163). Codex pricing findings are done (`8cd9a06`, `c46e84c`, `17eeda7`; suite 8936/8936).
-- Codex works with the account default model only (`gpt-6.1-terra`); use `-c model_reasoning_effort=high`, read-only, in pieces.
+Built and committed up to `35e87c2` (unit suite 9198/9198, PHP 8.5.12; 8 real-database scripts on MySQL 8.0.36, MySQL 8.4 and MariaDB 10.6): Codex pricing fixes, human check review fixes, decisions 0040-0042 (upgrades now run to `0006`). Nothing pushed.
+1. **Opus check** of `c95d1a5..35e87c2`. Report: `.claude/plans/launch-round3-review-report.md`.
+2. **Codex review** (background script, waits until 04:52 on 2026-11-28 after a usage limit): human check, no-JavaScript route, pricing and CI changes. Default model, effort high.
 
 ### Next (order)
-1. Opus builder: decision 0040 database tests in the deploy gate and CI (#174), 0041 no price on the Free plan (#175), 0042 three-decimal currencies, new upgrade `0006` (#176). Dynamic QR then takes `0007` (#164).
-2. Opus check, then Codex, of everything since `fe317f6`, until clean → push `work-in-progress` (decision 0008) → comment/close #31, #155, #159-#161, #163, #174-#176 → move finished review reports to `.claude/plans/history/`.
-3. First-launch plan WP5 → dynamic QR WP4 → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
+1. Fix findings → Opus check → Codex, until clean → push `work-in-progress` (decision 0008) → comment/close #31, #155, #159-#161, #163, #174-#176 → move finished review reports to `.claude/plans/history/`.
+2. First-launch plan WP5 → dynamic QR WP4 (upgrade `0007`, #164) → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
+- Only GitHub can prove: the new database-test jobs and the deploy gate (first push to `alpha`).
 - Model tiers (decision 0001): gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium (money and security = Opus); every check or review = Opus.
 
 ### Waiting on the owner
