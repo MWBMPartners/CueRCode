@@ -1125,7 +1125,7 @@ if (getenv('CUERCODE_IT_DUMP_PAGE') !== false) {
 }
 asCheck('J', $asPage['exit'] === 0 && str_contains($asPage['html'], '<h1'), 'GET (unlocked): the page renders (exit ' . $asPage['exit'] . ', ' . strlen($asPage['html']) . ' bytes)' . ($asPage['err'] !== '' ? ' stderr: ' . substr($asPage['err'], 0, 300) : ''));
 asCheck('J', substr_count($asPage['html'], '<h1') === 1, 'exactly one h1');
-asCheck('J', substr_count($asPage['html'], '<section id=') === 0 && substr_count($asPage['html'], 'id="section-') === 10, 'ten sections (dynamic QR added, #165)');
+asCheck('J', substr_count($asPage['html'], '<section id=') === 0 && substr_count($asPage['html'], 'id="section-') === 11, 'eleven sections (dynamic QR added, #165; abuse reports, #169)');
 asCheck('J', !str_contains($asPage['html'], $asSecrets['page']), 'the page does not contain the stored secret text');
 asCheck('J', !str_contains($asPage['html'], $asStoredCipher) && !str_contains($asPage['html'], substr($asStoredCipher, 0, 24)), 'the page does not contain the stored ciphertext');
 asCheck('J', str_contains($asPage['html'], 'Set - last changed'), 'the page says the secret is Set, and when it was last changed');
@@ -1135,7 +1135,7 @@ asCheck('J', str_contains($asPage['html'], 'Editing unlocked until') && !str_con
 foreach (array_keys(adminSettingsSections()) as $asSectionId) {
     asCheck('J', str_contains($asPage['html'], '<input type="hidden" name="fp" value="' . asFingerprint($asSectionId) . '">'), 'the ' . $asSectionId . ' form carries the current fingerprint');
 }
-asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 10, 'all ten forms have the unsaved-changes warning');
+asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 11, 'all eleven forms have the unsaved-changes warning');
 asCheck('J', str_contains($asPage['html'], 'Save PayPal settings') && str_contains($asPage['html'], 'Save prices, VAT and refunds') && str_contains($asPage['html'], 'Save email settings') && !str_contains($asPage['html'], 'Save email (microsoft'), 'each section has its own button words');
 asCheck('J', str_contains($asPage['html'], '(required)') && str_contains($asPage['html'], 'data-admin-confirm-check="Remove this stored secret?"'), 'required boxes say so and the Remove tick asks for confirmation');
 asCheck('J', str_contains($asPage['html'], 'name="f[password_reset_request_daily_cap]"') && str_contains($asPage['html'], 'name="f[verification_resend_min_gap_seconds]"'), 'the emailed-link limits are on the page');
