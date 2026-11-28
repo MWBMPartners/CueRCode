@@ -178,7 +178,7 @@ if (isset($ipArguments[0]) && $ipArguments[0] === '--save-group') {
         if ($ipChildFingerprint === '@current') {
             $ipChildFingerprint = adminPlansPricesFingerprint((array) adminPlansLoadPrices((int) $ipRequest['planID'], false));
         }
-        $ipChildResult = adminPricesSaveGroup($ipChildAdmin, (int) $ipRequest['planID'], (string) $ipRequest['group'], $ipChildFingerprint, $ipRequest['post']);
+        $ipChildResult = adminPricesSaveGroup($ipChildAdmin, (int) $ipRequest['planID'], (string) $ipRequest['group'], $ipChildFingerprint, ipFullPost((array) $ipRequest['post']));
     }
     echo '@@RESULT@@' . json_encode($ipChildResult) . PHP_EOL;
     exit(0);
@@ -253,6 +253,19 @@ foreach (['install.sql', 'seed_data.sql'] as $ipSqlFile) {
 // 🧰 Helpers
 // ==============================================================================
 $ipChecks = [];
+
+/**
+ * 📝 A price-group request as the real form sends it: the four date and time
+ *    boxes and the "recommended" box are always there (empty unless the test
+ *    gives them). Codex finding 1.2: a request without them is refused.
+ *
+ * @param array<string, mixed> $ipPost What the test wants to send
+ * @return array<string, mixed> The complete request
+ */
+function ipFullPost(array $ipPost): array
+{
+    return array_merge(['valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0'], $ipPost);
+}
 
 /**
  * 📝 Record one check and print it.
@@ -440,7 +453,7 @@ ipCheck('B', ipAudits($ipServer, 'plan.create', 'team_plus') === 1, 'one plan.cr
 $ipDuplicate = adminPlansCreate($ipAdmin, ['plan_key' => 'team_plus', 'plan_kind' => 'standard', 'plan_name' => 'Again', 'sort_order' => '1']);
 ipCheck('B', $ipDuplicate['ok'] === false && isset($ipDuplicate['errors']['plan_key']), 'the same key again is refused');
 
-$ipSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '7.99', 'USD' => '6.9', 'EUR' => ''], 'valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0']);
+$ipSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '7.99', 'USD' => '6.9', 'EUR' => ''], 'valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0']));
 ipCheck('B', $ipSaved['ok'] === true && $ipSaved['changed'] === true, 'monthly GBP and USD prices saved');
 $ipTeamGbp = ipPrice($ipServer, 'team_plus', 'monthly_gbp');
 $ipTeamUsd = ipPrice($ipServer, 'team_plus', 'monthly_usd');
@@ -453,18 +466,42 @@ ipCheck('B', $ipTeam['priceMonthly'] === '7.99' && $ipTeam['currency'] === 'GBP'
 $ipMirrorAudit = ipLastAudit($ipServer, 'plan.update');
 ipCheck('B', $ipMirrorAudit !== null && $ipMirrorAudit['entityKey'] === 'team_plus' && str_contains((string) $ipMirrorAudit['reason'], 'copied from the price list'), 'the mirror wrote its own plan.update audit row');
 
-$ipSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '79.99', 'USD' => '', 'EUR' => ''], 'recommended' => '1']);
+$ipSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '79.99', 'USD' => '', 'EUR' => ''], 'recommended' => '1']));
 ipCheck('B', $ipSaved['ok'] === true, 'yearly GBP saved as the recommended price');
 $ipTeam = ipPlan($ipServer, 'team_plus');
 ipCheck('B', $ipTeam['priceMonthly'] === '7.99' && $ipTeam['priceYearly'] === '79.99', 'mirror: monthly from the monthly group, yearly from the yearly group (the recommended flag is on yearly)');
 ipCheck('B', (int) ipPrice($ipServer, 'team_plus', 'yearly_gbp')['isDefault'] === 1, 'yearly is flagged recommended');
-$ipSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '7.99', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']);
+$ipSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '7.99', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']));
 ipCheck('B', $ipSaved['ok'] === true && (int) ipPrice($ipServer, 'team_plus', 'monthly_gbp')['isDefault'] === 1 && (int) ipPrice($ipServer, 'team_plus', 'yearly_gbp')['isDefault'] === 0, 'ticking monthly as recommended takes it off yearly');
 ipCheck('B', ipPlan($ipServer, 'team_plus')['priceMonthly'] === '7.99', 'moving the recommended flag does not change what is mirrored');
-$ipUnchanged = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '7.99', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']);
+$ipUnchanged = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '7.99', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']));
 ipCheck('B', $ipUnchanged['ok'] === true && $ipUnchanged['changed'] === false, 'saving the same again changes nothing');
-$ipWrongGroup = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'lifetime', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '1.00']]);
+$ipWrongGroup = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'lifetime', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '1.00']]));
 ipCheck('B', $ipWrongGroup['ok'] === false && ipCount($ipServer, 'SELECT COUNT(*) FROM `tblPlanPricePoints` WHERE `planID` = ? AND `priceGroupKey` = \'lifetime\'', 'i', [$ipTeamID]) === 0, 'a hand-made group this kind of plan cannot have is refused');
+
+// 🗓️ Codex finding 1.2 (7n Phase 2 review): a hand-made request with the
+//    same amounts but WITHOUT the date boxes used to clear the group's sale
+//    dates. It is now refused and the stored dates stay as they were.
+$ipDated = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '7.99', 'USD' => '6.90', 'EUR' => ''], 'valid_until_date' => '2027-01-31', 'recommended' => '1']));
+ipCheck('B', $ipDated['ok'] === true && ipPrice($ipServer, 'team_plus', 'monthly_gbp')['validUntil'] === '2027-01-31 23:59:59' && ipPrice($ipServer, 'team_plus', 'monthly_usd')['validUntil'] === '2027-01-31 23:59:59', 'finding 1.2 setup: an end date (31 Jan 2027, UK time) is saved on both monthly prices');
+$ipNoDates = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '7.99', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']);
+ipCheck('B', $ipNoDates['ok'] === false && isset($ipNoDates['errors']['form']), 'finding 1.2: the same amounts without the date boxes are REFUSED: ' . json_encode($ipNoDates['errors']));
+ipCheck('B', ipPrice($ipServer, 'team_plus', 'monthly_gbp')['validUntil'] === '2027-01-31 23:59:59' && ipPrice($ipServer, 'team_plus', 'monthly_usd')['validUntil'] === '2027-01-31 23:59:59', 'finding 1.2: ...and the stored end dates are untouched');
+$ipCleared = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '7.99', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']));
+ipCheck('B', $ipCleared['ok'] === true && ipPrice($ipServer, 'team_plus', 'monthly_gbp')['validUntil'] === null && ipPrice($ipServer, 'team_plus', 'monthly_usd')['validUntil'] === null, 'finding 1.2: date boxes sent EMPTY on purpose still clear the end dates');
+
+// 🌍 Codex finding 1.1: a currency beyond the first four (CAD, two decimal
+//    places) and a zero-decimal one (KRW) are offered and saved exactly in
+//    the DECIMAL(10,2) column; the offered list is put back afterwards.
+$ipServer->query("UPDATE `tblSettings` SET `settingValue` = 'GBP,USD,EUR,CAD,KRW' WHERE `settingKey` = 'billing_currencies'");
+$ipWider = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '79.99', 'USD' => '', 'EUR' => '', 'CAD' => '139.5', 'KRW' => '125000']]));
+ipCheck('B', $ipWider['ok'] === true && ipPrice($ipServer, 'team_plus', 'yearly_cad')['amount'] === '139.50' && ipPrice($ipServer, 'team_plus', 'yearly_krw')['amount'] === '125000.00', 'finding 1.1: CAD 139.5 is stored exactly as 139.50 and KRW 125000 as 125000.00: ' . json_encode($ipWider['errors']));
+ipCheck('B', moneyFormat((int) moneyStoredDecimalToMinor(ipPrice($ipServer, 'team_plus', 'yearly_cad')['amount'], 'CAD'), 'CAD') === "CAD\u{00A0}139.50" && moneyFormat((int) moneyStoredDecimalToMinor(ipPrice($ipServer, 'team_plus', 'yearly_krw')['amount'], 'KRW'), 'KRW') === "KRW\u{00A0}125,000", 'finding 1.1: ...and both read back and show exactly ("CAD 139.50", "KRW 125,000")');
+foreach (['yearly_cad', 'yearly_krw'] as $ipWiderKey) {
+    $ipWiderRow = ipPrice($ipServer, 'team_plus', $ipWiderKey);
+    ipCheck('B', adminPricesDelete($ipAdmin, $ipTeamID, (int) $ipWiderRow['pricePointID'], ipPricesFp($ipTeamID), true)['ok'] === true, 'finding 1.1 tidy-up: the ' . $ipWiderKey . ' test price is deleted again');
+}
+$ipServer->query("UPDATE `tblSettings` SET `settingValue` = 'GBP,USD,EUR' WHERE `settingKey` = 'billing_currencies'");
 
 // ==============================================================================
 // C. P1 freezing
@@ -472,10 +509,10 @@ ipCheck('B', $ipWrongGroup['ok'] === false && ipCount($ipServer, 'SELECT COUNT(*
 echo PHP_EOL . 'C. P1 freezing' . PHP_EOL;
 $ipFormFp = ipPricesFp($ipTeamID);               // the form is opened...
 ipBuy($ipServer, $ipCustomerID, (int) $ipTeamGbp['pricePointID']);   // ...then somebody buys
-$ipFrozen = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', $ipFormFp, ['amount' => ['GBP' => '8.49', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']);
+$ipFrozen = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', $ipFormFp, ipFullPost(['amount' => ['GBP' => '8.49', 'USD' => '6.90', 'EUR' => ''], 'recommended' => '1']));
 ipCheck('C', $ipFrozen['ok'] === false && isset($ipFrozen['errors']['amount_GBP']), 'changing a price bought AFTER the form was opened is refused');
 ipCheck('C', ipPrice($ipServer, 'team_plus', 'monthly_gbp')['amount'] === '7.99', '...the amount is still 7.99');
-$ipUsdChange = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '7.99', 'USD' => '7.49', 'EUR' => ''], 'recommended' => '1']);
+$ipUsdChange = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '7.99', 'USD' => '7.49', 'EUR' => ''], 'recommended' => '1']));
 ipCheck('C', $ipUsdChange['ok'] === true && ipPrice($ipServer, 'team_plus', 'monthly_usd')['amount'] === '7.49', 'the unbought USD price in the same group can still change');
 $ipDeleteFrozen = adminPricesDelete($ipAdmin, $ipTeamID, (int) $ipTeamGbp['pricePointID'], ipPricesFp($ipTeamID), true);
 ipCheck('C', $ipDeleteFrozen['ok'] === false && ipPrice($ipServer, 'team_plus', 'monthly_gbp') !== null, 'a bought price cannot be deleted');
@@ -486,7 +523,7 @@ $ipOld = ipPrice($ipServer, 'team_plus', 'monthly_gbp');
 ipCheck('C', $ipRetired['ok'] === true && (int) $ipOld['isActive'] === 0 && $ipOld['validUntil'] !== null && $ipOld['amount'] === '7.99', 'a bought price can be retired (amount untouched, end date set)');
 ipCheck('C', ipAudits($ipServer, 'price.retire') === 1, 'one price.retire audit row');
 ipCheck('C', ipPlan($ipServer, 'team_plus')['priceMonthly'] === '7.99' && count($ipRetired['warnings']) === 1, 'no current monthly GBP price: the pricing page keeps 7.99 (never "Free"), with a warning');
-$ipReplaced = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '8.49', 'USD' => '7.49', 'EUR' => ''], 'recommended' => '1']);
+$ipReplaced = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'monthly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '8.49', 'USD' => '7.49', 'EUR' => ''], 'recommended' => '1']));
 $ipNew = ipPrice($ipServer, 'team_plus', 'monthly_gbp_2');
 ipCheck('C', $ipReplaced['ok'] === true && $ipNew !== null && $ipNew['amount'] === '8.49' && $ipNew['priceGroupKey'] === 'monthly', 'the replacement price is monthly_gbp_2 in the same group');
 ipCheck('C', ipPlan($ipServer, 'team_plus')['priceMonthly'] === '8.49', 'the replacement is mirrored');
@@ -546,7 +583,7 @@ ipCheck('D', is_array($ipRace['result']) && $ipRace['result']['ok'] === false &&
 ipCheck('D', ipPrice($ipServer, 'team_plus', 'monthly_usd')['amount'] === '7.49', '...the USD price is still 7.49');
 
 // D2: the purchase is rolled back → the waiting save goes ahead.
-$ipEurSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', ipPricesFp($ipTeamID), ['amount' => ['GBP' => '79.99', 'USD' => '', 'EUR' => '69.00'], 'recommended' => '0']);
+$ipEurSaved = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', ipPricesFp($ipTeamID), ipFullPost(['amount' => ['GBP' => '79.99', 'USD' => '', 'EUR' => '69.00'], 'recommended' => '0']));
 $ipEurRow = ipPrice($ipServer, 'team_plus', 'yearly_eur');
 ipCheck('D', $ipEurSaved['ok'] === true && $ipEurRow !== null, 'a yearly EUR price is added (for D2)');
 $ipOther->begin_transaction();
@@ -568,11 +605,11 @@ $ipTeam = ipPlan($ipServer, 'team_plus');
 ipCheck('E', $ipTeam['planName'] === 'Team Plus (first)' && (int) $ipTeam['sortOrder'] === 5, '...and nothing of it was written');
 ipCheck('E', ipAudits($ipServer, 'plan.update', 'team_plus') >= 1 && ipLastAudit($ipServer, 'plan.update')['changesJSON'] !== null && str_contains((string) ipLastAudit($ipServer, 'plan.update')['changesJSON'], 'Team Plus (first)'), 'the first save is in the audit log with old and new name');
 $ipPriceFpBoth = ipPricesFp($ipTeamID);
-$ipFirst = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', $ipPriceFpBoth, ['amount' => ['GBP' => '79.99', 'USD' => '89.00', 'EUR' => '71.00'], 'recommended' => '0']);
-$ipSecond = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', $ipPriceFpBoth, ['amount' => ['GBP' => '79.99', 'USD' => '99.00', 'EUR' => '71.00'], 'recommended' => '0']);
+$ipFirst = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', $ipPriceFpBoth, ipFullPost(['amount' => ['GBP' => '79.99', 'USD' => '89.00', 'EUR' => '71.00'], 'recommended' => '0']));
+$ipSecond = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', $ipPriceFpBoth, ipFullPost(['amount' => ['GBP' => '79.99', 'USD' => '99.00', 'EUR' => '71.00'], 'recommended' => '0']));
 ipCheck('E', $ipFirst['ok'] === true && $ipSecond['ok'] === false && $ipSecond['stale'] === true, 'two price forms at once: the second is refused');
 ipCheck('E', ipPrice($ipServer, 'team_plus', 'yearly_usd')['amount'] === '89.00', '...the first one\'s 89.00 stands');
-$ipNoFp = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', '', ['amount' => ['GBP' => '79.99', 'USD' => '99.00', 'EUR' => '71.00']]);
+$ipNoFp = adminPricesSaveGroup($ipAdmin, $ipTeamID, 'yearly', '', ipFullPost(['amount' => ['GBP' => '79.99', 'USD' => '99.00', 'EUR' => '71.00']]));
 ipCheck('E', $ipNoFp['ok'] === false && $ipNoFp['stale'] === true, 'a form with no fingerprint is refused');
 ipCheck('E', ipPlanFp($ipTeamID) === adminPlansFormFingerprint(ipPlan($ipServer, 'team_plus')), '(the plan fingerprint is computed the same way from a loaded row)');
 
@@ -584,7 +621,7 @@ $ipDelUsed = adminPlansDelete($ipAdmin, $ipTeamID, ipPlanFp($ipTeamID), true);
 ipCheck('F', $ipDelUsed['ok'] === false && ipPlan($ipServer, 'team_plus') !== null, 'P4: a plan somebody bought cannot be deleted');
 $ipSpare = adminPlansCreate($ipAdmin, ['plan_key' => 'spare_plan', 'plan_kind' => 'standard', 'plan_name' => 'Spare', 'sort_order' => '0', 'cta_mode' => 'checkout', 'promise_mode' => '']);
 $ipSpareID = (int) $ipSpare['planID'];
-adminPricesSaveGroup($ipAdmin, $ipSpareID, 'monthly', ipPricesFp($ipSpareID), ['amount' => ['GBP' => '1.50', 'USD' => '', 'EUR' => '']]);
+adminPricesSaveGroup($ipAdmin, $ipSpareID, 'monthly', ipPricesFp($ipSpareID), ipFullPost(['amount' => ['GBP' => '1.50', 'USD' => '', 'EUR' => '']]));
 $ipDelNoTick = adminPlansDelete($ipAdmin, $ipSpareID, ipPlanFp($ipSpareID), false);
 ipCheck('F', $ipDelNoTick['ok'] === false && ipPlan($ipServer, 'spare_plan') !== null, 'P4: deleting needs the tick');
 $ipDel = adminPlansDelete($ipAdmin, $ipSpareID, ipPlanFp($ipSpareID), true);
@@ -620,7 +657,7 @@ foreach (['anonymous', 'free', 'pro'] as $ipProtectedKey) {
 //    even if the page offered it (an out-of-date page or a hand-made request).
 $ipEndedMade = adminPlansCreate($ipAdmin, ['plan_key' => 'ended_it', 'plan_kind' => 'standard', 'plan_name' => 'Ended', 'sort_order' => '7', 'cta_mode' => 'checkout']);
 $ipEndedID = (int) $ipEndedMade['planID'];
-adminPricesSaveGroup($ipAdmin, $ipEndedID, 'monthly', ipPricesFp($ipEndedID), ['amount' => ['GBP' => '4.00']]);
+adminPricesSaveGroup($ipAdmin, $ipEndedID, 'monthly', ipPricesFp($ipEndedID), ipFullPost(['amount' => ['GBP' => '4.00']]));
 adminPlansSetOnSale($ipAdmin, $ipEndedID, ipPlanFp($ipEndedID), true, false);
 ipCheck('F', in_array('ended_it', (array) adminSettingsTrialPlanKeys(), true), 'recheck F2 setup: a paid plan on sale with no dates may be the trial plan');
 $ipEndedDated = adminPlansUpdate($ipAdmin, $ipEndedID, ipPlanFp($ipEndedID), ['available_until_date' => '2026-01-01']);
@@ -682,7 +719,7 @@ echo PHP_EOL . 'I. One transaction' . PHP_EOL;
 $ipV2ID = (int) $ipV2['planID'];
 $ipServer->query("CREATE TRIGGER `it_refuse_price_audit` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` = 'price.create' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'integration test: audit refused'; END IF; END");
 $ipBefore = ipCount($ipServer, 'SELECT COUNT(*) FROM `tblPlanPricePoints` WHERE `planID` = ?', 'i', [$ipV2ID]);
-$ipFailed = adminPricesSaveGroup($ipAdmin, $ipV2ID, 'monthly', ipPricesFp($ipV2ID), ['amount' => ['GBP' => '9.49', 'USD' => '7.49', 'EUR' => '8.00'], 'recommended' => '1']);
+$ipFailed = adminPricesSaveGroup($ipAdmin, $ipV2ID, 'monthly', ipPricesFp($ipV2ID), ipFullPost(['amount' => ['GBP' => '9.49', 'USD' => '7.49', 'EUR' => '8.00'], 'recommended' => '1']));
 ipCheck('I', $ipFailed['ok'] === false, 'the save is reported as not saved');
 ipCheck('I', ipPrice($ipServer, 'team_plus_v2', 'monthly_gbp')['amount'] === '8.49', 'the amount change made before the failing audit row was undone (still 8.49)');
 ipCheck('I', ipCount($ipServer, 'SELECT COUNT(*) FROM `tblPlanPricePoints` WHERE `planID` = ?', 'i', [$ipV2ID]) === $ipBefore, 'no new EUR price was left behind');
@@ -749,6 +786,19 @@ ipCheck('L', ipPublicCards()['business']['text'] === '£199.99 /year | Billed ye
 $ipServer->query("UPDATE `tblPlanPricePoints` SET `validFrom` = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE `planID` = " . $ipBusinessID . " AND `priceKey` = 'monthly_gbp_2'");
 ipCheck('L', ipPublicCards()['business']['text'] === '£26.99 /month | or £199.99 billed yearly', 'F6: once its start has passed it IS shown, without anyone saving');
 
+// L2b. Codex finding 3.3: with billing_price_points_enabled ON, a second
+//      monthly offer flagged "recommended" (later in the display order) must
+//      not take over the card - the page and the admin preview both choose
+//      by price group, on sale now, lowest display order first.
+$ipServer->query("INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `priceGroupKey`, `billingInterval`, `intervalCount`, `amount`, `currency`, `isDefault`, `isActive`, `sortOrder`) VALUES (" . $ipBusinessID . ", 'monthly_gbp_3', 'monthly', 'monthly', 1, 29.99, 'GBP', 1, 1, 5)");
+$ipServer->query("UPDATE `tblSettings` SET `settingValue` = '1' WHERE `settingKey` = 'billing_price_points_enabled'");
+clearConfigCache();
+$ipPreviewSelection = adminMirrorSelection((array) adminPlansLoadPrices($ipBusinessID, false), 'GBP', adminPlansNowUtc());
+ipCheck('L', (bool) getConfig('billing_price_points_enabled', false) === true && ipPublicCards()['business']['text'] === '£26.99 /month | or £199.99 billed yearly' && $ipPreviewSelection['monthly'] === '26.99', 'finding 3.3: with price points switched on, the card still shows the group\'s £26.99 (not the recommended £29.99), the same as the admin preview\'s choice (' . (string) $ipPreviewSelection['monthly'] . ')');
+$ipServer->query("UPDATE `tblSettings` SET `settingValue` = '0' WHERE `settingKey` = 'billing_price_points_enabled'");
+clearConfigCache();
+$ipServer->query("DELETE FROM `tblPlanPricePoints` WHERE `planID` = " . $ipBusinessID . " AND `priceKey` = 'monthly_gbp_3'");
+
 // L3. Nothing on sale any more for a paid plan: "Price coming soon" (decision 0021).
 $ipServer->query("UPDATE `tblPlanPricePoints` SET `validUntil` = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE `planID` = " . $ipBusinessID);
 $ipCards = ipPublicCards();
@@ -762,7 +812,7 @@ ipCheck('L', ipPublicCards()['business']['text'] === '£24.99 /month | or £199.
 // L4. The only price of an on-sale plan is DELETED through the editor.
 $ipSoloMade = adminPlansCreate($ipAdmin, ['plan_key' => 'solo_it', 'plan_kind' => 'standard', 'plan_name' => 'Solo', 'sort_order' => '6', 'cta_mode' => 'checkout']);
 $ipSoloID = (int) $ipSoloMade['planID'];
-$ipSoloSaved = adminPricesSaveGroup($ipAdmin, $ipSoloID, 'monthly', ipPricesFp($ipSoloID), ['amount' => ['GBP' => '5.00']]);
+$ipSoloSaved = adminPricesSaveGroup($ipAdmin, $ipSoloID, 'monthly', ipPricesFp($ipSoloID), ipFullPost(['amount' => ['GBP' => '5.00']]));
 $ipSoloOnSale = adminPlansSetOnSale($ipAdmin, $ipSoloID, ipPlanFp($ipSoloID), true, false);
 ipCheck('L', $ipSoloMade['ok'] && $ipSoloSaved['ok'] && $ipSoloOnSale['ok'] && ipPublicCards()['solo_it']['text'] === '£5.00 /month | Billed monthly', 'setup: a new plan on sale at £5.00 a month');
 $ipSoloPrice = ipPrice($ipServer, 'solo_it', 'monthly_gbp');
@@ -824,7 +874,7 @@ $ipProID = (int) ipPlan($ipServer, 'pro')['planID'];
 //     change (which copies every plan's prices in the NEW currency), then the
 //     price save. Before the fix the save had read the main currency before
 //     its transaction, so it copied Pro back into the OLD currency.
-$ipUsdForPro = adminPricesSaveGroup($ipAdmin, $ipProID, 'monthly', ipPricesFp($ipProID), ['amount' => ['GBP' => '6.99', 'USD' => '8.99', 'EUR' => '']]);
+$ipUsdForPro = adminPricesSaveGroup($ipAdmin, $ipProID, 'monthly', ipPricesFp($ipProID), ipFullPost(['amount' => ['GBP' => '6.99', 'USD' => '8.99', 'EUR' => '']]));
 ipCheck('M', $ipUsdForPro['ok'] === true && ipPrice($ipServer, 'pro', 'monthly_usd')['amount'] === '8.99', 'setup: Pro gets a USD monthly price (8.99)');
 $ipOther->begin_transaction();
 $ipHold = $ipOther->query('SELECT `planID` FROM `tblSubscriptionPlans` WHERE `planID` = ' . $ipProID . ' FOR UPDATE');
@@ -846,7 +896,7 @@ ipCheck('M', ipPrice($ipServer, 'pro', 'monthly_gbp')['amount'] === '7.49', 'rac
 $ipStates = adminSettingsLoadRows($ipPricesKeys);
 $ipBack = adminSettingsProcessSection('prices', ['f' => ['billing_default_currency' => 'GBP']], (array) $ipStates);
 adminSettingsSaveSection($ipAdmin, 'prices', adminSettingsSectionFingerprint('prices', (array) $ipStates), $ipBack['changes']);
-adminPricesSaveGroup($ipAdmin, $ipProID, 'monthly', ipPricesFp($ipProID), ['amount' => ['GBP' => '6.99', 'USD' => '8.99', 'EUR' => '']]);
+adminPricesSaveGroup($ipAdmin, $ipProID, 'monthly', ipPricesFp($ipProID), ipFullPost(['amount' => ['GBP' => '6.99', 'USD' => '8.99', 'EUR' => '']]));
 ipCheck('M', ipPlan($ipServer, 'pro')['currency'] === 'GBP' && ipPlan($ipServer, 'pro')['priceMonthly'] === '6.99', 'tidy up: main currency GBP, Pro at 6.99 again');
 
 // M2. The trial-plan setting saved at the same moment the plan it names is
@@ -859,7 +909,7 @@ foreach (['delete first' => ['delete-plan', 'setting'], 'setting first' => ['set
     $ipRaceKey = 'race_trial_' . substr(md5($ipOrderName), 0, 6);
     $ipRaceMade = adminPlansCreate($ipAdmin, ['plan_key' => $ipRaceKey, 'plan_kind' => 'standard', 'plan_name' => 'Race ' . $ipOrderName, 'sort_order' => '9', 'cta_mode' => 'checkout']);
     $ipRaceID = (int) $ipRaceMade['planID'];
-    adminPricesSaveGroup($ipAdmin, $ipRaceID, 'monthly', ipPricesFp($ipRaceID), ['amount' => ['GBP' => '3.00']]);
+    adminPricesSaveGroup($ipAdmin, $ipRaceID, 'monthly', ipPricesFp($ipRaceID), ipFullPost(['amount' => ['GBP' => '3.00']]));
     adminPlansSetOnSale($ipAdmin, $ipRaceID, ipPlanFp($ipRaceID), true, false);
     ipCheck('M', in_array($ipRaceKey, (array) adminSettingsTrialPlanKeys(), true), $ipOrderName . ': setup: ' . $ipRaceKey . ' may be chosen as the trial plan');
 

@@ -1155,6 +1155,20 @@ itCheck('J empty db then seed check', $itSeedFailJ['ok'] === false && $itSeedFai
 itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'none' && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`') === 0 && itNumber($itJ, 'SELECT COUNT(*) FROM `tblQRCodeTypes`') === 0 && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === $itSettingsBeforeJ, 'F1: ...and NOTHING of the starting data was kept (no plans, no QR types, no marker), so the reload the page asks for loads it all again');
 $itJ->query('DROP TRIGGER `trg_it_j_refuse_price`');
 
+// J-b2. Codex finding 2.P1: an upgrade recorded as applied whose FILE IS GONE
+//       (simulated with a ledger row for a file that does not exist). Before
+//       the fix the starting data loaded without that upgrade's data steps,
+//       with only a warning, and the installer could lock itself. Now both
+//       the installer's first check and the load itself refuse, and nothing
+//       is written.
+$itJ->query("INSERT INTO `tblSchemaMigrations` (`migrationKey`, `checksum`, `appliedBy`) VALUES ('0099_it_file_gone', REPEAT('a', 64), 'test')");
+$itUnusableJ = migrationDbChangedAppliedUpgrades($itJ, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itUnusableJ['ok'] === true && $itUnusableJ['changed'] === [] && $itUnusableJ['unusable'] === ['0099_it_file_gone'], 'finding 2.P1: the installer\'s first check reports the applied upgrade whose file is missing: ' . json_encode($itUnusableJ));
+$itSeedGoneJ = migrationDbRunSeedSql($itJ, $itSeedSql, migrationDefaultDirectory());
+itCheck('J empty db then seed check', $itSeedGoneJ['ok'] === false && str_contains($itSeedGoneJ['refusal'], 'nothing was changed') && str_contains($itSeedGoneJ['refusal'], '0099_it_file_gone') && $itSeedGoneJ['stepsRun'] === 0, 'finding 2.P1: the starting-data load is REFUSED: ' . $itSeedGoneJ['refusal']);
+itCheck('J empty db then seed check', migrationDbSeedDataState($itJ)['state'] === 'none' && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSubscriptionPlans`') === 0 && itNumber($itJ, 'SELECT COUNT(*) FROM `tblSettings`') === $itSettingsBeforeJ, 'finding 2.P1: ...and nothing was written (no plans, no marker, settings unchanged)');
+$itJ->query("DELETE FROM `tblSchemaMigrations` WHERE `migrationKey` = '0099_it_file_gone'");
+
 // J-c. The retry: everything lands together, identical to a fresh install.
 //      ("Allowed to run" is not enough either - migration 0002 inserts some of
 //      the same settings as seed_data.sql, and the load must still SUCCEED.)
@@ -1238,7 +1252,11 @@ $itN2 = itFreshDb($itEnv, $itPort, $itDbN2);
 itRunSqlFile($itN2, $itInstallSql);
 itRunSqlFile($itN2, $itSeedSql);
 migrationRun($itN2, 'apply', 'test', $itDir0003, migrationDefaultInstallSqlPath());
-$itN2->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 5.49, `description` = 'Our own Pro wording.' WHERE `planKey` = 'pro'");
+// 📝 Codex finding 2.P2: owner edits that differ from the starting wording
+//    ONLY by a trailing space (Pro) or in capitals (Business, "sso") - the
+//    table's collation treats both as the same text.
+$itN2->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 5.49, `description` = 'For individuals who need dynamic QR codes, analytics, and automation. ' WHERE `planKey` = 'pro'");
+$itN2->query("UPDATE `tblSubscriptionPlans` SET `description` = 'For teams and organisations that need sso, roles, and enterprise-scale volume.' WHERE `planKey` = 'business'");
 $itN2->query("INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `billingInterval`, `amount`, `currency`) SELECT `planID`, 'yearly_gbp', 'yearly', 45.00, 'GBP' FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'");
 $itN2->query("INSERT INTO `tblSubscriptionPlans` (`planKey`, `planName`, `priceMonthly`, `priceYearly`, `currency`, `featuresJSON`, `limitsJSON`, `sortOrder`) VALUES ('enterprise', 'Our Enterprise', 150.00, 1500.00, 'GBP', '{}', '{}', 9)");
 $itN2->query("INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('billing', 'billing_currencies', 'GBP', 'string', 0, 1, 'Owner wording')");
@@ -1247,8 +1265,8 @@ $itUpN2 = migrationRun($itN2, 'apply', 'test', migrationDefaultDirectory(), migr
 itCheck('N owner changes kept', $itUpN2['status'] === 'ok', '0004 applies on a database the owner had already changed: ' . $itUpN2['error']);
 itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === '5.49', 'the owner\'s own Pro monthly price (£5.49, no longer the placeholder) is NOT moved to £6.99');
 itCheck('N owner changes kept', itValue($itN2, "SELECT `priceMonthly` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'") === '24.99', 'Business, still at the placeholder, IS moved to £24.99');
-itCheck('N owner changes kept', itValue($itN2, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === 'Our own Pro wording.', '#161: a Pro description the owner had changed is NOT overwritten');
-itCheck('N owner changes kept', str_contains(itValue($itN2, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'"), 'coming soon'), '#161: ...while the untouched Business description is updated');
+itCheck('N owner changes kept', itValue($itN2, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === 'For individuals who need dynamic QR codes, analytics, and automation. ', '#161 and Codex 2.P2: a Pro description the owner changed ONLY by adding a trailing space is NOT overwritten');
+itCheck('N owner changes kept', itValue($itN2, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'business'") === 'For teams and organisations that need sso, roles, and enterprise-scale volume.', 'Codex 2.P2: a Business description the owner changed ONLY in capitals ("sso") is NOT overwritten (byte-exact match; the untouched case is proved in N1)');
 itCheck('N owner changes kept', itValue($itN2, "SELECT CONCAT(`pp`.`amount`, '|', COALESCE(`pp`.`priceGroupKey`, 'NULL'), '|', `pp`.`isDefault`) FROM `tblPlanPricePoints` AS `pp` JOIN `tblSubscriptionPlans` AS `p` ON `p`.`planID` = `pp`.`planID` WHERE `p`.`planKey` = 'pro' AND `pp`.`priceKey` = 'yearly_gbp'") === '45.00|NULL|0', 'the owner\'s own Pro yearly price point (£45.00) is kept exactly, not replaced by the draft £49.99');
 // 💷 Review finding F5 (7n Phase 2 review): the price list must agree with the
 //    owner's own price, never hold the draft. Before the fix 0004 added the
