@@ -98,10 +98,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 82 |
-| `test_admin_access.php` | 665 |
-| `test_admin_csp.php` | 48 |
-| `test_admin_plans.php` | 653 |
-| `test_admin_settings.php` | 1351 |
+| `test_admin_access.php` | 668 |
+| `test_admin_csp.php` | 49 |
+| `test_admin_plans.php` | 660 |
+| `test_admin_settings.php` | 1462 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -111,22 +111,22 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_client_ip.php` | 260 |
 | `test_commercial_literals.php` | 9 |
 | `test_core.php` | 146 |
-| `test_credentials_template.php` | 8 |
+| `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
 | `test_deploy_test_gate.php` | 107 |
-| `test_dynamic_qr_schema.php` | 97 |
+| `test_dynamic_qr_schema.php` | 117 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
 | `test_email_exact_match.php` | 18 |
 | `test_email_log_privacy.php` | 15 |
-| `test_email_queue_runner.php` | 502 |
+| `test_email_queue_runner.php` | 510 |
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 144 |
 | `test_expiry_clock.php` | 6 |
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
-| `test_go2mylink.php` | 389 |
+| `test_go2mylink.php` | 469 |
 | `test_human_check.php` | 410 |
 | `test_human_check_fallbacks.php` | 129 |
 | `test_human_check_review_fixes.php` | 84 |
@@ -137,7 +137,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 73 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 576 |
+| `test_migrations.php` | 580 |
 | `test_money.php` | 709 |
 | `test_no_script_route_review_fixes.php` | 80 |
 | `test_oauth.php` | 136 |
@@ -158,11 +158,13 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9470** |
+| **Total** | **10190** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
 **Fourth-round review and second Codex review fixes (2026-11-28)** added three files: `test_email_exact_match.php` (18 checks: an email address is matched byte for byte, and no bare `email = ?` comparison is left in the site code), `test_offline_worker_privacy.php` (16: the offline worker never keeps a no-store or private page, `/admin` and `/install` are private, the cache version moved on) and `test_human_check_widget_script.php` (9: the real widget script under Node.js - a late provider answer cannot stop the fallback; skipped with a note where Node.js is missing). Checks were added to `test_admin_csp.php`, `test_log_mask.php`, `test_integration_web_server.php`, `test_human_check_fallbacks.php`, `test_human_check.php`, `test_pricing_page.php` and `test_migrations.php`, and old wording checks were updated in `test_account_recovery.php`, `test_admin_access.php`, `test_auth.php`, `test_admin_settings.php` and `test_human_check_review_fixes.php`. Real-database scripts gained scenario EX (`account_recovery`), 12d and the Low 3 check (`email_queue`), the look-alike spellings and eleven right sign-ins in R plus three outage checks in F (`human_check`), and P7-P9 (`migrations`). Each was shown failing on the code before its fix. Suite: **9470** in 62 files.
+
+**Dynamic QR review fixes (2026-11-28, H1, M1-M3, L1-L11; decisions 0045, 0046)** added checks to `test_go2mylink.php` (now 469: a link counts only on a confirmed short domain, found links switched off or pointing elsewhere, broken answers after sending, the alpha/beta block, the write-permission wording, ping must say pong, the 64 KB limit while reading), `test_dynamic_qr_schema.php` (117: the sync state word, raise-only limits, the abuse-report table for decision 0046, no published hash key), `test_admin_settings.php` (the key never follows the API address to another website; the abuse-report period) and `test_email_queue_runner.php` (the abuse-report clean-up). The stand-in server gained the scenarios `slowurl`, `garbled`, `nostatus`, `bigheaders` and `badlength`. Real-database parts: `email_queue_real_mysql.php` scenario 12e and more of `admin_settings_real_mysql.php` section Q (raise only, overdue payment, unknown limit name, not an admin, an audit row that cannot be written). Each was shown failing on the code before its fix, and removing each protection again makes a check fail. Suite: **10190** in 64 files.
 
 **Dynamic QR groundwork (2026-11-28, #164, #165)** added `test_go2mylink.php` (389 checks, about 10 seconds) and `test_dynamic_qr_schema.php` (97). `test_go2mylink.php` starts `tests/lib/go2mylink_standin_server.php`, a small HTTPS server on 127.0.0.1 that answers like Go2My.Link's API, with a throwaway certificate authority from `tests/lib/test_tls.php` (PHP's own OpenSSL functions; nothing installed). It proves success, 403, 409, 422, 429 (Retry-After), a time limit, a bad certificate (no request reaches the server), a web page or wrong-shaped JSON, a reply too large, a redirect not followed and the safe retry, then stops the server (closing its input stops it) and deletes the certificates. Nothing is sent to the real Go2My.Link. Both files failed first (the code did not exist yet); weakening the certificate check and following redirects in the code made 3 checks fail. Real-database parts: `migrations_real_mysql.php` scenario Q (upgrade 0007) and `admin_settings_real_mysql.php` section Q. Suite: **9972** in 61 files.
 
