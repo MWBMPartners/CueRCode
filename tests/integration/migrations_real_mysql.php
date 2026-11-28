@@ -105,7 +105,9 @@
  *   Scenario O. A database at 0004: an untouched "none" becomes "auto"; a
  *   "none" or "recaptcha" an admin or the command line chose (a row in the
  *   admin change log) is kept; an owner's own waiting time is kept; running
- *   0005 again changes nothing.
+ *   0005 again changes nothing; a stored value or description that differs
+ *   from the starting one only by capitals or a trailing space is kept byte
+ *   for byte (added 2026-11-28, merged review of #163).
  *
  *   Scenario J (extended). On the empty-database path 0004 leaves the plans
  *      and price-point tables EMPTY (review finding F1 still holds), and the
@@ -1368,6 +1370,24 @@ $itO->query("UPDATE `tblSettings` SET `settingValue` = 'recaptcha', `description
 migrationRun($itO, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck('O 0005 human check', itValue($itO, "SELECT CONCAT(`settingValue`, '|', `description`) FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'recaptcha|Owner wording', 'an owner\'s own provider ("recaptcha") and own description are KEPT');
 itCheck('O 0005 human check', $itSettingsAfterO !== '' && str_contains($itSettingsAfterO, 'bot_protection_when_unreachable=signin_only'), 'the new settings are in the security group (the outage rule starts as decision 0037)');
+itDropDb($itEnv, $itPort, $itDbO);
+
+// O4. Byte for byte: a stored value or description that differs from the
+//     starting one only by capitals or a trailing space is someone's own
+//     (the column's comparison rules would call them equal).
+foreach ([
+    'capitals'       => ['NONE', 'ACTIVE bot protection provider (none, turnstile, recaptcha, hcaptcha)'],
+    'trailing space' => ['none ', 'Active bot protection provider (none, turnstile, recaptcha, hcaptcha) '],
+] as $itO4Case => $itO4Values) {
+    $itO = itAt0004($itEnv, $itPort, $itDbO, $itInstallSql, $itSeedSql, $itDir0004);
+    $itO4Stmt = $itO->prepare("UPDATE `tblSettings` SET `settingValue` = ?, `description` = ? WHERE `settingKey` = 'bot_protection_provider'");
+    $itO4Stmt->bind_param('ss', $itO4Values[0], $itO4Values[1]);
+    $itO4Stmt->execute();
+    $itO4Stmt->close();
+    migrationRun($itO, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+    itCheck('O 0005 human check', itValue($itO, "SELECT CONCAT('[', `settingValue`, ']|[', `description`, ']') FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === '[' . $itO4Values[0] . ']|[' . $itO4Values[1] . ']', 'a stored value and description that differ from the starting ones only by ' . $itO4Case . ' are KEPT byte for byte: ' . itValue($itO, "SELECT CONCAT('[', `settingValue`, ']|[', `description`, ']') FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'"));
+    itDropDb($itEnv, $itPort, $itDbO);
+}
 
 foreach ((array) glob($itDir0004 . '*') as $itTempFile) {
     @unlink((string) $itTempFile);

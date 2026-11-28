@@ -26,7 +26,7 @@
  *    provider is asked. Off until a Global Admin enters a provider's keys.
  *    Never let through during a provider outage (decision 0037).
  * ✉️ No JavaScript (decision 0038): "Send the new link without JavaScript"
- *    passes the strict limits of noScriptRouteGate() instead of the widget;
+ *    goes through noScriptRouteRunForm() and its strict limits instead of the widget;
  *    the new link itself is the confirmation. Same answer and minimum time
  *    whatever happens.
  *
@@ -77,14 +77,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_submit'])) {
         $formError = 'Please enter a valid email address.';
     } elseif (humanCheckEmailRouteChosen($_POST) && humanCheckIsOn()) {
         // ✉️ Decision 0038: no JavaScript - the route's strict limits instead
-        //    of the widget. The same answer and minimum time whatever happens.
+        //    of the widget. The one helper decides from the limits (review
+        //    L5); the same answer and minimum time whatever happens.
         $emailRouteUsed = true;
-        $routeStartedAt = hrtime(true);
-        $routeGate      = noScriptRouteGate('resend', $postedEmail, getClientIP());
-        if ($routeGate['allowed'] && function_exists('requestNewVerificationLink')) {
+        noScriptRouteRunForm('resend', $postedEmail, getClientIP(), static function () use ($postedEmail): void {
             requestNewVerificationLink($postedEmail, getClientIP());
-        }
-        padResponseToMinimumDuration($routeStartedAt, CUERCODE_NO_SCRIPT_MIN_RESPONSE_MICROSECONDS);
+        });
         $requestedLink = true;
         $resultMessage = CUERCODE_RESEND_VERIFICATION_MESSAGE;
     } else {

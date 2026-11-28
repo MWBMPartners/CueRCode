@@ -29,11 +29,15 @@
  *
  * ✉️ NO JAVASCRIPT (decision 0038): the widget's <noscript> part has a
  * "Sign in by email confirmation instead" button. It goes through
- * noScriptSignInStart() (fn_no_script_route.php): strict limits, then the
- * correct password, then an emailed single-use link. This page then shows
- * "check your email" with a Continue button: after the link is approved in
- * ANOTHER browser, Continue signs THIS browser in (opening the link in THIS
- * browser signs it in directly, after a button press).
+ * noScriptSignInStart() (fn_no_script_route.php): the per-address limit,
+ * then the password, then (for a right one, within the email limits) an
+ * emailed single-use link. This page then shows "if the email address and
+ * password are right, we have emailed you a link" with Continue and Start
+ * again - the SAME answer and the same later pages whatever the password,
+ * so a script learns nothing (merged review M1). After the link is approved
+ * in ANOTHER browser, Continue (within 3 minutes) signs THIS browser in
+ * (opening the link in THIS browser signs it in directly, after a button
+ * press).
  *
  * OPEN-REDIRECT PROTECTION: an optional `?next=` query parameter controls the
  * post-login destination. Only a same-site, root-relative path (starting with
@@ -162,8 +166,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
     } elseif ($postedEmail === '' || $password === '') {
         $loginError = 'Email and password are both required.';
     } elseif (humanCheckEmailRouteChosen($_POST) && humanCheckIsOn()) {
-        // ✉️ Decision 0038: no JavaScript - limits, then the password, then
-        //    an emailed single-use link. Nobody is signed in on this request.
+        // ✉️ Decision 0038: no JavaScript - the per-address limit, then the
+        //    password, then an emailed single-use link. Nobody is signed in
+        //    on this request; "sent" is the answer whatever the password.
         $emailSignInStarted = true;
         if (isset($_SERVER['HTTP_USER_AGENT']) && is_string($_SERVER['HTTP_USER_AGENT'])) {
             $emailUserAgent = $_SERVER['HTTP_USER_AGENT'];
@@ -212,7 +217,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
     if (!validateCSRFToken($emailCsrf)) {
         $loginError = 'Your session has expired. Please reload the page and try again.';
     } elseif (isset($_POST['login_email_cancel'])) {
-        noScriptSignInForget();
+        // ✖️ Review I1: the waiting request is marked cancelled, then forgotten.
+        noScriptSignInCancel();
     } else {
         if (isset($_SERVER['HTTP_USER_AGENT']) && is_string($_SERVER['HTTP_USER_AGENT'])) {
             $emailUserAgent = $_SERVER['HTTP_USER_AGENT'];
@@ -224,8 +230,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_submit'])) {
             header('Location: ' . $emailContinue['next']);
             exit;
         }
-        if ($emailContinue['outcome'] === 'waiting') {
-            $emailSignInNotice = 'The sign-in has not been approved yet. Open the link in the email we sent, press the button on that page, then press Continue here.';
+        if ($emailContinue['outcome'] === 'not_yet') {
+            // 📌 Review M1: one answer for "not approved yet", "the approval
+            //    ran out" and a wrong password's stand-in request.
+            $emailSignInNotice = CUERCODE_NO_SCRIPT_NOT_YET_MESSAGE;
         } else {
             $loginError = 'That email sign-in has expired or is no longer valid. Please sign in again.';
         }
@@ -314,10 +322,10 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     <?php if ($emailSignInNotice !== '') { ?>
                                     <?php echo htmlspecialchars($emailSignInNotice, ENT_QUOTES, 'UTF-8'); ?>
                                     <?php } else { ?>
-                                    We have emailed you a sign-in link. Open it and press the button on that page.
+                                    If the email address and password were right, we have emailed you a sign-in link. Open it and press the button on that page.
                                     <?php } ?>
                                 </p>
-                                <p class="mb-2">If you open the link on another device, press Continue here afterwards to finish signing in on this browser.</p>
+                                <p class="mb-2">If you open the link on another device, come back and press Continue here within 3 minutes to finish signing in on this browser.</p>
                                 <form method="POST" action="<?php echo htmlspecialchars($emailFormAction, ENT_QUOTES, 'UTF-8'); ?>" class="d-flex flex-wrap gap-2 mb-0">
                                     <?php echo csrfField(); ?>
                                     <button type="submit" class="btn btn-primary" name="login_email_continue" value="1">

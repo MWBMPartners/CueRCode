@@ -40,8 +40,11 @@
  *     written, the form is refused.
  *   - the saved keys cannot be read (review M2: a changed ENCRYPTION_KEY or
  *     a damaged row): the check does NOT switch off. The provider counts as
- *     "set up but broken"; if no other provider is usable, every form is
- *     refused and the admin status says the keys cannot be read.
+ *     "set up but broken"; if no other provider is usable, the protected
+ *     forms sent the normal way are refused, the admin status says the keys
+ *     cannot be read, and the email-confirmed route (decision 0038, with its
+ *     limits) is offered to EVERYONE so people keep a way in while the keys
+ *     are entered again (merged review L4).
  *   - our own set-up is wrong (the provider says the secret is wrong, or our
  *     server cannot make a safe request: curl missing, certificates): ALWAYS
  *     refused, logged at most once every 10 minutes per provider.
@@ -67,6 +70,9 @@
  *     <noscript> part offers an email-confirmed route with strict limits
  *     (fn_no_script_route.php); a form sent without a token any other way is
  *     refused.
+ *   - a provider's fresh test result says "down" (merged review I4): a
+ *     visitor's token is not sent to it at all (no long wait); the outage
+ *     rule above decides as if the call had failed.
  *
  * PRIVACY: the visitor's browser loads the provider's script, so the
  *   provider sees the visitor's address there. The server sends the provider
@@ -1189,7 +1195,7 @@ function humanCheckVerifyRequest(#[\SensitiveParameter] array $input, array $opt
 
     if ($plan['state'] === 'broken') {
         // 🔐 Review M2: keys saved but unreadable - refused, never "off".
-        humanCheckLogBounded($deps, 'log:unreadable', 'error', 'Human check keys are saved but cannot be read (has ENCRYPTION_KEY changed?) - every protected form is refused until they are entered again on /admin/settings/ (or the check is switched off: php _includes/cli/human_check.php off)', 'providers: ' . implode(',', $plan['unreadable']));
+        humanCheckLogBounded($deps, 'log:unreadable', 'error', 'Human check keys are saved but cannot be read (has ENCRYPTION_KEY changed?) - the protected forms sent the normal way are refused (the email-confirmed route still works, with its limits) until the keys are entered again on /admin/settings/ (or the check is switched off: php _includes/cli/human_check.php off)', 'providers: ' . implode(',', $plan['unreadable']));
         return humanCheckResult('misconfigured', $plan['unreadable'][0]);
     }
 
@@ -1229,8 +1235,17 @@ function humanCheckVerifyRequest(#[\SensitiveParameter] array $input, array $opt
     }
 
     $tokenHash = hash('sha256', $found['token']);
-    $reply     = humanCheckNormaliseReply($deps['transport']($facts['verifyUrl'], humanCheckVerifyFields($facts, $found['token']), $settings['timeout']));
-    $found     = [];
+
+    // 🩺 Review I4: the server's own test said "down" less than a minute
+    //    ago - do not make the visitor wait the full time limit for a call
+    //    that will not be answered. Only the server writes that record.
+    if (humanCheckFreshlyDown($deps['stateRead'], $provider)) {
+        $found = [];
+        $reply = ['ok' => false, 'status' => 0, 'body' => '', 'error' => 'skipped: the last test said down', 'fault' => ''];
+    } else {
+        $reply = humanCheckNormaliseReply($deps['transport']($facts['verifyUrl'], humanCheckVerifyFields($facts, $found['token']), $settings['timeout']));
+        $found = [];
+    }
 
     if ($reply['ok'] !== true && $reply['fault'] === 'ours') {
         // 🔧 Review L1: a lasting fault on our own server - refused, not "down".
@@ -1281,6 +1296,29 @@ function humanCheckVerifyRequest(#[\SensitiveParameter] array $input, array $opt
     }
 
     return humanCheckResult($outcome, $provider);
+}
+
+/**
+ * 🩺 Did the server's own test call say "down" for this provider less than
+ *    CUERCODE_HUMAN_CHECK_HEALTH_FRESH_SECONDS ago (review I4)? Reads the
+ *    record only; never makes a call. Any problem reading it means "no".
+ *
+ * @param callable $stateRead (string $key): ?array{value: string, ageSeconds: int}
+ * @param string   $provider
+ * @return bool
+ */
+function humanCheckFreshlyDown(callable $stateRead, string $provider): bool
+{
+    try {
+        $record = $stateRead('health:' . $provider);
+    } catch (\Throwable $e) {
+        return false;
+    }
+
+    return is_array($record)
+        && isset($record['value'], $record['ageSeconds'])
+        && $record['value'] === 'down'
+        && (int) $record['ageSeconds'] <= CUERCODE_HUMAN_CHECK_HEALTH_FRESH_SECONDS;
 }
 
 /**
@@ -1900,28 +1938,39 @@ function humanCheckEmailRouteChosen(array $post): bool
 
 /**
  * ✉️ The wording of the email-route button for each form (0038). PURE.
+ *    'button'/'explain' are for the <noscript> part; 'brokenButton'/
+ *    'brokenExplain' for everyone while the saved keys cannot be read
+ *    (merged review L4), when "without JavaScript" would be wrong.
  *
  * @param string $purpose login | register | forgot | resend
- * @return array{button: string, explain: string}|null
+ * @return array{button: string, explain: string, brokenButton: string, brokenExplain: string}|null
  */
 function humanCheckEmailRouteWording(string $purpose): ?array
 {
     $wording = [
         'login'    => [
-            'button'  => 'Sign in by email confirmation instead',
-            'explain' => 'Without JavaScript you can still sign in: we check your password, then email you a link. Open it and press the button on that page to finish signing in.',
+            'button'        => 'Sign in by email confirmation instead',
+            'explain'       => 'Without JavaScript you can still sign in: we check your password, then email you a link. Open it and press the button on that page to finish signing in.',
+            'brokenButton'  => 'Sign in by email confirmation instead',
+            'brokenExplain' => 'You can still sign in: we check your password, then email you a link. Open it and press the button on that page to finish signing in.',
         ],
         'register' => [
-            'button'  => 'Create my account without JavaScript',
-            'explain' => 'Without JavaScript you can still create an account: it stays waiting until you use the link we email you.',
+            'button'        => 'Create my account without JavaScript',
+            'explain'       => 'Without JavaScript you can still create an account: it stays waiting until you use the link we email you.',
+            'brokenButton'  => 'Create my account by email confirmation',
+            'brokenExplain' => 'You can still create an account: it stays waiting until you use the link we email you.',
         ],
         'forgot'   => [
-            'button'  => 'Send the reset link without JavaScript',
-            'explain' => 'Without JavaScript we can still email you a reset link.',
+            'button'        => 'Send the reset link without JavaScript',
+            'explain'       => 'Without JavaScript we can still email you a reset link.',
+            'brokenButton'  => 'Send the reset link by email',
+            'brokenExplain' => 'We can still email you a reset link.',
         ],
         'resend'   => [
-            'button'  => 'Send the new link without JavaScript',
-            'explain' => 'Without JavaScript we can still email you a new verification link.',
+            'button'        => 'Send the new link without JavaScript',
+            'explain'       => 'Without JavaScript we can still email you a new verification link.',
+            'brokenButton'  => 'Send the new link by email',
+            'brokenExplain' => 'We can still email you a new verification link.',
         ],
     ];
 
@@ -1942,6 +1991,11 @@ function humanCheckEmailRouteWording(string $purpose): ?array
  * "could not be completed"). With JavaScript off the <noscript> part explains
  * why and, when $purpose is given, offers the email-confirmed route (0038).
  *
+ * While the saved keys cannot be read ("broken", review M2) no provider is
+ * drawn: a plain note says the form cannot be sent the usual way and, when
+ * $purpose is given, offers the email-confirmed route to EVERYONE (merged
+ * review L4). The pages honour that route in this state too.
+ *
  * @param array|null           $settings From humanCheckReadSettings(); null reads the site's settings
  * @param string               $purpose  login | register | forgot | resend ('' = no email route)
  * @param array<string, mixed> $options  'cachedHealth' (callable(provider): string) for tests
@@ -1954,6 +2008,9 @@ function humanCheckWidgetHtml(#[\SensitiveParameter] ?array $settings = null, st
     }
 
     $plan = humanCheckPlan($settings);
+    if ($plan['state'] === 'broken') {
+        return humanCheckBrokenWidgetHtml($purpose);
+    }
     if ($plan['state'] !== 'on') {
         return '';
     }
@@ -2014,6 +2071,31 @@ function humanCheckWidgetHtml(#[\SensitiveParameter] ?array $settings = null, st
 }
 
 /**
+ * 🧱 What a form shows while the saved keys cannot be read (merged review
+ *    L4): a note, and the email-confirmed route's button for everyone. PURE.
+ *
+ * @param string $purpose login | register | forgot | resend ('' = no email route)
+ * @return string HTML
+ */
+function humanCheckBrokenWidgetHtml(string $purpose): string
+{
+    $html = '<div class="mb-3"><div class="alert alert-warning mb-0" role="note">'
+        . '<p class="mb-2">The human check is not working just now, so this form cannot be sent the usual way.</p>';
+
+    $route = humanCheckEmailRouteWording($purpose);
+    if ($route !== null) {
+        $html .= '<p class="mb-2">' . humanCheckEscape($route['brokenExplain']) . ' To prevent abuse, this way is limited to a few emails an hour.</p>'
+            . '<button type="submit" class="btn btn-outline-secondary w-100" name="' . humanCheckEscape(CUERCODE_HUMAN_CHECK_EMAIL_ROUTE_FIELD) . '" value="1">'
+            . humanCheckEscape($route['brokenButton'])
+            . '</button>';
+    } else {
+        $html .= '<p class="mb-0">Please try again later.</p>';
+    }
+
+    return $html . '</div></div>';
+}
+
+/**
  * 🧼 Escape text for an HTML attribute or text.
  *
  * @param string $text
@@ -2054,7 +2136,7 @@ function humanCheckStatusLines(#[\SensitiveParameter] array $settings, array $he
             }
         }
     } elseif ($plan['state'] === 'broken') {
-        $lines[] = 'Refusing every protected form: the saved keys cannot be read (has ENCRYPTION_KEY in auth_creds.php changed, or is a row damaged?). Enter the keys again below, or switch the check off with php _includes/cli/human_check.php off.';
+        $lines[] = 'Refusing the protected forms sent the normal way: the saved keys cannot be read (has ENCRYPTION_KEY in auth_creds.php changed, or is a row damaged?). Visitors can still use the email-confirmed route (decision 0038), with its limits. Enter the keys again below, or switch the check off with php _includes/cli/human_check.php off.';
     } elseif ($settings['choice'] === 'none') {
         $lines[] = 'Off: the human check is switched off (provider setting "none").';
     } elseif (isset($providers[$settings['choice']])) {

@@ -754,6 +754,28 @@ function sendEmailNow(string $to, string $subject, string $htmlBody, ?string $to
 // ==============================================================================
 
 /**
+ * 🔢 How many emails this request has queued so far (queueEmail() adds one
+ *    for each row it really inserts). The no-JavaScript route (#163, review
+ *    L1) reads it before and after a form's work, so a form that sent no
+ *    email (for example "forgot password" for an address with no account)
+ *    does not use up the route's limits on emails.
+ *
+ * @param bool $addOne Add one first (only queueEmail() does this)
+ *
+ * @return int
+ */
+function emailQueuedCount(bool $addOne = false): int
+{
+    static $queued = 0;
+
+    if ($addOne) {
+        $queued++;
+    }
+
+    return $queued;
+}
+
+/**
  * 📥 Queue an email for later delivery by the queue runner (runEmailQueueBatch(),
  * run every minute by _includes/cron/process_email_queue.php - #112).
  *
@@ -833,6 +855,10 @@ function queueEmail(string $to, string $templateKey, array $params, ?string $sub
 
         $newEmailID = (int) $stmt->insert_id;
         $stmt->close();
+
+        // ✉️ #163: counted, so the no-JavaScript route can tell whether a
+        //    form it ran actually sent an email (emailQueuedCount()).
+        emailQueuedCount(true);
 
         logEmailAttempt('email_queued', $to, $finalSubject, 'Queued (emailID ' . $newEmailID . ')');
 

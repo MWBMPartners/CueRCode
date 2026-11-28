@@ -28,8 +28,8 @@
  *    Its refusal message is about the check only, never the account. Never
  *    let through during a provider outage (decision 0037).
  * ✉️ No JavaScript (decision 0038): "Send the reset link without
- *    JavaScript" passes the strict limits of noScriptRouteGate() instead of
- *    the widget; the reset link itself is the confirmation. Same answer and
+ *    JavaScript" goes through noScriptRouteRunForm() and its strict limits
+ *    instead of the widget; the reset link itself is the confirmation. Same answer and
  *    minimum time whatever happens.
  *
  * @package     CueRCode
@@ -79,14 +79,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['forgot_submit'])) {
         $formError = 'Please enter a valid email address.';
     } elseif (humanCheckEmailRouteChosen($_POST) && humanCheckIsOn()) {
         // ✉️ Decision 0038: no JavaScript - the route's strict limits instead
-        //    of the widget. The same answer and minimum time whatever happens.
+        //    of the widget. The one helper decides from the limits (review
+        //    L5); the same answer and minimum time whatever happens.
         $emailRouteUsed = true;
-        $routeStartedAt = hrtime(true);
-        $routeGate      = noScriptRouteGate('forgot', $postedEmail, getClientIP());
-        if ($routeGate['allowed'] && function_exists('requestPasswordReset')) {
+        noScriptRouteRunForm('forgot', $postedEmail, getClientIP(), static function () use ($postedEmail): void {
             requestPasswordReset($postedEmail, getClientIP());
-        }
-        padResponseToMinimumDuration($routeStartedAt, CUERCODE_NO_SCRIPT_MIN_RESPONSE_MICROSECONDS);
+        });
         $requestedReset = true;
     } else {
         // 🤖 #163: the human check, before any email is looked up or queued.

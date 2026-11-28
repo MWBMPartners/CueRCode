@@ -22,6 +22,11 @@
  * token works only once. While the check is off there is no widget and the
  * token is simply empty.
  *
+ * ✉️ The email-confirmed route's button (name "human_check_email_route",
+ * decision 0038) always sends its form the normal way, never as JSON: it is
+ * drawn for everyone while the saved human-check keys cannot be read
+ * (merged review L4), and only the page's own PHP handles that route.
+ *
  * @package     CueRCode
  * @subpackage  Frontend
  * @copyright   2025–2026 MWBM Partners Ltd
@@ -123,6 +128,29 @@
     // ==========================================================================
     // 🤖 Human check helpers (#163)
     // ==========================================================================
+
+    /**
+     * ✉️ Remember which button sent a form, so a press of the email-route
+     * button can go to the server as a normal form post (review L4).
+     */
+    $(document).on('click', 'button[name="human_check_email_route"]', function () {
+        $(this.form).data('cuercodeEmailRoute', true);
+    });
+
+    /**
+     * ✉️ Was this form sent by the email-route button? (The flag is cleared,
+     * so a later normal send is intercepted again.)
+     *
+     * @param {jQuery} $form
+     * @returns {boolean}
+     */
+    function emailRouteChosen($form) {
+        if ($form.data('cuercodeEmailRoute') === true) {
+            $form.removeData('cuercodeEmailRoute');
+            return true;
+        }
+        return false;
+    }
 
     /**
      * 🎫 The human-check token for a form ('' when the check is off).
@@ -240,6 +268,10 @@
         wirePasswordStrengthHint('reg-password', 'reg-password-strength');
 
         $form.on('submit', function (event) {
+            // ✉️ The email-route button: the page's own PHP handles it.
+            if (emailRouteChosen($form)) {
+                return;
+            }
             event.preventDefault();
 
             var email       = $('#reg-email').val();
@@ -301,6 +333,10 @@
         var nextUrl = $form.data('next-url') || '/account/';
 
         $form.on('submit', function (event) {
+            // ✉️ The email-route button: the page's own PHP handles it.
+            if (emailRouteChosen($form)) {
+                return;
+            }
             event.preventDefault();
 
             var email    = $('#login-email').val();
@@ -410,6 +446,10 @@
         }
 
         $form.on('submit', function (event) {
+            // ✉️ The email-route button: the page's own PHP handles it.
+            if (emailRouteChosen($form)) {
+                return;
+            }
             event.preventDefault();
 
             var email = $('#forgot-email').val();

@@ -586,7 +586,7 @@ assertTrue($hcMigration['ok'], 'migration 0005 loads (' . $hcMigration['error'] 
 assertEquals([], migrationValidateDefinition($hcMigration['definition'], '0005_human_check_settings'), 'migration 0005 passes every runner check');
 $hcMigrationText = (string) file_get_contents($hcMigrationPath);
 assertContains("SET `settingValue` = \\'auto\\'", $hcMigrationText, 'migration 0005: switches the untouched "none" to automatic');
-assertContains("AND `settingValue` = \\'none\\'", $hcMigrationText, '... only while it is still "none"');
+assertContains("AND CAST(`settingValue` AS BINARY) = CAST(\\'none\\' AS BINARY)", $hcMigrationText, '... only while it is still "none", byte for byte');
 assertContains('NOT EXISTS (SELECT 1 FROM `tblAdminAuditLog`', $hcMigrationText, '... and only if no admin (or the command line) ever changed it');
 foreach (['bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour'] as $hcNewKey) {
     assertContains("\\'" . $hcNewKey . "\\'", $hcMigrationText, 'migration 0005 adds ' . $hcNewKey);

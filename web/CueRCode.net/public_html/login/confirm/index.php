@@ -14,8 +14,10 @@
  * the page's security token) is what counts, once:
  *   - in the SAME browser that asked to sign in: that browser is signed in;
  *   - in ANOTHER browser (for example a phone): the page says clearly that
- *     THIS browser will not be signed in, and pressing approves the sign-in
- *     on the first browser only, where the person then presses Continue.
+ *     THIS browser will not be signed in, shows when, from what browser and
+ *     from what address the sign-in was asked for (merged review L6), and
+ *     pressing approves the sign-in on the first browser only, where the
+ *     person then has 3 minutes to press Continue.
  * A used, expired or unknown link, or one for an account whose password was
  * reset (or that signed out everywhere, or was locked or suspended) since,
  * says so and does nothing.
@@ -86,9 +88,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_submit'])) {
 }
 
 // 🔍 What to show (reading only).
-$confirmPreview = ['state' => 'invalid', 'bindingMatches' => false];
+$confirmPreview = ['state' => 'invalid', 'bindingMatches' => false, 'askedSecondsAgo' => 0, 'askedFrom' => '', 'askedBrowser' => ''];
 if ($confirmOutcome === '') {
     $confirmPreview = noScriptSignInPreview($confirmToken);
+}
+
+// 🕐 Review L6: when the sign-in was asked for, in plain words.
+$confirmAskedMinutes = intdiv((int) $confirmPreview['askedSecondsAgo'], 60);
+if ($confirmAskedMinutes < 1) {
+    $confirmAskedWhen = 'less than a minute ago';
+} elseif ($confirmAskedMinutes === 1) {
+    $confirmAskedWhen = 'about 1 minute ago';
+} else {
+    $confirmAskedWhen = 'about ' . $confirmAskedMinutes . ' minutes ago';
 }
 
 // ==============================================================================
@@ -132,8 +144,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <?php if ($confirmOutcome === 'approved') { ?>
                             <div class="alert alert-success" role="status" id="login-confirm-approved">
                                 <i class="fa-solid fa-circle-check me-1" aria-hidden="true"></i>
-                                Approved. Go back to the browser where you typed your password and press
-                                <strong>Continue</strong> there to finish signing in.
+                                Approved. Within 3 minutes, go back to the browser where you typed your password and press
+                                <strong>Continue</strong> there to finish signing in. After that the approval runs out and you would need to start again.
                                 <strong>This browser has not been signed in.</strong>
                             </div>
                             <?php } elseif ($confirmOutcome === 'invalid' || ($confirmError === '' && $confirmPreview['state'] !== 'usable')) { ?>
@@ -144,6 +156,15 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             </div>
                             <p class="text-center mb-0"><a href="/login/">Go to sign in</a></p>
                             <?php } elseif ($confirmError === '') { ?>
+                            <?php /* 🖥️ Review L6: what asked, so the person can judge it. */ ?>
+                            <dl class="small mb-3" id="login-confirm-asked">
+                                <dt>Asked for</dt>
+                                <dd class="mb-1"><?php echo htmlspecialchars($confirmAskedWhen, ENT_QUOTES, 'UTF-8'); ?></dd>
+                                <dt>Browser</dt>
+                                <dd class="mb-1"><?php echo htmlspecialchars($confirmPreview['askedBrowser'], ENT_QUOTES, 'UTF-8'); ?></dd>
+                                <dt>Internet address</dt>
+                                <dd class="mb-0 text-break"><?php echo htmlspecialchars($confirmPreview['askedFrom'], ENT_QUOTES, 'UTF-8'); ?></dd>
+                            </dl>
                             <?php if ($confirmPreview['bindingMatches']) { ?>
                             <p>Press the button to finish signing in on this browser.</p>
                             <?php } else { ?>
@@ -153,7 +174,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     Pressing the button approves the sign-in on that other browser only.
                                     <strong>This browser will not be signed in.</strong>
                                 </p>
-                                <p class="mb-0">Only press it if you asked to sign in a few minutes ago. If you did not, close this page and change your password with "Forgot password".</p>
+                                <p class="mb-0">Only press it if the details above are yours and you asked to sign in a few minutes ago. Afterwards you have 3 minutes to press Continue on that other browser. If you did not ask, close this page and change your password with "Forgot password".</p>
                             </div>
                             <?php } ?>
                             <form method="POST" action="/login/confirm/" novalidate>

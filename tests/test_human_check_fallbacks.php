@@ -444,7 +444,7 @@ assertEquals('invalid', noScriptSignInApproveDecision(['status' => 'waiting', 's
 assertEquals('invalid', noScriptSignInApproveDecision(['status' => 'waiting', 'secondsLeft' => 600], true, false), '0038: the account changed since (password reset, signed out everywhere, locked, suspended): refused');
 assertEquals('invalid', noScriptSignInApproveDecision(null, true, true), '0038: an unknown link is refused');
 
-assertEquals('sign_in', noScriptSignInContinueDecision(['status' => 'approved', 'secondsLeft' => 600], true), '0038: the first browser presses Continue after approval: signed in');
+assertEquals('sign_in', noScriptSignInContinueDecision(['status' => 'approved', 'secondsLeft' => 600, 'approvedSecondsAgo' => 20], true), '0038: the first browser presses Continue after approval: signed in');
 assertEquals('waiting', noScriptSignInContinueDecision(['status' => 'waiting', 'secondsLeft' => 600], true), '0038: Continue before the link is approved: "not approved yet"');
 assertEquals('invalid', noScriptSignInContinueDecision(['status' => 'approved', 'secondsLeft' => 0], true), '0038: Continue after it expired: start again');
 assertEquals('invalid', noScriptSignInContinueDecision(['status' => 'approved', 'secondsLeft' => 600], false), '0038: Continue after the account changed: start again');
@@ -478,14 +478,15 @@ function fbCodeOnly(string $source): string
 }
 
 foreach ([
-    'register'            => ['registerUser(', "noScriptRouteGate('register'"],
-    'forgot-password'     => ['requestPasswordReset(', "noScriptRouteGate('forgot'"],
-    'resend-verification' => ['requestNewVerificationLink(', "noScriptRouteGate('resend'"],
+    'register'            => ['registerUser(', "noScriptRouteRunForm('register'"],
+    'forgot-password'     => ['requestPasswordReset(', "noScriptRouteRunForm('forgot'"],
+    'resend-verification' => ['requestNewVerificationLink(', "noScriptRouteRunForm('resend'"],
 ] as $fbPage => $fbNeed) {
     $fbCode = fbCodeOnly((string) file_get_contents($fbSiteRoot . 'public_html' . $fbDs . $fbPage . $fbDs . 'index.php'));
     assertContains('humanCheckEmailRouteChosen($_POST)', $fbCode, '0038: /' . $fbPage . '/ knows the email route');
-    assertContains($fbNeed[1], $fbCode, '0038: /' . $fbPage . '/ passes the route\'s limits first');
-    assertContains('padResponseToMinimumDuration(', $fbCode, '0038: /' . $fbPage . '/ answers the route in the same minimum time either way');
+    // 📌 The helper itself (limits first, the same minimum time either way)
+    //    is proved with stand-ins in test_no_script_route_review_fixes.php.
+    assertContains($fbNeed[1], $fbCode, '0038: /' . $fbPage . '/ runs the route through the one helper (limits first, same minimum time)');
 }
 $fbLoginCode = fbCodeOnly((string) file_get_contents($fbSiteRoot . 'public_html' . $fbDs . 'login' . $fbDs . 'index.php'));
 assertContains('noScriptSignInStart(', $fbLoginCode, '0038: /login/ starts an email sign-in for the route');

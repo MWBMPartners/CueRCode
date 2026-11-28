@@ -22,9 +22,10 @@
  * never let through during a provider outage (decision 0037).
  *
  * ✉️ NO JAVASCRIPT (decision 0038): the widget's <noscript> part offers
- * "Create my account without JavaScript". That route passes the strict
- * limits of noScriptRouteGate() (per visitor address, per email address,
- * site-wide) instead of the widget; the account is then made exactly as
+ * "Create my account without JavaScript" (drawn for everyone while the
+ * saved keys cannot be read). That route goes through noScriptRouteRunForm()
+ * and its strict limits (per visitor address, emails per mailbox, emails per
+ * form site-wide) instead of the widget; the account is then made exactly as
  * usual and stays waiting until its emailed verification link is used (which
  * asks for the password, decision 0013). The answer is the same generic one
  * whether or not an account exists or a limit stopped the email, and takes
@@ -119,22 +120,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_submit'])) {
 
     if (empty($formErrors) && humanCheckEmailRouteChosen($_POST) && humanCheckIsOn()) {
         // ✉️ Decision 0038: no JavaScript - the route's strict limits instead
-        //    of the widget; the emailed verification link confirms. The same
+        //    of the widget; the emailed verification link confirms. The one
+        //    helper decides from the limits (review L5) and gives the same
         //    answer and minimum time whatever happens.
         $emailRouteUsed = true;
-        $routeStartedAt = hrtime(true);
-        $routeGate      = noScriptRouteGate('register', $postedEmail, getClientIP());
-        if ($routeGate['allowed']) {
-            if ($postedDisplay !== '') {
-                $routeDisplayName = $postedDisplay;
-            } else {
-                $routeDisplayName = null;
-            }
-            $registerResult = registerUser($postedEmail, $password, $routeDisplayName);
+        if ($postedDisplay !== '') {
+            $routeDisplayName = $postedDisplay;
         } else {
-            $registerResult = registerUserGenericResult();
+            $routeDisplayName = null;
         }
-        padResponseToMinimumDuration($routeStartedAt, CUERCODE_NO_SCRIPT_MIN_RESPONSE_MICROSECONDS);
+        noScriptRouteRunForm('register', $postedEmail, getClientIP(), static function () use ($postedEmail, $password, $routeDisplayName): void {
+            registerUser($postedEmail, $password, $routeDisplayName);
+        });
+        $registerResult = registerUserGenericResult();
     } elseif (empty($formErrors)) {
         // 🤖 #163: the human check, after the cheap checks (a token works
         //    once) and before an account is made or an email is queued.

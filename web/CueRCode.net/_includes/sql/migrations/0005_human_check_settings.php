@@ -24,8 +24,9 @@
  *      how long to wait for a provider (5 seconds; 2 to 15 allowed), the
  *      per-visitor limit on the four web forms before the provider is asked
  *      (30 an hour), and the three limits of the email-confirmed route for
- *      visitors without JavaScript (decision 0038: 5 an hour per visitor
- *      address, 3 a day per email address, 30 an hour for the whole site).
+ *      visitors without JavaScript (decision 0038: 5 uses an hour per
+ *      visitor address, 3 emails a day per mailbox, 30 emails an hour per
+ *      form for the whole site).
  *   4. Adds four small tables:
  *      - tblHumanCheckTokens: the SHA-256 hash of every token a provider
  *        accepted, for 10 minutes, so a token can never be used twice
@@ -34,13 +35,16 @@
  *        to each provider (decision 0037), and when each bounded log line
  *        was last written;
  *      - tblNoScriptRequests: one row per use of the no-JavaScript route
- *        that was let through (the email only as a keyed hash), for its
- *        limits;
+ *        within its per-address limit, saying whether it sent an email
+ *        (the email only as a keyed hash), for its limits;
  *      - tblEmailSignInRequests: the no-JavaScript email sign-in links
  *        (only hashes of the link and of the browser's secret).
  *
  * (Changed in place on 2026-11-27, before it had been applied anywhere or
- * pushed, to add items 3 and 4 after the independent review of #163.)
+ * pushed, to add items 3 and 4 after the independent review of #163; and
+ * again on 2026-11-28, still unapplied and unpushed, after the merged
+ * review: the starting values are compared byte for byte, and
+ * tblNoScriptRequests records which uses sent an email.)
  *
  * Nothing here can overwrite a value the owner has set: the updates only
  * match rows still at their starting value, and the inserts end with the
@@ -80,19 +84,23 @@ return [
             'label' => 'bot_protection_provider none to auto',
             'sql'   => 'UPDATE `tblSettings` SET `settingValue` = \'auto\''
                 . ' WHERE `settingKey` = \'bot_protection_provider\''
-                . ' AND `settingValue` = \'none\''
+                . ' AND CAST(`settingValue` AS BINARY) = CAST(\'none\' AS BINARY)'
                 . ' AND NOT EXISTS (SELECT 1 FROM `tblAdminAuditLog`'
                 . ' WHERE `entityType` = \'setting\' AND `entityKey` = \'bot_protection_provider\')',
         ],
 
         // 📝 The description, only while it is still the starting wording.
+        //    "Still the starting value" means byte for byte, here and above:
+        //    the column's comparison rules ignore capitals and trailing
+        //    spaces, so CAST(... AS BINARY) compares the stored bytes (the
+        //    same rule as 0004, Codex finding 2.P2).
         [
             'type'  => 'update_if_unchanged',
             'table' => 'tblSettings',
             'label' => 'description of bot_protection_provider',
             'sql'   => 'UPDATE `tblSettings` SET `description` = \'Human check provider: auto (the first with both keys, in the order turnstile, recaptcha, hcaptcha), turnstile, recaptcha, hcaptcha, or none (off)\''
                 . ' WHERE `settingKey` = \'bot_protection_provider\''
-                . ' AND `description` = \'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)\'',
+                . ' AND CAST(`description` AS BINARY) = CAST(\'Active bot protection provider (none, turnstile, recaptcha, hcaptcha)\' AS BINARY)',
         ],
 
         // ======================================================================
@@ -119,7 +127,7 @@ return [
             'table' => 'tblSettings',
             'label' => 'setting no_script_route_ip_per_hour',
             'sql'   => 'INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`)'
-                . ' VALUES (\'security\', \'no_script_route_ip_per_hour\', \'5\', \'integer\', 0, 1, \'No-JavaScript email route (decision 0038): the most uses from one visitor address in an hour, all four forms together. Whole number 1-100; anything else means the default of 5.\')'
+                . ' VALUES (\'security\', \'no_script_route_ip_per_hour\', \'5\', \'integer\', 0, 1, \'No-JavaScript email route (decision 0038): the most uses from one visitor address in an hour (an IPv6 address counts as its /64 network), all four forms together. Whole number 1-100; anything else means the default of 5.\')'
                 . ' ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`',
         ],
         [
@@ -127,7 +135,7 @@ return [
             'table' => 'tblSettings',
             'label' => 'setting no_script_route_email_per_day',
             'sql'   => 'INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`)'
-                . ' VALUES (\'security\', \'no_script_route_email_per_day\', \'3\', \'integer\', 0, 1, \'No-JavaScript email route (decision 0038): the most uses for one email address in 24 hours, whoever sends them. Whole number 1-20; anything else means the default of 3.\')'
+                . ' VALUES (\'security\', \'no_script_route_email_per_day\', \'3\', \'integer\', 0, 1, \'No-JavaScript email route (decision 0038): the most emails it sends to one mailbox in 24 hours, whoever asks (+tag spellings count as the same mailbox). Whole number 1-20; anything else means the default of 3.\')'
                 . ' ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`',
         ],
         [
@@ -135,7 +143,7 @@ return [
             'table' => 'tblSettings',
             'label' => 'setting no_script_route_site_per_hour',
             'sql'   => 'INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`)'
-                . ' VALUES (\'security\', \'no_script_route_site_per_hour\', \'30\', \'integer\', 0, 1, \'No-JavaScript email route (decision 0038): the most uses for the whole site in an hour. Whole number 1-1000; anything else means the default of 30.\')'
+                . ' VALUES (\'security\', \'no_script_route_site_per_hour\', \'30\', \'integer\', 0, 1, \'No-JavaScript email route (decision 0038): the most emails each of the four forms sends through it in an hour, for the whole site. Whole number 1-1000; anything else means the default of 30.\')'
                 . ' ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`',
         ],
         [
@@ -189,14 +197,16 @@ return [
                 . ' `requestID` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'🔑 Primary key\','
                 . ' `purpose` VARCHAR(16) NOT NULL COMMENT \'📋 login, register, forgot or resend\','
                 . ' `emailHash` CHAR(64) NOT NULL COMMENT \'🔐 Keyed hash of the email address typed (never the address)\','
-                . ' `requestIP` VARCHAR(45) NOT NULL COMMENT \'🌍 Visitor address (IPv4 or IPv6)\','
+                . ' `requestIP` VARCHAR(45) NOT NULL COMMENT \'🌍 Visitor address as counted: IPv4, or the /64 network of an IPv6 address\','
+                . ' `emailSent` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'✉️ 1 when this use sent (or is about to send) an email - only those count against the email limits\','
                 . ' `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'📅 When it was let through\','
                 . ' PRIMARY KEY (`requestID`),'
                 . ' INDEX `idx_no_script_ip` (`requestIP`, `createdAt`),'
-                . ' INDEX `idx_no_script_email` (`emailHash`, `createdAt`),'
+                . ' INDEX `idx_no_script_email` (`emailHash`, `emailSent`, `createdAt`),'
+                . ' INDEX `idx_no_script_purpose` (`purpose`, `emailSent`, `createdAt`),'
                 . ' INDEX `idx_no_script_created` (`createdAt`)'
                 . ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-                . ' COMMENT=\'✉️ Uses of the no-JavaScript email route that were let through, for its limits (decision 0038)\'',
+                . ' COMMENT=\'✉️ Uses of the no-JavaScript email route within the per-address limit, and which sent an email, for its limits (decision 0038)\'',
         ],
 
         // ======================================================================

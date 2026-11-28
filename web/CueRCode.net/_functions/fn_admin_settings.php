@@ -516,9 +516,9 @@ function adminSettingsRegistry(): array
     ]);
     $noScriptBounds = noScriptRouteBounds();
     $noScriptWords  = [
-        'ip_per_hour'   => ['Most uses from one visitor address in an hour', 'Whatever the email address, all four forms together.'],
-        'email_per_day' => ['Most uses for one email address in 24 hours', 'Whoever sends them, so nobody can fill one person\'s inbox.'],
-        'site_per_hour' => ['Most uses for the whole site in an hour', 'A ceiling on all the emails this route can cause.'],
+        'ip_per_hour'   => ['Most uses from one visitor address in an hour', 'Whatever the email address, all four forms together, counted before any password is looked at. An IPv6 address counts as its whole /64 network.'],
+        'email_per_day' => ['Most emails to one mailbox in 24 hours', 'Whoever asks, so nobody can fill one person\'s inbox. "+tag" spellings (and, for Gmail, dots) count as the same mailbox. A wrong password or an address with no account uses up nothing.'],
+        'site_per_hour' => ['Most emails each form sends in an hour, for the whole site', 'A ceiling on the emails this route can cause, counted for each of the four forms separately, so a flood on one form cannot block another (for example a real person\'s sign-in).'],
     ];
     foreach ($noScriptWords as $noScriptSuffix => $noScriptText) {
         $noScriptBound = $noScriptBounds[$noScriptSuffix];
