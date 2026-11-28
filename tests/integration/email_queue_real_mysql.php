@@ -564,7 +564,7 @@ itCheck('0 set-up', emailQueueLinkLifetimes() === ['verification' => 86400, 'pas
 // 🧹 #122: the two seeded clean-up settings, read through the real getConfig() (integer type).
 itCheck(
     '0 set-up',
-    emailQueueHousekeepingOptions('getConfig') === ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => []],
+    emailQueueHousekeepingOptions('getConfig') === ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => []],
     'emailQueueHousekeepingOptions(getConfig) reads the seeded 30 / 90 days, with no invalid settings'
 );
 
@@ -887,6 +887,73 @@ itCheck('12b old email log entries deleted', $itResult['housekeepingFailures'] =
 $itResult = runEmailQueueBatch($itGateway, $itOkSender, ['retentionDays' => 7, 'givenUpRetentionDays' => 10]);
 itCheck('12b old email log entries deleted', ($itResult['logPurged'] ?? null) === 2, 'shorter periods set by the admin apply to the log too (the 29-day sent and 31-day failed entries go)');
 itExec("DELETE FROM `tblActivityLog` WHERE `entityType` = ? OR `activityType` = 'it_other'", 's', ['email']);
+
+// ------------------------------------------------------------------------------
+// #179: the error log is deleted after its period; other activity entries keep
+// their visitor address and browser name only for theirs (the entries stay);
+// the admin change log is never touched.
+// ------------------------------------------------------------------------------
+itExec('DELETE FROM `tblErrorLog` WHERE `errorTitle` LIKE ?', 's', ['it-179-%']);
+itExec("DELETE FROM `tblActivityLog` WHERE `activityType` LIKE ?", 's', ['it_179_%']);
+foreach (['old' => 91, 'new' => 89] as $itTag => $itDays) {
+    itExec(
+        "INSERT INTO `tblErrorLog` (`errorSeverity`, `errorTitle`, `requestIP`, `userAgent`, `createdAt`) VALUES ('warning', ?, '203.0.113.179', 'IT browser', DATE_SUB(NOW(), INTERVAL ? DAY))",
+        'si',
+        ['it-179-' . $itTag, $itDays]
+    );
+    itExec(
+        "INSERT INTO `tblActivityLog` (`activityType`, `activityDetail`, `entityType`, `requestIP`, `userAgent`, `createdAt`) VALUES (?, 'IT 179', 'user', '203.0.113.179', 'IT browser', DATE_SUB(NOW(), INTERVAL ? DAY))",
+        'si',
+        ['it_179_' . $itTag, $itDays]
+    );
+}
+// 📌 The admin change log comes from upgrade 0002; this script loads only
+//    install.sql, so the check runs only where the table is there (CI's
+//    run loads the upgrades into other scripts; tests/test_email_queue_runner.php
+//    also checks the clean-up never names that table).
+$itHasAuditLog = (int) itSelect("SELECT COUNT(*) AS `n` FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?", 's', ['tblAdminAuditLog'])[0]['n'] === 1;
+if ($itHasAuditLog) {
+    itExec(
+        "INSERT INTO `tblAdminAuditLog` (`actorType`, `actorLabel`, `action`, `entityType`, `entityKey`, `outcome`, `requestIP`, `userAgent`, `createdAt`) VALUES ('cli', 'cli:it', ?, 'setting', 'it_179', 'success', '203.0.113.179', 'IT browser', DATE_SUB(NOW(), INTERVAL 400 DAY))",
+        's',
+        ['it_179']
+    );
+}
+$itCount179 = static function (string $itSql, string $itValue): int {
+    return (int) itSelect($itSql, 's', [$itValue])[0]['n'];
+};
+$itResult = runEmailQueueBatch($itGateway, $itOkSender, []);
+itCheck('12c error log and visitor details (#179)', $itCount179('SELECT COUNT(*) AS `n` FROM `tblErrorLog` WHERE `errorTitle` = ?', 'it-179-old') === 0 && $itCount179('SELECT COUNT(*) AS `n` FROM `tblErrorLog` WHERE `errorTitle` = ?', 'it-179-new') === 1, 'an error-log row 91 days old is deleted, one 89 days old is kept (default 90 days)');
+$itOldEntry = itSelect('SELECT `requestIP`, `userAgent`, `activityDetail` FROM `tblActivityLog` WHERE `activityType` = ?', 's', ['it_179_old']);
+$itNewEntry = itSelect('SELECT `requestIP`, `userAgent` FROM `tblActivityLog` WHERE `activityType` = ?', 's', ['it_179_new']);
+itCheck('12c error log and visitor details (#179)', count($itOldEntry) === 1 && $itOldEntry[0]['requestIP'] === null && $itOldEntry[0]['userAgent'] === null && $itOldEntry[0]['activityDetail'] === 'IT 179', 'an activity entry 91 days old is KEPT, without its visitor address and browser name');
+itCheck('12c error log and visitor details (#179)', count($itNewEntry) === 1 && $itNewEntry[0]['requestIP'] === '203.0.113.179' && $itNewEntry[0]['userAgent'] === 'IT browser', 'an activity entry 89 days old keeps both');
+if ($itHasAuditLog) {
+    itCheck('12c error log and visitor details (#179)', $itCount179("SELECT COUNT(*) AS `n` FROM `tblAdminAuditLog` WHERE `action` = ? AND `requestIP` = '203.0.113.179' AND `userAgent` = 'IT browser'", 'it_179') === 1, 'the admin change log is not touched (a 400-day-old row keeps its address and browser name)');
+} else {
+    echo '    note the admin change log is not in this database (it comes from upgrade 0002); the code check in tests/test_email_queue_runner.php covers it' . PHP_EOL;
+}
+itCheck('12c error log and visitor details (#179)', ($itResult['errorLogPurged'] ?? 0) >= 1 && ($itResult['visitorDetailsCleared'] ?? 0) >= 1 && $itResult['housekeepingFailures'] === 0, 'the run reports what it removed, and no clean-up step failed: ' . json_encode([$itResult['errorLogPurged'] ?? null, $itResult['visitorDetailsCleared'] ?? null]));
+$itResult = runEmailQueueBatch($itGateway, $itOkSender, ['errorLogRetentionDays' => 30, 'visitorDetailsRetentionDays' => 30]);
+$itNewEntry = itSelect('SELECT `requestIP` FROM `tblActivityLog` WHERE `activityType` = ?', 's', ['it_179_new']);
+itCheck('12c error log and visitor details (#179)', $itCount179('SELECT COUNT(*) AS `n` FROM `tblErrorLog` WHERE `errorTitle` = ?', 'it-179-new') === 0 && count($itNewEntry) === 1 && $itNewEntry[0]['requestIP'] === null, 'shorter periods set by an admin (30 days) apply to both');
+itExec('DELETE FROM `tblErrorLog` WHERE `errorTitle` LIKE ?', 's', ['it-179-%']);
+itExec('DELETE FROM `tblActivityLog` WHERE `activityType` LIKE ?', 's', ['it_179_%']);
+if ($itHasAuditLog) {
+    itExec('DELETE FROM `tblAdminAuditLog` WHERE `action` = ?', 's', ['it_179']);
+}
+
+// 🙈 #179: no email address reaches the error log in clear - not in the
+//    title, the detail (a database error can quote a value), the backtrace,
+//    the page address, the headers or the extra data.
+$itServerBefore = $_SERVER;
+$_SERVER['REQUEST_URI']  = '/forgot-password/?email=it-179-url@it.cuercode.invalid';
+$_SERVER['HTTP_REFERER'] = 'https://example.invalid/?who=it-179-referer@it.cuercode.invalid';
+logError('warning', 'it-179-mask for it-179-title@it.cuercode.invalid', "Duplicate entry 'it-179-detail@it.cuercode.invalid' for key 'uq_email'", ['to' => 'it-179-extra@it.cuercode.invalid', 'backtrace' => '#0 send(it-179-trace@it.cuercode.invalid)']);
+$_SERVER = $itServerBefore;
+$itMasked = itSelect("SELECT CONCAT_WS('|', `errorTitle`, `errorDetail`, `errorBacktrace`, `requestURL`, `requestHeaders`, `userAgent`, CAST(`additionalData` AS CHAR)) AS `everything` FROM `tblErrorLog` WHERE `errorTitle` LIKE ?", 's', ['it-179-mask%']);
+itCheck('12c error log and visitor details (#179)', count($itMasked) === 1 && !str_contains((string) $itMasked[0]['everything'], '@it.cuercode.invalid') && str_contains((string) $itMasked[0]['everything'], '[address]'), 'an error-log row written with addresses in its title, detail, backtrace, page address, headers and extra data holds none of them, only "[address]": ' . substr((string) ($itMasked[0]['everything'] ?? ''), 0, 400));
+itExec('DELETE FROM `tblErrorLog` WHERE `errorTitle` LIKE ?', 's', ['it-179-%']);
 
 // ==============================================================================
 // 1️⃣3️⃣ #122: an email whose details were cleared is never sent

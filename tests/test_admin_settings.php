@@ -333,13 +333,14 @@ foreach ($asRegistry as $asKey => $asField) {
 }
 assertEquals(
     [
+        'error_log_retention_days', 'activity_visitor_details_retention_days',
         'no_script_route_password_per_day',
         'trusted_proxy_ips',
         'verification_resend_min_gap_seconds', 'verification_resend_daily_cap', 'verification_resend_ip_per_hour',
         'password_reset_request_min_gap_seconds', 'password_reset_request_daily_cap', 'password_reset_request_ip_per_hour',
     ],
     $asOptionalKeys,
-    'only trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
+    'only the two #179 log periods, trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
 );
 assertEquals(9, count(adminSettingsSections()), 'there are nine sections (plan §7.2, plus the website address section, #113 B9)');
 

@@ -100,8 +100,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_ui.php` | 82 |
 | `test_admin_access.php` | 664 |
 | `test_admin_csp.php` | 38 |
-| `test_admin_plans.php` | 652 |
-| `test_admin_settings.php` | 1354 |
+| `test_admin_plans.php` | 654 |
+| `test_admin_settings.php` | 1364 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -117,8 +117,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
-| `test_email_log_privacy.php` | 11 |
-| `test_email_queue_runner.php` | 485 |
+| `test_email_log_privacy.php` | 15 |
+| `test_email_queue_runner.php` | 502 |
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 144 |
 | `test_expiry_clock.php` | 6 |
@@ -152,9 +152,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9331** |
+| **Total** | **9364** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**#179: time limits for the error log and visitor details, no email address in the error log (2026-11-28)** added 17 checks to `test_email_queue_runner.php` (the two new clean-up steps with the default 90 days, admin periods, bad periods falling back to 90, no clean-up without the lock, a failing step reported, the report lines, the two steps never naming the admin change log and never deleting other activity entries; the four option checks now include the two periods), 4 to `test_email_log_privacy.php` (the two admin-editable settings; the privacy page states both periods) and 10 to `test_admin_settings.php` (the registry's own checks for each new field; the two may lack a seeded row). On the old code 12 runner checks and 4 privacy checks failed. `email_queue_real_mysql.php` gained scenario 12c (7 checks): an error-log row 91 days old deleted and one 89 days old kept; an activity entry 91 days old kept without its address and browser name, one 89 days old untouched; 30-day admin periods apply; the run reports what it removed; and a real `logError()` call with addresses in the title, detail, backtrace, page address, Referer header and extra data stores only `[address]` - on MySQL 8.4.13 that check FAILED before the masking change (every address was stored). The admin change-log part of 12c runs only where that table exists (this script loads `install.sql` alone, without upgrade 0002); the unit code check covers it there. Suite: **9364** in 58 files.
 
 **#178: account page dates in the site's time zone (2026-11-28)** added 12 checks to `test_account_ui.php` (`siteFormatDatabaseTime()` across Tokyo, New York, London summer time and UTC; nothing shown for an unreadable or impossible value; an unknown zone falls back to UTC; the page uses the helper for its four dates and no longer calls `strtotime()`). On the old code 3 failed (the helper did not exist; the page still used `strtotime()`). Suite: **9331** in 58 files.
 

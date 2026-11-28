@@ -84,9 +84,10 @@ if (function_exists('getConfig')) {
     $siteEmail = 'hello@cuercode.net';
 }
 
-// 🧹 #129: how long email records are kept - the periods actually in force
-//    (a Global Admin can change them), read by the same rule the clean-up uses.
-$privacyEmailPeriods = ['retentionDays' => 30, 'givenUpRetentionDays' => 90];
+// 🧹 #129 / #179: how long email records, the error log and visitor details
+//    in the activity log are kept - the periods actually in force (a Global
+//    Admin can change them), read by the same rule the clean-up uses.
+$privacyEmailPeriods = ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90];
 if (function_exists('emailQueueHousekeepingOptions') && function_exists('getConfig')) {
     $privacyEmailPeriods = emailQueueHousekeepingOptions('getConfig');
 }
@@ -447,7 +448,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                         <ul>
                             <li>QR code content submitted by anonymous users is retained only as long as needed to generate and deliver the requested output;</li>
                             <li>Saved QR codes and account data are retained for the life of your account and for a limited period afterwards;</li>
-                            <li>Technical and error logs are retained for a limited diagnostic period and then purged;</li>
+                            <li id="retention-logs">Our error log, which can include your internet address, the name of your browser and the address of the page you were on (never your email address), is deleted after <?php echo (int) $privacyEmailPeriods['errorLogRetentionDays']; ?>&nbsp;days; the internet address and browser name stored with other entries in our activity log are removed after <?php echo (int) $privacyEmailPeriods['visitorDetailsRetentionDays']; ?>&nbsp;days (the entry itself, saying what happened and when, is kept), by a scheduled clean-up. Our record of changes made by administrators keeps the administrator's internet address;</li>
                             <li id="retention-email">Records of the emails we send you, and the matching entries in our activity log (both include your email address), are deleted after <?php echo (int) $privacyEmailPeriods['retentionDays']; ?>&nbsp;days for emails that were sent or deliberately not sent, and after <?php echo (int) $privacyEmailPeriods['givenUpRetentionDays']; ?>&nbsp;days for emails that could not be delivered, by a scheduled clean-up;</li>
                             <li>Records we must keep for legal, tax or accounting reasons are retained for the period required by law.</li>
                         </ul>

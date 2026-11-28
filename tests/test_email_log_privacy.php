@@ -60,3 +60,14 @@ assertContains('activity log', $elPrivacy, '#129: the privacy page says the acti
 
 $elSettings = (string) file_get_contents($elSite . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin_settings.php');
 assertContains('activity-log entries', $elSettings, '#129: the admin screen says the periods cover the activity log');
+
+// ==============================================================================
+// #179: error log and visitor details - admin-editable periods, privacy page
+// ==============================================================================
+requireFn('fn_admin_settings.php');
+$elRegistry = adminSettingsRegistry();
+foreach (['error_log_retention_days' => 'error log', 'activity_visitor_details_retention_days' => 'visitor address and browser name'] as $elKey => $elWords) {
+    assertTrue(isset($elRegistry[$elKey]) && $elRegistry[$elKey]['section'] === 'email-records' && $elRegistry[$elKey]['min'] === 1 && $elRegistry[$elKey]['max'] === 3650 && $elRegistry[$elKey]['default'] === 90 && $elRegistry[$elKey]['rowOptional'] === true, '#179: a Global Admin can set the ' . $elWords . ' period (1-3650 days, 90 until saved)');
+}
+assertTrue(str_contains($elPrivacy, "privacyEmailPeriods['errorLogRetentionDays']") && str_contains($elPrivacy, "privacyEmailPeriods['visitorDetailsRetentionDays']"), '#179: the privacy page states the error-log and visitor-details periods actually in force');
+assertFalse(str_contains($elPrivacy, 'Technical and error logs are retained for a limited diagnostic period'), '#179: the vague "limited diagnostic period" sentence is gone');

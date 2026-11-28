@@ -103,6 +103,10 @@ $eqrNewStore = static function (): \stdClass {
     $eqrStore->failOps        = [];
     $eqrStore->logPurges      = [];
     $eqrStore->logRows        = 0;
+    $eqrStore->errorPurges    = [];
+    $eqrStore->errorRows      = 0;
+    $eqrStore->visitorClears  = [];
+    $eqrStore->visitorRows    = 0;
     $eqrStore->claimCalls     = 0;
     $eqrStore->releaseCalls   = 0;
     $eqrStore->nested         = null;
@@ -637,6 +641,27 @@ $eqrMakeGateway = static function (\stdClass $eqrStore, string $eqrRunner) use (
             $eqrStore->logPurges[] = [$eqrDays, $eqrFailedDays, $eqrLimit];
 
             return $eqrStore->logRows;
+        },
+        // T (#179): delete old error-log rows; U (#179): clear the visitor
+        //    address and browser name of old activity entries. The stand-ins
+        //    only record what they were asked.
+        'purgeErrorLog' => static function (int $eqrDays, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'purgeErrorLog')) {
+                return null;
+            }
+
+            $eqrStore->errorPurges[] = [$eqrDays, $eqrLimit];
+
+            return $eqrStore->errorRows;
+        },
+        'clearVisitorDetails' => static function (int $eqrDays, int $eqrLimit) use ($eqrStore, $eqrShouldFail): ?int {
+            if ($eqrShouldFail($eqrStore, 'clearVisitorDetails')) {
+                return null;
+            }
+
+            $eqrStore->visitorClears[] = [$eqrDays, $eqrLimit];
+
+            return $eqrStore->visitorRows;
         },
     ];
 };
@@ -1578,24 +1603,24 @@ foreach ($eqrRetentionCases as $eqrCase) {
 
 // --- emailQueueHousekeepingOptions() ---------------------------------------------------
 assertEquals(
-    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => []],
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => []],
     emailQueueHousekeepingOptions($eqrSettingsGetter([])),
     'emailQueueHousekeepingOptions: missing settings -> the defaults, nothing reported'
 );
 assertEquals(
-    ['retentionDays' => 45, 'givenUpRetentionDays' => 120, 'invalidSettings' => []],
-    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => '45', 'email_queue_failed_retention_days' => 120])),
+    ['retentionDays' => 45, 'givenUpRetentionDays' => 120, 'errorLogRetentionDays' => 14, 'visitorDetailsRetentionDays' => 30, 'invalidSettings' => []],
+    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => '45', 'email_queue_failed_retention_days' => 120, 'error_log_retention_days' => '14', 'activity_visitor_details_retention_days' => 30])),
     'emailQueueHousekeepingOptions: valid values are used'
 );
 assertEquals(
-    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => ['email_queue_retention_days', 'email_queue_failed_retention_days']],
-    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 0, 'email_queue_failed_retention_days' => 'thirty'])),
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => ['email_queue_retention_days', 'email_queue_failed_retention_days', 'error_log_retention_days', 'activity_visitor_details_retention_days']],
+    emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 0, 'email_queue_failed_retention_days' => 'thirty', 'error_log_retention_days' => 0, 'activity_visitor_details_retention_days' => '3651'])),
     'emailQueueHousekeepingOptions: 0 / "thirty" -> the default, and the setting is named'
 );
 $eqrHousekeepingBad = emailQueueHousekeepingOptions($eqrSettingsGetter(['email_queue_retention_days' => 'retention-value-777']));
 assertFalse(str_contains((string) json_encode($eqrHousekeepingBad), 'retention-value-777'), 'emailQueueHousekeepingOptions: an invalid value is never included in the result');
 assertEquals(
-    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'invalidSettings' => []],
+    ['retentionDays' => 30, 'givenUpRetentionDays' => 90, 'errorLogRetentionDays' => 90, 'visitorDetailsRetentionDays' => 90, 'invalidSettings' => []],
     emailQueueHousekeepingOptions(static function (string $eqrKey, mixed $eqrDefault = null): mixed {
         throw new \RuntimeException('simulated settings failure');
     }),
@@ -1854,6 +1879,49 @@ $eqrStore                           = $eqrNewStore();
 $eqrStore->failOps['purgeEmailLog'] = 'throw';
 $eqrResult                          = $eqrRun($eqrStore, 'A');
 assertEquals(1, $eqrResult['housekeepingFailures'], '#129: a failing activity-log clean-up is reported (exit code 3)');
+
+// --- #179: the error log and the visitor details of activity entries -----------------------------
+$eqrStore              = $eqrNewStore();
+$eqrStore->errorRows   = 6;
+$eqrStore->visitorRows = 9;
+$eqrResult             = $eqrRun($eqrStore, 'A');
+assertEquals([[90, 500]], $eqrStore->errorPurges, '#179: each run deletes error-log rows older than the default 90 days');
+assertEquals([[90, 500]], $eqrStore->visitorClears, '#179: each run clears the visitor address and browser name of activity entries older than the default 90 days');
+assertEquals(6, $eqrResult['errorLogPurged'] ?? null, '#179: ...and reports how many error-log rows went');
+assertEquals(9, $eqrResult['visitorDetailsCleared'] ?? null, '#179: ...and how many activity entries lost their visitor details');
+$eqrTidyText = implode(' ', formatEmailQueueTidyLines($eqrResult));
+assertContains('6 old error-log entries', $eqrTidyText, '#179: ...in plain words (error log)');
+assertContains('9 older activity-log entries', $eqrTidyText, '#179: ...in plain words (visitor details)');
+
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['errorLogRetentionDays' => 14, 'visitorDetailsRetentionDays' => 30]);
+assertEquals([[14, 500]], $eqrStore->errorPurges, '#179: the error-log period an admin sets is used');
+assertEquals([[30, 500]], $eqrStore->visitorClears, '#179: the visitor-details period an admin sets is used');
+
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['errorLogRetentionDays' => 0, 'visitorDetailsRetentionDays' => 'all']);
+assertEquals([[90, 500]], $eqrStore->errorPurges, '#179: an invalid period (0) falls back to 90 days, never "delete everything now"');
+assertEquals([[90, 500]], $eqrStore->visitorClears, '#179: an invalid period (text) falls back to 90 days');
+
+$eqrStore = $eqrNewStore();
+$eqrRun($eqrStore, 'A', ['useLock' => false]);
+assertEquals([], $eqrStore->errorPurges, '#179: no error-log clean-up without the queue lock');
+assertEquals([], $eqrStore->visitorClears, '#179: no visitor-details clean-up without the queue lock');
+
+foreach (['purgeErrorLog', 'clearVisitorDetails'] as $eqrFailingOp) {
+    $eqrStore                        = $eqrNewStore();
+    $eqrStore->failOps[$eqrFailingOp] = 'throw';
+    $eqrResult                       = $eqrRun($eqrStore, 'A');
+    assertEquals(1, $eqrResult['housekeepingFailures'], '#179: a failing ' . $eqrFailingOp . ' is reported (exit code 3)');
+}
+
+$eqrEmailCode = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_email.php');
+foreach (['purgeOldErrorLogRows', 'clearOldActivityVisitorDetails'] as $eqrCleanFn) {
+    $eqrCleanStart = (int) strpos($eqrEmailCode, 'function ' . $eqrCleanFn . '(');
+    $eqrCleanBody  = substr($eqrEmailCode, $eqrCleanStart, (int) strpos($eqrEmailCode, "\n}\n", $eqrCleanStart) - $eqrCleanStart);
+    assertTrue($eqrCleanStart > 0 && !str_contains($eqrCleanBody, 'tblAdminAuditLog'), '#179: ' . $eqrCleanFn . '() never touches the admin change log');
+}
+assertTrue(str_contains($eqrEmailCode, "'UPDATE `tblActivityLog` SET `requestIP` = NULL, `userAgent` = NULL '") && !str_contains($eqrEmailCode, 'DELETE FROM `tblActivityLog` WHERE `createdAt`'), '#179: activity entries are kept (only their visitor details are cleared); only email entries are ever deleted');
 
 // --- #123: expired links ---------------------------------------------------------------------------
 $eqrStore = $eqrNewStore();

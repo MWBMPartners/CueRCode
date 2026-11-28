@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - The error log and visitor details in the activity log are no longer kept for ever (#179, 2026-11-28)
+
+- **Time limits:** the email queue job's clean-up now deletes error-log entries after 90 days, and removes the visitor's internet address and browser name from other activity-log entries after 90 days (the entries themselves, saying what happened and when, are kept). Both periods are new settings a Global Admin can change (1 to 3650 days) in the "Email records and logs" section of `/admin/settings/`. 90 days is a starting value, not an owner decision. The admin change log is not touched. No database upgrade. Needs the cron job, like the email-record clean-up.
+- **No email addresses in the error log:** a database error that quotes a refused value, a page address with `?email=` or a Referer header used to put an email address into the error log in clear. Every text field of a new error-log entry now shows `[address]` instead. Entries written before this change keep what they hold until the 90 days pass.
+- **Privacy page:** section 7 now states both periods actually in force. The legal wording still needs review (#38).
+- Shown failing first: 12 unit checks in `tests/test_email_queue_runner.php` and 4 in `tests/test_email_log_privacy.php`; on MySQL 8.4 a real error-log row held the addresses from its title, detail, backtrace, page address and Referer header; then all passing.
+
 ### Fixed - The account page shows dates in the site's time zone (#178, 2026-11-28)
 
 - The "Saved", "Linked", "Created" and "Last used" dates on `/account/` showed the time as the database stores it (UTC), not in the site's time zone, so near midnight they could show the wrong day. They now use one helper, `siteFormatDatabaseTime()`. Nothing changes on a site whose time zone is UTC (the default). Display only.

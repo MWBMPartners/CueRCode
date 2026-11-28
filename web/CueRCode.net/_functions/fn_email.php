@@ -1101,6 +1101,8 @@ if (!defined('CUERCODE_EMAIL_QUEUE_GATEWAY_KEYS')) {
         'purgeFinished',    // 🗑️ #122: delete old sent/skipped records
         'purgeGivenUp',     // 🗑️ #122: delete old given-up records
         'purgeEmailLog',    // 🗑️ #129: delete old email entries from the activity log
+        'purgeErrorLog',    // 🗑️ #179: delete old error-log rows
+        'clearVisitorDetails', // 🙈 #179: clear visitor address and browser name of old activity entries
     ]);
 }
 
@@ -1207,6 +1209,36 @@ if (!defined('CUERCODE_EMAIL_QUEUE_SETTING_RETENTION_DAYS')) {
  */
 if (!defined('CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS')) {
     define('CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS', 'email_queue_failed_retention_days');
+}
+
+/**
+ * @var int #179: default days to keep an error-log row (tblErrorLog). The
+ * owner has not decided a period (no record in docs/decisions/); 90 days is
+ * the starting value, long enough to look into a fault reported weeks later,
+ * and a Global Admin can change it. Same accepted range as the email periods.
+ */
+if (!defined('CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT')) {
+    define('CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT', 90);
+}
+
+/**
+ * @var int #179: default days an activity-log entry keeps the visitor's
+ * internet address and browser name (tblActivityLog.requestIP, userAgent).
+ * After that the two are cleared and the entry itself stays. Starting value,
+ * not an owner decision; a Global Admin can change it.
+ */
+if (!defined('CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT')) {
+    define('CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT', 90);
+}
+
+/** @var string #179: tblSettings key - days to keep error-log rows (no seeded row; the default applies). */
+if (!defined('CUERCODE_SETTING_ERROR_LOG_RETENTION_DAYS')) {
+    define('CUERCODE_SETTING_ERROR_LOG_RETENTION_DAYS', 'error_log_retention_days');
+}
+
+/** @var string #179: tblSettings key - days activity entries keep visitor address and browser name (no seeded row). */
+if (!defined('CUERCODE_SETTING_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS')) {
+    define('CUERCODE_SETTING_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS', 'activity_visitor_details_retention_days');
 }
 
 /**
@@ -1769,6 +1801,8 @@ function emptyEmailQueueRunResult(): array
         'detailsCleared'       => 0,  // 🧹 #122: given-up emails whose stored details were cleared
         'purged'               => 0,  // 🗑️ #122: old finished records deleted
         'logPurged'            => 0,  // 🗑️ #129: old email entries deleted from the activity log
+        'errorLogPurged'       => 0,  // 🗑️ #179: old error-log rows deleted
+        'visitorDetailsCleared' => 0, // 🙈 #179: activity entries whose visitor address and browser name were cleared
         'housekeepingFailures' => 0,  // ⚠️ #122/#123: clean-up steps that failed (database error)
     ];
 }
@@ -1967,20 +2001,27 @@ function parseEmailQueueRetentionDays(mixed $value): ?int
  * @param callable $getSetting Called as $getSetting(string $key, mixed $default)
  *                             - getConfig in production, a stand-in in tests.
  *
- * @return array{retentionDays: int, givenUpRetentionDays: int, invalidSettings: list<string>}
+ * #179: also the error-log period and the visitor-details period (the same
+ * accepted range and the same "missing or invalid means the default" rule).
+ *
+ * @return array{retentionDays: int, givenUpRetentionDays: int, errorLogRetentionDays: int, visitorDetailsRetentionDays: int, invalidSettings: list<string>}
  */
 function emailQueueHousekeepingOptions(callable $getSetting): array
 {
     $options = [
-        'retentionDays'        => CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_DEFAULT,
-        'givenUpRetentionDays' => CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT,
-        'invalidSettings'      => [],
+        'retentionDays'               => CUERCODE_EMAIL_QUEUE_RETENTION_DAYS_DEFAULT,
+        'givenUpRetentionDays'        => CUERCODE_EMAIL_QUEUE_GIVEN_UP_RETENTION_DAYS_DEFAULT,
+        'errorLogRetentionDays'       => CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT,
+        'visitorDetailsRetentionDays' => CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT,
+        'invalidSettings'             => [],
     ];
 
     // 📋 setting key => option name (the default is already in $options).
     $settingMap = [
-        CUERCODE_EMAIL_QUEUE_SETTING_RETENTION_DAYS          => 'retentionDays',
-        CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS => 'givenUpRetentionDays',
+        CUERCODE_EMAIL_QUEUE_SETTING_RETENTION_DAYS               => 'retentionDays',
+        CUERCODE_EMAIL_QUEUE_SETTING_GIVEN_UP_RETENTION_DAYS      => 'givenUpRetentionDays',
+        CUERCODE_SETTING_ERROR_LOG_RETENTION_DAYS                 => 'errorLogRetentionDays',
+        CUERCODE_SETTING_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS  => 'visitorDetailsRetentionDays',
     ];
 
     foreach ($settingMap as $settingKey => $optionName) {
@@ -2162,9 +2203,19 @@ function formatEmailQueueTidyLines(array $result): array
     $detailsCleared = 0;
     $failures       = 0;
     $logPurged      = 0;
+    $errorPurged    = 0;
+    $visitorCleared = 0;
 
     if (isset($result['logPurged'])) {
         $logPurged = (int) $result['logPurged'];
+    }
+
+    if (isset($result['errorLogPurged'])) {
+        $errorPurged = (int) $result['errorLogPurged'];
+    }
+
+    if (isset($result['visitorDetailsCleared'])) {
+        $visitorCleared = (int) $result['visitorDetailsCleared'];
     }
 
     if (isset($result['expired'])) {
@@ -2198,6 +2249,14 @@ function formatEmailQueueTidyLines(array $result): array
 
     if ($logPurged > 0) {
         $lines[] = 'Tidied up: removed ' . $logPurged . ' old email entries from the activity log.';
+    }
+
+    if ($errorPurged > 0) {
+        $lines[] = 'Tidied up: deleted ' . $errorPurged . ' old error-log entries.';
+    }
+
+    if ($visitorCleared > 0) {
+        $lines[] = 'Tidied up: removed the visitor address and browser name from ' . $visitorCleared . ' older activity-log entries (the entries themselves are kept).';
     }
 
     if ($failures > 0) {
@@ -2266,17 +2325,29 @@ function validateEmailQueueGateway(array $gateway): void
  * @param int   $retentionDays        Days to keep sent/skipped records.
  * @param int   $givenUpRetentionDays Days to keep given-up records.
  * @param int   $tidyLimit            Most rows per statement.
+ * @param int   $errorLogDays         #179: days to keep error-log rows.
+ * @param int   $visitorDetailsDays   #179: days activity entries keep the visitor's
+ *                                    address and browser name.
  *
- * @return array{expired: int, detailsCleared: int, purged: int, logPurged: int, failures: int}
+ * @return array{expired: int, detailsCleared: int, purged: int, logPurged: int, errorLogPurged: int, visitorDetailsCleared: int, failures: int}
  */
-function runEmailQueueHousekeeping(array $gateway, array $linkLifetimes, int $retentionDays, int $givenUpRetentionDays, int $tidyLimit): array
-{
+function runEmailQueueHousekeeping(
+    array $gateway,
+    array $linkLifetimes,
+    int $retentionDays,
+    int $givenUpRetentionDays,
+    int $tidyLimit,
+    int $errorLogDays = CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT,
+    int $visitorDetailsDays = CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT
+): array {
     $counts = [
-        'expired'        => 0,
-        'detailsCleared' => 0,
-        'purged'         => 0,
-        'logPurged'      => 0,
-        'failures'       => 0,
+        'expired'               => 0,
+        'detailsCleared'        => 0,
+        'purged'                => 0,
+        'logPurged'             => 0,
+        'errorLogPurged'        => 0,
+        'visitorDetailsCleared' => 0,
+        'failures'              => 0,
     ];
 
     // 1️⃣ #123: skip WAITING emails whose link has expired (or nearly). Done
@@ -2346,6 +2417,29 @@ function runEmailQueueHousekeeping(array $gateway, array $linkLifetimes, int $re
         $counts['logPurged'] = $changed;
     } else {
         $counts['failures']++;
+    }
+
+    // 5️⃣ #179: the error log and the visitor details of the activity log.
+    //    Error-log rows are deleted; activity entries are KEPT (the admin and
+    //    security history stays), only their address and browser name go.
+    //    tblAdminAuditLog is never touched here.
+    $visitorSteps = [
+        'purgeErrorLog'       => ['days' => $errorLogDays, 'count' => 'errorLogPurged'],
+        'clearVisitorDetails' => ['days' => $visitorDetailsDays, 'count' => 'visitorDetailsCleared'],
+    ];
+
+    foreach ($visitorSteps as $operationName => $step) {
+        try {
+            $changed = $gateway[$operationName]($step['days'], $tidyLimit);
+        } catch (\Throwable $e) {
+            $changed = null;
+        }
+
+        if (is_int($changed) && $changed >= 0) {
+            $counts[$step['count']] = $changed;
+        } else {
+            $counts['failures']++;
+        }
     }
 
     return $counts;
@@ -2486,6 +2580,27 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
 
         if ($parsedDays !== null) {
             $givenUpRetentionDays = $parsedDays;
+        }
+    }
+
+    // 🗑️ #179: the error-log and visitor-details periods, the same way.
+    $errorLogDays = CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT;
+
+    if (array_key_exists('errorLogRetentionDays', $options)) {
+        $parsedDays = parseEmailQueueRetentionDays($options['errorLogRetentionDays']);
+
+        if ($parsedDays !== null) {
+            $errorLogDays = $parsedDays;
+        }
+    }
+
+    $visitorDetailsDays = CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT;
+
+    if (array_key_exists('visitorDetailsRetentionDays', $options)) {
+        $parsedDays = parseEmailQueueRetentionDays($options['visitorDetailsRetentionDays']);
+
+        if ($parsedDays !== null) {
+            $visitorDetailsDays = $parsedDays;
         }
     }
 
@@ -2632,13 +2747,15 @@ function runEmailQueueBatch(array $gateway, callable $sender, array $options = [
         // checks further down still apply. A failed step is counted and
         // reported (exit code 3) but never stops sending.
         if ($haveLock) {
-            $housekeeping = runEmailQueueHousekeeping($gateway, $linkLifetimes, $retentionDays, $givenUpRetentionDays, $tidyLimit);
+            $housekeeping = runEmailQueueHousekeeping($gateway, $linkLifetimes, $retentionDays, $givenUpRetentionDays, $tidyLimit, $errorLogDays, $visitorDetailsDays);
 
-            $result['expired']              = $result['expired'] + $housekeeping['expired'];
-            $result['detailsCleared']       = $housekeeping['detailsCleared'];
-            $result['purged']               = $housekeeping['purged'];
-            $result['logPurged']            = $housekeeping['logPurged'];
-            $result['housekeepingFailures'] = $housekeeping['failures'];
+            $result['expired']               = $result['expired'] + $housekeeping['expired'];
+            $result['detailsCleared']        = $housekeeping['detailsCleared'];
+            $result['purged']                = $housekeeping['purged'];
+            $result['logPurged']             = $housekeeping['logPurged'];
+            $result['errorLogPurged']        = $housekeeping['errorLogPurged'];
+            $result['visitorDetailsCleared'] = $housekeeping['visitorDetailsCleared'];
+            $result['housekeepingFailures']  = $housekeeping['failures'];
         }
 
         // ======================================================================
@@ -3896,6 +4013,60 @@ function purgeOldEmailActivityRows(int $olderThanDays, int $failedOlderThanDays,
 }
 
 /**
+ * 🗑️ #179: delete error-log rows (tblErrorLog) older than $olderThanDays.
+ *
+ * The error log holds the visitor's address, browser name and the page
+ * address of each fault, so it is kept no longer than needed to look into a
+ * fault. Nothing else depends on its rows (the admin change log is its own
+ * table). Oldest first is not needed: every matching row goes in the end.
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param int $olderThanDays Age limit.
+ * @param int $limit         Most rows deleted by this call.
+ *
+ * @return int|null How many rows were deleted, or null on a database error.
+ */
+function purgeOldErrorLogRows(int $olderThanDays, int $limit): ?int
+{
+    return emailQueueChangeRows(
+        'DELETE FROM `tblErrorLog` WHERE `createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY) LIMIT ?',
+        'ii',
+        [$olderThanDays, $limit],
+        'Error-log clean-up failed'
+    );
+}
+
+/**
+ * 🙈 #179: clear the visitor's address and browser name (tblActivityLog
+ *    requestIP and userAgent) of activity entries older than $olderThanDays.
+ *
+ * The entries themselves are KEPT: what happened, to which record, by which
+ * account and when stays in the history (security-relevant entries such as
+ * the human-check outage rows included). Only the two visitor details go.
+ * The admin change log (tblAdminAuditLog) has its own address column and is
+ * not touched.
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ *
+ * @param int $olderThanDays Age limit.
+ * @param int $limit         Most rows changed by this call.
+ *
+ * @return int|null How many entries were changed, or null on a database error.
+ */
+function clearOldActivityVisitorDetails(int $olderThanDays, int $limit): ?int
+{
+    return emailQueueChangeRows(
+        'UPDATE `tblActivityLog` SET `requestIP` = NULL, `userAgent` = NULL '
+        . 'WHERE `createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY) AND (`requestIP` IS NOT NULL OR `userAgent` IS NOT NULL) '
+        . 'LIMIT ?',
+        'ii',
+        [$olderThanDays, $limit],
+        'Activity-log visitor details clean-up failed'
+    );
+}
+
+/**
  * 🔌 The production gateway: each queue operation mapped to its real
  * database function, by name (plain strings, so they are easy to search for).
  *
@@ -3925,6 +4096,8 @@ function emailQueueDatabaseGateway(): array
         'purgeFinished' => 'purgeFinishedEmailQueueRows',
         'purgeGivenUp'  => 'purgeGivenUpEmailQueueRows',
         'purgeEmailLog' => 'purgeOldEmailActivityRows',
+        'purgeErrorLog'       => 'purgeOldErrorLogRows',
+        'clearVisitorDetails' => 'clearOldActivityVisitorDetails',
     ];
 }
 
@@ -4034,8 +4207,10 @@ function emailQueueRunnerMain(array $args, array $env): int
     $batchOptions = [
         'limit'                => $args['limit'],
         'clock'                => $clock,
-        'retentionDays'        => $housekeeping['retentionDays'],
-        'givenUpRetentionDays' => $housekeeping['givenUpRetentionDays'],
+        'retentionDays'               => $housekeeping['retentionDays'],
+        'givenUpRetentionDays'        => $housekeeping['givenUpRetentionDays'],
+        'errorLogRetentionDays'       => $housekeeping['errorLogRetentionDays'],
+        'visitorDetailsRetentionDays' => $housekeeping['visitorDetailsRetentionDays'],
     ];
 
     // 6️⃣ / 7️⃣ Not ready to send (switched off, or switched on with settings missing):
@@ -4249,10 +4424,24 @@ function emailQueueRunnerCheck(array $settings, array $gateway, callable $out, c
         $givenUpRetentionDays = (int) $housekeeping['givenUpRetentionDays'];
     }
 
+    $errorLogDays = CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT;
+
+    if (isset($housekeeping['errorLogRetentionDays'])) {
+        $errorLogDays = (int) $housekeeping['errorLogRetentionDays'];
+    }
+
+    $visitorDetailsDays = CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT;
+
+    if (isset($housekeeping['visitorDetailsRetentionDays'])) {
+        $visitorDetailsDays = (int) $housekeeping['visitorDetailsRetentionDays'];
+    }
+
     $lines[] = 'Clean-up: one-time links are removed as soon as an email is sent or skipped, and '
         . CUERCODE_EMAIL_QUEUE_RESEND_WINDOW_HOURS . ' hours after it is given up; sent and skipped records are deleted after '
         . $retentionDays . ' days and given-up ones after ' . $givenUpRetentionDays
-        . ' days. Email entries in the activity log are deleted after the same two periods. This also runs while sending is switched off.';
+        . ' days. Email entries in the activity log are deleted after the same two periods. Error-log entries are deleted after '
+        . $errorLogDays . ' days, and other activity-log entries lose the visitor address and browser name after ' . $visitorDetailsDays
+        . ' days (the entries are kept). This also runs while sending is switched off.';
 
     // ⚠️ Settings that are present but not valid - their NAMES only, never values.
     if (isset($housekeeping['invalidSettings']) && is_array($housekeeping['invalidSettings']) && count($housekeeping['invalidSettings']) > 0) {
@@ -4371,8 +4560,10 @@ function processEmailQueue(int $max = 2): array
         //    batch simply uses the defaults.
         if (function_exists('getConfig')) {
             $housekeeping                         = emailQueueHousekeepingOptions('getConfig');
-            $batchOptions['retentionDays']        = $housekeeping['retentionDays'];
-            $batchOptions['givenUpRetentionDays'] = $housekeeping['givenUpRetentionDays'];
+            $batchOptions['retentionDays']               = $housekeeping['retentionDays'];
+            $batchOptions['givenUpRetentionDays']        = $housekeeping['givenUpRetentionDays'];
+            $batchOptions['errorLogRetentionDays']       = $housekeeping['errorLogRetentionDays'];
+            $batchOptions['visitorDetailsRetentionDays'] = $housekeeping['visitorDetailsRetentionDays'];
         }
 
         $result = runEmailQueueBatch(emailQueueDatabaseGateway(), 'sendEmailNow', $batchOptions);

@@ -104,6 +104,14 @@ if (!function_exists('moneyParseCurrencyList')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_money.php';
 }
 
+// 🗑️ #179: the error-log and visitor-details periods' defaults
+//    (CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT and friends) live in
+//    fn_email.php with the clean-up that uses them. That file defines
+//    constants and functions only on loading.
+if (!defined('CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_email.php';
+}
+
 // ==============================================================================
 // 🔧 Constants
 // ==============================================================================
@@ -248,10 +256,10 @@ function adminSettingsSections(): array
             'intro' => 'The site sends its emails (account verification, password resets) through a Microsoft 365 mailbox. Fill in the details from your Microsoft Entra app registration, use "Check Microsoft connection", then turn email on. Also make sure the cron job that sends queued emails is set up (see the install notes).',
         ],
         'email-records' => [
-            'saveLabel' => 'Save email record periods',
-            'title' => 'Email records',
+            'saveLabel' => 'Save record periods',
+            'title' => 'Email records and logs',
             'icon'  => 'fa-solid fa-broom',
-            'intro' => 'How long the record of each sent or given-up email is kept before it is deleted. The same two periods apply to the email activity-log entries, which name the recipient. Whole days, 1 to 3650. The privacy page shows the periods set here.',
+            'intro' => 'How long the record of each sent or given-up email is kept before it is deleted (the same two periods apply to the email activity-log entries, which name the recipient), how long error-log entries are kept, and how long activity entries keep the visitor\'s internet address and browser name. Whole days, 1 to 3650. The scheduled email queue job does the clean-up. The privacy page shows the periods set here.',
         ],
         'signin' => [
             'saveLabel' => 'Save sign-in provider settings',
@@ -415,6 +423,22 @@ function adminSettingsRegistry(): array
         'help' => 'Whole days, 1 to 3650. The default is 90. Longer, because support is asked about these. Also covers activity-log entries for failed emails.',
         'min' => 1, 'max' => 3650,
         'description' => 'Days to keep a given-up email record',
+    ]);
+    // 🗑️ #179: the error log, and the visitor details of activity entries.
+    //    No seeded rows: the code uses the default until an admin saves one.
+    $fields[] = adminSettingsField([
+        'key' => CUERCODE_SETTING_ERROR_LOG_RETENTION_DAYS, 'section' => 'email-records', 'kind' => 'int', 'group' => 'security', 'type' => 'integer',
+        'label' => 'Keep error-log entries for (days)',
+        'help' => 'Whole days, 1 to 3650. The default is ' . CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT . '. Each entry holds the page address, the visitor\'s internet address and browser name; after this many days it is deleted. Email addresses are never stored in it (they are replaced with [address]).',
+        'min' => 1, 'max' => 3650, 'rowOptional' => true, 'default' => CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT,
+        'description' => 'Days to keep an error-log entry (#179)',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => CUERCODE_SETTING_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS, 'section' => 'email-records', 'kind' => 'int', 'group' => 'security', 'type' => 'integer',
+        'label' => 'Keep visitor address and browser name in activity entries for (days)',
+        'help' => 'Whole days, 1 to 3650. The default is ' . CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT . '. After this many days the internet address and browser name are removed from activity-log entries; the entries themselves (what happened, and when) are kept. The admin change log keeps its own record.',
+        'min' => 1, 'max' => 3650, 'rowOptional' => true, 'default' => CUERCODE_ACTIVITY_VISITOR_DETAILS_RETENTION_DAYS_DEFAULT,
+        'description' => 'Days activity entries keep the visitor address and browser name (#179)',
     ]);
 
     // ------------------------------------------------------------ 3. Sign in

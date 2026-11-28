@@ -484,6 +484,33 @@ function logError(
     }
 
     // ==================================================================
+    // 🙈 #179: no email address is stored in clear in the error log
+    // ==================================================================
+    // A database error can quote the value it refused ("Duplicate entry
+    // 'name@example.com' ..."), a page address can carry ?email=..., and a
+    // Referer header can too. Every free-text field is passed through
+    // maskEmailAddresses() (fn_log_mask.php), which writes "[address]"
+    // instead and fails closed (an empty string, never the raw text). The
+    // SQL text and file paths stay readable here (this table is
+    // access-controlled); the error_log() fallback below masks those too.
+    $title              = maskEmailAddresses($title);
+    $detail             = maskEmailAddresses($detail);
+    $requestURL         = maskEmailAddresses($requestURL);
+    $sanitisedHeaders   = maskEmailAddresses($sanitisedHeaders);
+    $userAgent          = maskEmailAddresses($userAgent);
+    if ($backtrace !== null) {
+        $backtrace = maskEmailAddresses((string) $backtrace);
+    }
+    if ($additionalDataJSON !== null && $additionalDataJSON !== false) {
+        $additionalDataJSON = maskEmailAddresses($additionalDataJSON);
+        if ($additionalDataJSON === '') {
+            $additionalDataJSON = null;
+        }
+    } else {
+        $additionalDataJSON = null;
+    }
+
+    // ==================================================================
     // 🗄️ Insert into tblErrorLog
     // @see https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php
     // ==================================================================
