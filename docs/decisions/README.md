@@ -52,3 +52,4 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0040](0040-real-database-tests-also-block-a-deploy.md) | 2026-11-28 | Owner: the real-database tests also run automatically and block a deploy | Current |
 | [0041](0041-free-plan-cannot-be-given-a-price.md) | 2026-11-28 | Owner: the Free plan cannot be given a price | Current |
 | [0042](0042-support-three-decimal-currencies-before-launch.md) | 2026-11-28 | Owner: support three-decimal currencies before launch | Current |
+| [0043](0043-lead-limits-and-retention-defaults.md) | 2026-11-28 | Lead (owner may overrule): starting limits and log keeping periods | Current (unapproved) |
