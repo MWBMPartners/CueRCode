@@ -951,7 +951,9 @@ function migrationDecideStep(array $step, callable $existsChecker): string
  * Skipped (and reported): a recorded migration whose file is missing,
  * cannot be loaded, has changed since it was applied (its new text never
  * ran anywhere, so it must not run now either), or no longer passes the
- * checks. Migrations that are still WAITING are not included: the normal
+ * checks. Since Codex finding 2.P1 the web installer refuses to load the
+ * starting data or finish when this list is not empty (see
+ * migrationDbRunSeedSql() and migrationDbChangedAppliedUpgrades()). Migrations that are still WAITING are not included: the normal
  * upgrade run straight afterwards applies them in full.
  *
  * @param array<string, array{path: string, checksum: string, definition: mixed, loadError: string}> $migrations From migrationLoadAll()
@@ -1031,6 +1033,36 @@ function migrationChangedUpgradesRefusal(array $changedKeys): string
         . 'database, so it would not match a normal install. The installer has stopped, nothing was changed, and it '
         . 'will not lock itself. Start again with an empty database (delete this database and create it again '
         . 'empty, or point the site at a new empty one), then reload this page.';
+}
+
+/**
+ * 🛑 What the web installer says when an upgrade recorded as applied cannot
+ *    have its starting-data steps repeated: its file is missing, cannot be
+ *    loaded, or no longer passes the checks (Codex finding 2.P1 of the 7n
+ *    Phase 2 review). PURE.
+ *
+ * Without that file, the starting data would be loaded WITHOUT the upgrade's
+ * own starting-data changes (for 0004: the Enterprise plan and the draft
+ * prices), while the database's record says the upgrade was applied - a
+ * database that is not what a normal install gives, and nothing would ever
+ * correct it. So the installer stops before changing anything and does not
+ * lock itself. (A file that has CHANGED has its own message,
+ * migrationChangedUpgradesRefusal().)
+ *
+ * @param array<int, string> $unusableKeys Applied upgrades that cannot be repeated
+ * @return string Plain English, safe to show to anyone; '' when the list is empty
+ */
+function migrationUnusableUpgradesRefusal(array $unusableKeys): string
+{
+    if ($unusableKeys === []) {
+        return '';
+    }
+
+    return 'This database has some database upgrades recorded as applied whose files are missing or cannot be read: '
+        . implode(', ', $unusableKeys) . '. Without them the starting data cannot be set up the way a normal install '
+        . 'sets it up. The installer has stopped, nothing was changed, and it will not lock itself. Put back the complete '
+        . 'set of upgrade files from the same version of CueRCode (in _includes/sql/migrations/), or start again with an '
+        . 'empty database, then reload this page.';
 }
 
 // ==============================================================================
@@ -2254,7 +2286,9 @@ function migrationDbSeedTablesTransactional(\mysqli $db, array $tables = []): ar
  *         load was refused before it started (nothing was written);
  *         stepsRun / migrations: the repeated data steps and the upgrades they
  *         belong to; skipped: recorded upgrades whose files are missing or
- *         changed (not repeated)
+ *         changed - since Codex finding 2.P1 any such upgrade REFUSES the
+ *         whole load (nothing is written), so skipped is only ever non-empty
+ *         together with a refusal
  */
 function migrationDbRunSeedSql(\mysqli $db, string $seedSql, string $replayDir = ''): array
 {
@@ -2292,6 +2326,19 @@ function migrationDbRunSeedSql(\mysqli $db, string $seedSql, string $replayDir =
             }
             $replaySteps          = $planned['steps'];
             $outcome['skipped']   = $planned['skipped'];
+
+            // 🛑 Codex finding 2.P1: an applied upgrade whose data steps
+            //    cannot be repeated (file changed, missing, unreadable or no
+            //    longer valid) would leave the starting data different from
+            //    a normal install for ever. Refused before anything is written.
+            if ($planned['skipped'] !== []) {
+                $outcome['error']   = 'seed_data.sql was not run: these applied upgrades cannot be repeated: ' . implode(', ', $planned['skipped']);
+                $outcome['refusal'] = 'The starting data was not loaded and nothing was changed, because some database upgrades '
+                    . 'recorded as applied to this database cannot be repeated with it (their files are missing, have changed '
+                    . 'or cannot be read): ' . implode(', ', $planned['skipped']) . '. Put back the matching upgrade files, '
+                    . 'or start again with an empty database, then reload this page.';
+                return $outcome;
+            }
             foreach ($replaySteps as $plannedStep) {
                 $tablesToCheck[] = (string) $plannedStep['step']['table'];
             }
@@ -3424,21 +3471,25 @@ function migrationDbAppliedChecksums(\mysqli $db): array
 
 /**
  * 🛑 Which upgrades this database applied from a file that has CHANGED since
- *    (recheck finding 1 of the 7n Phase 2 review, decision 0036). Reads only.
+ *    (recheck finding 1 of the 7n Phase 2 review, decision 0036), and which
+ *    applied upgrades cannot be repeated for any other reason - file missing,
+ *    cannot be loaded, no longer passes the checks (Codex finding 2.P1).
+ *    Reads only.
  *
  * The web installer asks this before it changes anything, and stops without
- * locking itself when the list is not empty (migrationChangedUpgradesRefusal()
- * says why). The command-line tool and the admin Upgrades page keep their
- * warning: they never run a changed file again either.
+ * locking itself when either list is not empty (migrationChangedUpgradesRefusal()
+ * and migrationUnusableUpgradesRefusal() say why). The command-line tool and
+ * the admin Upgrades page keep their warning: they never run a changed file
+ * again either.
  *
  * @param \mysqli $db            Connection with the site database selected
  * @param string  $migrationsDir Folder of migration files
- * @return array{ok: bool, changed: array<int, string>, error: string}
+ * @return array{ok: bool, changed: array<int, string>, unusable: array<int, string>, error: string}
  *         error may hold raw database text - log it, never show it
  */
 function migrationDbChangedAppliedUpgrades(\mysqli $db, string $migrationsDir): array
 {
-    $result = ['ok' => false, 'changed' => [], 'error' => ''];
+    $result = ['ok' => false, 'changed' => [], 'unusable' => [], 'error' => ''];
 
     try {
         $loaded = migrationLoadAll($migrationsDir);
@@ -3461,7 +3512,14 @@ function migrationDbChangedAppliedUpgrades(\mysqli $db, string $migrationsDir): 
         // 🧭 The same "changed since applied" rule the upgrade run warns about.
         $plan              = migrationBuildPlan($availableChecksums, $applied['checksums']);
         $result['changed'] = $plan['changed'];
-        $result['ok']      = true;
+
+        // 🛑 Codex finding 2.P1: applied upgrades whose starting-data steps
+        //    cannot be repeated for any OTHER reason (file missing, cannot be
+        //    loaded, no longer passes the checks) - the same list the repeat
+        //    in migrationDbRunSeedSql() would have to skip.
+        $replay             = migrationReplayPlan($loaded['migrations'], $applied['checksums']);
+        $result['unusable'] = array_values(array_diff($replay['skipped'], $plan['changed']));
+        $result['ok']       = true;
     } catch (\Throwable $unexpected) {
         $result['ok']    = false;
         $result['error'] = 'Stopped by an unexpected error (' . get_class($unexpected) . ': ' . $unexpected->getMessage() . ')';

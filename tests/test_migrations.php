@@ -1254,6 +1254,45 @@ assertTrue(
 );
 assertContains("migrationChangedUpgradesRefusal(\$upgradeFileCheck['changed'])", $migInstallerSource, 'recheck F1: the installer shows the plain refusal');
 
+// 🛑 Codex finding 2.P1 (7n Phase 2 review): an upgrade recorded as applied
+//    whose file is MISSING, cannot be loaded or no longer passes the checks
+//    cannot have its starting-data steps repeated either. Before this fix
+//    the installer loaded the starting data without them, warned, and could
+//    lock itself as successful (no Enterprise plan, while the record said
+//    0004 was applied). Now it refuses to load the starting data or finish.
+$migUnusableMessage = migrationUnusableUpgradesRefusal(['0004_plans_prices_currencies']);
+assertContains('0004_plans_prices_currencies', $migUnusableMessage, 'finding 2.P1: the refusal names the upgrade');
+assertContains('nothing was changed', $migUnusableMessage, 'finding 2.P1: the refusal says nothing was changed');
+assertContains('will not lock itself', $migUnusableMessage, 'finding 2.P1: the refusal says the installer did not lock itself');
+assertContains('_includes/sql/migrations/', $migUnusableMessage, 'finding 2.P1: the refusal says where the upgrade files belong');
+assertContains('empty database', $migUnusableMessage, 'finding 2.P1: ...and the other way out (start from an empty database)');
+assertFalse(str_contains($migUnusableMessage, 'checksum') || str_contains($migUnusableMessage, 'tblSchemaMigrations'), 'finding 2.P1: the refusal is plain words');
+assertEquals('', migrationUnusableUpgradesRefusal([]), 'finding 2.P1: nothing unusable, no refusal');
+assertContains("\$upgradeFileCheck['unusable'] !== []", $migInstallerSource, 'finding 2.P1: the installer stops, before changing anything, when an applied upgrade cannot be repeated');
+assertContains("migrationUnusableUpgradesRefusal(\$upgradeFileCheck['unusable'])", $migInstallerSource, 'finding 2.P1: ...and shows the plain refusal');
+assertFalse(str_contains($migInstallerSource, "\$seedRun['skipped'] !== []"), 'finding 2.P1: the installer no longer loads the starting data and only WARNS about upgrades it could not repeat');
+$migSeedRunSource = substr($migRunnerSource, (int) strpos($migRunnerSource, 'function migrationDbRunSeedSql('));
+$migSeedRunSource = substr($migSeedRunSource, 0, (int) strpos($migSeedRunSource, 'function migrationDbRunSeedTransaction('));
+assertTrue(
+    (int) strpos($migSeedRunSource, "if (\$planned['skipped'] !== [])") > 0
+    && (int) strpos($migSeedRunSource, "if (\$planned['skipped'] !== [])") < (int) strpos($migSeedRunSource, 'migrationDbRunSeedTransaction($db, $seedSql)'),
+    'finding 2.P1: the seed load itself also refuses (before writing anything) when an applied upgrade cannot be repeated'
+);
+
+// 📝 Codex finding 2.P2: upgrade 0004 replaces a starting description only
+//    when it is still BYTE FOR BYTE the starting wording. The column's
+//    collation ignores capitals, accents and trailing spaces, so a plain =
+//    also matched an owner's edit that changed only those.
+$mig0004Steps = $migLoaded['migrations']['0004_plans_prices_currencies']['definition']['steps'];
+$migDescriptionSteps = 0;
+foreach ($mig0004Steps as $mig0004Step) {
+    if ($mig0004Step['type'] === 'update_if_unchanged' && str_contains($mig0004Step['sql'], 'SET `description`')) {
+        $migDescriptionSteps++;
+        assertMatches('/WHERE `planKey` = \'[a-z]+\' AND CAST\(`description` AS BINARY\) = CAST\(\'[^\']+\' AS BINARY\)$/', $mig0004Step['sql'], 'finding 2.P2: ' . $mig0004Step['label'] . ' compares the description byte for byte');
+    }
+}
+assertEquals(2, $migDescriptionSteps, 'finding 2.P2: both description changes (Pro and Business) were checked');
+
 // 📝 Recheck finding 7: a comment said seed_data.sql sets its own SQL mode.
 //    It does not (only the character set); the comments now say so, and this
 //    pins the fact they rely on.

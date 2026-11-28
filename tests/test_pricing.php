@@ -69,8 +69,10 @@ assertEquals('£1,234.50', pricingFormatPrice('1234.50', 'GBP'), 'pricingFormatP
 assertEquals('£49.99', pricingFormatPrice('49.99', 'gbp'), 'pricingFormatPrice: a lowercase currency code normalises');
 assertEquals('$9.90', pricingFormatPrice('9.90', 'USD'), 'pricingFormatPrice: dollars use fn_money.php\'s symbol');
 assertEquals('€9.90', pricingFormatPrice('9.9', 'EUR'), 'pricingFormatPrice: euros use fn_money.php\'s symbol');
-assertEquals('CHF 9.90', pricingFormatPrice('9.9', 'CHF'), 'pricingFormatPrice: a currency fn_money.php does not know shows its code, not a guessed symbol');
-assertEquals('? 9.90', pricingFormatPrice('9.9', ''), 'pricingFormatPrice: an empty currency code fails safe to a neutral "?" prefix rather than assuming GBP');
+assertEquals("CHF\u{00A0}9.90", pricingFormatPrice('9.9', 'CHF'), 'pricingFormatPrice: a currency without its own sign here (CHF) shows its code, never a guessed symbol (Codex finding 1.1: every ISO 4217 currency is known)');
+assertEquals("KWD\u{00A0}1.230", pricingFormatPrice('1.23', 'KWD'), 'pricingFormatPrice: a three-decimal currency is shown with three decimals');
+assertEquals("XTS\u{00A0}9.90", pricingFormatPrice('9.9', 'XTS'), 'pricingFormatPrice: a code that is not a currency (XTS, the ISO test code) shows its code, with the same unbreakable space');
+assertEquals("?\u{00A0}9.90", pricingFormatPrice('9.9', ''), 'pricingFormatPrice: an empty currency code fails safe to a neutral "?" prefix rather than assuming GBP');
 
 // ==============================================================================
 // 🔢 Section 2: pricingFormatLimit()

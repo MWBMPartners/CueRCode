@@ -38,7 +38,8 @@
  *   - settings, plans and price points are "insert if missing" (ON DUPLICATE
  *     KEY UPDATE `x` = `x` changes nothing when the row is already there);
  *   - the two price moves and the two description changes only match a row
- *     still at its starting value;
+ *     still at its starting value (the descriptions byte for byte, so an
+ *     edit that only changed capitals, accents or trailing spaces is kept);
  *   - the Enterprise price is only added to an Enterprise plan this migration
  *     created (one whose button is "Contact us"), never to an Enterprise plan
  *     the owner had already made by hand.
@@ -387,19 +388,25 @@ return [
         // organisation-wide single sign-on). The owner chose to keep naming
         // them, marked as coming soon. ONLY a description still exactly at its
         // starting wording is changed: one an admin has edited is left alone.
+        // "Exactly" means byte for byte (Codex finding 2.P2 of the 7n Phase 2
+        // review): the column's utf8mb4_unicode_ci collation treats capitals,
+        // accents and trailing spaces as the same, so a plain = would also
+        // match - and overwrite - an owner's edit that changed only those.
+        // CAST(... AS BINARY) compares the stored bytes themselves.
+        // (Upgrade 0004 is corrected in place under decision 0036.)
         [
             'type'  => 'update_if_unchanged',
             'table' => 'tblSubscriptionPlans',
             'label' => 'pro description: unbuilt features marked coming soon',
             'sql'   => 'UPDATE `tblSubscriptionPlans` SET `description` = \'For individuals who need dynamic QR codes, analytics and automation (all coming soon).\''
-                . ' WHERE `planKey` = \'pro\' AND `description` = \'For individuals who need dynamic QR codes, analytics, and automation.\'',
+                . ' WHERE `planKey` = \'pro\' AND CAST(`description` AS BINARY) = CAST(\'For individuals who need dynamic QR codes, analytics, and automation.\' AS BINARY)',
         ],
         [
             'type'  => 'update_if_unchanged',
             'table' => 'tblSubscriptionPlans',
             'label' => 'business description: unbuilt features marked coming soon',
             'sql'   => 'UPDATE `tblSubscriptionPlans` SET `description` = \'For teams and organisations that need enterprise-scale volume, with organisation-wide single sign-on (SSO) and team roles coming soon.\''
-                . ' WHERE `planKey` = \'business\' AND `description` = \'For teams and organisations that need SSO, roles, and enterprise-scale volume.\'',
+                . ' WHERE `planKey` = \'business\' AND CAST(`description` AS BINARY) = CAST(\'For teams and organisations that need SSO, roles, and enterprise-scale volume.\' AS BINARY)',
         ],
     ],
 ];

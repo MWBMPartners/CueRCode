@@ -357,13 +357,37 @@ assertTrue(adminPlansPricesFingerprint(array_merge($apRows, [$apPrice(['pricePoi
 // ✅ Section 6: the price-group form
 // ==============================================================================
 $apOffered = ['GBP', 'USD', 'EUR'];
-$apGroup = function (array $apPost, array $apRefs = [], ?array $apRowsIn = null) use ($apOffered, $apRows, $apUk): array {
+// 📝 The form always sends its four date and time boxes and the
+//    "recommended" box (a hidden 0 before the tick box), so the helper fills
+//    in any of them a test leaves out, empty - as the real form does.
+$apFormBoxes = ['valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0'];
+$apGroup = function (array $apPost, array $apRefs = [], ?array $apRowsIn = null) use ($apOffered, $apRows, $apUk, $apFormBoxes): array {
     $apUse = $apRows;
     if ($apRowsIn !== null) {
         $apUse = $apRowsIn;
     }
-    return adminPlansProcessPriceGroup($apPost, 'monthly', $apOffered, $apUse, $apRefs, $apUk);
+    return adminPlansProcessPriceGroup(array_merge($apFormBoxes, $apPost), 'monthly', $apOffered, $apUse, $apRefs, $apUk);
 };
+
+// 🗓️ Codex finding 1.2 (7n Phase 2 review): a hand-made request that leaves
+//    out the date boxes must NOT be read as "no dates" - that would clear the
+//    sale dates of every current price in the group (a future price on sale
+//    at once, an ending offer made endless). Each missing box refuses the
+//    whole group; an explicitly EMPTY box still clears its date.
+$apDatedRows = [$apPrice(['validFrom' => '2026-12-01 00:00:00', 'validUntil' => '2026-12-31 23:59:59']), $apRows[1]];
+foreach (array_keys($apFormBoxes) as $apMissingBox) {
+    $apPartial = $apFormBoxes;
+    unset($apPartial[$apMissingBox]);
+    $apOut = adminPlansProcessPriceGroup(array_merge($apPartial, ['amount' => ['GBP' => '6.99']]), 'monthly', $apOffered, $apDatedRows, [], $apUk);
+    assertTrue($apOut['errors'] !== [] && $apOut['operations'] === [], 'finding 1.2: a request without the "' . $apMissingBox . '" box is refused');
+    assertTrue(isset($apOut['errors']['form']), 'finding 1.2: ...with a message for the whole form (' . $apMissingBox . ')');
+}
+$apOut = adminPlansProcessPriceGroup(['amount' => ['GBP' => '6.99']], 'monthly', $apOffered, $apDatedRows, [], $apUk);
+assertTrue(isset($apOut['errors']['form']), 'finding 1.2: the request Codex described (unchanged amounts, no date boxes at all) is refused');
+assertContains('Reload the page', $apOut['errors']['form'], 'finding 1.2: ...and the admin is told to reload the page');
+$apOut = adminPlansProcessPriceGroup(array_merge($apFormBoxes, ['amount' => ['GBP' => '6.99']]), 'monthly', $apOffered, $apDatedRows, [], $apUk);
+assertEquals([], $apOut['errors'], 'finding 1.2: explicitly EMPTY date boxes are accepted...');
+assertEquals([null, null], [$apOut['validFrom'], $apOut['validUntil']], 'finding 1.2: ...and do clear the dates (that is what emptying them means)');
 
 $apOut = $apGroup(['amount' => ['GBP' => '6.99', 'USD' => '7.99', 'EUR' => '']]);
 assertEquals([], $apOut['errors'], 'group: unchanged GBP, new USD, empty EUR is fine');
@@ -527,6 +551,18 @@ assertEquals([], $apOut['errors'], 'a request about something else in the sectio
 assertEquals(['GBP', 'USD'], moneyParseCurrencyList('gbp usd')['codes'], 'moneyParseCurrencyList: spaces work too, order kept');
 assertFalse(moneyParseCurrencyList('GBP,gbp')['ok'], 'moneyParseCurrencyList: the same code twice (any case) is refused');
 assertFalse(moneyParseCurrencyList(',,')['ok'], 'moneyParseCurrencyList: nothing but commas is refused');
+
+// 🌍 Codex finding 1.1: any current ISO 4217 currency the prices can be saved
+//    in may be offered and made the main currency; a three-decimal one may not.
+$apOut = adminSettingsProcessSection('prices', ['f' => ['billing_currencies' => 'GBP,CAD,AUD', 'billing_default_currency' => 'CAD']], $apCurrent);
+assertEquals([], $apOut['errors'], 'finding 1.1: CAD and AUD can be offered, and CAD made the main currency');
+$apOut = adminSettingsProcessSection('prices', ['f' => ['billing_currencies' => 'GBP,KWD']], $apCurrent);
+assertTrue(isset($apOut['errors']['billing_currencies']), 'finding 1.1: a three-decimal currency (KWD) cannot be offered');
+assertTrue(isset($apRegistry['billing_default_currency']['options']['CAD']), 'finding 1.1: CAD is in the main-currency list');
+assertFalse(isset($apRegistry['billing_default_currency']['options']['KWD']), 'finding 1.1: KWD is not in the main-currency list (it cannot be offered)');
+assertFalse(str_contains($apRegistry['billing_currencies']['help'], 'ZWG'), 'finding 1.1: the help text does not list all 155 codes');
+$apCadGroup = adminPlansProcessPriceGroup(['amount' => ['GBP' => '6.99', 'CAD' => '12.50'], 'valid_from_date' => '', 'valid_from_time' => '', 'valid_until_date' => '', 'valid_until_time' => '', 'recommended' => '0'], 'monthly', ['GBP', 'CAD'], $apRows, [], $apUk);
+assertEquals([['op' => 'create', 'currency' => 'CAD', 'amount' => '12.50']], $apCadGroup['operations'], 'finding 1.1: the price form reads a CAD price when CAD is offered, and saves it as exactly 12.50');
 
 // ==============================================================================
 // ✅ Section 9: static guards (each proved against a bad sample first)

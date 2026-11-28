@@ -375,6 +375,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                     'status' => 'error',
                     'message' => migrationChangedUpgradesRefusal($upgradeFileCheck['changed'])
                 ];
+            } elseif ($upgradeFileCheck['unusable'] !== []) {
+                // 🛑 Codex finding 2.P1: an upgrade recorded as applied whose
+                //    file is missing or cannot be read. Its starting-data
+                //    steps could not be repeated with the starting data, so
+                //    the install would not match a normal one. Stop: nothing
+                //    changed, no lock file; the message says what to do.
+                $results[] = [
+                    'status' => 'error',
+                    'message' => migrationUnusableUpgradesRefusal($upgradeFileCheck['unusable'])
+                ];
             } else {
                 // ----------------------------------------------------------------
                 // 📌 Step 4: Execute install.sql (table creation)
@@ -527,13 +537,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked && $credsAvailable) {
                                         . ' upgrade(s), ' . $seedRun['stepsRun'] . ' step(s)). Nothing you had changed was overwritten.'
                                 ];
                             }
-                            if ($seedRun['skipped'] !== []) {
-                                $results[] = [
-                                    'status' => 'warning',
-                                    'message' => 'Some upgrades recorded as applied were not repeated because their files are missing '
-                                        . 'or have changed since they were applied: ' . implode(', ', $seedRun['skipped'])
-                                ];
-                            }
+                            // (An applied upgrade that cannot be repeated now REFUSES the
+                            //  whole load - Codex finding 2.P1 - so a successful load
+                            //  never has one left to warn about.)
                         } elseif ($seedRun['refusal'] !== '') {
                             // 🧱 Codex round 2 (finding R1-2): refused BEFORE
                             //    anything was loaded (for example a table that is

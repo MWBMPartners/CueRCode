@@ -250,7 +250,7 @@ $ppDescriptions = [
 foreach ($ppDescriptions as $ppPlanKey => $ppWords) {
     $ppSql = ppStepSql($ppSteps, $ppPlanKey . ' description: unbuilt features marked coming soon');
     assertEquals(
-        'UPDATE `tblSubscriptionPlans` SET `description` = \'' . $ppWords[1] . '\' WHERE `planKey` = \'' . $ppPlanKey . '\' AND `description` = \'' . $ppWords[0] . '\'',
+        'UPDATE `tblSubscriptionPlans` SET `description` = \'' . $ppWords[1] . '\' WHERE `planKey` = \'' . $ppPlanKey . '\' AND CAST(`description` AS BINARY) = CAST(\'' . $ppWords[0] . '\' AS BINARY)',
         $ppSql,
         '#161: the ' . $ppPlanKey . ' description changes ONLY while it is still the starting wording'
     );
@@ -273,7 +273,9 @@ foreach ($ppSteps as $ppStep) {
     if ($ppStep['type'] === 'update_if_unchanged') {
         // The price moves match the old price; the #161 description changes
         // match the old wording - either way, only an untouched row changes.
-        assertMatches('/ AND (`priceMonthly` = [0-9.]+ AND `currency` = \'GBP\'|`description` = \'[^\']+\')$/D', $ppStep['sql'], migrationDescribeStep($ppStep) . ': only matches the exact old value, so an owner-edited price or description is never overwritten');
+        // (Codex finding 2.P2: a description is compared byte for byte - the
+        //  column's collation would ignore capitals, accents and trailing spaces.)
+        assertMatches('/ AND (`priceMonthly` = [0-9.]+ AND `currency` = \'GBP\'|CAST\(`description` AS BINARY\) = CAST\(\'[^\']+\' AS BINARY\))$/D', $ppStep['sql'], migrationDescribeStep($ppStep) . ': only matches the exact old value, so an owner-edited price or description is never overwritten');
     }
 }
 $ppInstallSql = (string) file_get_contents($ppSqlDir . 'install.sql');

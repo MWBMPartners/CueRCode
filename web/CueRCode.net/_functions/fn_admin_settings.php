@@ -584,14 +584,18 @@ function adminSettingsRegistry(): array
     // 💱 Task 7n Phase 2 (migration 0004): currencies, the price promise and
     //    whether the pricing page shows prices. Group and type match the
     //    migration's rows (tests/test_admin_settings.php checks this).
+    // 🌍 Codex finding 1.1: every current ISO 4217 currency whose prices the
+    //    database can hold exactly (not the three-decimal ones such as KWD).
     $currencyChoices = [];
     foreach (moneyCurrencyInfo() as $currencyCode => $currencyFacts) {
-        $currencyChoices[$currencyCode] = $currencyCode . ' - ' . $currencyFacts['name'];
+        if (moneyCurrencyCanBeOffered($currencyCode)) {
+            $currencyChoices[$currencyCode] = $currencyCode . ' - ' . $currencyFacts['name'];
+        }
     }
     $fields[] = adminSettingsField([
         'key' => 'billing_currencies', 'section' => 'prices', 'subgroup' => 'Currencies, price promise and the pricing page', 'kind' => 'currency_list', 'group' => 'billing', 'type' => 'string',
         'label' => 'Currencies prices can be set in',
-        'help' => 'Three-letter codes separated by commas, for example GBP,USD,EUR. The plan price screen shows one box for each. Codes this site knows: ' . implode(', ', array_keys(moneyCurrencyInfo())) . '. Removing a currency hides its boxes; prices already saved in it are kept.',
+        'help' => 'Three-letter ISO 4217 codes separated by commas, for example GBP,USD,EUR,CAD. Any current currency can be used except the few with three decimal places (such as KWD), which cannot be offered yet. The plan price screen shows one box for each. Removing a currency hides its boxes; prices already saved in it are kept.',
         'allowEmpty' => false, 'maxLength' => 100,
         'description' => 'Currencies prices can be set in: three-letter codes separated by commas, for example GBP,USD,EUR',
     ]);
@@ -1876,7 +1880,7 @@ function adminSettingsRunAfterSave(string $name, array $admin = []): bool
             return false;
         }
         $mainCurrency = strtoupper(trim($currencyRows['billing_default_currency']['value']));
-        if (!moneyCurrencyKnown($mainCurrency)) {
+        if (!moneyCurrencyCanBeOffered($mainCurrency)) {
             return false;
         }
         require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_admin_plans.php';

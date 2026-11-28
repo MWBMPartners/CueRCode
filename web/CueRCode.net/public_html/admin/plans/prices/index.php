@@ -192,13 +192,18 @@ if ($pricesReady && !$pricesReadProblem && $pricesPlan === null) {
     http_response_code(404);
 }
 
-// 🏷️ Words for each currency box: "GBP - Pound sterling (£)".
+// 🏷️ Words for each currency box: "GBP - Pound Sterling (£)", or
+//    "CAD - Canadian Dollar" for a currency shown by its code.
 $pricesCurrencyFacts = moneyCurrencyInfo();
 $pricesCurrencyWords = static function (string $code) use ($pricesCurrencyFacts): string {
-    if (isset($pricesCurrencyFacts[$code])) {
-        return $code . ' - ' . $pricesCurrencyFacts[$code]['name'] . ' (' . $pricesCurrencyFacts[$code]['symbol'] . ')';
+    if (!isset($pricesCurrencyFacts[$code])) {
+        return $code;
     }
-    return $code;
+    $words = $code . ' - ' . $pricesCurrencyFacts[$code]['name'];
+    if ($pricesCurrencyFacts[$code]['symbol'] !== $code) {
+        $words .= ' (' . $pricesCurrencyFacts[$code]['symbol'] . ')';
+    }
+    return $words;
 };
 
 // 💬 An amount from the database for people ("£6.99"), never via a float.

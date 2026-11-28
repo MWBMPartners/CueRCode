@@ -273,6 +273,76 @@ assertEquals(['29.00', '', 'USD'], [$ppSwitched['priceMonthly'], $ppSwitched['pr
 $ppFreeRetired = pricingDisplayRowsFromPlans([pricingApplyPriceList($ppPlanRow(['planKey' => CUERCODE_PLAN_KEY_FREE]), [$ppListPrice(['isActive' => 0, 'amount' => '1.00'])], 'GBP', $ppListNow)])[0];
 assertTrue($ppFreeRetired['isZeroPrice'], 'F6: the free plan whose only price was retired is Free again');
 
+// 🎯 Codex finding 3.3 (7n Phase 2 review): ONE rule chooses the figure, on
+//    the public card and on the admin preview alike - the price on sale now
+//    in the monthly (or yearly) GROUP, lowest display order first. Before the
+//    fix, switching billing_price_points_enabled on let the card pick a
+//    different row by billing interval and the "recommended" flag instead.
+$ppCardAndPreview = static function (array $ppPriceRows) use ($ppPlanRow, $ppListNow): array {
+    $ppPublic = pricingApplyPriceList($ppPlanRow(['priceMonthly' => '7.99', 'priceYearly' => '0.00']), $ppPriceRows, 'GBP', $ppListNow);
+    // What listPublicPlansForDisplay() attaches while the switch is on.
+    $ppPublic['pricePoints'] = $ppPriceRows;
+    $ppCard = pricingPriceBlock(pricingDisplayRowsFromPlans([$ppPublic])[0], true);
+    $ppPreview = pricingPriceBlock(pricingDisplayRowsFromPlans(pricingPreviewRows([$ppPublic], [7 => pricingCurrentGroupPrices($ppPriceRows, 'GBP', $ppListNow)], 'GBP'))[0], true, 'GBP');
+    return [$ppCard['headline'], $ppPreview['headline']];
+};
+// Two monthly offers in the monthly group: the second is marked recommended.
+$ppTwoOffers = [
+    $ppListPrice(['pricePointID' => 11, 'billingInterval' => 'monthly', 'amount' => '7.99', 'isDefault' => 0, 'sortOrder' => 1]),
+    $ppListPrice(['pricePointID' => 12, 'billingInterval' => 'monthly', 'amount' => '9.99', 'isDefault' => 1, 'sortOrder' => 2]),
+];
+assertEquals(['£7.99', '£7.99'], $ppCardAndPreview($ppTwoOffers), 'finding 3.3: two monthly offers - the card and the preview both show the group\'s first (£7.99), not the one flagged recommended');
+// An older ungrouped monthly row (no price group), flagged recommended.
+$ppUngrouped = [
+    $ppListPrice(['pricePointID' => 11, 'billingInterval' => 'monthly', 'amount' => '7.99', 'isDefault' => 0, 'sortOrder' => 1]),
+    $ppListPrice(['pricePointID' => 13, 'priceGroupKey' => null, 'billingInterval' => 'monthly', 'amount' => '9.99', 'isDefault' => 1, 'sortOrder' => 0]),
+];
+assertEquals(['£7.99', '£7.99'], $ppCardAndPreview($ppUngrouped), 'finding 3.3: an older monthly row outside the monthly group never replaces the group\'s price');
+// A sale that has ended in the group is followed by both, whatever the price-point list says.
+$ppEndedOffer = [
+    $ppListPrice(['pricePointID' => 11, 'billingInterval' => 'monthly', 'amount' => '5.99', 'validUntil' => '2026-11-01 00:00:00', 'sortOrder' => 1]),
+    $ppListPrice(['pricePointID' => 14, 'billingInterval' => 'monthly', 'amount' => '7.99', 'sortOrder' => 2]),
+];
+assertEquals(['£7.99', '£7.99'], $ppCardAndPreview($ppEndedOffer), 'finding 3.3: an ended sale price shows on neither (sale dates are part of the one rule)');
+
+// 📜 Codex finding 3.4: the preview keeps a price set the OLDER way (the
+//    plan's own monthly / yearly column) when that group has no price rows
+//    at all and the plan's currency is the one previewed - as the public page
+//    does. It used to say "No price in GBP yet" while visitors saw £12.00.
+$ppLegacyOnly = $ppPlanRow(['planID' => 8, 'planKey' => 'old_way', 'priceMonthly' => '12.00', 'priceYearly' => '120.00', 'hasPricePoint' => false]);
+$ppLegacyPublic = pricingPriceBlock(pricingDisplayRowsFromPlans([$ppLegacyOnly])[0], true);
+$ppLegacyPreview = pricingPriceBlock(pricingDisplayRowsFromPlans(pricingPreviewRows([$ppLegacyOnly], [8 => pricingCurrentGroupPrices([], 'GBP', $ppListNow)], 'GBP'))[0], true, 'GBP');
+assertEquals(['£12.00', 'or £120.00 billed yearly'], [$ppLegacyPublic['headline'], $ppLegacyPublic['subline']], 'finding 3.4 setup: the public card shows the older columns (£12.00, £120.00 yearly)');
+assertEquals([$ppLegacyPublic['headline'], $ppLegacyPublic['subline']], [$ppLegacyPreview['headline'], $ppLegacyPreview['subline']], 'finding 3.4: the GBP preview shows the same figures');
+$ppLegacyUsd = pricingPriceBlock(pricingDisplayRowsFromPlans(pricingPreviewRows([$ppLegacyOnly], [8 => pricingCurrentGroupPrices([], 'USD', $ppListNow)], 'USD'))[0], true, 'USD');
+assertEquals('No price in USD yet', $ppLegacyUsd['headline'], 'finding 3.4: ...but a USD preview never borrows the GBP figure');
+// Monthly managed by price rows (none in GBP on sale), yearly only in the older column.
+$ppHalf = pricingApplyPriceList($ppPlanRow(['planID' => 9, 'priceMonthly' => '12.00', 'priceYearly' => '120.00']), [$ppListPrice(['pricePointID' => 21, 'planID' => 9, 'currency' => 'USD', 'amount' => '15.00'])], 'GBP', $ppListNow);
+$ppHalfPublic = pricingPriceBlock(pricingDisplayRowsFromPlans([$ppHalf])[0], true);
+$ppHalfPreview = pricingPriceBlock(pricingDisplayRowsFromPlans(pricingPreviewRows([$ppHalf], [9 => pricingCurrentGroupPrices([$ppListPrice(['pricePointID' => 21, 'planID' => 9, 'currency' => 'USD', 'amount' => '15.00'])], 'GBP', $ppListNow)], 'GBP'))[0], true, 'GBP');
+assertEquals('£120.00', $ppHalfPublic['headline'], 'finding 3.4 setup: monthly is managed (no GBP row on sale), yearly comes from the older column');
+assertEquals(['No monthly price in GBP yet', '£120.00 billed yearly'], [$ppHalfPreview['headline'], $ppHalfPreview['subline']], 'finding 3.4: the preview keeps the older yearly figure and says the monthly one is missing');
+
+// 🛑 Codex finding 3.5: when the price list cannot be read, the page must not
+//    show the older copied figures (a sale may have started or ended) nor
+//    call a plan "Free" - every card says the price is unavailable.
+$ppUnavailable = pricingDisplayRowsFromPlans([
+    $ppPlanRow(['planID' => 1, 'planKey' => CUERCODE_PLAN_KEY_FREE, 'priceUnavailable' => true]),
+    $ppPlanRow(['planID' => 2, 'planKey' => 'paid', 'priceMonthly' => '24.99', 'priceUnavailable' => true]),
+    $ppPlanRow(['planID' => 3, 'planKey' => 'big', 'ctaMode' => 'contact', 'priceMonthly' => '99.00', 'priceUnavailable' => true]),
+]);
+foreach ($ppUnavailable as $ppUnavailablePlan) {
+    $ppUnavailableBlock = pricingPriceBlock($ppUnavailablePlan, true);
+    assertEquals('Price unavailable', $ppUnavailableBlock['headline'], 'finding 3.5: ' . $ppUnavailablePlan['planKey'] . ' says "Price unavailable" when the price list could not be read');
+    assertFalse($ppUnavailablePlan['isZeroPrice'], 'finding 3.5: ' . $ppUnavailablePlan['planKey'] . ' is never "Free" then (no "Create free account" button)');
+}
+$ppUnavailableGrid = ppRenderGrid($ppUnavailable, true);
+assertFalse(str_contains($ppUnavailableGrid, '24.99') || str_contains($ppUnavailableGrid, '£99') || str_contains($ppUnavailableGrid, '>Free<'), 'finding 3.5: no stale figure and no "Free" anywhere on the page');
+$ppFetchSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_pricing.php');
+$ppFetchBody = substr($ppFetchSource, (int) strpos($ppFetchSource, 'function listPublicPlansForDisplay('), 6000);
+assertContains("'priceUnavailable'] = true", $ppFetchBody, 'finding 3.5: a failed price-list read marks the plans as unavailable');
+assertContains("logError('error', 'Public pricing price list failed'", $ppFetchBody, 'finding 3.5: ...and is still logged');
+
 // ==============================================================================
 // 🤝 Section 7: each card states its OWN price promise (decision 0020, #159)
 // ==============================================================================
@@ -317,12 +387,14 @@ assertEquals('', pricingPromiseNote([]), 'recheck F4: no priced card at all - no
 assertEquals('', pricingPromiseNote(['', '']), 'recheck F4: no card states a promise - no promise wording');
 assertEquals($ppEachPlanSays, pricingPromiseNote(['a', 'b']), 'recheck F4: every card states one - "each plan"');
 
-// 💱 Price points in several currencies: only the plan's own currency is used.
+// 💱 Price points in several currencies (and, since Codex finding 3.3, any
+//    attached price point at all) never become the headline: the figure is
+//    the plan row's own, which the page has already chosen by price group.
 $ppMixed = $ppDisplay(['priceMonthly' => '3.50', 'pricePoints' => [
     ['priceKey' => 'monthly_usd', 'billingInterval' => 'monthly', 'amount' => '4.25', 'currency' => 'USD', 'isDefault' => 1],
     ['priceKey' => 'monthly_gbp', 'billingInterval' => 'monthly', 'amount' => '3.75', 'currency' => 'GBP', 'isDefault' => 0],
 ]]);
-assertEquals('£3.75', $ppMixed['priceMonthlyFormatted'], 'price points: another currency never becomes the headline');
+assertEquals('£3.50', $ppMixed['priceMonthlyFormatted'], 'price points: neither another currency\'s nor the plan\'s own attached price point replaces the group-chosen figure (finding 3.3)');
 
 // 🔐 The preview page: gate first, private, no JavaScript needed, changes nothing.
 $ppPreviewPage = (string) file_get_contents(CUERCODE_SITE_ROOT . 'public_html' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'pricing-preview' . DIRECTORY_SEPARATOR . 'index.php');

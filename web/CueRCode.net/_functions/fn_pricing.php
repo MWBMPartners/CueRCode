@@ -162,11 +162,9 @@ function listPublicPlansForDisplay(): array
             // 📌 Every plan starts with an EMPTY price-point list - the
             // additive query below (#70, Table 22 tblPlanPricePoints) fills
             // this in ONLY when billing_price_points_enabled=1 AND at least
-            // one row exists for this plan. pricingDisplayRowsFromPlans()
-            // falls back to the legacy priceMonthly/priceYearly columns
-            // whenever a plan's 'pricePoints' stays empty - so a fresh
-            // install (kill-switch off, table empty) renders BYTE-IDENTICAL
-            // to before this key existed.
+            // one row exists for this plan. The list never changes the
+            // figures shown (Codex finding 3.3): those come from the price
+            // list by price group, below (pricingApplyPriceList()).
             $row['pricePoints']   = [];
             $row['hasPricePoint'] = false;
             $planRows[] = $row;
@@ -192,8 +190,12 @@ function listPublicPlansForDisplay(): array
     //     ended or started is followed without anyone saving again. A plan
     //     without grouped price rows keeps its older columns.
     // `SELECT *` on purpose, like the plans query above: the priceGroupKey
-    // column comes from database upgrade 0004. Fail-safe: if this query fails
-    // the plans keep their older columns (the page never breaks).
+    // column comes from database upgrade 0004. If this query fails, the
+    // failure is logged and every plan is marked 'priceUnavailable' (Codex
+    // finding 3.5 of the 7n Phase 2 review): the older columns are only a copy
+    // and may be out of date (a sale may have started or ended), and a plan
+    // given without payment may have a price that could not be read - so the
+    // cards say "Price unavailable", never an old figure and never "Free".
     // ==========================================================================
     $mainCurrency = '';
     if (function_exists('getConfig')) {
@@ -233,6 +235,9 @@ function listPublicPlansForDisplay(): array
         } catch (\Throwable $e) {
             if (function_exists('logError')) {
                 logError('error', 'Public pricing price list failed', $e->getMessage());
+            }
+            foreach (array_keys($planRows) as $planIndex) {
+                $planRows[$planIndex]['priceUnavailable'] = true;
             }
         }
     }
@@ -740,6 +745,8 @@ function pricingEmailIsPlain(string $address): bool
  *   - ordinary paid plan: the monthly price, with the yearly one underneath;
  *     whichever is missing is left out (a missing price is never "Free");
  *   - prices hidden: words only, no figures;
+ *   - the price list could not be read ('priceUnavailable', Codex finding
+ *     3.5): "Price unavailable" on every card - no old figure, never "Free";
  *   - preview ($previewCurrency not empty): a missing price says so.
  *
  * @param array<string, mixed> $plan            One row from pricingDisplayRowsFromPlans()
@@ -767,6 +774,11 @@ function pricingPriceBlock(array $plan, bool $showPrices, string $previewCurrenc
             return $words('Price on request', 'Contact us and we will agree it with you');
         }
         return $words('Price to be announced', '');
+    }
+
+    // 🛑 Finding 3.5: the price list could not be read just now.
+    if (!empty($plan['priceUnavailable'])) {
+        return $words('Price unavailable', 'Please try again in a few minutes');
     }
 
     $monthly = $plan['priceMonthlyFormatted'];
@@ -839,14 +851,19 @@ function pricingPriceBlock(array $plan, bool $showPrices, string $previewCurrenc
  * 🔭 For the Global Admin preview: replace each plan's single-price columns
  *    with its current price points in ONE currency. PURE.
  *
- * A price that does not exist in that currency becomes empty - never the old
- * column's figure, and never zero - so the preview shows the gap honestly. A
+ * A price that does not exist in that currency becomes empty - never another
+ * currency's figure, and never zero - so the preview shows the gap honestly.
+ * A group (monthly / yearly) with NO price rows at all is priced the older
+ * way: its figure from the plan's own column is kept when the plan's currency
+ * is the one being previewed, exactly as the public page keeps it
+ * (pricingApplyPriceList(); Codex finding 3.4 of the 7n Phase 2 review). A
  * plan with no price of any kind (no price points and nothing in the old
  * columns) stays free.
  *
  * @param array<int, array<string, mixed>>   $planRows   From listPublicPlansForDisplay()
- * @param array<int, array<string, ?string>> $selections planID => ['monthly' => text|null, 'yearly' => text|null]
- *                                                       (adminMirrorSelection())
+ * @param array<int, array<string, mixed>>   $selections planID => adminMirrorSelection() result:
+ *                                                       'monthly' / 'yearly' (text|null) and
+ *                                                       'managed' (which groups have price rows)
  * @param string                             $currency   The currency being previewed
  * @return array<int, array<string, mixed>> Rows ready for pricingDisplayRowsFromPlans()
  */
@@ -878,10 +895,19 @@ function pricingPreviewRows(array $planRows, array $selections, string $currency
         $planRow['hasPricePoint'] = !$isFree;
 
         foreach (['monthly' => 'priceMonthly', 'yearly' => 'priceYearly'] as $group => $column) {
+            // 📜 Finding 3.4: a group without any price rows, in the plan's own currency.
+            $pricedTheOldWay = (isset($selections[$planID]['managed'][$group])
+                && $selections[$planID]['managed'][$group] === false
+                && $storedCurrency === $currency);
+
             if ($isFree) {
                 $planRow[$column] = '0';
             } elseif (isset($selections[$planID][$group])) {
                 $planRow[$column] = (string) $selections[$planID][$group];
+            } elseif ($pricedTheOldWay && $group === 'monthly') {
+                $planRow[$column] = $storedMonthly;
+            } elseif ($pricedTheOldWay) {
+                $planRow[$column] = $storedYearly;
             } else {
                 $planRow[$column] = '';
             }
@@ -1193,9 +1219,10 @@ function pricingVatNote(string $mode): string
  * 💷 Format a stored price for the pricing grid. PURE; no floats.
  *
  * Zero reads as the plain word "Free" - clearer at a glance on a comparison
- * grid than "£0.00". Currencies fn_money.php knows are shown with their symbol
- * ("£6.99", "$6.99"); any other code is printed as it is ("CHF 9.90") rather
- * than guessing a symbol. Anything that is not a plain stored amount (empty, a
+ * grid than "£0.00". Every current ISO 4217 currency is formatted by
+ * fn_money.php's moneyFormat() ("£6.99", "$6.99", "CHF 9.90", "KWD 1.230");
+ * a code that is not a current currency is printed as it is ("XTS 9.90")
+ * rather than guessing a symbol. Anything that is not a plain stored amount (empty, a
  * negative number, words) gives '' - never "Free", because an unreadable price
  * is not a free one.
  *
@@ -1236,11 +1263,14 @@ function pricingFormatPrice(string $amount, string $currency): string
         return moneyFormat($minor, $currencyUpper);
     }
 
+    // 📌 A code fn_money.php does not know (not a current ISO 4217
+    //    currency) is shown as it is, followed by a no-break space like
+    //    moneyFormat()'s "CAD 12.50"; an empty currency column gets a
+    //    neutral "?" - never assume pounds.
     if ($currencyUpper === '') {
-        // 📌 An empty currency column: a neutral prefix, never assume pounds.
-        $pricePrefix = '? ';
+        $pricePrefix = "?\u{00A0}";
     } else {
-        $pricePrefix = $currencyUpper . ' ';
+        $pricePrefix = $currencyUpper . "\u{00A0}";
     }
 
     return $pricePrefix . $parts[1] . '.' . str_pad($fraction, 2, '0', STR_PAD_RIGHT);
@@ -1362,14 +1392,17 @@ function pricingFormatLimit(int|null $v): string
 /**
  * 💷 Pick the price point to SHOW for a given billing interval, if any.
  *
+ * ⚠️ Not used for the pricing page's figures (Codex finding 3.3 of the 7n
+ * Phase 2 review: the page and the admin preview both choose by price group,
+ * pricingCurrentGroupPrices()). Kept for the #70 price-point tests.
+ *
  * PURE function - no I/O. Prefers the row explicitly marked `isDefault` for
  * that interval (an admin's "this is the recommended/canonical monthly row"
  * choice, e.g. when several currencies share the same billingInterval); when
  * none is marked default, falls back to the FIRST matching row in the given
  * (already sortOrder-ordered) list - never throws, never warns, simply
  * returns null when no price point matches the requested interval at all
- * (e.g. a lifetime-only plan has no 'monthly' row - the caller then falls
- * back to the legacy priceMonthly column, see pricingDisplayRowsFromPlans()).
+ * (e.g. a lifetime-only plan has no 'monthly' row).
  *
  * @param array  $pricePoints     Decoded price-point rows (see
  *                                 pricingDisplayRowsFromPlans()'s Pass 1 shape).
@@ -1431,19 +1464,17 @@ function pricingFindPricePointByInterval(array $pricePoints, string $billingInte
  * its existing fields - purely additive, every pre-#125 caller/test that
  * only reads 'key'/'label'/'enabled'/'value' keeps working unchanged.
  *
- * #70 flexible-pricing branch: when a plan row carries a non-empty
- * 'pricePoints' array (listPublicPlansForDisplay()'s additive query, ONLY
- * populated when billing_price_points_enabled=1 and rows exist),
- * priceMonthlyFormatted/priceYearlyFormatted PREFER the matching
- * `billingInterval='monthly'`/`'yearly'` price point over the legacy
- * priceMonthly/priceYearly columns (via pricingFindPricePointByInterval()),
- * and every decoded price point is additionally exposed on the output row's
- * new 'pricePoints' key (grantsJSON decoded, amount pre-formatted) - useful
- * for a lifetime/PAYG-pack card that has no 'monthly'/'yearly' row at all. A
- * plan with NO 'pricePoints' input (or an absent key entirely - the exact
- * shape every existing caller/test already passes) behaves byte-for-byte as
- * before this branch existed: legacy priceMonthly/priceYearly, and an empty
- * 'pricePoints' output array.
+ * #70 price points: when a plan row carries a non-empty 'pricePoints' array
+ * (listPublicPlansForDisplay()'s additive query, ONLY populated when
+ * billing_price_points_enabled=1 and rows exist), every decoded price point
+ * is exposed on the output row's 'pricePoints' key (grantsJSON decoded,
+ * amount pre-formatted) - for a later lifetime/PAYG-pack card. They NEVER
+ * change priceMonthlyFormatted/priceYearlyFormatted: those always come from
+ * the row's priceMonthly/priceYearly, which the page has already chosen from
+ * the price list by price group (Codex finding 3.3 of the 7n Phase 2 review:
+ * one selection rule for the public card and the admin preview). A row
+ * marked 'priceUnavailable' (the price list could not be read, finding 3.5)
+ * is passed through and is never free.
  *
  * @param array $plans Raw plan rows as returned by listPublicPlansForDisplay()
  *                      (each with string featuresJSON/limitsJSON columns, and
@@ -1464,6 +1495,7 @@ function pricingFindPricePointByInterval(array $pricePoints, string $billingInte
  *       'priceYearlyFormatted'  => string,
  *       'currency'              => string,
  *       'isZeroPrice'           => bool,
+ *       'priceUnavailable'      => bool,    // the price list could not be read (finding 3.5)
  *       'features' => [ ['key'=>string,'label'=>string,'enabled'=>bool,
  *                         'status'=>'available'|'coming_soon'], ... ],  // #125
  *       'limits'   => [ ['key'=>string,'label'=>string,'value'=>string,
@@ -1477,7 +1509,7 @@ function pricingFindPricePointByInterval(array $pricePoints, string $billingInte
  *   JSON contains NO allow-listed key at all (#125) still produces its own
  *   display row - just with empty 'features'/'limits' sub-arrays.
  *
- * @see pricingAllowedDisplayKeys(), pricingHumanizeKey(), pricingFormatPrice(), pricingFormatLimit(), pricingFindPricePointByInterval()
+ * @see pricingAllowedDisplayKeys(), pricingHumanizeKey(), pricingFormatPrice(), pricingFormatLimit()
  */
 function pricingDisplayRowsFromPlans(array $plans): array
 {
@@ -1592,6 +1624,7 @@ function pricingDisplayRowsFromPlans(array $plans): array
             'pricePromiseMode'   => $promiseMode,
             'pricePromiseMonths' => $promiseMonths,
             'hasPricePoint' => !empty($planRow['hasPricePoint']),
+            'priceUnavailable' => !empty($planRow['priceUnavailable']),
             'planKey'      => isset($planRow['planKey']) ? (string) $planRow['planKey'] : '',
             'planName'     => isset($planRow['planName']) ? (string) $planRow['planName'] : '',
             'description'  => isset($planRow['description']) ? (string) $planRow['description'] : '',
@@ -1689,35 +1722,17 @@ function pricingDisplayRowsFromPlans(array $plans): array
         }
 
         // ------------------------------------------------------------
-        // 💷 #70 branch: PREFER tblPlanPricePoints rows when present for
-        // this plan, else fall back to the legacy priceMonthly/priceYearly
-        // columns - EXACTLY the existing pricingFormatPrice() calls below,
-        // unchanged, whenever a plan carries no price points (the universal
-        // case until an admin populates Table 22 AND flips
-        // billing_price_points_enabled=1).
+        // 🎯 The headline figures come ONLY from priceMonthly / priceYearly
+        // (Codex finding 3.3 of the 7n Phase 2 review). The pricing page
+        // fills those from the price list by price GROUP, on sale now
+        // (pricingApplyPriceList()), and the admin preview uses the same
+        // rule (pricingPreviewRows() with adminMirrorSelection()), so the two
+        // can never show different amounts. Before the fix, switching
+        // billing_price_points_enabled on let this function pick another row
+        // by billing interval and the "recommended" flag instead.
         // ------------------------------------------------------------
-        // 💱 Only price points in the plan's own currency compete for the
-        // headline figures (the same offer exists in several currencies).
-        $ownCurrencyPoints = [];
-        foreach ($decodedPlan['pricePoints'] as $pricePoint) {
-            if ($pricePoint['currency'] === $decodedPlan['currency']) {
-                $ownCurrencyPoints[] = $pricePoint;
-            }
-        }
-        $monthlyPricePoint = pricingFindPricePointByInterval($ownCurrencyPoints, 'monthly');
-        $yearlyPricePoint  = pricingFindPricePointByInterval($ownCurrencyPoints, 'yearly');
-
-        if ($monthlyPricePoint !== null) {
-            $priceMonthlyFormatted = pricingFormatPrice($monthlyPricePoint['amount'], $monthlyPricePoint['currency']);
-        } else {
-            $priceMonthlyFormatted = pricingFormatPrice($decodedPlan['priceMonthly'], $decodedPlan['currency']);
-        }
-
-        if ($yearlyPricePoint !== null) {
-            $priceYearlyFormatted = pricingFormatPrice($yearlyPricePoint['amount'], $yearlyPricePoint['currency']);
-        } else {
-            $priceYearlyFormatted = pricingFormatPrice($decodedPlan['priceYearly'], $decodedPlan['currency']);
-        }
+        $priceMonthlyFormatted = pricingFormatPrice($decodedPlan['priceMonthly'], $decodedPlan['currency']);
+        $priceYearlyFormatted  = pricingFormatPrice($decodedPlan['priceYearly'], $decodedPlan['currency']);
 
         // 📋 Every decoded price point, pre-formatted for direct rendering -
         // e.g. a lifetime-only or PAYG-pack plan's 'one_off'/'lifetime' rows,
@@ -1742,9 +1757,11 @@ function pricingDisplayRowsFromPlans(array $plans): array
         // 0021, #160) neither is any plan other than the two the site gives
         // without payment: a paid plan with no price yet says "Price coming
         // soon" instead (pricingPriceBlock()).
+        // (Finding 3.5: never free while the price list cannot be read.)
         $isFree = ($decodedPlan['ctaMode'] !== 'contact'
             && pricingIsNoPaymentPlan($decodedPlan['planKey'])
             && !$decodedPlan['hasPricePoint']
+            && !$decodedPlan['priceUnavailable']
             && pricingFormatPrice($decodedPlan['priceMonthly'], $decodedPlan['currency']) === 'Free'
             && in_array(pricingFormatPrice($decodedPlan['priceYearly'], $decodedPlan['currency']), ['Free', ''], true));
 
@@ -1761,6 +1778,7 @@ function pricingDisplayRowsFromPlans(array $plans): array
             'priceYearlyFormatted'  => $priceYearlyFormatted,
             'currency'              => $decodedPlan['currency'],
             'isZeroPrice'           => $isFree,
+            'priceUnavailable'      => $decodedPlan['priceUnavailable'],
             'features'              => $featureRows,
             'limits'                => $limitRows,
             'pricePoints'           => $pricePointRows,

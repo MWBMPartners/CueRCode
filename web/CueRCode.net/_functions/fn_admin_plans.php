@@ -1155,7 +1155,9 @@ function adminPlansCurrentByCurrency(array $rows, string $groupKey): array
  *
  * Form boxes: amount[<CUR>] for every offered currency; valid_from_date /
  * valid_from_time / valid_until_date / valid_until_time for the whole group;
- * recommended = "1" to show this group as the recommended choice.
+ * recommended = "1" to show this group as the recommended choice. The four
+ * date boxes and "recommended" must all be SENT (empty is fine): a request
+ * without one is refused as a whole, error key 'form' (Codex finding 1.2).
  *
  * Per offered currency:
  *   - empty box, no current price  → nothing;
@@ -1181,6 +1183,21 @@ function adminPlansCurrentByCurrency(array $rows, string $groupKey): array
 function adminPlansProcessPriceGroup(array $post, string $groupKey, array $offered, array $rows, array $references, string $timezone): array
 {
     $outcome = ['errors' => [], 'operations' => [], 'validFrom' => null, 'validUntil' => null, 'recommended' => false];
+
+    // 🗓️ Codex finding 1.2 (7n Phase 2 review): the form ALWAYS sends its
+    //    four date and time boxes and the "recommended" box (a hidden 0 in
+    //    front of the tick box). A request without one of them did not come
+    //    from the form as shown, and reading a missing box as "empty" would
+    //    clear the sale dates (or the recommended mark) of every current
+    //    price in the group - putting a future price on sale at once, or
+    //    making an ending offer endless. So it is refused; a box sent EMPTY
+    //    still clears its value, as the page says.
+    foreach (['valid_from_date', 'valid_from_time', 'valid_until_date', 'valid_until_time', 'recommended'] as $requiredBox) {
+        if (!array_key_exists($requiredBox, $post)) {
+            $outcome['errors']['form'] = 'Part of the form was missing (the sale dates or the recommended choice), so nothing was saved. Reload the page and try again.';
+            return $outcome;
+        }
+    }
 
     $amounts = [];
     if (isset($post['amount']) && is_array($post['amount'])) {
@@ -1279,18 +1296,12 @@ function adminPlansProcessPriceGroup(array $post, string $groupKey, array $offer
     }
 
     // ------------------------------------------------------- the group's dates
-    $read = function (string $name) use ($post): mixed {
-        if (array_key_exists($name, $post)) {
-            return $post[$name];
-        }
-        return '';
-    };
-
-    $from = adminPlansCheckLocalDate($read('valid_from_date'), $read('valid_from_time'), $timezone, false);
+    //    (all four boxes are present - checked at the top, finding 1.2)
+    $from = adminPlansCheckLocalDate($post['valid_from_date'], $post['valid_from_time'], $timezone, false);
     if (!$from['ok']) {
         $outcome['errors']['valid_from_date'] = $from['error'];
     }
-    $until = adminPlansCheckLocalDate($read('valid_until_date'), $read('valid_until_time'), $timezone, true);
+    $until = adminPlansCheckLocalDate($post['valid_until_date'], $post['valid_until_time'], $timezone, true);
     if (!$until['ok']) {
         $outcome['errors']['valid_until_date'] = $until['error'];
     }
@@ -1951,7 +1962,9 @@ function adminPlansCurrencySettings(bool $lock = false): array
         }
     }
 
-    if (!moneyCurrencyKnown($default)) {
+    // 🌍 A main currency that cannot be offered (unknown, or a three-decimal
+    //    one put in by hand) is replaced by the first offered one.
+    if (!moneyCurrencyCanBeOffered($default)) {
         $default = '';
         if ($offered !== []) {
             $default = $offered[0];
@@ -2983,8 +2996,8 @@ function adminPricesFindOwn(array $prices, int $pricePointID): ?array
  */
 function adminMirrorLegacyPlanPrices(array $admin, int $planID, string $currency, array $emptiedGroups = []): array
 {
-    if (!moneyCurrencyKnown($currency)) {
-        throw new \RuntimeException('The main currency is not one this site knows.');
+    if (!moneyCurrencyCanBeOffered($currency)) {
+        throw new \RuntimeException('The main currency is not one prices can be set in.');
     }
 
     $loaded = adminPlansLoadPlan($planID, true);

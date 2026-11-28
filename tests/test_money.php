@@ -7,7 +7,8 @@
  * Path: tests/test_money.php
  *
  * Proves every rule in _functions/fn_money.php (task 7n Phase 2, plan §8.1):
- *   1. the currency facts (GBP, USD, EUR and the zero-decimal JPY);
+ *   1. the currency facts (every current ISO 4217 currency, with 0, 2 or 3
+ *      decimal places) and which of them can be offered;
  *   2. reading a typed price - what is accepted and what is refused;
  *   3. reading a DECIMAL value back from the database;
  *   4. writing amounts for the database and for people to read;
@@ -29,21 +30,65 @@ requireFn('fn_money.php');
 // 🌍 Section 1: currency facts
 // ==============================================================================
 $moneyInfo = moneyCurrencyInfo();
-assertEquals(['GBP', 'USD', 'EUR', 'JPY'], array_keys($moneyInfo), 'currency facts: GBP, USD, EUR and JPY (the zero-decimal proof)');
+// 🌍 Codex finding 1.1 (7n Phase 2 review): every current ISO 4217 currency,
+//    not just four. 155 = ISO 4217 List One as published on 2026-09-17, less
+//    the fund codes (such as CLF and USN) and the entries with no decimal
+//    places at all (gold, silver, the test code XTS, "no currency" XXX).
+assertEquals(155, count($moneyInfo), 'currency facts: all 155 current ISO 4217 currencies');
+$moneyByPlaces = [0 => 0, 2 => 0, 3 => 0];
+foreach ($moneyInfo as $moneyCode => $moneyFacts) {
+    if (isset($moneyByPlaces[$moneyFacts['minorUnits']])) {
+        $moneyByPlaces[$moneyFacts['minorUnits']]++;
+    }
+}
+assertEquals([0 => 16, 2 => 132, 3 => 7], $moneyByPlaces, 'currency facts: 16 with no decimal places, 132 with two, 7 with three (ISO 4217)');
+$moneyCodes = array_keys($moneyInfo);
+$moneySorted = $moneyCodes;
+sort($moneySorted, SORT_STRING);
+assertEquals($moneySorted, $moneyCodes, 'currency facts: in alphabetical order of code (the order the main-currency list shows)');
+foreach (['CAD' => 2, 'AUD' => 2, 'CHF' => 2, 'INR' => 2, 'KRW' => 0, 'ISK' => 0, 'CLP' => 0, 'VND' => 0, 'KWD' => 3, 'BHD' => 3, 'OMR' => 3, 'TND' => 3] as $moneyCode => $moneyPlaces) {
+    assertEquals($moneyPlaces, moneyMinorUnits($moneyCode), $moneyCode . ' is known, with ' . $moneyPlaces . ' decimal places (ISO 4217)');
+}
+foreach (['XTS', 'XXX', 'XAU', 'CLF', 'USN', 'ANG', 'HRK'] as $moneyNotCurrency) {
+    assertFalse(moneyCurrencyKnown($moneyNotCurrency), $moneyNotCurrency . ' is not offered as a currency (a fund, a metal, a test code or a withdrawn currency)');
+}
 assertEquals(['£', 2], [$moneyInfo['GBP']['symbol'], $moneyInfo['GBP']['minorUnits']], 'GBP: £ and 2 decimal places');
 assertEquals(['$', 2], [$moneyInfo['USD']['symbol'], $moneyInfo['USD']['minorUnits']], 'USD: $ and 2 decimal places');
 assertEquals(['€', 2], [$moneyInfo['EUR']['symbol'], $moneyInfo['EUR']['minorUnits']], 'EUR: € and 2 decimal places');
 assertEquals(['¥', 0], [$moneyInfo['JPY']['symbol'], $moneyInfo['JPY']['minorUnits']], 'JPY: ¥ and no decimal places');
+assertEquals('CAD', $moneyInfo['CAD']['symbol'], 'CAD: shown with its code (no guessed symbol: "$" alone would read as US dollars)');
 foreach ($moneyInfo as $moneyCode => $moneyFacts) {
     assertMatches('/^[A-Z]{3}$/D', $moneyCode, $moneyCode . ': a three-capital-letter ISO 4217 code');
-    assertTrue(is_string($moneyFacts['name']) && $moneyFacts['name'] !== '', $moneyCode . ': has an English name');
+    assertTrue(is_string($moneyFacts['name']) && $moneyFacts['name'] !== '' && trim($moneyFacts['name']) === $moneyFacts['name'], $moneyCode . ': has an English name, with no stray spaces');
+    assertTrue(in_array($moneyFacts['minorUnits'], [0, 2, 3], true), $moneyCode . ': 0, 2 or 3 decimal places');
 }
 assertTrue(moneyCurrencyKnown('GBP'), 'GBP is known');
+assertTrue(moneyCurrencyKnown('CAD'), 'CAD is known (the example in Codex finding 1.1)');
 assertFalse(moneyCurrencyKnown('gbp'), 'lower-case gbp is not accepted (codes are stored in capitals)');
 assertFalse(moneyCurrencyKnown('XYZ'), 'an unknown code is not known');
 assertFalse(moneyCurrencyKnown(''), 'an empty code is not known');
 assertEquals(100, moneyMinorPerMajor('GBP'), '100 pence in a pound');
 assertEquals(1, moneyMinorPerMajor('JPY'), '1 minor unit in a yen');
+assertEquals(1000, moneyMinorPerMajor('KWD'), '1000 fils in a Kuwaiti dinar');
+
+// 🗄️ The price columns are DECIMAL(10,2): they hold two decimal places, so a
+//    three-decimal currency (KWD 1.234) cannot be saved exactly. Such a
+//    currency is known (its prices can be READ and shown) but cannot be
+//    offered until the columns are widened (reported to the lead).
+assertEquals(2, moneyStoredDecimalPlaces(), 'the database price columns hold 2 decimal places');
+assertTrue(moneyCurrencyCanBeOffered('GBP') && moneyCurrencyCanBeOffered('CAD') && moneyCurrencyCanBeOffered('JPY'), 'two- and zero-decimal currencies can be offered');
+assertFalse(moneyCurrencyCanBeOffered('KWD'), 'a three-decimal currency cannot be offered (its prices could not be saved exactly)');
+assertFalse(moneyCurrencyCanBeOffered('XYZ'), 'an unknown code cannot be offered');
+$moneyList = moneyParseCurrencyList('GBP,CAD,AUD,JPY');
+assertTrue($moneyList['ok'] && $moneyList['codes'] === ['GBP', 'CAD', 'AUD', 'JPY'], 'a currency list with CAD and AUD is accepted (Codex finding 1.1)');
+$moneyList = moneyParseCurrencyList('GBP,KWD');
+assertFalse($moneyList['ok'], 'a currency list with a three-decimal currency is refused');
+assertContains('KWD', $moneyList['error'], '...and the reason names it');
+assertContains('three decimal places', $moneyList['error'], '...and says why, in plain words');
+$moneyList = moneyParseCurrencyList('GBP,XYZ');
+assertFalse($moneyList['ok'], 'a list with an unknown code is refused');
+assertContains('XYZ', $moneyList['error'], '...and the reason names the code');
+assertTrue(strlen($moneyList['error']) < 200, '...without listing all 155 codes');
 assertThrows(static function (): void {
     moneyMinorUnits('XYZ');
 }, 'an unknown currency is refused loudly', InvalidArgumentException::class);
@@ -67,6 +112,9 @@ $moneyAccepted = [
     ['007.50', 'GBP', 750],
     ['1200', 'JPY', 1200],
     ['9999999', 'JPY', 9999999],
+    ['12.50', 'CAD', 1250],
+    ['1500', 'KRW', 1500],
+    ['0.5', 'CHF', 50],
 ];
 foreach ($moneyAccepted as $moneyCase) {
     assertEquals($moneyCase[2], moneyParseToMinor($moneyCase[0], $moneyCase[1]), 'typed "' . trim($moneyCase[0]) . '" ' . $moneyCase[1] . ' is ' . $moneyCase[2] . ' minor units');
@@ -90,6 +138,9 @@ $moneyRefused = [
     ['6.99', 'XYZ', 'an unknown currency'],
     ['6.99', 'gbp', 'a lower-case currency code'],
     ['12.5', 'JPY', 'a decimal in a zero-decimal currency'],
+    ['12.5', 'KRW', 'a decimal in another zero-decimal currency'],
+    ['1.234', 'KWD', 'a three-decimal currency (it cannot be saved exactly in a two-decimal column)'],
+    ['1.5', 'KWD', 'any amount in a three-decimal currency'],
     ['0x1A', 'GBP', 'a hexadecimal number'],
     ['١٢', 'GBP', 'digits from another script'],
     ['6.99abc', 'GBP', 'trailing letters'],
@@ -113,6 +164,8 @@ assertEquals(null, moneyStoredDecimalToMinor('-1.00', 'GBP'), 'a negative stored
 assertEquals(null, moneyStoredDecimalToMinor('6.99', 'XYZ'), 'an unknown currency is refused');
 assertEquals(null, moneyStoredDecimalToMinor('', 'GBP'), 'an empty value is refused');
 assertEquals(null, moneyStoredDecimalToMinor(' 6.99', 'GBP'), 'a stored value is never padded, so padding is refused');
+assertEquals(1230, moneyStoredDecimalToMinor('1.23', 'KWD'), 'stored "1.23" Kuwaiti dinars is 1230 fils (a three-decimal price can still be READ exactly)');
+assertEquals(1250, moneyStoredDecimalToMinor('12.50', 'CAD'), 'stored "12.50" Canadian dollars is 1250 cents');
 
 // ==============================================================================
 // 🖨️ Section 4: writing amounts
@@ -128,6 +181,10 @@ assertThrows(static function (): void {
 assertThrows(static function (): void {
     moneyMinorToDecimalString(1, 'XYZ');
 }, 'an unknown currency is refused loudly when writing', InvalidArgumentException::class);
+assertEquals('1.230', moneyMinorToDecimalString(1230, 'KWD'), '1230 fils is written "1.230" (it fits a two-decimal column exactly)');
+assertThrows(static function (): void {
+    moneyMinorToDecimalString(1234, 'KWD');
+}, '1234 fils is refused loudly: the two-decimal column would round it to 1.23', InvalidArgumentException::class);
 
 assertEquals('£6.99', moneyFormat(699, 'GBP'), 'shown as £6.99');
 assertEquals('$6.99', moneyFormat(699, 'USD'), 'shown as $6.99');
@@ -139,6 +196,9 @@ assertEquals('£99,999.99', moneyFormat(9999999, 'GBP'), 'the typing limit is sh
 assertEquals('£1,000,000.00', moneyFormat(100000000, 'GBP'), 'millions grouped too');
 assertEquals('¥1,200', moneyFormat(1200, 'JPY'), 'yen has no decimal part');
 assertEquals('¥5', moneyFormat(5, 'JPY'), 'a small yen amount');
+assertEquals("CAD\u{00A0}1,234.50", moneyFormat(123450, 'CAD'), 'a currency without its own symbol here is shown with its code and a space that never breaks across lines');
+assertEquals("KRW\u{00A0}15,000", moneyFormat(15000, 'KRW'), 'a zero-decimal currency other than yen');
+assertEquals("KWD\u{00A0}1.230", moneyFormat(1230, 'KWD'), 'a three-decimal currency is shown with three decimals');
 
 // 🔁 Round trip: typed -> stored -> read back -> shown, exactly (plan Phase 2 acceptance).
 foreach (['6.99', '49.99', '24.99', '199.99', '99.00', '0.01', '99999.99'] as $moneyTyped) {
