@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - The Free plan keeps its sign-up button when prices cannot be read (second Codex review, decision 0041, 2026-11-28)
+
+- If the price list could not be read, every plan was marked "Price unavailable", including the Free plan. Its "Create free account" link was then replaced by a disabled "Coming soon" button, although decision 0041 says the Free plan can never have a price. The Free plan is now handled apart from the price list, both where the list is read (`listPublicPlansForDisplay()`) and where the cards are built (`pricingDisplayRowsFromPlans()`), so it stays "Free" with its working sign-up link. Every other plan still says "Price unavailable", as before.
+- Shown failing first: 6 new checks in `tests/test_pricing_page.php`, including a stand-in database whose price list cannot be read. Now they pass.
+
 ### Fixed - A late provider script can no longer stop the human check moving on (second Codex review, 2026-11-28)
 
 - The widget script waits 8 seconds for a provider's script, then tries the next configured provider. All three providers answer through the same function, so a provider that answered late, after the page had moved on, stopped the next provider's 8-second timer. If that provider never answered, the third was never tried. A late "could not load" from an earlier script also made it skip a provider.

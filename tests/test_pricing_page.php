@@ -65,6 +65,10 @@ function dbQuery(string $sql, string $types = '', array $params = []): PpStateme
     global $argv;
     $GLOBALS['ppSql'][] = $sql;
     if (str_contains($sql, '`tblPlanPricePoints`')) {
+        if ($argv[2] === 'pricefails') {
+            // 🛑 Second Codex review: the price list cannot be read.
+            throw new RuntimeException('stand-in: the price list cannot be read');
+        }
         if ($argv[2] === 'freepriced') {
             // 🆓 Decision 0041: older data left a price on sale on the Free plan.
             return new PpStatement([['planID' => 1, 'pricePointID' => 9, 'priceKey' => 'monthly_gbp', 'priceGroupKey' => 'monthly', 'billingInterval' => 'monthly', 'intervalCount' => 1, 'amount' => '3.00', 'currency' => 'GBP', 'grantsJSON' => null, 'validFrom' => null, 'validUntil' => null, 'isDefault' => 0, 'isActive' => 1, 'sortOrder' => 1], ['planID' => 2]]);
@@ -93,13 +97,13 @@ function dbQuery(string $sql, string $types = '', array $params = []): PpStateme
 requireFn('fn_pricing.php');
 $rows = listPublicPlansForDisplay();
 $display = pricingDisplayRowsFromPlans($rows);
-echo json_encode(['sql' => $GLOBALS['ppSql'], 'ids' => array_column($rows, 'planID'), 'free' => array_column($display, 'isZeroPrice'), 'cta' => array_column($display, 'ctaMode')]);
+echo json_encode(['sql' => $GLOBALS['ppSql'], 'ids' => array_column($rows, 'planID'), 'free' => array_column($display, 'isZeroPrice'), 'cta' => array_column($display, 'ctaMode'), 'unavailable' => array_column($display, 'priceUnavailable')]);
 PPCHILD;
 
 $ppChildFile = (string) tempnam(sys_get_temp_dir(), 'cuercode_pp_');
 file_put_contents($ppChildFile, $ppChildSource);
 $ppRuns = [];
-foreach (['after', 'before', 'freepriced'] as $ppMode) {
+foreach (['after', 'before', 'freepriced', 'pricefails'] as $ppMode) {
     $ppPipes = [];
     $ppProcess = proc_open([PHP_BINARY, $ppChildFile, CUERCODE_TEST_REPO_ROOT, $ppMode], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $ppPipes);
     $ppOut = (string) stream_get_contents($ppPipes[1]);
@@ -119,6 +123,11 @@ assertEquals([1, 2], $ppRuns['before']['ids'], 'listing before upgrade 0004: the
 //    row on sale and figures in its older columns) is ignored, so its card
 //    stays "Free" with the "Create free account" button.
 assertEquals([true, false], $ppRuns['freepriced']['free'], '0041: the Free plan with an old price row and old figures is still Free (its sign-up button stays)');
+// 🆓 Second Codex review (decision 0041): when the price list cannot be read,
+//    the Free plan (which can never have a price) keeps its sign-up button;
+//    the other plan says "Price unavailable".
+assertEquals([true, false], $ppRuns['pricefails']['free'] ?? null, 'Codex 2 / 0041: the price list cannot be read: the Free plan is still Free (its "Create free account" button stays)');
+assertEquals([false, true], $ppRuns['pricefails']['unavailable'] ?? null, 'Codex 2: ... and only the other plan is marked "Price unavailable"');
 assertEquals(['checkout', 'checkout'], $ppRuns['before']['cta'], 'listing before upgrade 0004: every button is the ordinary one');
 foreach (['planKind', 'ctaMode', 'availableFrom', 'priceGroupKey'] as $ppNewColumn) {
     assertFalse(str_contains(implode(' ', $ppRuns['before']['sql']), $ppNewColumn), 'listing SQL never names the upgrade 0004 column ' . $ppNewColumn);
@@ -342,12 +351,22 @@ assertEquals(['No monthly price in GBP yet', '£120.00 billed yearly'], [$ppHalf
 
 // 🛑 Codex finding 3.5: when the price list cannot be read, the page must not
 //    show the older copied figures (a sale may have started or ended) nor
-//    call a plan "Free" - every card says the price is unavailable.
-$ppUnavailable = pricingDisplayRowsFromPlans([
+//    call a plan "Free" - every card says the price is unavailable. EXCEPT the
+//    Free plan (decision 0041, second Codex review): it can never have a
+//    price, so it stays "Free" with its "Create free account" button.
+$ppUnavailableAll = pricingDisplayRowsFromPlans([
     $ppPlanRow(['planID' => 1, 'planKey' => CUERCODE_PLAN_KEY_FREE, 'priceUnavailable' => true]),
     $ppPlanRow(['planID' => 2, 'planKey' => 'paid', 'priceMonthly' => '24.99', 'priceUnavailable' => true]),
     $ppPlanRow(['planID' => 3, 'planKey' => 'big', 'ctaMode' => 'contact', 'priceMonthly' => '99.00', 'priceUnavailable' => true]),
+    $ppPlanRow(['planID' => 4, 'planKey' => CUERCODE_PLAN_KEY_ANONYMOUS, 'priceUnavailable' => true]),
 ]);
+$ppFreeWhileUnavailable = $ppUnavailableAll[0];
+assertTrue($ppFreeWhileUnavailable['isZeroPrice'] && !$ppFreeWhileUnavailable['priceUnavailable'], 'Codex 2 / 0041: the Free plan is still Free when the price list cannot be read (never "Price unavailable")');
+assertEquals('Free', pricingPriceBlock($ppFreeWhileUnavailable, true)['headline'], 'Codex 2 / 0041: ... its card says "Free"');
+$ppFreeGrid = ppRenderGrid([$ppFreeWhileUnavailable], true);
+assertContains('href="/register/"', $ppFreeGrid, 'Codex 2 / 0041: ... and keeps its working "Create free account" link');
+assertFalse(str_contains($ppFreeGrid, 'Coming soon'), 'Codex 2 / 0041: ... never a disabled "Coming soon" button');
+$ppUnavailable = array_slice($ppUnavailableAll, 1);
 foreach ($ppUnavailable as $ppUnavailablePlan) {
     $ppUnavailableBlock = pricingPriceBlock($ppUnavailablePlan, true);
     assertEquals('Price unavailable', $ppUnavailableBlock['headline'], 'finding 3.5: ' . $ppUnavailablePlan['planKey'] . ' says "Price unavailable" when the price list could not be read');
@@ -356,7 +375,8 @@ foreach ($ppUnavailable as $ppUnavailablePlan) {
 $ppUnavailableGrid = ppRenderGrid($ppUnavailable, true);
 assertFalse(str_contains($ppUnavailableGrid, '24.99') || str_contains($ppUnavailableGrid, '£99') || str_contains($ppUnavailableGrid, '>Free<'), 'finding 3.5: no stale figure and no "Free" anywhere on the page');
 $ppFetchSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_pricing.php');
-$ppFetchBody = substr($ppFetchSource, (int) strpos($ppFetchSource, 'function listPublicPlansForDisplay('), 6000);
+$ppFetchStart = (int) strpos($ppFetchSource, 'function listPublicPlansForDisplay(');
+$ppFetchBody = substr($ppFetchSource, $ppFetchStart, (int) strpos($ppFetchSource, "\n}\n", $ppFetchStart) - $ppFetchStart);
 assertContains("'priceUnavailable'] = true", $ppFetchBody, 'finding 3.5: a failed price-list read marks the plans as unavailable');
 assertContains("logError('error', 'Public pricing price list failed'", $ppFetchBody, 'finding 3.5: ...and is still logged');
 

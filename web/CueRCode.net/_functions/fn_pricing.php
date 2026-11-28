@@ -196,6 +196,8 @@ function listPublicPlansForDisplay(): array
     // and may be out of date (a sale may have started or ended), and a plan
     // given without payment may have a price that could not be read - so the
     // cards say "Price unavailable", never an old figure and never "Free".
+    // The one exception is the Free plan (decision 0041, second Codex
+    // review): it can never have a price, so it stays "Free" with its button.
     // ==========================================================================
     $mainCurrency = '';
     if (function_exists('getConfig')) {
@@ -206,6 +208,20 @@ function listPublicPlansForDisplay(): array
     }
 
     if (!empty($planRows)) {
+        // 🆓 Decision 0041: the Free plan never has a price. Any price row or
+        //    older figure found on it (older data) is ignored, so its "Create
+        //    free account" button always stays - also when the price list
+        //    below cannot be read (second Codex review: it used to be marked
+        //    "Price unavailable" then, which replaced the button).
+        $freePlanIndexes = [];
+        foreach ($planRows as $planIndex => $planRow) {
+            if (isset($planRow['planKey']) && pricingIsFreePlan((string) $planRow['planKey'])) {
+                $planRows[$planIndex]['priceMonthly'] = '0';
+                $planRows[$planIndex]['priceYearly'] = '0';
+                $freePlanIndexes[] = $planIndex;
+            }
+        }
+
         try {
             $pricedStmt   = dbQuery('SELECT * FROM `tblPlanPricePoints` ORDER BY `planID` ASC, `sortOrder` ASC, `pricePointID` ASC');
             $pricedResult = $pricedStmt->get_result();
@@ -221,12 +237,8 @@ function listPublicPlansForDisplay(): array
                     $planPrices = $pricesByPlan[(int) $planRow['planID']];
                 }
 
-                // 🆓 Decision 0041: the Free plan never has a price. Any price
-                //    row or older figure found on it (older data) is ignored,
-                //    so its "Create free account" button always stays.
-                if (isset($planRow['planKey']) && pricingIsFreePlan((string) $planRow['planKey'])) {
-                    $planRows[$planIndex]['priceMonthly'] = '0';
-                    $planRows[$planIndex]['priceYearly'] = '0';
+                // 🆓 Decision 0041: the Free plan's price rows are ignored (above).
+                if (in_array($planIndex, $freePlanIndexes, true)) {
                     continue;
                 }
 
@@ -246,6 +258,10 @@ function listPublicPlansForDisplay(): array
                 logError('error', 'Public pricing price list failed', $e->getMessage());
             }
             foreach (array_keys($planRows) as $planIndex) {
+                // 🆓 Never the Free plan: it has no price to be unavailable.
+                if (in_array($planIndex, $freePlanIndexes, true)) {
+                    continue;
+                }
                 $planRows[$planIndex]['priceUnavailable'] = true;
             }
         }
@@ -1655,13 +1671,21 @@ function pricingDisplayRowsFromPlans(array $plans): array
             $promiseMonths = (int) $planRow['pricePromiseMonths'];
         }
 
+        // 🆓 Decision 0041 (second Codex review): "the price list could not be
+        //    read" never applies to the Free plan, which can never have a
+        //    price - its card keeps "Free" and its sign-up button.
+        $priceUnavailable = !empty($planRow['priceUnavailable']);
+        if (isset($planRow['planKey']) && pricingIsFreePlan((string) $planRow['planKey'])) {
+            $priceUnavailable = false;
+        }
+
         $decodedPlans[] = [
             'ctaMode'      => $ctaMode,
             'contactUrl'   => $contactUrl,
             'pricePromiseMode'   => $promiseMode,
             'pricePromiseMonths' => $promiseMonths,
             'hasPricePoint' => !empty($planRow['hasPricePoint']),
-            'priceUnavailable' => !empty($planRow['priceUnavailable']),
+            'priceUnavailable' => $priceUnavailable,
             'planKey'      => isset($planRow['planKey']) ? (string) $planRow['planKey'] : '',
             'planName'     => isset($planRow['planName']) ? (string) $planRow['planName'] : '',
             'description'  => isset($planRow['description']) ? (string) $planRow['description'] : '',
