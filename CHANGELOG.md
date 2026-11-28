@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixes - Codex review of plans, prices and currencies (task 7n Phase 2, 2026-11-28, #31)
+
+Each finding was first shown failing on the old code, then fixed. Real-database checks ran on MySQL 8.0.36 and MariaDB 10.6.
+
+- **Every current currency can be offered (finding 1.1).** The site knew only GBP, USD, EUR and JPY, so a Global Admin could not offer, say, Canadian dollars without a code change. It now knows all 155 current ISO 4217 currencies with their official decimal places (ISO 4217 List One of 17 September 2026; fund codes, metals and the test code are left out). Which are offered is still the admin's choice in the settings. The seven currencies with three decimal places (KWD, BHD, OMR, JOD, IQD, LYD, TND) cannot be offered yet: the price columns hold two decimal places, so 1.234 would be saved as 1.23. Currencies other than pounds, dollars, euros and yen are shown with their code, for example "CAD 12.50".
+- **A price form sent without its date boxes is refused (finding 1.2).** A hand-made request with the same amounts but no "on sale from / until" boxes used to clear the sale dates of every current price in the group (a future price went on sale at once; an ending offer became endless). The same applied to the "recommended" box. The form always sends them, so a request without them is now refused; boxes sent empty still clear the dates.
+- **Installer: stops when an applied upgrade's file is missing (finding 2.P1).** If an upgrade was recorded as applied (for example by `migrate.php --apply` before the installer ran) and its file is then missing or cannot be read, the installer used to load the starting data without that upgrade's part, warn, and lock itself as finished - no Enterprise plan, while the record said 0004 was applied. It now refuses before changing anything, and says to put the files back or start from an empty database.
+- **Upgrade 0004 no longer overwrites a description that differs only in capitals, accents or a trailing space (finding 2.P2).** The comparison is now byte for byte (`CAST(... AS BINARY)`). 0004 was corrected in place again under decision 0036: rebuild any developer database that applied the earlier version.
+- **The pricing card and the admin preview use one rule (finding 3.3).** With `billing_price_points_enabled` on, the card could pick another monthly offer by its "recommended" flag. Both now show the price on sale now in each price group.
+- **The preview keeps prices set the older way (finding 3.4).** A plan priced only in its older monthly or yearly column showed a figure publicly but "No price yet" in the preview.
+- **"Price unavailable" when the price list cannot be read (finding 3.5).** The page used to keep the older copied figures (which may be out of date) and could call a plan "Free". The failure is logged and every card now says "Price unavailable".
+- **Wording (findings 3.2 and 3.6).** The deploy gate runs the unit tests (`tests/test_*.php`), not the real-database tests in `tests/integration/`; `tools/ci/run-tests.sh`, `deploy.yml`, DEV_NOTES and AGENTS.md now say so (whether the deploy should run them is an owner question). The guard in `tests/test_commercial_literals.php` checks the starting plan keys and prices only, and now says so. The entry "A deploy now waits for the full test suite" below should be read with this correction.
+- **Not changed (finding 3.1):** PHP 8.6 test failures still do not block a deploy. That is the owner's decision (0005 and 0025).
+
 ### Added - Human check on the account forms (#163, decisions 0024, 0037 and 0038, 2026-11-27) - built; Opus review fixed; Codex review owed
 
 **Apply database upgrade 0005 after deploying** (`/admin/upgrades/` or `migrate.php --apply`). Nothing changes for visitors until a Global Admin enters a provider's keys. Upgrade 0005 was changed in place before it was applied anywhere or pushed: a developer database that applied the earlier version must be rebuilt.

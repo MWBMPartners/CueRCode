@@ -1,16 +1,24 @@
 <?php
 /**
  * ==============================================================================
- * 🧪 CueRCode - Project-wide guard: no commercial value written into the code
- *    (task 7n Phase 2, plan §9 and security check S24)
+ * 🧪 CueRCode - Guard: the STARTING plan keys and prices are not written
+ *    into the code (task 7n Phase 2, plan §9 and security check S24)
  * ==============================================================================
  *
  * Path: tests/test_commercial_literals.php
  *
  * Owner rule (2026-10-05): "never hard-code a commercial rule". Plans and
- * prices are data a Global Admin edits. This test reads every PHP file under
- * web/CueRCode.net/ with PHP's own tokeniser and fails when a string or number
- * token is:
+ * prices are data a Global Admin edits.
+ *
+ * ⚠️ WHAT THIS CAN AND CANNOT PROVE (Codex finding 3.6 of the 7n Phase 2
+ *    review): it looks for a FIXED LIST - the plan keys and prices the site
+ *    starts with. A different hard-coded amount (say 12.50) or a new plan key
+ *    is not on the list and passes. So it stops the starting values from
+ *    creeping back into the code; it does not prove the code holds no
+ *    commercial value at all. That still depends on review.
+ *
+ * This test reads every PHP file under web/CueRCode.net/ with PHP's own
+ * tokeniser and fails when a string or number token is:
  *   - one of the starting PAID plan keys (pro, business, enterprise, payg,
  *     pro_lifetime_founders - "anonymous" and "free" are left out because they
  *     are the code's documented fallback plans and ordinary words); or

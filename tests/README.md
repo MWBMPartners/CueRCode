@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-28, human check #163 review fixes and decisions 0037/0038: the table below was re-measured; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-28, Codex review fixes of task 7n Phase 2: the table below was re-measured; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -51,7 +51,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
 | `test_admin_access.php` | 664 |
-| `test_admin_plans.php` | 600 |
+| `test_admin_plans.php` | 620 |
 | `test_admin_settings.php` | 1346 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
@@ -81,8 +81,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 492 |
-| `test_money.php` | 161 |
+| `test_migrations.php` | 506 |
+| `test_money.php` | 666 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -92,15 +92,15 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_php_runtime_guards.php` | 24 |
 | `test_plans_prices_migration.php` | 168 |
 | `test_predefined_logo_png.php` | 264 |
-| `test_pricing.php` | 122 |
+| `test_pricing.php` | 124 |
 | `test_pricing_flex.php` | 51 |
-| `test_pricing_page.php` | 133 |
+| `test_pricing_page.php` | 150 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **8378** |
+| **Total** | **8936** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -111,6 +111,12 @@ Run `php tests/run.php` at any time to reproduce this table live.
 **Human check review fixes and decisions 0037/0038 (#163, 2026-11-28)** added `test_human_check_review_fixes.php` (review findings M1, M2, L1, L2, L3, L5 and the per-visitor form limit, with stand-ins for the token record, the stored-row question and the counter) and `test_human_check_fallbacks.php` (decision 0037: only the server's own test call decides "down", bounded test calls and log rows, only sign-in and only with every configured provider down, fallback providers, no unconfigured provider; decision 0038: the route's limits, the keyed email hash, the `<noscript>` button, the email sign-in link decisions and the pages' order of checks). Both were first run against the code before the change: the review-fixes file failed 33 checks (M1 7, M2 5, L1 5, L5 1, form limit 4, L3 11; four sections also stopped on functions that did not exist yet, and the L2 case was reproduced on its own: a token from evil.example passed when the request claimed Host: evil.example) and the fallbacks file stopped at once (its function file was missing). Commenting out the human-check call on `/login/` and in `handleAuthLogin()` (the review's own L3 mutation) now fails 11 checks; before the fix it failed none. `test_human_check.php`, `test_admin_settings.php`, `test_sessions_valid_from.php`, `test_email_queue_runner.php` and `test_resend_verification.php` (L4: the double-quoted string) were updated for the new behaviour. The whole suite is then **8378** on PHP 8.5.12, with no PHP warning. On PHP 8.4.27 (the bare `php:8.4-cli` Docker image, which has no gd, intl, bcmath or mysqli and runs as root) every human-check file and every file this change touched passed; the 20 failures there are all in files that need those missing extensions or a non-root user.
 
 **Human check (#163, 2026-11-27)** added `test_human_check.php` (377 assertions: each of the three providers with stand-in replies - success, failure, provider unreachable, error page, reply that is not JSON, missing or bad token, keys absent, wrong host name, replayed or expired token, wrong keys, published test keys - plus the widget, the command-line options, static checks that every page and JSON route makes the call, the exact content security policy and the migration rules). No real provider is called. It was first run before the code existed (it failed: the function file was missing), then with the functions but before the pages were wired (49 of 377 checks failed). The table above was re-measured on PHP 8.5.12 the same day: **8026** assertions, all passing.
+
+### Codex review fixes of task 7n Phase 2 (2026-11-28, #31)
+
+Every finding was first shown failing on the old code (the unit tests on PHP 8.5.12; the real-database checks by putting the old file back for one run and then restoring the new one). Unit suite: **8936** assertions in 54 files, all passing. New or changed checks: `test_money.php` (all 155 current ISO 4217 currencies with 0, 2 or 3 decimal places; the three-decimal ones cannot be offered because the price columns hold two; an amount the column would round is refused), `test_admin_plans.php` (CAD offered and saved; a price form without its date or "recommended" boxes refused), `test_migrations.php` and `test_plans_prices_migration.php` (an applied upgrade whose file is missing refuses the installer; 0004 compares descriptions byte for byte), `test_pricing_page.php` and `test_pricing.php` (one selection rule for the card and the preview; the preview keeps older-column prices; "Price unavailable" when the price list cannot be read).
+
+On throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other, every script in `tests/integration/` passed: `migrations_real_mysql.php` 198 checks on each (new: an applied upgrade with no file is reported and the starting-data load is refused with nothing written; owner descriptions that differ only by a trailing space or capitals are kept - on the old code the first FAILED on MariaDB and the second on both servers), `admin_plans_real_mysql.php` 144 (new: the date boxes left out are refused and the stored end dates stay; CAD 139.50 and KRW 125,000 saved and read back exactly; with `billing_price_points_enabled` on, the card still shows the price group's figure - each FAILED on the old code on MySQL), `admin_settings_real_mysql.php` 232, `admin_access_real_mysql.php` 167, `account_recovery_real_mysql.php` 192, `email_queue_real_mysql.php` 77, `human_check_real_mysql.php` 115 and `resend_verification_real_mysql.php` 32 on each. Not run: a real browser; a failing price-list read on a real database (unit-tested only).
 
 ### Real-database and HTTP runs for the human check review fixes and decisions 0037/0038 (#163, 2026-11-28)
 
@@ -328,7 +334,7 @@ Run 2026-11-25 (after the final review: test buttons record each press before co
 ## Optional real-database check (admin plans and prices)
 
 `tests/test_admin_plans.php` proves the plans editor's decisions. `tests/integration/admin_plans_real_mysql.php`
-(124 checks, scenarios A-M) proves the rest on a throwaway database: the 0004 starting data; making a plan
+(144 checks, scenarios A-M) proves the rest on a throwaway database: the 0004 starting data; making a plan
 (off sale, features copied, audited, duplicate key refused); prices saved exactly as text and mirrored by
 price group; P1 a bought price cannot change or be deleted even when bought after the form was opened, but
 can be retired and replaced (`monthly_gbp_2`); a REAL race - a second process saving while another

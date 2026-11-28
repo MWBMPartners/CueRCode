@@ -72,7 +72,7 @@ jobs:
   # three are checked before deploy. A failure on 8.4, 8.5 or the 8.6
   # compatibility scan blocks the deploy. The 8.6 job is allowed to fail for
   # now (continue-on-error), a provisional choice (decision 0002); see ci.yml for
-  # the rule on making it blocking. The full test suite runs in the `tests` job
+  # the rule on making it blocking. The unit test suite runs in the `tests` job
   # below.
   php-checks:
     name: PHP checks (PHP ${{ matrix.php }})
@@ -115,10 +115,12 @@ jobs:
         run: php tools/php86-compat-scan.php
 
   # ===========================================================================
-  # 🧪 Gate: the full test suite must pass BEFORE anything is uploaded
+  # 🧪 Gate: the unit test suite must pass BEFORE anything is uploaded
   # ===========================================================================
   # (#155, decision 0025) Runs the same script as ci.yml. 8.4 and 8.5 block the
-  # deploy; 8.6 is report-only for now (decision 0005). This job is repeated
+  # deploy; 8.6 is report-only for now (decision 0005). The real-database tests
+  # in tests/integration/ are NOT run here (they need a database server; see
+  # tools/ci/run-tests.sh), so they cannot block an upload. This job is repeated
   # here instead of calling ci.yml, because ci.yml cancels an earlier run of the
   # same branch and a called copy would collide with the one the push starts.
   tests:
