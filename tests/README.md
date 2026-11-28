@@ -74,7 +74,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
 | `test_human_check.php` | 411 |
-| `test_human_check_fallbacks.php` | 116 |
+| `test_human_check_fallbacks.php` | 113 |
 | `test_human_check_review_fixes.php` | 82 |
 | `test_install_checks.php` | 101 |
 | `test_installer_load_order.php` | 9 |
@@ -83,6 +83,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_login_next_url.php` | 21 |
 | `test_migrations.php` | 506 |
 | `test_money.php` | 666 |
+| `test_no_script_route_review_fixes.php` | 76 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -100,9 +101,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **8936** |
+| **Total** | **9009** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Merged security review of the no-JavaScript route (#163, 2026-11-28)** added `test_no_script_route_review_fixes.php` (76 assertions: findings M1, L1, L3, L4, L5, L6, I2, I3, I4, I5 and upgrade 0005's byte-for-byte compare; the route helper is driven with stand-ins for its gate, its "give the place back" step, the queued-email counter and the minimum time, so the check is on what the helper does, not on a function name). First run against the old code it failed 37 of 57 (the rest stopped on functions that did not exist yet). `test_human_check_fallbacks.php` lost 3 checks (the pages no longer read the limits themselves; the helper's own checks replace them) and `test_human_check.php` now looks for 0005's byte-for-byte compare. Suite: **9009** assertions in 55 files on PHP 8.5.12, all passing. `tests/integration/human_check_real_mysql.php` grew to 171 checks in 16 scenarios (new M, N, P, Q; K, I and J changed): run against the old code (commit 17eeda7) 39 of them failed, in K, M, N, P, Q, I and J. `migrations_real_mysql.php` grew to 200 (O: a stored "NONE", or a description differing only in capitals or a trailing space, is kept; failed on the old code on both servers). Every protection the review found untested was then removed in a scratch copy, one at a time (19 removals, including the new ones), and each made at least one test fail; 18 were caught by the real-database run, the "do not ask a provider freshly tested down" skip only by the unit tests (the real run has no provider to time). On throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28** all eight scripts in `tests/integration/` passed: human check 171, migrations 200, account recovery 192, admin access 167, admin plans 144, admin settings 232, email queue 77, resend verification 32 on each.
 
 **Task 7n Phase 2 slice 2c (2026-11-26)** added `test_admin_plans.php` (566 assertions: the plan-key rule, UK-time dates, every freezing rule P1/P4/P5/P6 shown to refuse and to allow, new-version and price keys, fingerprints, the price-group form, the mirror, the five new settings, and static guards each proved against a bad sample first) and 54 assertions in `test_admin_settings.php`. The whole suite was then **7390** on PHP 8.5.12.
 
