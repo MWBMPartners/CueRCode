@@ -32,10 +32,32 @@
  *      token - also with a valid API key, so a key is no way round - and 503
  *      HUMAN_CHECK_UNAVAILABLE with one; reset-password (exempt, needs an
  *      emailed link) is unaffected.
- *   F. "Let people through" chosen: a token with the provider unreachable is
- *      let through (the account is made) and it is logged; no token is still
- *      refused.
- *   G. No key typed during the run is in any log table or the server's log.
+ *   F. Decision 0037, every configured provider down by the SERVER'S OWN
+ *      test (its result row written as the test call would - a visitor
+ *      cannot): sign-in without a token is let through and written to the
+ *      activity log ONCE (bounded); wrong passwords still count and still
+ *      lock the account; sign-up and forgot password are still refused; the
+ *      JSON sign-in too; "refuse" refuses sign-in; an OLD "down" is tested
+ *      again (here: curl is off, so "our set-up", never "down").
+ *   K. Decision 0038 over real HTTP: the no-JavaScript email sign-in (wrong
+ *      password: no email; right password: one email; opening the link in
+ *      another browser changes nothing; its button only approves; the link
+ *      works once; Continue signs in the first browser; the same browser is
+ *      signed in directly; a moved "sessions valid from" mark and an expired
+ *      link are refused; the per-address limit stops the email); the
+ *      no-JavaScript sign-up and forgot password give the same answer for an
+ *      existing and a new address, in at least the minimum time.
+ *   L. The four web forms' per-visitor limit stops the call to the provider.
+ *   G. No key or sign-in link typed during the run is in any log table or
+ *      the server's log.
+ *   H. Review M1 on the real table: a token accepted once is refused the
+ *      second time; eight processes with the same token at the same moment:
+ *      exactly one is accepted.
+ *   I. Review M2 with real setConfig(): a damaged stored secret makes the
+ *      check refuse (not "off") and the status say the keys cannot be read.
+ *   J. The no-JavaScript route's limits on the real table, including twelve
+ *      processes at the same moment for one email address: exactly the
+ *      limit gets through.
  *
  * It is NOT run by tests/run.php. How to run it (Docker example):
  *     docker run -d --rm --name cuercode-it-hc -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
@@ -126,6 +148,39 @@ if (isset($hcArguments[0]) && $hcArguments[0] === '--run-cli') {
     hcDefineDatabase($hcChildDb);
     $_SERVER['argv'] = array_merge(['human_check.php'], array_slice($hcArguments, 2));
     require $hcSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'cli' . DIRECTORY_SEPARATOR . 'human_check.php';
+    exit(0);
+}
+
+// ==============================================================================
+// 👶 CHILD mode: one request at the same moment as its siblings (H and J)
+// php <this file> --race claim|gate <db>
+// ==============================================================================
+if (isset($hcArguments[0]) && $hcArguments[0] === '--race') {
+    $hcRaceMode = '';
+    if (isset($hcArguments[1])) {
+        $hcRaceMode = $hcArguments[1];
+    }
+    $hcChildDb = '';
+    if (isset($hcArguments[2])) {
+        $hcChildDb = $hcArguments[2];
+    }
+    if (preg_match('/^cuercode_it_[a-z0-9_]+$/', $hcChildDb) !== 1) {
+        fwrite(STDERR, 'Refusing: bad database name.' . PHP_EOL);
+        exit(9);
+    }
+    hcDefineDatabase($hcChildDb);
+    require_once $hcSiteRoot . '_includes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+    restore_error_handler();
+    restore_exception_handler();
+    $hcStartAt = (float) getenv('CUERCODE_IT_CHILD_START');
+    while ($hcStartAt > 0 && microtime(true) < $hcStartAt) {
+        usleep(1000);
+    }
+    if ($hcRaceMode === 'claim') {
+        echo humanCheckClaimToken((string) getenv('CUERCODE_IT_CHILD_HASH'), 'turnstile');
+    } elseif ($hcRaceMode === 'gate') {
+        echo json_encode(noScriptRouteGate('forgot', (string) getenv('CUERCODE_IT_CHILD_EMAIL'), (string) getenv('CUERCODE_IT_CHILD_IP')));
+    }
     exit(0);
 }
 
@@ -331,7 +386,9 @@ hcCheck('A', hcValue($hcServer, "SELECT `settingValue` FROM `tblSettings` WHERE 
 hcCheck('A', humanCheckActive() === null, 'no keys: the check is off');
 $hcOff = humanCheckVerifyRequest([]);
 hcCheck('A', $hcOff['ok'] === true && $hcOff['reason'] === 'off', 'the one call answers "off" and lets the form through');
-hcCheck('A', humanCheckReadSettings()['whenUnreachable'] === 'refuse' && humanCheckReadSettings()['timeout'] === 5, 'refuse when unreachable, wait 5 seconds (from the real rows)');
+hcCheck('A', humanCheckReadSettings()['whenUnreachable'] === 'signin_only' && humanCheckReadSettings()['timeout'] === 5, 'every provider down: only sign-in (decision 0037); wait 5 seconds (from the real rows)');
+hcCheck('A', hcValue($hcServer, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`) ORDER BY `settingKey`) FROM `tblSettings` WHERE `settingKey` IN ('human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour')") === 'human_check_form_ip_per_hour=30,no_script_route_email_per_day=3,no_script_route_ip_per_hour=5,no_script_route_site_per_hour=30', 'the limit settings start at 30, 3, 5 and 30: ' . hcValue($hcServer, "SELECT GROUP_CONCAT(CONCAT(`settingKey`, '=', `settingValue`)) FROM `tblSettings` WHERE `settingKey` LIKE 'no_script_route_%' OR `settingKey` = 'human_check_form_ip_per_hour'"));
+hcCheck('A', hcValue($hcServer, "SELECT COUNT(*) FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` IN ('tblHumanCheckTokens', 'tblHumanCheckState', 'tblNoScriptRequests', 'tblEmailSignInRequests')") === '4', 'the four new tables exist');
 
 // ==============================================================================
 // B. Keys stored encrypted; the order Turnstile, reCAPTCHA, hCaptcha
@@ -354,7 +411,7 @@ hcCheck('B', hcValue($hcServer, "SELECT `isSensitive` FROM `tblSettings` WHERE `
 // ==============================================================================
 echo PHP_EOL . 'C. Command line' . PHP_EOL;
 $hcCliRun = hcCli($hcDbName, ['status']);
-hcCheck('C', $hcCliRun['exit'] === 0 && str_contains($hcCliRun['out'], 'In use now: Cloudflare Turnstile.'), 'status: names Turnstile: ' . trim($hcCliRun['out'] . $hcCliRun['err']));
+hcCheck('C', $hcCliRun['exit'] === 0 && str_contains($hcCliRun['out'], 'In use now: Cloudflare Turnstile, then Google reCAPTCHA.'), 'status: names Turnstile, then reCAPTCHA: ' . trim($hcCliRun['out'] . $hcCliRun['err']));
 $hcCliRun = hcCli($hcDbName, ['off']);
 hcCheck('C', $hcCliRun['exit'] === 0 && str_contains($hcCliRun['out'], 'Saved') && str_contains($hcCliRun['out'], 'switched off'), 'off: saved, and the status says switched off');
 hcCheck('C', hcValue($hcServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'none', 'off: the provider setting is "none"');
@@ -364,7 +421,7 @@ hcCheck('C', humanCheckActive() === null, 'off: the site now has no human check'
 $hcCliRun = hcCli($hcDbName, ['off']);
 hcCheck('C', $hcCliRun['exit'] === 0 && str_contains($hcCliRun['out'], 'Nothing to change') && hcValue($hcServer, "SELECT COUNT(*) FROM `tblAdminAuditLog` WHERE `entityKey` = 'bot_protection_provider'") === '1', 'off again: nothing to change, no second row');
 $hcCliRun = hcCli($hcDbName, ['on']);
-hcCheck('C', $hcCliRun['exit'] === 0 && hcValue($hcServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'auto' && str_contains($hcCliRun['out'], 'In use now: Cloudflare Turnstile.'), 'on: back to "auto", Turnstile in use');
+hcCheck('C', $hcCliRun['exit'] === 0 && hcValue($hcServer, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'bot_protection_provider'") === 'auto' && str_contains($hcCliRun['out'], 'In use now: Cloudflare Turnstile, then Google reCAPTCHA.'), 'on: back to "auto", Turnstile in use (reCAPTCHA next)');
 $hcCliRun = hcCli($hcDbName, ['delete']);
 hcCheck('C', $hcCliRun['exit'] === 2, 'a bad option: exit 2');
 $hcCliAll = $hcCliRun['out'] . $hcCliRun['err'];
@@ -417,7 +474,8 @@ $hcServer->query("UPDATE `tblSettings` SET `settingValue` = '1000' WHERE `settin
 
 // 👤 An existing, active account (for sign-in and forgot password) and an API key.
 $hcUserEmail = 'person@it.cuercode.invalid';
-$hcUserHash  = password_hash('Correct-Horse-' . bin2hex(random_bytes(4)), PASSWORD_DEFAULT);
+$hcUserPassword = 'Correct-Horse-' . bin2hex(random_bytes(4));
+$hcUserHash  = password_hash($hcUserPassword, PASSWORD_DEFAULT);
 $hcInsert = $hcServer->prepare("INSERT INTO `tblUsers` (`email`, `emailVerifiedAt`, `passwordHash`, `displayName`, `status`, `roleID`) VALUES (?, '2026-11-01 09:00:00', ?, 'IT person', 'active', 3)");
 $hcInsert->bind_param('ss', $hcUserEmail, $hcUserHash);
 $hcInsert->execute();
@@ -462,7 +520,10 @@ $hcCsrfToken = '';
 foreach ($hcForms as $hcPath => $hcFields) {
     $hcPage = hcHttp('GET', $hcBase . '/' . $hcPath . '/', $hcJar);
     $hcCsrfToken = hcCsrf($hcPage['body']);
-    hcCheck('E', $hcPage['status'] === 200 && str_contains($hcPage['body'], 'class="cuercode-human-check"') && str_contains($hcPage['body'], 'data-sitekey="' . $hcTurnstileSite . '"') && str_contains($hcPage['body'], '/assets/js/cuercode-human-check.js'), 'GET /' . $hcPath . '/: the widget with the site key, and its script');
+    // 📌 Turnstile first, reCAPTCHA as the fallback - or the other way round
+    //    once the server's own test (curl is off here) has found Turnstile
+    //    unusable: either way Turnstile's PUBLIC site key is on the page.
+    hcCheck('E', $hcPage['status'] === 200 && str_contains($hcPage['body'], 'class="cuercode-human-check"') && str_contains($hcPage['body'], $hcTurnstileSite) && str_contains($hcPage['body'], 'data-fallbacks="') && str_contains($hcPage['body'], '/assets/js/cuercode-human-check.js'), 'GET /' . $hcPath . '/: the widget with the site keys (one provider, the other as its fallback), and its script');
     hcCheck('E', !str_contains($hcPage['body'], $hcSecrets['turnstileSecret']) && str_contains($hcPage['body'], '<noscript>'), 'GET /' . $hcPath . '/: no secret on the page; a note for JavaScript off');
 
     $hcUsersBefore  = $hcCount('SELECT COUNT(*) FROM `tblUsers`');
@@ -498,20 +559,209 @@ foreach ($hcApiCalls as $hcRoute => $hcBody) {
 hcCheck('E', $hcCount("SELECT COUNT(*) FROM `tblUsers` WHERE `email` = 'api@it.cuercode.invalid'") === 0, 'API: no account was made');
 $hcAnswer = hcHttp('POST', $hcBase . '/api/v1/auth/reset-password', $hcJar, [], ['token' => str_repeat('a', 64), 'new_password' => 'Plenty-Long-Pass-41'], ['X-CSRF-Token: ' . $hcCsrfToken]);
 hcCheck('E', is_array($hcAnswer['json']) && $hcAnswer['json']['error_code'] === 'RESET_TOKEN_INVALID', 'API auth/reset-password (exempt, needs the emailed link): answers about the link, not the human check (' . $hcAnswer['status'] . ')');
-hcCheck('E', $hcCount("SELECT COUNT(*) FROM `tblErrorLog` WHERE `errorTitle` LIKE 'Human check provider could not be reached%'") > 0, 'each "could not be reached" is written to the error log');
+hcCheck('E', $hcCount("SELECT COUNT(*) FROM `tblErrorLog` WHERE `errorTitle` LIKE 'Human check: this server cannot make a safe request%'") === 1, 'curl is off in this server, so every token counted as OUR set-up being wrong (review L1, never "down") - and after 7 such requests the error log holds ONE line (bounded): ' . $hcCount("SELECT COUNT(*) FROM `tblErrorLog` WHERE `errorTitle` LIKE 'Human check: this server cannot make a safe request%'"));
 
 // ==============================================================================
-// F. "Let people through" when the provider cannot be reached
+// F. Decision 0037: every configured provider down (by the server's own test)
 // ==============================================================================
-echo PHP_EOL . 'F. Let people through' . PHP_EOL;
-$hcServer->query("UPDATE `tblSettings` SET `settingValue` = 'allow' WHERE `settingKey` = 'bot_protection_when_unreachable'");
-$hcPage = hcHttp('GET', $hcBase . '/register/', $hcJar);
-$hcUsersBefore = $hcCount('SELECT COUNT(*) FROM `tblUsers`');
-$hcPost = hcHttp('POST', $hcBase . '/register/', $hcJar, array_merge(['csrf_token' => hcCsrf($hcPage['body']), 'cf-turnstile-response' => 'XXXX.DUMMY.TOKEN.XXXX'], $hcForms['register']));
-hcCheck('F', str_contains($hcPost['body'], 'a verification link has been sent') && $hcCount('SELECT COUNT(*) FROM `tblUsers`') === $hcUsersBefore + 1, 'a token with the provider unreachable: let through, the account is made');
-$hcPage = hcHttp('GET', $hcBase . '/register/', $hcJar);
-$hcPost = hcHttp('POST', $hcBase . '/register/', $hcJar, array_merge(['csrf_token' => hcCsrf($hcPage['body'])], $hcForms['register'], ['email' => 'second@it.cuercode.invalid']));
-hcCheck('F', str_contains($hcPost['body'], 'Please complete the human check'), 'no token at all: still refused');
+echo PHP_EOL . 'F. Every provider down' . PHP_EOL;
+// 🩺 The result row a test call writes when Turnstile cannot be reached. Only
+//    the server writes this table; nothing a visitor sends can.
+//    Both configured providers (Turnstile and reCAPTCHA) must be down.
+foreach (['turnstile', 'recaptcha'] as $hcDownProvider) {
+    $hcServer->query("INSERT INTO `tblHumanCheckState` (`stateKey`, `stateValue`, `checkedAt`) VALUES ('health:" . $hcDownProvider . "', 'down', NOW()) ON DUPLICATE KEY UPDATE `stateValue` = 'down', `checkedAt` = NOW()");
+}
+$hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcServer->query("UPDATE `tblHumanCheckState` SET `stateValue` = 'up' WHERE `stateKey` = 'health:recaptcha'");
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
+hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'Please complete the human check'), 'Turnstile down but reCAPTCHA up: sign-in without a token is still refused (the other provider is used)');
+$hcServer->query("UPDATE `tblHumanCheckState` SET `stateValue` = 'down', `checkedAt` = NOW() WHERE `stateKey` = 'health:recaptcha'");
+$hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
+hcCheck('F', $hcPost['status'] === 302, 'sign-in with NO token and the right password while every provider is down: let through (HTTP ' . $hcPost['status'] . ')');
+hcCheck('F', $hcCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'human_check_outage_signin'") === 1 && $hcCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'human_check_outage_signin_success' AND `entityType` = 'user' AND `entityID` = " . $hcUserID) === 1, 'written to the activity log: one "let through" row and one "signed in" row naming the account');
+$hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+for ($hcTry = 1; $hcTry <= 5; $hcTry++) {
+    $hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+    $hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => 'wrong-password-' . $hcTry]);
+}
+hcCheck('F', str_contains($hcPost['body'], 'Invalid email or password') && $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID) === 5 && hcValue($hcServer, 'SELECT `lockedUntil` FROM `tblUsers` WHERE `userID` = ' . $hcUserID) !== '', 'five wrong passwords during the outage: each counted, and the account is LOCKED (the wrong-password limit still applies)');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
+hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'Invalid email or password'), 'locked: even the right password is refused during the outage');
+hcCheck('F', $hcCount("SELECT COUNT(*) FROM `tblActivityLog` WHERE `activityType` = 'human_check_outage_signin'") === 1, 'seven let-through attempts within a minute: still ONE activity row (bounded)');
+$hcServer->query('UPDATE `tblUsers` SET `failedLoginCount` = 0, `lockedUntil` = NULL WHERE `userID` = ' . $hcUserID);
+$hcUsersBefore  = $hcCount('SELECT COUNT(*) FROM `tblUsers`');
+$hcEmailsBefore = $hcCount('SELECT COUNT(*) FROM `tblEmailQueue`');
+foreach (['register', 'forgot-password', 'resend-verification'] as $hcPath) {
+    $hcPage = hcHttp('GET', $hcBase . '/' . $hcPath . '/', $hcJar);
+    $hcPost = hcHttp('POST', $hcBase . '/' . $hcPath . '/', $hcJar, array_merge(['csrf_token' => hcCsrf($hcPage['body'])], $hcForms[$hcPath]));
+    hcCheck('F', str_contains($hcPost['body'], 'Please complete the human check'), '/' . $hcPath . '/ with no token during the outage: still REFUSED (only sign-in is let through)');
+}
+hcCheck('F', $hcCount('SELECT COUNT(*) FROM `tblUsers`') === $hcUsersBefore && $hcCount('SELECT COUNT(*) FROM `tblEmailQueue`') === $hcEmailsBefore, '... no account made, no email queued');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcCsrfToken = hcCsrf($hcPage['body']);
+$hcAnswer = hcHttp('POST', $hcBase . '/api/v1/auth/login', $hcJar, [], ['email' => $hcUserEmail, 'password' => $hcUserPassword], ['X-CSRF-Token: ' . $hcCsrfToken]);
+hcCheck('F', $hcAnswer['status'] === 200, 'JSON sign-in with no token during the outage: 200 (' . $hcAnswer['status'] . ')');
+$hcAnswer = hcHttp('POST', $hcBase . '/api/v1/auth/register', $hcJar, [], ['email' => 'outage@it.cuercode.invalid', 'password' => 'Plenty-Long-Pass-41'], ['X-CSRF-Token: ' . $hcCsrfToken]);
+hcCheck('F', $hcAnswer['status'] === 400 && is_array($hcAnswer['json']) && $hcAnswer['json']['error_code'] === 'HUMAN_CHECK_REQUIRED', 'JSON sign-up with no token during the outage: still 400 HUMAN_CHECK_REQUIRED');
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = 'refuse' WHERE `settingKey` = 'bot_protection_when_unreachable'");
+$hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword]);
+hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'Please complete the human check'), '"refuse" chosen: sign-in is refused during the outage too');
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = 'signin_only' WHERE `settingKey` = 'bot_protection_when_unreachable'");
+$hcServer->query("UPDATE `tblHumanCheckState` SET `checkedAt` = DATE_SUB(NOW(), INTERVAL 10 MINUTE) WHERE `stateKey` IN ('health:turnstile', 'health:recaptcha')");
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcUserEmail, 'password' => $hcUserPassword, 'human_check_provider' => 'turnstile', 'provider_status' => 'down']);
+hcCheck('F', $hcPost['status'] === 200 && str_contains($hcPost['body'], 'Please complete the human check'), 'an OLD "down" (10 minutes) is tested again; posted fields claiming "down" change nothing: refused');
+hcCheck('F', hcValue($hcServer, "SELECT CONCAT(`stateValue`, '|', TIMESTAMPDIFF(SECOND, `checkedAt`, NOW()) < 30) FROM `tblHumanCheckState` WHERE `stateKey` = 'health:turnstile'") === 'misconfigured|1', 'the new test result is "our set-up" (curl is off here), never "down": ' . hcValue($hcServer, "SELECT `stateValue` FROM `tblHumanCheckState` WHERE `stateKey` = 'health:turnstile'"));
+$hcServer->query("DELETE FROM `tblHumanCheckState` WHERE `stateKey` LIKE 'health:%'");
+
+// ==============================================================================
+// K. Decision 0038 over real HTTP: the no-JavaScript route
+// ==============================================================================
+echo PHP_EOL . 'K. No JavaScript: the email-confirmed route' . PHP_EOL;
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = '100' WHERE `settingKey` = 'no_script_route_ip_per_hour'");
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = '20' WHERE `settingKey` = 'no_script_route_email_per_day'");
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = '1000' WHERE `settingKey` = 'no_script_route_site_per_hour'");
+$hcSignInTokens = [];
+
+/**
+ * 🎫 The raw token in the newest email sign-in email ('' when none).
+ */
+function hcLatestSignInToken(\mysqli $hcDb): string
+{
+    $hcUrl = hcValue($hcDb, "SELECT JSON_UNQUOTE(JSON_EXTRACT(`paramsJSON`, '$.confirmUrl')) FROM `tblEmailQueue` WHERE `templateKey` = 'email_sign_in' ORDER BY `emailID` DESC LIMIT 1");
+    if (preg_match('/[?&]token=([0-9a-f]{64})/', $hcUrl, $hcMatch) === 1) {
+        return $hcMatch[1];
+    }
+    return '';
+}
+
+/**
+ * ✉️ Start an email sign-in in a cookie jar ("browser"); returns the response.
+ */
+function hcStartEmailSignIn(string $hcBase, string $hcJar, string $hcEmail, string $hcPassword): array
+{
+    $hcPage = hcHttp('GET', $hcBase . '/login/', $hcJar);
+    return hcHttp('POST', $hcBase . '/login/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcEmail, 'password' => $hcPassword, 'human_check_email_route' => '1']);
+}
+
+$hcSignInMails = static function () use ($hcCount): int {
+    return $hcCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `templateKey` = 'email_sign_in'");
+};
+$hcJarA = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcJarB = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJarA);
+hcCheck('K', str_contains($hcPage['body'], 'name="human_check_email_route"') && strpos($hcPage['body'], '<noscript>') < strpos($hcPage['body'], 'name="human_check_email_route"'), 'GET /login/: the "Sign in by email confirmation instead" button is inside <noscript>');
+$hcFailsBefore = $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID);
+$hcPost = hcStartEmailSignIn($hcBase, $hcJarA, $hcUserEmail, 'wrong-password-email');
+hcCheck('K', str_contains($hcPost['body'], 'Invalid email or password') && $hcSignInMails() === 0 && $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID) === $hcFailsBefore + 1, 'wrong password: the usual "invalid" answer, NO email, and the wrong password is counted');
+$hcPost = hcStartEmailSignIn($hcBase, $hcJarA, 'nobody@it.cuercode.invalid', 'whatever-password');
+hcCheck('K', str_contains($hcPost['body'], 'Invalid email or password') && $hcSignInMails() === 0, 'no such account: the same answer, no email');
+$hcStarted = microtime(true);
+$hcPost = hcStartEmailSignIn($hcBase, $hcJarA, $hcUserEmail, $hcUserPassword);
+$hcTook = microtime(true) - $hcStarted;
+$hcToken1 = hcLatestSignInToken($hcServer);
+$hcSignInTokens[] = $hcToken1;
+hcCheck('K', str_contains($hcPost['body'], 'id="login-email-pending"') && $hcSignInMails() === 1 && $hcToken1 !== '', 'right password: "check your email", ONE sign-in email with a link (' . round($hcTook, 2) . ' s)');
+hcCheck('K', $hcCount("SELECT COUNT(*) FROM `tblEmailSignInRequests` WHERE `status` = 'waiting' AND `tokenHash` = SHA2('" . $hcToken1 . "', 256)") === 1 && $hcCount("SELECT COUNT(*) FROM `tblEmailSignInRequests` WHERE `tokenHash` = '" . $hcToken1 . "'") === 0, 'the request is stored with only the HASH of the link');
+hcCheck('K', hcHttp('GET', $hcBase . '/account/', $hcJarA)['status'] !== 200, 'the first browser is NOT signed in yet');
+$hcConfirm = hcHttp('GET', $hcBase . '/login/confirm/?token=' . $hcToken1, $hcJarB);
+hcCheck('K', $hcConfirm['status'] === 200 && str_contains($hcConfirm['body'], 'This browser will not be signed in') && $hcCount("SELECT COUNT(*) FROM `tblEmailSignInRequests` WHERE `status` = 'waiting' AND `tokenHash` = SHA2('" . $hcToken1 . "', 256)") === 1, 'link opened in ANOTHER browser: it says plainly that browser will not be signed in, and opening it changed nothing');
+$hcPost = hcHttp('POST', $hcBase . '/login/confirm/', $hcJarB, ['csrf_token' => hcCsrf($hcConfirm['body']), 'confirm_submit' => '1', 'token' => $hcToken1]);
+hcCheck('K', str_contains($hcPost['body'], 'This browser has not been signed in') && hcHttp('GET', $hcBase . '/account/', $hcJarB)['status'] !== 200, 'its button: "approved", and that other browser is still NOT signed in');
+$hcPost = hcHttp('POST', $hcBase . '/login/confirm/', $hcJarB, ['csrf_token' => hcCsrf($hcConfirm['body']), 'confirm_submit' => '1', 'token' => $hcToken1]);
+hcCheck('K', str_contains($hcPost['body'], 'expired, has already been used'), 'the same link a second time: refused (single use)');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcJarA);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcJarA, ['csrf_token' => hcCsrf($hcPage['body']), 'login_email_continue' => '1']);
+hcCheck('K', $hcPost['status'] === 302 && hcHttp('GET', $hcBase . '/account/', $hcJarA)['status'] === 200, 'the first browser presses Continue: it is signed in');
+hcCheck('K', $hcCount("SELECT COUNT(*) FROM `tblEmailSignInRequests` WHERE `status` = 'used' AND `tokenHash` = SHA2('" . $hcToken1 . "', 256)") === 1, '... and the request is marked used');
+
+// 🖥️ The same browser opens the link: signed in after the button press.
+$hcJarC = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+hcStartEmailSignIn($hcBase, $hcJarC, $hcUserEmail, $hcUserPassword);
+$hcToken2 = hcLatestSignInToken($hcServer);
+$hcSignInTokens[] = $hcToken2;
+$hcConfirm = hcHttp('GET', $hcBase . '/login/confirm/?token=' . $hcToken2, $hcJarC);
+hcCheck('K', str_contains($hcConfirm['body'], 'Sign in on this browser') && hcHttp('GET', $hcBase . '/account/', $hcJarC)['status'] !== 200, 'link opened in the SAME browser: a "Sign in on this browser" button, nobody signed in by opening it');
+$hcPost = hcHttp('POST', $hcBase . '/login/confirm/', $hcJarC, ['csrf_token' => hcCsrf($hcConfirm['body']), 'confirm_submit' => '1', 'token' => $hcToken2]);
+hcCheck('K', $hcPost['status'] === 302 && hcHttp('GET', $hcBase . '/account/', $hcJarC)['status'] === 200, '... the button signs that browser in');
+
+// 🕐 A password reset (the "sessions valid from" mark moves) kills a waiting link.
+$hcJarD = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+hcStartEmailSignIn($hcBase, $hcJarD, $hcUserEmail, $hcUserPassword);
+$hcToken3 = hcLatestSignInToken($hcServer);
+$hcSignInTokens[] = $hcToken3;
+authMoveSessionsValidFrom($hcUserID);
+$hcConfirm = hcHttp('GET', $hcBase . '/login/confirm/?token=' . $hcToken3, $hcJarD);
+$hcPost = hcHttp('POST', $hcBase . '/login/confirm/', $hcJarD, ['csrf_token' => hcCsrf($hcConfirm['body']), 'confirm_submit' => '1', 'token' => $hcToken3]);
+hcCheck('K', str_contains($hcConfirm['body'], 'no longer valid') && $hcPost['status'] === 200 && hcHttp('GET', $hcBase . '/account/', $hcJarD)['status'] !== 200, 'after a password reset moved the account\'s mark: the waiting link no longer works');
+
+// ⏳ An expired link.
+$hcJarE = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+hcStartEmailSignIn($hcBase, $hcJarE, $hcUserEmail, $hcUserPassword);
+$hcToken4 = hcLatestSignInToken($hcServer);
+$hcSignInTokens[] = $hcToken4;
+$hcServer->query("UPDATE `tblEmailSignInRequests` SET `expiresAt` = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE `tokenHash` = SHA2('" . $hcToken4 . "', 256)");
+$hcConfirm = hcHttp('GET', $hcBase . '/login/confirm/?token=' . $hcToken4, $hcJarE);
+hcCheck('K', str_contains($hcConfirm['body'], 'has expired'), 'an expired link is refused');
+
+// 🚦 The per-email-address limit (back to the default of 3 a day).
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = '3' WHERE `settingKey` = 'no_script_route_email_per_day'");
+$hcMailsBefore = $hcSignInMails();
+$hcPost = hcStartEmailSignIn($hcBase, tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_'), $hcUserEmail, $hcUserPassword);
+hcCheck('K', str_contains($hcPost['body'], 'Too many sign-in emails') && $hcSignInMails() === $hcMailsBefore, 'over the per-address limit: refused BEFORE the password, no email');
+
+// 🙈 Sign-up and forgot password without JavaScript: the same answer for an
+//    existing and a new address, in at least the minimum time.
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = '20' WHERE `settingKey` = 'no_script_route_email_per_day'");
+$hcAnswers = [];
+foreach (['existing' => $hcUserEmail, 'new' => 'brand-new@it.cuercode.invalid'] as $hcWhich => $hcAddress) {
+    $hcJarF = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+    $hcPage = hcHttp('GET', $hcBase . '/register/', $hcJarF);
+    $hcStarted = microtime(true);
+    $hcPost = hcHttp('POST', $hcBase . '/register/', $hcJarF, ['csrf_token' => hcCsrf($hcPage['body']), 'register_submit' => '1', 'email' => $hcAddress, 'password' => 'Plenty-Long-Pass-41', 'password_confirm' => 'Plenty-Long-Pass-41', 'human_check_email_route' => '1']);
+    $hcSeconds = microtime(true) - $hcStarted;
+    $hcMessage = '';
+    if (preg_match('/<div class="alert alert-success" role="status">(.*?)<\/div>/s', $hcPost['body'], $hcMatch) === 1) {
+        $hcMessage = trim((string) preg_replace('/\s+/', ' ', strip_tags($hcMatch[1])));
+    }
+    $hcAnswers[$hcWhich] = ['message' => $hcMessage, 'seconds' => $hcSeconds];
+}
+hcCheck('K', $hcAnswers['existing']['message'] !== '' && $hcAnswers['existing']['message'] === $hcAnswers['new']['message'], 'no-JavaScript sign-up: the SAME answer for an existing and a new address');
+hcCheck('K', $hcAnswers['existing']['seconds'] >= 0.4 && $hcAnswers['new']['seconds'] >= 0.4, 'no-JavaScript sign-up: both take at least the minimum 0.4 s (existing ' . round($hcAnswers['existing']['seconds'], 3) . ' s, new ' . round($hcAnswers['new']['seconds'], 3) . ' s)');
+hcCheck('K', $hcCount("SELECT COUNT(*) FROM `tblUsers` WHERE `email` = 'brand-new@it.cuercode.invalid' AND `status` = 'pending'") === 1, '... the new address got a WAITING account (usable only from its emailed link)');
+$hcResetsBefore = $hcCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `templateKey` = 'password_reset'");
+$hcForgotAnswers = [];
+foreach (['existing' => $hcUserEmail, 'unknown' => 'nobody-here@it.cuercode.invalid'] as $hcWhich => $hcAddress) {
+    $hcJarF = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+    $hcPage = hcHttp('GET', $hcBase . '/forgot-password/', $hcJarF);
+    $hcPost = hcHttp('POST', $hcBase . '/forgot-password/', $hcJarF, ['csrf_token' => hcCsrf($hcPage['body']), 'forgot_submit' => '1', 'email' => $hcAddress, 'human_check_email_route' => '1']);
+    $hcForgotAnswers[$hcWhich] = (string) preg_replace('/\s+/', ' ', strip_tags($hcPost['body']));
+}
+hcCheck('K', str_contains($hcForgotAnswers['existing'], 'If that account exists') && str_contains($hcForgotAnswers['unknown'], 'If that account exists') && $hcCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `templateKey` = 'password_reset'") === $hcResetsBefore + 1, 'no-JavaScript forgot password: the same answer either way; one reset email, for the real account only');
+hcCheck('K', $hcCount('SELECT COUNT(*) FROM `tblNoScriptRequests`') > 0 && $hcCount("SELECT COUNT(*) FROM `tblNoScriptRequests` WHERE `emailHash` LIKE '%@%'") === 0, 'the route\'s record holds only keyed hashes, never an address');
+
+// ==============================================================================
+// L. The web forms' per-visitor limit stops the call to the provider
+// ==============================================================================
+echo PHP_EOL . 'L. Rate limit before the provider is asked' . PHP_EOL;
+$hcServer->query("DELETE FROM `tblAPIRateLog` WHERE `endpoint` = 'page/human-check'");
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = '3' WHERE `settingKey` = 'human_check_form_ip_per_hour'");
+$hcJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcLimitBodies = [];
+for ($hcTry = 1; $hcTry <= 4; $hcTry++) {
+    $hcPage = hcHttp('GET', $hcBase . '/forgot-password/', $hcJar);
+    $hcPost = hcHttp('POST', $hcBase . '/forgot-password/', $hcJar, ['csrf_token' => hcCsrf($hcPage['body']), 'forgot_submit' => '1', 'email' => $hcUserEmail, 'cf-turnstile-response' => 'junk-token-' . $hcTry]);
+    $hcLimitBodies[] = $hcPost['body'];
+}
+hcCheck('L', str_contains($hcLimitBodies[2], 'could not be completed just now') && str_contains($hcLimitBodies[3], 'Too many tries from your connection'), 'limit 3: the 3rd junk token is still checked, the 4th is refused before any call');
+hcCheck('L', $hcCount("SELECT COUNT(*) FROM `tblAPIRateLog` WHERE `endpoint` = 'page/human-check'") === 4, 'each form send with a token is counted for the limit');
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = '30' WHERE `settingKey` = 'human_check_form_ip_per_hour'");
 
 // ==============================================================================
 // G. No key in any log
@@ -520,7 +770,18 @@ echo PHP_EOL . 'G. Logs' . PHP_EOL;
 proc_terminate($hcWeb);
 proc_close($hcWeb);
 $hcLogText = (string) @file_get_contents($hcServerLog) . (string) @file_get_contents($hcServerLog . '.out');
-foreach ($hcSecrets as $hcSecretName => $hcSecret) {
+// 🎫 The email sign-in links: in no log TABLE. (The web server's own access
+//    log lists every address it was asked for, so it holds each emailed link,
+//    exactly as it does for the verification and reset links; a link from it
+//    can only APPROVE the browser that typed the password, never sign the
+//    reader in - see DEV_NOTES.)
+$hcDbSecrets = [];
+foreach ($hcSignInTokens as $hcTokenIndex => $hcSignInToken) {
+    if ($hcSignInToken !== '') {
+        $hcDbSecrets['emailSignInLink' . ($hcTokenIndex + 1)] = $hcSignInToken;
+    }
+}
+foreach (array_merge($hcSecrets, $hcDbSecrets) as $hcSecretName => $hcSecret) {
     $hcWhere = [];
     foreach (['tblErrorLog', 'tblActivityLog', 'tblAdminAuditLog'] as $hcTable) {
         $hcColumns = [];
@@ -537,12 +798,108 @@ foreach ($hcSecrets as $hcSecretName => $hcSecret) {
         }
         $hcStatement->close();
     }
-    if (str_contains($hcLogText, $hcSecret)) {
+    if (!isset($hcDbSecrets[$hcSecretName]) && str_contains($hcLogText, $hcSecret)) {
         $hcWhere[] = 'web server log';
     }
     hcCheck('G', $hcWhere === [], $hcSecretName . ' is in no log ' . implode(', ', $hcWhere));
 }
 hcCheck('G', !str_contains($hcLogText, 'Fatal error') && !str_contains($hcLogText, 'Warning:') && !str_contains($hcLogText, 'Deprecated:'), 'the web server logged no PHP fatal error, warning or deprecation');
+
+// ==============================================================================
+// H. Review M1 on the real table
+// ==============================================================================
+echo PHP_EOL . 'H. A token is never accepted twice' . PHP_EOL;
+clearConfigCache();
+$hcYes = static function (string $hcUrl, array $hcFields, int $hcTimeout): array {
+    return ['ok' => true, 'status' => 200, 'body' => (string) json_encode(['success' => true, 'hostname' => 'cuercode.net']), 'error' => '', 'fault' => ''];
+};
+$hcFirst  = humanCheckVerifyRequest(['cf-turnstile-response' => 'it-same-token'], ['transport' => $hcYes, 'allowedHosts' => ['cuercode.net']]);
+$hcSecond = humanCheckVerifyRequest(['cf-turnstile-response' => 'it-same-token'], ['transport' => $hcYes, 'allowedHosts' => ['cuercode.net']]);
+hcCheck('H', $hcFirst['reason'] === 'passed' && $hcSecond['reason'] === 'expired_or_reused', 'the same token twice (provider says yes both times): passed, then refused (' . $hcFirst['reason'] . ', ' . $hcSecond['reason'] . ')');
+hcCheck('H', $hcCount("SELECT COUNT(*) FROM `tblHumanCheckTokens` WHERE `tokenHash` = SHA2('it-same-token', 256) AND `expiresAt` > NOW()") === 1 && $hcCount("SELECT COUNT(*) FROM `tblHumanCheckTokens` WHERE `tokenHash` = 'it-same-token'") === 0, 'one row, holding only the SHA-256 hash, kept for a while');
+$hcRaceHash  = hash('sha256', 'it-race-token-' . bin2hex(random_bytes(4)));
+$hcRaceStart = sprintf('%.6F', microtime(true) + 2.0);
+$hcRacers = [];
+for ($hcI = 0; $hcI < 8; $hcI++) {
+    $hcRacers[] = proc_open([PHP_BINARY, __FILE__, '--race', 'claim', $hcDbName], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $hcRacePipes[$hcI], null, ['CUERCODE_IT_ENCRYPTION_KEY' => ENCRYPTION_KEY, 'CUERCODE_IT_CHILD_START' => $hcRaceStart, 'CUERCODE_IT_CHILD_HASH' => $hcRaceHash] + getenv());
+}
+$hcRaceResults = [];
+foreach ($hcRacers as $hcI => $hcRacer) {
+    fclose($hcRacePipes[$hcI][0]);
+    $hcRaceResults[] = trim((string) stream_get_contents($hcRacePipes[$hcI][1]));
+    fclose($hcRacePipes[$hcI][1]);
+    fclose($hcRacePipes[$hcI][2]);
+    proc_close($hcRacer);
+}
+$hcRaceCounts = array_count_values($hcRaceResults);
+hcCheck('H', isset($hcRaceCounts['claimed']) && $hcRaceCounts['claimed'] === 1 && isset($hcRaceCounts['reused']) && $hcRaceCounts['reused'] === 7, 'eight processes with the same token at the same moment: exactly ONE accepted (' . json_encode($hcRaceCounts) . ')');
+
+// ==============================================================================
+// I. Review M2 with the real settings code
+// ==============================================================================
+echo PHP_EOL . 'I. Keys that cannot be read' . PHP_EOL;
+hcSet('recaptcha_site_key', '');
+hcSet('recaptcha_secret_key', '');
+hcCli($hcDbName, ['on']);
+clearConfigCache();
+$hcBefore = humanCheckVerifyRequest([]);
+hcCheck('I', $hcBefore['reason'] === 'missing_token', 'Turnstile keys saved: a form with no token is refused (' . $hcBefore['reason'] . ')');
+$hcServer->query("UPDATE `tblSettings` SET `settingValue` = 'damaged-not-a-real-ciphertext' WHERE `settingKey` = 'turnstile_secret_key'");
+clearConfigCache();
+$hcAfter = humanCheckVerifyRequest([]);
+hcCheck('I', $hcAfter['ok'] === false && $hcAfter['reason'] === 'misconfigured', 'the stored secret damaged: still REFUSED as "set-up wrong", not switched off (' . $hcAfter['reason'] . ')');
+$hcStatus = implode(' ', humanCheckStatusLines(humanCheckReadSettings()));
+hcCheck('I', str_contains($hcStatus, 'cannot be read') && !str_contains($hcStatus, 'not both entered'), 'the admin status says the keys cannot be read');
+hcCheck('I', humanCheckWidgetHtml(null, 'login') === '' && humanCheckIsOn() === true, 'no widget is drawn, but the check counts as ON (forms refused)');
+hcSet('turnstile_secret_key', $hcSecrets['turnstileSecret']);
+clearConfigCache();
+hcCheck('I', is_array(humanCheckActive()) && humanCheckActive()['provider'] === 'turnstile', 'keys entered again: working again');
+
+// ==============================================================================
+// J. The no-JavaScript route's limits on the real table
+// ==============================================================================
+echo PHP_EOL . 'J. No-JavaScript route limits' . PHP_EOL;
+$hcServer->query('DELETE FROM `tblNoScriptRequests`');
+foreach (['no_script_route_ip_per_hour' => '5', 'no_script_route_email_per_day' => '3', 'no_script_route_site_per_hour' => '30'] as $hcLimitKey => $hcLimitValue) {
+    hcSet($hcLimitKey, $hcLimitValue);
+}
+$hcGate = [];
+for ($hcI = 1; $hcI <= 4; $hcI++) {
+    $hcGate[] = noScriptRouteGate('forgot', 'One.Person@it.cuercode.invalid', '198.51.100.' . $hcI)['reason'];
+}
+hcCheck('J', $hcGate === ['ok', 'ok', 'ok', 'email'], 'one email address from four visitor addresses: the 4th is refused (' . implode(',', $hcGate) . ')');
+$hcGate = [];
+for ($hcI = 1; $hcI <= 6; $hcI++) {
+    $hcGate[] = noScriptRouteGate('forgot', 'person' . $hcI . '@it.cuercode.invalid', '192.0.2.77')['reason'];
+}
+hcCheck('J', $hcGate === ['ok', 'ok', 'ok', 'ok', 'ok', 'ip'], 'one visitor address, six email addresses: the 6th is refused (' . implode(',', $hcGate) . ')');
+hcSet('no_script_route_site_per_hour', '10');
+$hcGate = [];
+for ($hcI = 1; $hcI <= 3; $hcI++) {
+    $hcGate[] = noScriptRouteGate('forgot', 'site' . $hcI . '@it.cuercode.invalid', '203.0.113.' . $hcI)['reason'];
+}
+hcCheck('J', $hcGate === ['ok', 'ok', 'site'], 'the whole-site limit set to 10 with 8 already let through: two more, then refused (' . implode(',', $hcGate) . ')');
+hcCheck('J', $hcCount('SELECT COUNT(*) FROM `tblNoScriptRequests`') === 10, 'only requests that were let through are recorded (10 rows, the site-wide limit: the table cannot grow under a flood)');
+$hcServer->query('DELETE FROM `tblNoScriptRequests`');
+hcSet('no_script_route_site_per_hour', '30');
+$hcRaceStart = sprintf('%.6F', microtime(true) + 2.0);
+$hcRacers = [];
+$hcRacePipes = [];
+for ($hcI = 0; $hcI < 12; $hcI++) {
+    $hcRacers[] = proc_open([PHP_BINARY, __FILE__, '--race', 'gate', $hcDbName], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $hcRacePipes[$hcI], null, ['CUERCODE_IT_ENCRYPTION_KEY' => ENCRYPTION_KEY, 'CUERCODE_IT_CHILD_START' => $hcRaceStart, 'CUERCODE_IT_CHILD_EMAIL' => 'race@it.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.' . (100 + $hcI)] + getenv());
+}
+$hcRaceAllowed = 0;
+foreach ($hcRacers as $hcI => $hcRacer) {
+    fclose($hcRacePipes[$hcI][0]);
+    $hcRaceAnswer = json_decode(trim((string) stream_get_contents($hcRacePipes[$hcI][1])), true);
+    fclose($hcRacePipes[$hcI][1]);
+    fclose($hcRacePipes[$hcI][2]);
+    proc_close($hcRacer);
+    if (is_array($hcRaceAnswer) && $hcRaceAnswer['allowed'] === true) {
+        $hcRaceAllowed++;
+    }
+}
+hcCheck('J', $hcRaceAllowed === 3 && $hcCount('SELECT COUNT(*) FROM `tblNoScriptRequests`') === 3, 'twelve processes at the same moment for ONE email address: exactly 3 let through (' . $hcRaceAllowed . ')');
 
 // ==============================================================================
 // 🧹 Clean up and report

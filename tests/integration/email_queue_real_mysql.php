@@ -560,7 +560,7 @@ itCheck('0 set-up', checkEmailQueueDatabase() === null, 'checkEmailQueueDatabase
 $itLockName = itSelect('SELECT ' . CUERCODE_EMAIL_QUEUE_LOCK_NAME_SQL . ' AS `lockName`', 's', [CUERCODE_EMAIL_QUEUE_LOCK_PREFIX])[0]['lockName'];
 itCheck('0 set-up', strlen((string) $itLockName) === 48 && str_starts_with((string) $itLockName, CUERCODE_EMAIL_QUEUE_LOCK_PREFIX), 'the lock name is 48 characters and starts with the prefix');
 // ⏳ #123: under the REAL start-up code the runner gets fn_auth.php's lifetimes.
-itCheck('0 set-up', emailQueueLinkLifetimes() === ['verification' => 86400, 'password_reset' => 3600], "emailQueueLinkLifetimes() gives fn_auth.php's lifetimes (24 hours, 60 minutes) under the real bootstrap");
+itCheck('0 set-up', emailQueueLinkLifetimes() === ['verification' => 86400, 'password_reset' => 3600, 'email_sign_in' => 900], "emailQueueLinkLifetimes() gives fn_auth.php's lifetimes (24 hours, 60 minutes, and 15 minutes for the no-JavaScript email sign-in, #163) under the real bootstrap");
 // 🧹 #122: the two seeded clean-up settings, read through the real getConfig() (integer type).
 itCheck(
     '0 set-up',
