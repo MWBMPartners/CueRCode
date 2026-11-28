@@ -446,6 +446,29 @@ assertEquals([], $asSame['changes'], 'same values: no change');
 $asRetention = adminSettingsProcessSection('email-records', ['f' => ['email_queue_retention_days' => '3651']], ['email_queue_retention_days' => $asState(['value' => '30'])]);
 assertTrue(isset($asRetention['errors']['email_queue_retention_days']) && $asRetention['changes'] === [], 'a retention period of 3651 is an error and saves nothing');
 
+// 🔑 M2 (#165 review): the saved Go2My.Link key never follows the API
+//    address to another website. Changing the address's website while a key
+//    is saved needs the key typed again (or removed) in the same save.
+$asG2Typed = 'g2ml_AbC-_9xY_' . str_repeat('Q', 40) . '-_z';
+$asG2Stored = [
+    'go2mylink_api_base_url' => $asState(['value' => 'https://go2my.link/api/v1']),
+    'go2mylink_api_key'      => $asState(['hasValue' => true]),
+];
+$asG2Move = adminSettingsProcessSection('dynamic', ['f' => ['go2mylink_api_base_url' => 'https://keys.example.net/api/v1']], $asG2Stored);
+assertTrue(isset($asG2Move['errors']['go2mylink_api_key']), 'M2: a new API website with the saved key kept is refused (the page saves nothing while a box has an error)');
+assertContains('keys.example.net', $asG2Move['errors']['go2mylink_api_key'] ?? '', 'M2: ...the message names the new website and asks for the key again');
+$asG2MoveNoRow = adminSettingsProcessSection('dynamic', ['f' => ['go2mylink_api_base_url' => 'https://keys.example.net/api/v1']], ['go2mylink_api_key' => $asState(['hasValue' => true])]);
+assertTrue(isset($asG2MoveNoRow['errors']['go2mylink_api_key']), 'M2: ...also when the address had no row (the production default applied)');
+$asG2NewKey = adminSettingsProcessSection('dynamic', ['f' => ['go2mylink_api_base_url' => 'https://alpha.go2my.link/api/v1', 'go2mylink_api_key' => $asG2Typed]], $asG2Stored);
+assertEquals([], $asG2NewKey['errors'], 'M2: a new API website WITH a newly typed key is accepted');
+assertEquals(2, count($asG2NewKey['changes']), 'M2: ...both are saved');
+$asG2Remove = adminSettingsProcessSection('dynamic', ['f' => ['go2mylink_api_base_url' => 'https://alpha.go2my.link/api/v1'], 'rm' => ['go2mylink_api_key' => '1']], $asG2Stored);
+assertTrue($asG2Remove['errors'] === [] && count($asG2Remove['changes']) === 2, 'M2: ...or with the saved key removed');
+$asG2SameSite = adminSettingsProcessSection('dynamic', ['f' => ['go2mylink_api_base_url' => 'https://go2my.link/api/v2']], $asG2Stored);
+assertTrue($asG2SameSite['errors'] === [] && count($asG2SameSite['changes']) === 1, 'M2: a new path on the SAME website keeps the saved key');
+$asG2NoKey = adminSettingsProcessSection('dynamic', ['f' => ['go2mylink_api_base_url' => 'https://alpha.go2my.link/api/v1']], ['go2mylink_api_base_url' => $asState(['value' => 'https://go2my.link/api/v1']), 'go2mylink_api_key' => $asState(['hasValue' => false])]);
+assertTrue($asG2NoKey['errors'] === [] && count($asG2NoKey['changes']) === 1, 'M2: with no saved key the address may change freely');
+
 // ✋ The email switch needs its tick when turning it ON.
 $asNoTick = adminSettingsProcessSection('email', ['f' => ['email_enabled' => '1']], ['email_enabled' => $asState(['value' => '0'])]);
 assertTrue(isset($asNoTick['errors']['email_enabled']), 'turning email on without the tick is refused');

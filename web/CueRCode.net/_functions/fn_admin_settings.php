@@ -1591,6 +1591,17 @@ function adminSettingsProcessSection(string $sectionId, #[\SensitiveParameter] a
         ];
     }
 
+    // 🔑 Review M2 (#165): the saved Go2My.Link key is never sent to a
+    //    website it was not entered for. Moving the API address to another
+    //    website while a key is saved needs the key typed again (or removed)
+    //    in the same save.
+    if ($sectionId === 'dynamic' && !isset($outcome['errors']['go2mylink_api_key'])) {
+        $keyProblem = adminSettingsGo2MyLinkKeyMustBeRetyped($outcome['changes'], $current);
+        if ($keyProblem !== '') {
+            $outcome['errors']['go2mylink_api_key'] = $keyProblem;
+        }
+    }
+
     // ⏱️ The two password-confirmation limits must make sense together,
     //    counting the saved value for a box that was not in the request.
     if ($sectionId === 'admin-security') {
@@ -1636,6 +1647,51 @@ function adminSettingsProcessSection(string $sectionId, #[\SensitiveParameter] a
     }
 
     return $outcome;
+}
+
+/**
+ * 🔑 Review M2 (#165): does this save move the Go2My.Link API address to
+ *    another WEBSITE while the saved key would stay? Then the key must be
+ *    typed again (or removed) in the same save, so a key is only ever sent
+ *    to the website it was entered for - otherwise an admin session could
+ *    point the address at its own server, press "Test connection" and read
+ *    the key from the Authorization header. A new path on the same website
+ *    is fine. PURE.
+ *
+ * @param array<int, array<string, mixed>>    $changes From adminSettingsProcessSection()
+ * @param array<string, array<string, mixed>> $current The saved states
+ * @return string '' when fine, otherwise the message for the key box
+ */
+function adminSettingsGo2MyLinkKeyMustBeRetyped(#[\SensitiveParameter] array $changes, array $current): string
+{
+    $newAddress = null;
+    $keyChanged = false;
+    foreach ($changes as $change) {
+        if ($change['key'] === 'go2mylink_api_base_url' && $change['action'] === 'update') {
+            $newAddress = (string) $change['value'];
+        }
+        if ($change['key'] === 'go2mylink_api_key' && in_array($change['action'], ['set', 'clear'], true)) {
+            $keyChanged = true;
+        }
+    }
+
+    $keySaved = (isset($current['go2mylink_api_key']['hasValue']) && $current['go2mylink_api_key']['hasValue'] === true);
+    if ($newAddress === null || $keyChanged || !$keySaved) {
+        return '';
+    }
+
+    // 📌 No saved row: the code's own production address applies.
+    $oldAddress = CUERCODE_GO2MYLINK_DEFAULT_API_URL;
+    if (isset($current['go2mylink_api_base_url']['value']) && is_string($current['go2mylink_api_base_url']['value']) && trim($current['go2mylink_api_base_url']['value']) !== '') {
+        $oldAddress = $current['go2mylink_api_base_url']['value'];
+    }
+
+    $newHost = go2mylinkHostOf($newAddress);
+    if ($newHost === go2mylinkHostOf($oldAddress)) {
+        return '';
+    }
+
+    return 'The API address now points at a different website (' . $newHost . '). So that the saved key is never sent there, type the API key for that website here, or tick "Remove", in the same save.';
 }
 
 // ==============================================================================
