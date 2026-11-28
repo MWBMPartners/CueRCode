@@ -288,7 +288,7 @@ function adminSettingsSections(): array
             'saveLabel' => 'Save dynamic QR settings',
             'title' => 'Dynamic QR codes (Go2My.Link)',
             'icon'  => 'fa-solid fa-arrows-rotate',
-            'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it only reads, and changes nothing on Go2My.Link. Dynamic codes stay switched off for everyone until the rest of the feature is built and checked.',
+            'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it creates and changes no link on Go2My.Link (Go2My.Link still records the calls in its request log and counts them towards the key\'s request limit). Dynamic codes stay switched off for everyone until the rest of the feature is built and checked.',
         ],
         'paypal' => [
             'saveLabel' => 'Save PayPal settings',
@@ -2559,8 +2559,9 @@ function adminSettingsTestGraph(array $admin, ?callable $tokenFetcher = null, ?i
 
 /**
  * 🔗 "Test connection" for Go2My.Link (#165): runs go2mylinkTestConnection(),
- *    which only reads (and tries to change a code that cannot exist), so
- *    NOTHING changes on Go2My.Link. Never returns the key or Go2My.Link's
+ *    which only reads (and tries to change a code that cannot exist), so no
+ *    link is created or changed on Go2My.Link (its request log and the key's
+ *    request count still move, review L7). Never returns the key or Go2My.Link's
  *    own wording.
  *
  * Audit (setting.test_go2mylink): a row is written BEFORE the check (if it

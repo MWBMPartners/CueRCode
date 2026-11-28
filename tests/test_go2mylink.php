@@ -194,6 +194,14 @@ $g2Created = $g2Ok(['short_code' => 'Ab3dE9x', 'short_url' => 'https://QRmy.Link
 $g2Opts = static function (callable $g2Transport) use ($g2GoodSettings, $g2Logger): array {
     return ['settings' => $g2GoodSettings, 'transport' => $g2Transport, 'logger' => $g2Logger];
 };
+// 📋 The requests a scripted run made, as "METHOD route".
+$g2Methods = static function (array $g2Requests): string {
+    $g2Out = [];
+    foreach ($g2Requests as $g2Request) {
+        $g2Out[] = $g2Request['method'] . ' ' . substr($g2Request['url'], strlen('https://go2my.link/api/v1/'));
+    }
+    return implode(', ', $g2Out);
+};
 
 // ==============================================================================
 // ✅ Section 4: the requests
@@ -275,7 +283,7 @@ $g2Cases = [
     ['404',                     $g2Reply(404, $g2Err(404, 'No such short URL in this account.')), 'not_found', false, 'could not be found'],
     ['409 code taken',          $g2Reply(409, $g2Err(409, 'That alias is already taken. Please choose another.', 'custom_code')), 'code_taken', false, 'try again'],
     ['409 QR already linked',   $g2Reply(409, $g2Err(409, 'That QR code is already linked to a short URL.', 'qr_external_uuid')), 'already_linked', false, 'not available just now'],
-    ['422 destination refused', $g2Reply(422, $g2Err(422, 'That destination is not permitted. Please enter a public HTTP or HTTPS URL.', 'destination_url')), 'rejected', false, 'cannot be used'],
+    ['422 destination refused', $g2Reply(422, $g2Err(422, 'That destination is not permitted. Please enter a public HTTP or HTTPS URL.', 'destination_url')), 'rejected', false, 'could not accept'],
     ['429 rate limit',          $g2Reply(429, $g2Err(429, 'Rate limit exceeded.'), ['retryAfter' => 60]), 'rate_limited', false, 'busy'],
     ['500',                     $g2Reply(500, $g2Err(500, 'An unexpected error occurred.')), 'unavailable', true, 'could not be reached'],
     ['503',                     $g2Reply(503, $g2Err(503, 'The public API is temporarily unavailable.')), 'unavailable', false, 'could not be reached'],
@@ -290,6 +298,10 @@ $g2Cases = [
     ['TLS handshake',           $g2Fail(35, 'TLS connect error'), 'tls_failed', false, 'not available just now'],
     ['time limit',              $g2Fail(28, 'Operation timed out after 5001 milliseconds'), 'timeout', true, 'could not be reached'],
     ['connection dropped',      $g2Fail(56, 'Recv failure: Connection reset by peer'), 'timeout', true, 'could not be reached'],
+    // 🧾 M1: the request was SENT, then the answer could not be read.
+    ['garbled status line',     $g2Fail(1, 'Unsupported protocol'), 'bad_reply', true, 'not available just now'],
+    ['broken length header',    $g2Fail(8, 'Weird server reply'), 'bad_reply', true, 'not available just now'],
+    ['headers too large',       $g2Reply(201, '', ['ok' => false, 'tooLarge' => true, 'errno' => 23]), 'bad_reply', true, 'not available just now'],
 ];
 foreach ($g2Cases as $g2Case) {
     $g2Seen   = [];
@@ -319,6 +331,22 @@ $g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(422, $g2Err
 assertTrue($g2Result['httpCode'] === 422 && $g2Result['field'] === 'destination_url', '422: CueRCode answers 422 and names the field');
 $g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Fail(28, 'timed out')], $g2Seen)));
 assertEquals(503, $g2Result['httpCode'], 'a time limit: CueRCode answers 503 (try again later)');
+$g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(422, $g2Err(422, 'x', 'destination_url'))], $g2Seen)));
+assertFalse(str_contains($g2Result['message'], 'cannot be used'), 'L10: a 422 does not tell the member the web address is bad (Go2My.Link\'s 422 also means a reserved code, no code could be made, or its own database fault)');
+assertContains('several', $g2Result['adminMessage'], 'L10: ...and the admin is told a 422 can mean several things');
+
+// 🧾 M1: an unknown curl failure BEFORE anything was sent is still our own fault, with nothing done.
+$g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([array_merge($g2Fail(1, 'Unsupported protocol'), ['sent' => false])], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'bad_request' && $g2Result['outcomeUnknown'] === false, 'M1: an unknown failure before anything was sent: bad_request, nothing done');
+assertEquals(['reason' => 'bad_reply', 'mayHaveRun' => true], go2mylinkTransportReason(1, true), 'M1: an unknown curl failure after the request was sent: an unreadable answer that may have been carried out');
+assertEquals(['reason' => 'bad_request', 'mayHaveRun' => false], go2mylinkTransportReason(1, false), 'M1: ...the same failure before sending: our own fault, nothing done');
+$g2Seen = [];
+$g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(8, 'Weird server reply'), $g2Reply(404, $g2Err(404, 'No such short URL in this account.')), $g2Reply(201, $g2Created)], $g2Seen)));
+assertTrue($g2Result['ok'] && $g2Methods($g2Seen) === 'POST urls, GET urls/Ab3dE9x, POST urls', 'M1: an unreadable answer to a create leads to the look-up and the safe retry, not to "a fault in CueRCode" (' . $g2Methods($g2Seen) . ')');
+
+// 🔎 L3: the reply must be for OUR QR id.
+$g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Ok(['short_code' => 'Ab3dE9x', 'short_url' => 'https://QRmy.Link/Ab3dE9x', 'qr_code_external_uuid' => '00000000-0000-4000-8000-000000000000']))], $g2Seen)));
+assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'bad_reply' && $g2Result['outcomeUnknown'] === true, 'L3: a 201 naming another QR id is an unexpected reply, never a success');
 
 // 🌐 201 but Go2My.Link chose its own code (allow_external_shortcode off).
 $g2Result = go2mylinkCreateLink($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Ok(['short_code' => 'Zz99abc', 'short_url' => 'https://QRmy.Link/Zz99abc', 'qr_code_external_uuid' => $g2Link['redirectUUID']]))], $g2Seen)));
@@ -340,13 +368,6 @@ assertTrue(count($g2Logged) === 1 && str_contains($g2Logged[0], 'auth_failed') &
 // ==============================================================================
 // ✅ Section 6: the safe retry (lead choice L1)
 // ==============================================================================
-$g2Methods = static function (array $g2Requests): string {
-    $g2Out = [];
-    foreach ($g2Requests as $g2Request) {
-        $g2Out[] = $g2Request['method'] . ' ' . substr($g2Request['url'], strlen('https://go2my.link/api/v1/'));
-    }
-    return implode(', ', $g2Out);
-};
 
 $g2Seen = [];
 $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Reply(201, $g2Created)], $g2Seen)));
@@ -434,7 +455,7 @@ $g2Result = go2mylinkCreateLinkSafely($g2Link, $g2Opts($g2Script([$g2Fail(28, 't
 assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'rejected' && $g2Result['remoteExists'] === true, 'L1: ...and if that change is refused, it is not a success (the link exists, pointing elsewhere)');
 
 // ==============================================================================
-// ✅ Section 7: "Test connection" changes nothing
+// ✅ Section 7: "Test connection" creates and changes no link
 // ==============================================================================
 $g2Account = $g2Ok(['userUID' => 7, 'email' => 'owner@example.com', 'displayName' => 'Owner', 'orgHandle' => 'cuercode', 'keyName' => 'CueRCode', 'scopes' => ['qr:link', 'urls:read', 'urls:write', 'urls:delete', 'analytics:read', 'account:read']]);
 $g2AllGood = [
@@ -476,6 +497,24 @@ $g2Seen = [];
 $g2Test = go2mylinkTestConnection($g2Opts($g2Script([$g2AllGood[0], $g2AllGood[1], $g2AllGood[2], $g2Reply(403, $g2Err(403, 'This API key does not have the required scope.'))], $g2Seen)));
 assertTrue($g2Test['ok'], 'test connection: a key that may not read its own details still passes (account:read is optional)');
 assertContains('could not be listed', implode(' ', $g2Test['lines']), 'test connection: ...and says the permissions could not be listed');
+
+// 🏓 L3: the ping must really say pong.
+$g2Seen = [];
+$g2Test = go2mylinkTestConnection($g2Opts($g2Script([$g2Reply(200, $g2Ok(['pong' => false])), $g2AllGood[1], $g2AllGood[2], $g2AllGood[3]], $g2Seen)));
+assertTrue(!$g2Test['ok'] && $g2Test['reason'] === 'bad_reply' && count($g2Seen) === 1, 'L3: a ping answer without pong = true is not Go2My.Link: the check fails at once');
+
+// 🚧 L8: Go2My.Link's "no such endpoint" 404 comes BEFORE its permission
+//    check, so only the change handler's own "no such link" 404 proves urls:write.
+$g2Seen = [];
+$g2Test = go2mylinkTestConnection($g2Opts($g2Script([$g2AllGood[0], $g2AllGood[1], $g2Reply(404, $g2Err(404, 'The requested endpoint does not exist.')), $g2AllGood[3]], $g2Seen)));
+assertTrue(!$g2Test['ok'] && $g2Methods($g2Seen) === 'GET ping, GET urls?limit=1, PUT urls/bulk', 'L8: a 404 that is not the change handler\'s own "no such link" does not count as permission to change links (' . $g2Test['reason'] . ')');
+assertFalse(str_contains(implode(' ', $g2Test['lines']), 'may change links'), 'L8: ...and it does not say the key may change links');
+
+// 📝 L7: it does not claim to change nothing at all on Go2My.Link.
+$g2Seen = [];
+$g2Test = go2mylinkTestConnection($g2Opts($g2Script($g2AllGood, $g2Seen)));
+assertContains('No link was created or changed', implode(' ', $g2Test['lines']), 'L7: says plainly that no link was created or changed');
+assertContains('request log', implode(' ', $g2Test['lines']), 'L7: ...and that the calls are still recorded in Go2My.Link\'s request log and count towards the key\'s limit');
 
 $g2Seen = [];
 $g2Test = go2mylinkTestConnection(['settings' => array_merge($g2GoodSettings, ['apiKey' => '', 'problem' => 'not_configured']), 'transport' => $g2Script([], $g2Seen)]);
@@ -593,6 +632,22 @@ if ($g2Port > 0) {
     assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'bad_reply', 'real HTTPS: JSON of the wrong shape is an unexpected reply');
     $g2Result = go2mylinkLookupLink('Ab3dE9x', $g2Real('big'));
     assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'bad_reply', 'real HTTPS: a 200 KB reply is cut off at 64 KB and treated as unexpected');
+    // 📏 L3: the 64 KB limit holds WHILE reading (memory), not only afterwards.
+    $g2Raw = go2mylinkHttpTransport(go2mylinkBuildRequest($g2Real('big')['settings'], 'GET', 'urls/Ab3dE9x', null), 2, $g2Tls['caFile']);
+    assertTrue($g2Raw['tooLarge'] === true && strlen($g2Raw['body']) <= CUERCODE_GO2MYLINK_MAX_REPLY_BYTES, 'L3: reading a 200 KB reply stops at 64 KB (' . strlen($g2Raw['body']) . ' bytes kept)');
+
+    $g2Raw = go2mylinkHttpTransport(go2mylinkBuildRequest($g2Real('bigheaders')['settings'], 'GET', 'ping', null), 2, $g2Tls['caFile']);
+    assertTrue($g2Raw['tooLarge'] === true && $g2Raw['sent'] === true, 'M1: over 16 KB of reply headers is reported as a reply too large (after the request was sent)');
+
+    // 🧾 M1: Go2My.Link received the whole create, then answered in a broken way.
+    foreach (['garbled' => 'a garbled status line', 'nostatus' => 'no status line at all', 'bigheaders' => 'a 201 with over 16 KB of headers', 'badlength' => 'a 201 with a broken Content-Length'] as $g2Broken => $g2BrokenLabel) {
+        $g2ClearLog();
+        $g2Result = go2mylinkCreateLink(array_merge($g2Link, ['redirectUUID' => '2fa85f64-5717-4562-b3fc-2c963f66afa2', 'shortCode' => 'Brk7777']), $g2Real($g2Broken));
+        $g2Log = $g2Requests();
+        assertTrue(count($g2Log) === 1 && $g2Log[0]['method'] === 'POST' && is_array($g2Log[0]['body']), 'real HTTPS, M1 (' . $g2BrokenLabel . '): the server received the whole create');
+        assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'bad_reply' && $g2Result['outcomeUnknown'] === true, 'real HTTPS, M1 (' . $g2BrokenLabel . '): an unreadable answer that may have been carried out, never "nothing happened": ' . $g2Result['reason'] . ' / ' . var_export($g2Result['outcomeUnknown'], true));
+    }
+
     $g2ClearLog();
     $g2Result = go2mylinkLookupLink('Ab3dE9x', $g2Real('redirect'));
     assertTrue(!$g2Result['ok'] && $g2Result['reason'] === 'bad_reply', 'real HTTPS: a redirect is not a success');

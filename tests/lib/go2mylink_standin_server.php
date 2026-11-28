@@ -40,6 +40,11 @@
  *     shape       answers 200 with JSON of the wrong shape
  *     big         answers 200 with 200 KB of JSON
  *     redirect    answers 302 to /ok/api/v1/ping on this same server
+ *     garbled     answers with a garbled status line (review M1)
+ *     nostatus    answers with a body and no status line at all (HTTP/0.9 style)
+ *     bigheaders  answers 201 with more than 16 KB of headers
+ *     badlength   answers 201 with a broken Content-Length header
+ *   (The last four read the WHOLE request first, as a real server would.)
  *
  * How it is run (by the test, never by hand on a real site):
  *   php go2mylink_standin_server.php <certFile> <keyFile> <logFile> <expectedKey>
@@ -318,6 +323,20 @@ while (true) {
         standinSend($standinClient, 200, standinSuccess(['padding' => str_repeat('x', 200000)]));
         continue;
     }
+    // 🧾 Review M1: the request was received in full, the answer is broken.
+    $standinOk201 = standinSuccess(['short_code' => 'Brk7777', 'short_url' => 'https://QRmy.Link/Brk7777', 'qr_code_external_uuid' => '2fa85f64-5717-4562-b3fc-2c963f66afa2']);
+    $standinBrokenAnswers = [
+        'garbled'    => "HXTP/1.1 2O1 Cre@ted\r\nContent-Length: " . strlen($standinOk201) . "\r\nConnection: close\r\n\r\n" . $standinOk201,
+        'nostatus'   => $standinOk201,
+        'bigheaders' => "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n" . str_repeat('X-Padding: ' . str_repeat('p', 1000) . "\r\n", 20) . 'Content-Length: ' . strlen($standinOk201) . "\r\nConnection: close\r\n\r\n" . $standinOk201,
+        'badlength'  => "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: twelve\r\nConnection: close\r\n\r\n" . $standinOk201,
+    ];
+    if (isset($standinBrokenAnswers[$standinScenario])) {
+        @fwrite($standinClient, $standinBrokenAnswers[$standinScenario]);
+        @fclose($standinClient);
+        continue;
+    }
+
     if ($standinScenario === 'redirect') {
         standinSend($standinClient, 302, '', ['Location: https://127.0.0.1:' . $standinPort . '/ok/api/v1/ping']);
         continue;

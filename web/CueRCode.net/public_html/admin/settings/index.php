@@ -12,8 +12,8 @@
  *      a test email"
  *   2. Email records       3. Sign in with Microsoft or Google
  *   4. Bot protection
- *   4b. Dynamic QR codes (Go2My.Link) - with "Test connection", which only
- *      reads (#165)
+ *   4b. Dynamic QR codes (Go2My.Link) - with "Test connection", which creates
+ *      and changes no link (#165)
  *   5. PayPal
  *   6. Prices, VAT and refunds (the charging switches are shown "Off (locked)")
  *   7. Free trials         8. Admin security
@@ -437,8 +437,9 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <h3 class="h6">Try it out</h3>
                             <p class="small text-body-secondary">
                                 "Test connection" checks that Go2My.Link answers, that its security certificate is good, that the saved key is
-                                accepted and which permissions it has. It only reads (and tries to change a code that cannot exist), so nothing is
-                                created or changed on Go2My.Link. At most 10 in 10 minutes. Save your changes first.
+                                accepted and which permissions it has. It only reads (and tries to change a code that cannot exist), so no link is
+                                created or changed on Go2My.Link; Go2My.Link still records the calls in its request log and counts them towards
+                                the key's request limit. At most 10 in 10 minutes. Save your changes first.
                             </p>
                             <form method="POST" action="/admin/settings/">
                                 <?php echo csrfField(); ?>

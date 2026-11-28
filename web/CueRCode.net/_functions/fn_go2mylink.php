@@ -183,6 +183,11 @@ if (!defined('CUERCODE_GO2MYLINK_PROBE_CODE')) {
     define('CUERCODE_GO2MYLINK_PROBE_CODE', 'bulk');
 }
 
+/** @var string Go2My.Link's change handler's own 404 wording (handlers/urls.php), review L8. */
+if (!defined('CUERCODE_GO2MYLINK_NO_SUCH_LINK')) {
+    define('CUERCODE_GO2MYLINK_NO_SUCH_LINK', 'No such short URL in this account.');
+}
+
 /** @var string Shown to a member whenever the cause is on our side or Go2My.Link's set-up. */
 if (!defined('CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE')) {
     define('CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE', 'Dynamic codes are not available just now. Please try again later.');
@@ -430,13 +435,13 @@ function go2mylinkReasonFacts(string $reason): array
         'not_found'          => ['That dynamic code could not be found on the link service.', 'Go2My.Link has no link with this code in the CueRCode organisation.', 404],
         'code_taken'         => ['That did not work just now. Please try again.', 'Go2My.Link already has a link with this short code, so a new code has to be chosen.', 409],
         'already_linked'     => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link already has a link for this QR code, under a short code CueRCode does not know. An admin needs to look at it before it is tried again.', 409],
-        'rejected'           => ['That web address cannot be used for a dynamic code. Please check it, or try another one.', 'Go2My.Link refused the destination address (its own address check).', 422],
+        'rejected'           => ['The link service could not accept this code just now. Please check the web address, or try again later.', 'Go2My.Link refused the request (status 422). Its 422 means one of several things it does not tell apart: the destination address failed its check, the code is one it reserves, it could not make a code, or its own database refused the row.', 422],
         'rate_limited'       => ['The link service is busy just now. Please try again in a few minutes.', 'Go2My.Link\'s request limit for this API key has been reached.', 429],
         'unavailable'        => [CUERCODE_GO2MYLINK_MEMBER_UNREACHABLE, 'Go2My.Link answered that it is not working just now.', 503],
         'unreachable'        => [CUERCODE_GO2MYLINK_MEMBER_UNREACHABLE, 'Go2My.Link could not be reached: its address was not found, or it did not accept the connection. Nothing was sent.', 503],
         'timeout'            => [CUERCODE_GO2MYLINK_MEMBER_UNREACHABLE, 'Go2My.Link did not answer in time, or the connection dropped part-way.', 503],
         'tls_failed'         => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link\'s security certificate could not be checked, so nothing was sent. Check the certificate on the API address.', 503],
-        'bad_reply'          => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link gave an answer CueRCode did not expect (not the usual shape, too large, or a redirect).', 502],
+        'bad_reply'          => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link gave an answer CueRCode did not expect or could not read (not the usual shape, broken, too large, or a redirect).', 502],
         'wrong_short_domain' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link made the link on a different short domain from the one this site prints in codes. The link exists on Go2My.Link, but it is not printed and is not tried again. Make the short-link address on the settings page the CueRCode organisation\'s default short domain on Go2My.Link (and verify that domain there), then deal with this code by hand.', 503],
         'domain_unconfirmed' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but its look-up does not say which short domain the link is on, so CueRCode cannot confirm that the printed address would work. The code is held: it is not printed and is not tried again. Check the link on the Go2My.Link dashboard. (Go2My.Link has been asked to include the short address in its look-up: Go2My.Link issue #276.)', 503],
         'link_switched_off'  => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but it is switched off there, so it is not printed. CueRCode cannot switch a link back on; look at it on the Go2My.Link dashboard.', 409],
@@ -611,7 +616,7 @@ function go2mylinkBuildRequest(#[\SensitiveParameter] array $settings, string $m
  *
  * @param array  $request From go2mylinkBuildRequest()
  * @param int    $timeout Seconds
- * @param string $caFile  Extra trusted authority (the tests' own); '' = the system's only
+ * @param string $caFile  The tests' own authority, used INSTEAD of the system bundle; '' = the system's (the site)
  * @return array{ok: bool, status: int, body: string, retryAfter: int, errno: int, error: string, tooLarge: bool, sent: bool}
  */
 function go2mylinkHttpTransport(#[\SensitiveParameter] array $request, int $timeout, string $caFile = ''): array
@@ -648,10 +653,13 @@ function go2mylinkHttpTransport(#[\SensitiveParameter] array $request, int $time
             $body .= $chunk;
             return strlen($chunk);
         },
-        // ⏳ Only Retry-After is read from the headers, and only so much of them.
-        CURLOPT_HEADERFUNCTION => static function ($handle, string $line) use (&$retryAfter, &$headerBytes): int {
+        // ⏳ Only Retry-After is read from the headers, and only so much of
+        //    them. Too many headers counts as a reply too large (review M1),
+        //    so a create is treated as "may have been made".
+        CURLOPT_HEADERFUNCTION => static function ($handle, string $line) use (&$retryAfter, &$headerBytes, &$tooLarge): int {
             $headerBytes += strlen($line);
             if ($headerBytes > CUERCODE_GO2MYLINK_MAX_HEADER_BYTES) {
+                $tooLarge = true;
                 return 0;
             }
             $match = [];
@@ -677,8 +685,11 @@ function go2mylinkHttpTransport(#[\SensitiveParameter] array $request, int $time
         return $failed;
     }
 
-    // 🧪 The tests trust their own throwaway authority. This only ADDS trust
-    //    for that one file; checking stays on.
+    // 🧪 Only the tests pass $caFile: their own throwaway authority. It
+    //    REPLACES the default certificate bundle for this one request (curl's
+    //    CURLOPT_CAINFO names the bundle used to check the server); checking
+    //    stays on. The site never passes it, so real calls use the system's
+    //    bundle.
     if ($caFile !== '' && curl_setopt($curlHandle, CURLOPT_CAINFO, $caFile) !== true) {
         return $failed;
     }
@@ -808,8 +819,32 @@ function go2mylinkTransportReason(int $errno, bool $sent): array
         return ['reason' => 'timeout', 'mayHaveRun' => true];
     }
 
-    // 🔧 Anything else is our own set-up (no curl, a bad option, ...).
+    // 🧾 Review M1: anything else AFTER the request left (a garbled or
+    //    missing status line, a broken length header, ...) is an answer that
+    //    could not be read: Go2My.Link may have done what was asked.
+    if ($sent) {
+        return ['reason' => 'bad_reply', 'mayHaveRun' => true];
+    }
+
+    // 🔧 Anything else before sending is our own set-up (no curl, a bad option, ...).
     return ['reason' => 'bad_request', 'mayHaveRun' => false];
+}
+
+/**
+ * 💬 Go2My.Link's own error wording from a reply body, or '' when there is
+ *    none. Only ever compared with fixed text; never shown or logged. PURE.
+ *
+ * @param string $body
+ * @return string
+ */
+function go2mylinkErrorMessageOf(string $body): string
+{
+    $decoded = json_decode($body, true, 16);
+    if (is_array($decoded) && isset($decoded['error']['message']) && is_string($decoded['error']['message'])) {
+        return $decoded['error']['message'];
+    }
+
+    return '';
 }
 
 /**
@@ -1322,8 +1357,10 @@ function go2mylinkCreateLinkSafely(array $link, #[\SensitiveParameter] array $op
 }
 
 /**
- * 🔌 "Test connection" (the admin settings page). Changes NOTHING on
- *    Go2My.Link. In order:
+ * 🔌 "Test connection" (the admin settings page). Creates and changes no
+ *    link on Go2My.Link. (Go2My.Link still records each call in its request
+ *    log, counts it towards the key's request limit and notes when the key
+ *    was last used - review L7.) In order:
  *
  *   1. GET /ping            - the address answers, the certificate is good,
  *                             the key is accepted;
@@ -1332,7 +1369,8 @@ function go2mylinkCreateLinkSafely(array $link, #[\SensitiveParameter] array $op
  *                             checks the permission (403) BEFORE it looks for
  *                             the link, and "bulk" is a code it reserves, so
  *                             the answer is "no such link" (404) and nothing
- *                             changes; no body is sent either;
+ *                             changes; no body is sent either. Only that
+ *                             handler's own wording counts (review L8);
  *   4. GET /account         - the key's permissions, to see qr:link. Only
  *                             possible when the key also has the optional
  *                             account:read; otherwise this is said plainly.
@@ -1381,8 +1419,14 @@ function go2mylinkTestConnection(#[\SensitiveParameter] array $options = []): ar
     }
     $lines[] = 'The key may read links (urls:read).';
 
-    // 3️⃣ May change links: a change to a code that can never exist.
+    // 3️⃣ May change links: a change to a code that can never exist. Only
+    //    the change handler's own "no such link" 404 counts (review L8):
+    //    Go2My.Link's "no such endpoint" 404 comes BEFORE its permission
+    //    check, so it would prove nothing.
     $probeReply = go2mylinkSend($settings, 'PUT', 'urls/' . CUERCODE_GO2MYLINK_PROBE_CODE, null, $options);
+    if ($probeReply['ok'] && $probeReply['status'] === 404 && go2mylinkErrorMessageOf($probeReply['body']) !== CUERCODE_GO2MYLINK_NO_SUCH_LINK) {
+        return $stop(go2mylinkFailure('bad_reply', false, ['httpStatus' => 404]), 'Changing links could not be checked (permission urls:write): Go2My.Link did not answer as its change handler does.');
+    }
     if (!($probeReply['ok'] && $probeReply['status'] === 404)) {
         $probe = go2mylinkResultFromReply($probeReply, [], false);
         return $stop($probe, 'Changing links did not work (permission urls:write).');
@@ -1411,7 +1455,7 @@ function go2mylinkTestConnection(#[\SensitiveParameter] array $options = []): ar
     }
 
     $lines[] = 'These are not checked here, because only a real code can show them: that Go2My.Link has its CueRCode switch and its "CueRCode chooses the code" setting on, and that new links are made on '
-        . go2mylinkHostOf((string) $settings['shortLinkBase']) . '. Nothing was created or changed on Go2My.Link.';
+        . go2mylinkHostOf((string) $settings['shortLinkBase']) . '. No link was created or changed on Go2My.Link (it still records these calls in its request log, and they count towards the key\'s request limit).';
 
     return ['ok' => $ok, 'reason' => $reason, 'lines' => $lines];
 }
