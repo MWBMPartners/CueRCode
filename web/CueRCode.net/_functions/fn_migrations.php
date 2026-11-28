@@ -453,9 +453,13 @@ function migrationStepTypes(): array
  *    from its (squashed, quoted-text-blanked) SQL. Pure.
  *
  * The step must be exactly
- *   ALTER TABLE `t` MODIFY COLUMN `c` DECIMAL(p,s) NOT NULL ...   (or NULL ...)
+ *   ALTER TABLE `t` MODIFY COLUMN `c` DECIMAL(p,s) NOT NULL [DEFAULT n] [COMMENT '...']
+ *   (or NULL instead of NOT NULL, and DEFAULT NULL)
  * so the precision, the scale and whether the column may be empty are all
- * stated, and the runner can compare them with the live column.
+ * stated, and the runner can compare them with the live column. Third-round
+ * review, Info 2: nothing else may follow (no INVISIBLE, no computed-column
+ * words, no text DEFAULT), so a widening step cannot also change something
+ * the runner does not compare.
  *
  * @param string $squashed The step SQL, quoted text blanked, spaces squashed
  * @param string $table    The step's table
@@ -465,7 +469,9 @@ function migrationStepTypes(): array
 function migrationWidenTarget(string $squashed, string $table, string $name): ?array
 {
     $pattern = '/^ALTER TABLE ' . preg_quote('`' . $table . '`', '/') . ' MODIFY COLUMN ' . preg_quote('`' . $name . '`', '/')
-        . ' DECIMAL ?\( ?([0-9]{1,2}) ?, ?([0-9]{1,2}) ?\) (NOT NULL|NULL)\b/i';
+        . ' DECIMAL ?\( ?([0-9]{1,2}) ?, ?([0-9]{1,2}) ?\) (NOT NULL|NULL)'
+        . '(?: DEFAULT (?:[0-9]{1,20}(?:\.[0-9]{1,30})?|NULL))?'
+        . "(?: COMMENT ' ?')? ?$/i";
     $found = [];
     if (preg_match($pattern, $squashed, $found) !== 1) {
         return null;

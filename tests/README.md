@@ -55,9 +55,10 @@ CUERCODE_IT_DB_USER=root CUERCODE_IT_DB_PASS= \
 ```
 
 It refuses (through `tools/ci/integration_db_guard.php`) any server that is
-not on this machine or that holds a database other than the server's own and
-`cuercode_it_` ones, gives each script its own `cuercode_it_ci_<script>`
-database, and fails when a required script is missing, none ran, any failed,
+not on this machine, an account without the server-wide `SHOW DATABASES`
+right (it could not see every database), or a server that holds a database
+other than the server's own and `cuercode_it_` ones, gives each script its own
+`cuercode_it_ci_<script>` database and removes it afterwards, and fails when a required script is missing, none ran, any failed,
 deprecation text appeared or part of a script could not run. To run it by hand
 the same way GitHub does, start an empty throwaway server (for example
 `docker run -d --rm --name cuercode-it-ci -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 127.0.0.1:3306:3306 mysql:8.4`;
@@ -112,7 +113,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_core.php` | 146 |
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
-| `test_deploy_test_gate.php` | 88 |
+| `test_deploy_test_gate.php` | 107 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
@@ -131,8 +132,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 551 |
-| `test_money.php` | 703 |
+| `test_migrations.php` | 559 |
+| `test_money.php` | 709 |
 | `test_no_script_route_review_fixes.php` | 85 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
@@ -151,9 +152,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9277** |
+| **Total** | **9310** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Third-round review, Low 2-4 and Info 1, 2, 4 (2026-11-28).** Low 2: `migrations_real_mysql.php` reads the old `install.sql` from the committed copy `tests/integration/fixtures/install_76b1af7.sql` (pinned SHA-256; compared with commit `76b1af7` where history holds it). Shown failing first in a copy of the tree committed on its own (as a squash merge leaves it): the old script refused, exit 2, "invalid object name '76b1af7'"; the new one passed there ("comparison skipped") and in the real clone ("identical to commit 76b1af7"), and refused a copy with one byte added (exit 2). Low 3: new P6 in `migrations_real_mysql.php` (a column already DECIMAL(13,3) is widened, not skipped) and N3b in `admin_plans_real_mysql.php` (with price points switched on, the Free card has none; Business keeps its own). Each failed with its protection removed in a scratch copy (P6: 5 steps run, the column left at decimal(13,3); N3b: the Free card carried 1 price point) and passed without; migrations now 216 checks, admin plans 170. Low 4: 7 checks in `test_deploy_test_gate.php` (`cuercodeItGuardPrivilegeProblems()`, `cuercodeItGuardGrantee()`); on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28 an account granted only `cuercode\_it\_%`, with a `cuercode_live` database on the server, was accepted by the old guard (exit 0) and is refused by the new one (exit 2); root is still accepted. Info 1: 6 checks in `test_money.php` (`moneyMinorFitsStoredPlaces()` with a made-up 4- and 6-decimal currency). Info 2: 8 checks in `test_migrations.php` (INVISIBLE, a computed column, a text default and a word after COMMENT refused; the allowed shapes still valid). Info 4: 13 checks in `test_deploy_test_gate.php` (the runner asks the guard to remove every script's database; a bad name to remove is refused). Suite: **9310** in 58 files.
 
 **Third-round review, Medium 1: the no-JavaScript route can no longer lock an account (2026-11-28)** added 10 checks to `test_no_script_route_review_fixes.php` (the per-account number of password checks and its bounds, the route checking passwords without counting a wrong one, the stand-in check past the number, the normal sign-in still counting), 3 to `test_admin_settings.php` (the new setting's bounds; it may lack a seeded row) and changed one in `test_human_check_fallbacks.php` (the defaults). `human_check_real_mysql.php` grew to 179 checks: new scenario R (five wrong route posts from one address, then the per-address limit, thirteen in all: never counted, never locked; only 10 checked; the right password through the NORMAL form then signs in; the normal form still locks after five) and a race in J (twelve sign-ins at once, password checks set to 3: exactly 3 checked); K, M and N now expect wrong route passwords NOT to be counted. On the code before the fix, on MySQL 8.0.36, K, N, R and J failed - the right password through the normal form got HTTP 200 "Invalid email or password" after five wrong route posts. Suite: **9277** in 58 files.
 
@@ -316,10 +319,13 @@ only picks up `tests/test_*.php`), but CI still syntax-checks it.
   base and derived - **must start with `cuercode_it_`**, or the script refuses
   (exit 2).
 - **Remove the container afterwards**, and check nothing was left behind.
-- It needs the pre-task-7n `install.sql` from **git history** (commit
-  `76b1af7`, read with `git show`). An ordinary clone has it; a *shallow*
-  clone (`git clone --depth 1`) or a shallow CI checkout might not - the
-  script refuses (exit 2) rather than skip that check silently.
+- It needs the pre-task-7n `install.sql` (commit `76b1af7`). Since the
+  third-round review (Low 2) that is a committed, byte-for-byte copy,
+  `tests/integration/fixtures/install_76b1af7.sql`, so a squash or rebase
+  merge (which drops the commit from the branch's history) no longer stops
+  it. The script refuses (exit 2) if the copy's SHA-256 is not the pinned
+  one, or if git history holds commit `76b1af7` and the copy differs from
+  it; with no such commit in history it says the comparison was skipped.
 
 ```bash
 REPO="/path/to/CueRCode"   # quote it - the path may contain spaces

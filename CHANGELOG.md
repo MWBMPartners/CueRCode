@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Third-round review: test gate and guard findings (Low 2-4, Info 1, 2, 4; 2026-11-28)
+
+- **The deploy gate no longer breaks after a squash or rebase merge (Low 2).** The migrations test read an old `install.sql` from git history (commit 76b1af7), which such a merge removes from the branch. It is now a committed, byte-for-byte copy (`tests/integration/fixtures/install_76b1af7.sql`), refused unless its fingerprint matches and, where history still has the commit, unless it is identical to it.
+- **Two untested protections now have tests (Low 3):** a money column already at three decimal places but with too few whole digits is widened, not skipped; and the Free plan's card never carries price points.
+- **The test-server guard checks it can see every database (Low 4).** It refuses an account without the server-wide right to list all databases, because such an account would not see a live database it has no rights to.
+- **Smaller hardening (Info 1, 2, 4):** the "the price columns would round this" rule is tested on its own; a widening step in a database upgrade may contain nothing after the column type except a number default and a description; the shared test runner removes each test database after its script.
+
 ### Security - Signing in without JavaScript can no longer keep someone locked out (third-round review, Medium 1, 2026-11-28)
 
 - **The fault:** the email-confirmed sign-in for visitors without JavaScript has no human check, and wrong passwords typed through it counted toward the account's lock-out. Five posts with wrong passwords from one internet address (inside its limit of 5 an hour) locked any account for 15 minutes, and one more post every quarter of an hour kept it locked.

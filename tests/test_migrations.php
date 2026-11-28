@@ -1311,6 +1311,14 @@ $migWiden = [
 ];
 assertEquals([], migrationValidateStep($migWiden, 1), '0042: a widen_decimal_column step is valid');
 assertEquals(['precision' => 15, 'scale' => 3, 'notNull' => true], migrationWidenTargetOfStep($migWiden), '0042: its target is read from the SQL');
+foreach ([
+    'no DEFAULT, no COMMENT'    => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL',
+    'a COMMENT only'            => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL COMMENT \'x\'',
+    'an empty COMMENT'          => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NULL DEFAULT NULL COMMENT \'\'',
+    'a whole-number DEFAULT'    => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL DEFAULT 0',
+] as $migWidenOkLabel => $migWidenOkSql) {
+    assertEquals([], migrationValidateStep(array_merge($migWiden, ['sql' => $migWidenOkSql]), 1), 'Info 2: a widen step with ' . $migWidenOkLabel . ' is still valid');
+}
 assertTrue($migRefusedWith(['type' => 'add_column', 'table' => 'tblExample', 'name' => 'amount', 'sql' => 'ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL'], 'the word MODIFY'), '0042: MODIFY is still refused in every other step type');
 $migWidenBad = [
     'two columns'        => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL, MODIFY COLUMN `other` DECIMAL(15,3) NOT NULL', 'only one thing'],
@@ -1322,6 +1330,12 @@ $migWidenBad = [
     'another column'     => ['ALTER TABLE `tblExample` MODIFY COLUMN `other` DECIMAL(15,3) NOT NULL', 'must appear back-quoted'],
     'a DROP inside'      => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL DROP', 'the word DROP'],
     'CHANGE instead'     => ['ALTER TABLE `tblExample` CHANGE `amount` `amount` DECIMAL(15,3) NOT NULL', 'the word CHANGE'],
+    // 🧾 Third-round review, Info 2: nothing after NOT NULL / NULL except a
+    //    number DEFAULT and a COMMENT.
+    'INVISIBLE after it' => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL INVISIBLE', 'must be ALTER TABLE'],
+    'a computed column'  => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL AS (0) STORED', 'must be ALTER TABLE'],
+    'text DEFAULT'       => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL DEFAULT \'0\'', 'must be ALTER TABLE'],
+    'a word after COMMENT' => ['ALTER TABLE `tblExample` MODIFY COLUMN `amount` DECIMAL(15,3) NOT NULL COMMENT \'x\' UNIQUE', 'must be ALTER TABLE'],
 ];
 foreach ($migWidenBad as $migWidenLabel => [$migWidenSql, $migWidenNeedle]) {
     $migWidenStep = $migWiden;

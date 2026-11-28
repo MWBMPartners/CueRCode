@@ -200,6 +200,7 @@ if (is_executable('/bin/bash')) {
         'an unreachable server fails'      => [$itFolder($itNames, [], '<?php exit(1);'), false],
         'a missing guard fails'            => [array_diff_key($itFolder($itNames), ['tools/ci/integration_db_guard.php' => true]), false],
         'no scripts at all fails'          => [['tools/ci/integration_db_guard.php' => '<?php exit(0);'], false],
+        'each database is removed after'   => [$itFolder($itNames, [], '<?php echo "guard " . implode(" ", array_slice($argv, 1)) . "\n"; exit(0);'), true],
     ];
     foreach ($itCases as $label => [$files, $shouldPass]) {
         $result = deployGateRun($files, $itScript);
@@ -211,6 +212,12 @@ if (is_executable('/bin/bash')) {
             assertContains('migrations ok  db=cuercode_it_ci_migrations all=1', $result['output'], '0040: a script that builds its own databases gets no options and its own name');
             assertContains('email_queue ok --load-schema db=cuercode_it_ci_email_queue all=1', $result['output'], '0040: email_queue loads the starting tables');
             assertContains('account_recovery ok --load-schema db=cuercode_it_ci_account_recovery', $result['output'], '0040: account_recovery loads the starting tables');
+        }
+        if ($label === 'each database is removed after') {
+            // 🧹 Third-round review, Info 4: no test database is left behind.
+            foreach ($itNames as $itDropName) {
+                assertContains('guard --drop=cuercode_it_ci_' . $itDropName, $result['output'], 'Info 4: the runner asks the guard to remove cuercode_it_ci_' . $itDropName . ' after its script');
+            }
         }
         if ($label === 'a failing script fails') {
             // 🏃 One failure does not stop the others running.
@@ -252,6 +259,7 @@ if (function_exists('cuercodeItGuardProblems')) {
         'far-away host' => [['CUERCODE_IT_DB_HOST' => 'db.example.com', 'CUERCODE_IT_DB_USER' => 'root'], []],
         'no host'       => [['CUERCODE_IT_DB_HOST' => '', 'CUERCODE_IT_DB_USER' => 'root'], []],
         'bad name'      => [['CUERCODE_IT_DB_HOST' => '127.0.0.1', 'CUERCODE_IT_DB_USER' => 'root'], ['--create=live_site']],
+        'bad drop name' => [['CUERCODE_IT_DB_HOST' => '127.0.0.1', 'CUERCODE_IT_DB_USER' => 'root'], ['--drop=live_site']],
     ];
     foreach ($itGuardCases as $itLabel => [$itEnv, $itArgs]) {
         $itProcess = proc_open(
@@ -271,6 +279,18 @@ if (function_exists('cuercodeItGuardProblems')) {
         }
         assertEquals(2, $itExit, '0040 guard command: ' . $itLabel . ' is refused (exit ' . $itExit . '): ' . trim($itOutput));
     }
+}
+// 👁️ Third-round review, Low 4: the list of databases is only complete when
+//    the account may see every database, so the guard requires that right.
+assertTrue(function_exists('cuercodeItGuardPrivilegeProblems') && function_exists('cuercodeItGuardGrantee'), 'Low 4: the guard checks that the account can see every database');
+if (function_exists('cuercodeItGuardPrivilegeProblems') && function_exists('cuercodeItGuardGrantee')) {
+    assertEquals([], cuercodeItGuardPrivilegeProblems(['SELECT', 'SHOW DATABASES', 'CREATE']), 'Low 4: an account with the server-wide "show databases" right is accepted');
+    assertEquals([], cuercodeItGuardPrivilegeProblems(['show databases']), 'Low 4: the right is matched whatever its capitals');
+    assertTrue(cuercodeItGuardPrivilegeProblems(['SELECT', 'CREATE', 'DROP']) !== [], 'Low 4: an account without it is refused (it would not see a live database it has no rights to)');
+    assertTrue(cuercodeItGuardPrivilegeProblems([]) !== [], 'Low 4: an account with no server-wide rights at all is refused');
+    assertEquals("'root'@'%'", cuercodeItGuardGrantee('root@%'), 'Low 4: CURRENT_USER() "root@%" is looked up as \'root\'@\'%\'');
+    assertEquals("'it@user'@'localhost'", cuercodeItGuardGrantee('it@user@localhost'), 'Low 4: the host is after the LAST "@"');
+    assertEquals("'o''brien'@'%'", cuercodeItGuardGrantee("o'brien@%"), 'Low 4: a quote in the name is doubled, as the server writes it');
 }
 
 $workflowDir = $gateRoot . DIRECTORY_SEPARATOR . '.github' . DIRECTORY_SEPARATOR . 'workflows' . DIRECTORY_SEPARATOR;

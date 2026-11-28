@@ -11,10 +11,11 @@
 #
 # It runs every tests/integration/*_real_mysql.php, one after the other (some
 # check timings, so never in parallel), each with its own fresh database
-# named cuercode_it_ci_<script>. The database server must already be running
-# and must be a THROWAWAY one: tools/ci/integration_db_guard.php refuses a
-# server that is not on this machine or that holds any database other than
-# the server's own and cuercode_it_ ones.
+# named cuercode_it_ci_<script>, removed again after the script. The database
+# server must already be running and must be a THROWAWAY one:
+# tools/ci/integration_db_guard.php refuses a server that is not on this
+# machine, an account that cannot see every database, or a server that holds
+# any database other than the server's own and cuercode_it_ ones.
 #
 # Connection details (the throwaway server's, never a real site's):
 #   CUERCODE_IT_DB_HOST (127.0.0.1), CUERCODE_IT_DB_PORT (3306),
@@ -100,6 +101,11 @@ for script in tests/integration/*_real_mysql.php; do
   cat "${output}"
   echo "::endgroup::"
   ran=$((ran + 1))
+
+  # 🧹 Third-round review, Info 4: remove this script's database (the guard
+  #    checks the server again first). Leaving one behind is harmless on a
+  #    throwaway server, so a problem here is a warning, not a failure.
+  php "${GUARD}" --drop="${CUERCODE_IT_DB_NAME}" || echo "::warning::could not remove ${CUERCODE_IT_DB_NAME} after ${name}."
 
   if [ "${status}" -ne 0 ]; then
     echo "::error::${script} failed (exit ${status})."

@@ -225,6 +225,16 @@ assertThrows(static function (): void {
 }, 'an unknown currency is refused loudly when writing', InvalidArgumentException::class);
 assertEquals('1.230', moneyMinorToDecimalString(1230, 'KWD'), '1230 fils is written "1.230"');
 assertEquals('1.234', moneyMinorToDecimalString(1234, 'KWD'), '0042: 1234 fils is written "1.234" (the three-decimal columns hold it exactly)');
+// 🧮 Third-round review, Info 1: the "the columns would round this" rule,
+//    proved with a made-up 4-decimal currency (no ISO currency has one today).
+assertTrue(function_exists('moneyMinorFitsStoredPlaces'), 'Info 1: the rounding refusal has its own testable rule');
+if (function_exists('moneyMinorFitsStoredPlaces')) {
+    assertFalse(moneyMinorFitsStoredPlaces(12345, 4, 3), 'Info 1: 1.2345 in a 4-decimal currency would be rounded by 3-place columns: refused');
+    assertTrue(moneyMinorFitsStoredPlaces(12340, 4, 3), 'Info 1: 1.2340 fits 3 places exactly');
+    assertTrue(moneyMinorFitsStoredPlaces(1234, 3, 3), 'Info 1: a 3-decimal amount always fits 3 places');
+    assertTrue(moneyMinorFitsStoredPlaces(5, 2, 3), 'Info 1: a 2-decimal amount always fits 3 places');
+    assertFalse(moneyMinorFitsStoredPlaces(1, 6, 3), 'Info 1: a 6-decimal currency\'s smallest unit is refused');
+}
 assertEquals("KWD\u{00A0}1.234", moneyFormat(1234, 'KWD'), '0042: shown as KWD 1.234');
 assertEquals("BHD\u{00A0}1,234,567.891", moneyFormat(1234567891, 'BHD'), '0042: a large three-decimal amount is grouped in thousands');
 

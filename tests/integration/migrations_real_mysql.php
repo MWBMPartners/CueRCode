@@ -149,13 +149,16 @@
  *    database...). Every one of those derived names is re-checked against the
  *    same "cuercode_it_" safety rule before it is ever used.
  *
- * ⚠️ Scenario B needs the pre-task-7n install.sql, read straight out of git
- *    history (commit 76b1af7, the last commit before task 7n Phase 1A moved
- *    the #70 columns out of it) with `git show`. That commit must be reachable
- *    from wherever this script is run - an ordinary clone has it; a SHALLOW
- *    clone (`git clone --depth 1`) or a shallow CI checkout might not. If it
- *    is not reachable, this script refuses to run (exit 2) rather than skip
- *    silently.
+ * ⚠️ Scenario B needs the pre-task-7n install.sql (commit 76b1af7, the last
+ *    commit before task 7n Phase 1A moved the #70 columns out of it). Since
+ *    the third-round review (Low 2) it is a committed copy,
+ *    tests/integration/fixtures/install_76b1af7.sql, because after a squash
+ *    or rebase merge that commit is no longer in the branch's history and
+ *    `git show` failed every deploy. The script refuses to run (exit 2)
+ *    unless the copy's SHA-256 is the pinned one and, wherever git history
+ *    still holds commit 76b1af7, the copy is identical to that commit's file.
+ *    Where history does not hold it, that second check is skipped and says
+ *    so (the pinned hash still proves the file is unchanged).
  *
  * ⚠️ SAFETY - read before changing anything here:
  *   - It creates and DROPS whole databases. It refuses to run (exit 2) unless
@@ -174,7 +177,8 @@
  *     that need to inspect the detailed result array (stepsRun, warnings...).
  *
  * Exit codes: 0 every scenario passed | 1 a scenario failed or crashed |
- * 2 refused (unsafe database name, missing settings, git history too shallow).
+ * 2 refused (unsafe database name, missing settings, the old install.sql
+ * fixture missing, changed or different from git history).
  *
  * @package     CueRCode
  * @subpackage  Tests
@@ -660,37 +664,50 @@ if (!is_string($itInstallSql) || $itInstallSql === '' || !is_string($itSeedSql) 
     exit(2);
 }
 
-// 🕰️ The last commit before task 7n Phase 1A moved the #70 columns out of
-//    install.sql (see the file header for why this must come from git
-//    history, not a committed copy). `git -C` is used so this works however
-//    this script itself is invoked (relative path, absolute path, symlink).
+// 🕰️ The install.sql of commit 76b1af7, the last commit before task 7n
+//    Phase 1A moved the #70 columns out of it - a committed, byte-for-byte
+//    copy (third-round review, Low 2; see the file header and
+//    tests/integration/fixtures/README.md).
+$itOldInstallPath = __DIR__ . DIRECTORY_SEPARATOR . 'fixtures' . DIRECTORY_SEPARATOR . 'install_76b1af7.sql';
+$itOldInstallSql  = '';
+if (is_file($itOldInstallPath)) {
+    $itOldInstallSql = (string) file_get_contents($itOldInstallPath);
+}
+if (hash('sha256', $itOldInstallSql) !== '531d98788dd0d4c8d0ddbab2c5dd30582fe060ac771dfd7edc990e6ab9990bfe') {
+    fwrite(STDERR, 'Refusing to run: tests/integration/fixtures/install_76b1af7.sql is missing or has been changed (its SHA-256 is not the pinned one).' . PHP_EOL);
+    exit(2);
+}
+
+// 🔎 Where git history still holds commit 76b1af7, the copy must be that
+//    commit's file exactly. `git -C` is used so this works however this
+//    script itself is invoked (relative path, absolute path, symlink).
 $itOldInstallDescriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
 $itOldInstallProcess     = proc_open(
     ['git', '-C', $itRepoRoot, 'show', '76b1af7:web/CueRCode.net/_includes/sql/install.sql'],
     $itOldInstallDescriptors,
     $itOldInstallPipes
 );
-$itOldInstallSql = '';
-$itOldInstallErr = '';
-$itOldInstallExit = 1;
+$itHistorySql  = '';
+$itHistoryExit = 1;
 
 if (is_resource($itOldInstallProcess)) {
     fclose($itOldInstallPipes[0]);
-    $itOldInstallSql  = (string) stream_get_contents($itOldInstallPipes[1]);
-    $itOldInstallErr  = (string) stream_get_contents($itOldInstallPipes[2]);
+    $itHistorySql = (string) stream_get_contents($itOldInstallPipes[1]);
+    stream_get_contents($itOldInstallPipes[2]);
     fclose($itOldInstallPipes[1]);
     fclose($itOldInstallPipes[2]);
-    $itOldInstallExit = proc_close($itOldInstallProcess);
+    $itHistoryExit = proc_close($itOldInstallProcess);
 }
 
-if ($itOldInstallExit !== 0 || trim($itOldInstallSql) === '') {
-    fwrite(STDERR, 'Refusing to run: could not read the pre-task-7n install.sql from git history (commit 76b1af7).' . PHP_EOL);
-    fwrite(STDERR, 'This usually means the clone is shallow (git clone --depth 1) and does not reach that commit.' . PHP_EOL);
-    fwrite(STDERR, 'git said: ' . trim($itOldInstallErr) . PHP_EOL);
-    exit(2);
+if ($itHistoryExit === 0) {
+    if ($itHistorySql !== $itOldInstallSql) {
+        fwrite(STDERR, 'Refusing to run: tests/integration/fixtures/install_76b1af7.sql is not the same as install.sql at commit 76b1af7 in git history.' . PHP_EOL);
+        exit(2);
+    }
+    echo 'Read the pre-task-7n install.sql from tests/integration/fixtures/install_76b1af7.sql (' . substr_count($itOldInstallSql, "\n") . ' lines; identical to commit 76b1af7 in git history).' . PHP_EOL;
+} else {
+    echo 'Read the pre-task-7n install.sql from tests/integration/fixtures/install_76b1af7.sql (' . substr_count($itOldInstallSql, "\n") . ' lines; pinned SHA-256 matches; commit 76b1af7 is not in this copy\'s git history, so the comparison with it was skipped).' . PHP_EOL;
 }
-
-echo 'Read the pre-task-7n install.sql from git history (commit 76b1af7, ' . substr_count($itOldInstallSql, "\n") . ' lines).' . PHP_EOL;
 
 // 🧮 Database names used below - all derived from the one base name, and all
 //    re-checked by itSafeDbName() the moment they are used.
@@ -1794,6 +1811,15 @@ itCheck('P 0006 money columns', $itNullP['status'] === 'failed' && itMoneyColumn
 $itP->query('ALTER TABLE `tblDiscounts` MODIFY COLUMN `value` DECIMAL(10,2) NOT NULL');
 $itFixedP = migrationRun($itP, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
 itCheck('P 0006 money columns', $itFixedP['status'] === 'ok' && itSchemaSnapshot($itP) === $itSchemaA, 'once the column is put right, the next run finishes and the result is the fresh install\'s');
+itDropDb($itEnv, $itPort, $itDbP);
+
+// P6. Third-round review, Low 3 A: a column already at three decimal places
+//     but with only 10 whole digits (DECIMAL(13,3), set by hand) is NOT
+//     "already done": its step runs and widens it to DECIMAL(15,3).
+$itP = itAt0005($itEnv, $itPort, $itDbP, $itInstallSql, $itSeedSql, $itDir0005);
+$itP->query('ALTER TABLE `tblPayments` MODIFY COLUMN `amount` DECIMAL(13,3) NOT NULL');
+$itShortP = migrationRun($itP, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+itCheck('P 0006 money columns', $itShortP['status'] === 'ok' && isset($itShortP['migrations'][0]['stepsRun']) && $itShortP['migrations'][0]['stepsRun'] === 6 && itMoneyColumnTypes($itP, [['tblPayments', 'amount']]) === ['decimal(15,3)|NO|none'] && itSchemaSnapshot($itP) === $itSchemaA, 'a column at DECIMAL(13,3) (three decimals, only 10 whole digits) is not skipped as done: its step runs and it becomes DECIMAL(15,3) (third-round review, Low 3 A): ' . json_encode([$itShortP['migrations'], itMoneyColumnTypes($itP, [['tblPayments', 'amount']])]));
 itDropDb($itEnv, $itPort, $itDbP);
 
 foreach ((array) glob($itDir0005 . '*') as $itTempFile) {

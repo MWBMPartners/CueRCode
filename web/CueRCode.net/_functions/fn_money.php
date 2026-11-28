@@ -597,19 +597,38 @@ function moneyMinorToDecimalString(int $minor, string $currency): string
 {
     $text = moneyMinorToPlainText($minor, $currency);
 
-    // 🔢 Digits beyond the column's two decimal places must all be zero.
-    $extraPlaces = moneyMinorUnits($currency) - moneyStoredDecimalPlaces();
-    if ($extraPlaces > 0) {
-        $extraFactor = 1;
-        for ($step = 0; $step < $extraPlaces; $step++) {
-            $extraFactor = $extraFactor * 10;
-        }
-        if ($minor % $extraFactor !== 0) {
-            throw new \InvalidArgumentException('This amount cannot be saved exactly: the price columns hold ' . moneyStoredDecimalPlaces() . ' decimal places.');
-        }
+    // 🔢 Digits beyond the columns' decimal places must all be zero.
+    if (!moneyMinorFitsStoredPlaces($minor, moneyMinorUnits($currency), moneyStoredDecimalPlaces())) {
+        throw new \InvalidArgumentException('This amount cannot be saved exactly: the price columns hold ' . moneyStoredDecimalPlaces() . ' decimal places.');
     }
 
     return $text;
+}
+
+/**
+ * 🧮 Can an amount in minor units be stored exactly in columns with
+ *    $storedPlaces decimal places? PURE. Split out so the rule can be tested
+ *    with a made-up currency (third-round review, Info 1): no ISO currency
+ *    has more decimal places than the columns today.
+ *
+ * @param int $minor          Amount in minor units (zero or more)
+ * @param int $currencyPlaces The currency's decimal places
+ * @param int $storedPlaces   The columns' decimal places
+ * @return bool True when every digit past $storedPlaces is zero
+ */
+function moneyMinorFitsStoredPlaces(int $minor, int $currencyPlaces, int $storedPlaces): bool
+{
+    $extraPlaces = $currencyPlaces - $storedPlaces;
+    if ($extraPlaces <= 0) {
+        return true;
+    }
+
+    $extraFactor = 1;
+    for ($step = 0; $step < $extraPlaces; $step++) {
+        $extraFactor = $extraFactor * 10;
+    }
+
+    return ($minor % $extraFactor) === 0;
 }
 
 /**

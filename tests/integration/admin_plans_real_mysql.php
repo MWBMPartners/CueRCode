@@ -989,6 +989,17 @@ $ipServer->query("INSERT INTO `tblPlanPricePoints` (`planID`, `priceKey`, `price
 $ipServer->query("UPDATE `tblSubscriptionPlans` SET `priceMonthly` = 3.00, `priceYearly` = 30.00 WHERE `planID` = " . $ipFreeID);
 $ipCards = ipPublicCards();
 ipCheck('N', isset($ipCards[CUERCODE_PLAN_KEY_FREE]) && $ipCards[CUERCODE_PLAN_KEY_FREE]['free'] === true && str_starts_with($ipCards[CUERCODE_PLAN_KEY_FREE]['text'], 'Free'), 'the pricing page ignores it: the Free card still says Free (with its sign-up button): ' . json_encode($ipCards[CUERCODE_PLAN_KEY_FREE] ?? null));
+// N3b. Third-round review, Low 3 B: with price points switched on, the
+//      Free plan's card still carries none (a paid plan's does - the control).
+$ipServer->query("UPDATE `tblSettings` SET `settingValue` = '1' WHERE `settingKey` = 'billing_price_points_enabled'");
+clearConfigCache();
+$ipPointsByPlan = [];
+foreach (listPublicPlansForDisplay() as $ipListedPlan) {
+    $ipPointsByPlan[(string) $ipListedPlan['planKey']] = count((array) $ipListedPlan['pricePoints']);
+}
+$ipServer->query("UPDATE `tblSettings` SET `settingValue` = '0' WHERE `settingKey` = 'billing_price_points_enabled'");
+clearConfigCache();
+ipCheck('N', isset($ipPointsByPlan[CUERCODE_PLAN_KEY_FREE], $ipPointsByPlan['business']) && $ipPointsByPlan[CUERCODE_PLAN_KEY_FREE] === 0 && $ipPointsByPlan['business'] > 0, 'with price points switched on, the Free card carries no price points although a Free price row is on sale; Business carries its own (third-round review, Low 3 B): ' . json_encode($ipPointsByPlan));
 ipCheck('N', !in_array(CUERCODE_PLAN_KEY_FREE, (array) adminSettingsTrialPlanKeys(), true), 'the settings screen never offers it as the trial plan');
 $ipTrialStates = adminSettingsLoadRows(array_keys(adminSettingsFieldsForSection('trials')));
 $ipTrialFree = adminSettingsProcessSection('trials', ['f' => ['billing_trial_plan_key' => CUERCODE_PLAN_KEY_FREE]], (array) $ipTrialStates, ['planKeys' => (array) adminSettingsTrialPlanKeys()]);

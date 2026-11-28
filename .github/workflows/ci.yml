@@ -208,7 +208,9 @@ jobs:
           - '127.0.0.1:3306:3306'
     steps:
       # 📜 Full history: migrations_real_mysql.php builds an "old" database
-      #    from install.sql as it was in commit 76b1af7 (git show).
+      #    from a committed copy of install.sql at commit 76b1af7
+      #    (tests/integration/fixtures/) and, where history holds that
+      #    commit, checks the copy against it (third-round review, Low 2).
       - name: Checkout (full history)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
