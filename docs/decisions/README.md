@@ -49,3 +49,6 @@ Older decisions live in `LAUNCH_DECISIONS.md` and `.claude/HANDOFF.md` §0 and h
 | [0037](0037-human-check-outage-falls-back-to-other-providers-then-sign-in-only.md) | 2026-11-27 | Owner: human check outage tries other providers, then lets only sign-in through, and logs it | Current |
 | [0038](0038-no-javascript-visitors-get-an-email-confirmed-fallback.md) | 2026-11-27 | Owner: visitors without JavaScript get an email-confirmed fallback with strict limits | Current |
 | [0039](0039-correct-the-csp-sentence-in-project-instructions.md) | 2026-11-27 | Owner: correct the outside-scripts sentence in .claude/CLAUDE.md | Current |
+| [0040](0040-real-database-tests-also-block-a-deploy.md) | 2026-11-28 | Owner: the real-database tests also run automatically and block a deploy | Current |
+| [0041](0041-free-plan-cannot-be-given-a-price.md) | 2026-11-28 | Owner: the Free plan cannot be given a price | Current |
+| [0042](0042-support-three-decimal-currencies-before-launch.md) | 2026-11-28 | Owner: support three-decimal currencies before launch | Current |
