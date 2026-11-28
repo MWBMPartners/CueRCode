@@ -54,3 +54,29 @@ regexes = [
   '''\$token is something like''',
   '''setConfig\(\s*'third_party_api_key'\s*,''',
 ]
+
+# -----------------------------------------------------------------------------
+# 3) Made-up values used by the tests (#180). Each entry needs BOTH the exact
+#    value AND the one test file it lives in, so the same text anywhere else, or
+#    any other value in those files, is still reported.
+# -----------------------------------------------------------------------------
+[[allowlists]]
+description = "Made-up test password in the human check integration test"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^Plenty-Long-Pass-41$''']
+paths = ['''^tests/integration/human_check_real_mysql\.php$''']
+
+[[allowlists]]
+description = "Invented Go2My.Link keys in the connection test (stand-in server only)"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^g2ml_(AbCdEfGh|WrongKey)_$''']
+paths = ['''^tests/test_go2mylink\.php$''']
+
+[[allowlists]]
+description = "A price group label that looks like a key in the plans test"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^monthly_gbp_2$''']
+paths = ['''^tests/test_admin_plans\.php$''']
