@@ -379,6 +379,37 @@ function issueEmailVerificationLink(int $userID, string $email, ?string $display
     return true;
 }
 
+/** @var int Minutes a no-JavaScript email sign-in link lasts (#163, decision 0038; fn_no_script_route.php). Kept with the other link lifetimes, which fn_email.php reads. */
+if (!defined('CUERCODE_NO_SCRIPT_SIGN_IN_TTL_MINUTES')) {
+    define('CUERCODE_NO_SCRIPT_SIGN_IN_TTL_MINUTES', 15);
+}
+
+/** @var string The one answer sign-up always gives (anti-enumeration), shared with the no-JavaScript route (#163, 0038). */
+if (!defined('CUERCODE_REGISTER_GENERIC_MESSAGE')) {
+    define(
+        'CUERCODE_REGISTER_GENERIC_MESSAGE',
+        'If this email address is available for registration, a verification link has been sent to it.'
+    );
+}
+
+/**
+ * 📝 The identical "if that address can be used, a link is on its way" result
+ *    sign-up gives in every case. Also used by the no-JavaScript route (0038)
+ *    when its limits stop the email, so that answer is the same too. PURE.
+ *
+ * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
+ */
+function registerUserGenericResult(): array
+{
+    return [
+        'success'   => true,
+        'httpCode'  => 201,
+        'errorCode' => null,
+        'message'   => CUERCODE_REGISTER_GENERIC_MESSAGE,
+        'data'      => [],
+    ];
+}
+
 // ==============================================================================
 // 📝 registerUser() - Register a new (pending) account
 // ==============================================================================
@@ -414,15 +445,7 @@ function issueEmailVerificationLink(int $userID, string $email, ?string $display
  */
 function registerUser(string $email, #[\SensitiveParameter] string $plainPassword, ?string $displayName = null): array
 {
-    $genericMessage = 'If this email address is available for registration, '
-        . 'a verification link has been sent to it.';
-    $genericSuccess = [
-        'success'   => true,
-        'httpCode'  => 201,
-        'errorCode' => null,
-        'message'   => $genericMessage,
-        'data'      => [],
-    ];
+    $genericSuccess = registerUserGenericResult();
 
     if (!function_exists('dbQuery')) {
         return [
@@ -1772,45 +1795,52 @@ function verifyEmailToken(string $rawToken, #[\SensitiveParameter] ?string $pass
 // ==============================================================================
 
 /**
- * 🚪 Authenticate a user by email + password and issue a session on success.
+ * 🚪 The one "invalid email or password" answer every failed sign-in gets
+ *    (no enumeration). PURE.
  *
- * ANTI-ENUMERATION: every failure path (no such account, wrong password,
- * locked account, unverified/pending account, suspended account) returns the
- * SAME generic 401 message and error code - none of these states are
- * distinguishable from the response. password_verify() is ALWAYS invoked
- * (against a fixed dummy hash when no account row exists) so response timing
- * does not leak account existence either.
- *
- * @param string $email         Candidate email address
- * @param string $plainPassword Candidate plaintext password
- * @param string $ipAddress     Client IP address (for the session + lockout audit trail)
- * @param string $userAgent     Client user agent string (for the session audit trail)
- *
- * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array}
- *
- * @see issueUserSession()
- * @see recordFailedLogin()
- * @see fn_password.php - verifyPassword(), cuercodeDummyPasswordHash()
+ * @return array{success: bool, httpCode: int, errorCode: string, message: string, data: array}
  */
-function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, string $ipAddress, string $userAgent): array
+function loginUserGenericFailure(): array
 {
-    $genericFailMessage = 'Invalid email or password, or the account is not yet verified.';
-    $genericFailResult  = [
+    return [
         'success'   => false,
         'httpCode'  => 401,
         'errorCode' => 'INVALID_CREDENTIALS',
-        'message'   => $genericFailMessage,
+        'message'   => 'Invalid email or password, or the account is not yet verified.',
         'data'      => [],
     ];
+}
+
+/**
+ * 🔐 Check an email and password WITHOUT signing anyone in (#163, 0038).
+ *
+ * The first half of loginUser(), shared with the no-JavaScript email sign-in
+ * (fn_no_script_route.php), so both apply exactly the same rules: the same
+ * look-up, the same always-paid password check (a dummy hash when there is no
+ * account, so the time taken does not show whether one exists), the same
+ * refusal for a locked, waiting or suspended account, and the same
+ * wrong-password counting and lock-out (recordFailedLogin()).
+ *
+ * @param string $email         Candidate email address
+ * @param string $plainPassword Candidate plaintext password
+ *
+ * @return array{ok: bool, result: array, row: array<string, mixed>|null, sessionsValidFromSeen: string|null}
+ *         ok=false: 'result' is the answer to give (generic, or 503 with no database)
+ */
+function loginUserCheckPassword(string $email, #[\SensitiveParameter] string $plainPassword): array
+{
+    $genericFailResult = loginUserGenericFailure();
+    $refused           = ['ok' => false, 'result' => $genericFailResult, 'row' => null, 'sessionsValidFromSeen' => null];
 
     if (!function_exists('dbQuery')) {
-        return [
+        $refused['result'] = [
             'success'   => false,
             'httpCode'  => 503,
             'errorCode' => 'SERVICE_UNAVAILABLE',
             'message'   => 'Login is temporarily unavailable. Please try again later.',
             'data'      => [],
         ];
+        return $refused;
     }
 
     $normalizedEmail = mb_strtolower(trim($email));
@@ -1818,7 +1848,7 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
     // 🕐 Review finding 1: the account's "sessions valid from" mark is read in
     //    the SAME statement as the password hash, so the two always belong
     //    together. If a reset changes the password after this read, it also
-    //    moves the mark, and the session below is refused (issueUserSession()).
+    //    moves the mark, and the session is refused (issueUserSession()).
     $validFromColumn = '';
     if (authSessionsValidFromReady()) {
         $validFromColumn = ', `sessionsValidFrom`';
@@ -1838,7 +1868,7 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
         if (function_exists('logError')) {
             logError('error', 'Login lookup failed', $e->getMessage());
         }
-        return $genericFailResult;
+        return $refused;
     }
 
     // 🕐 Timing-safe non-enumeration: always pay the Argon2id verification
@@ -1848,20 +1878,19 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
         if (function_exists('verifyPassword') && function_exists('cuercodeDummyPasswordHash')) {
             verifyPassword($plainPassword, cuercodeDummyPasswordHash());
         }
-        return $genericFailResult;
+        return $refused;
     }
 
-    $userID      = (int) $row['userID'];
-    $status      = (string) $row['status'];
-    $failedCount = (int) $row['failedLoginCount'];
+    $userID = (int) $row['userID'];
+    $status = (string) $row['status'];
 
-    $lockedUntilRaw       = $row['lockedUntil'];
+    $lockedUntilRaw = $row['lockedUntil'];
     if ($lockedUntilRaw !== null) {
         $lockedUntilTimestamp = strtotime((string) $lockedUntilRaw);
     } else {
         $lockedUntilTimestamp = false;
     }
-    $isLocked             = ($lockedUntilTimestamp !== false && $lockedUntilTimestamp > time());
+    $isLocked = ($lockedUntilTimestamp !== false && $lockedUntilTimestamp > time());
 
     // 🔒 Always run verifyPassword() regardless of lock/status state, so a
     // locked/pending/suspended account does not produce a different timing
@@ -1877,7 +1906,7 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
         if (!$isLocked && $status === 'active' && !$passwordOk) {
             recordFailedLogin($userID);
         }
-        return $genericFailResult;
+        return $refused;
     }
 
     $sessionsValidFromSeen = null;
@@ -1885,14 +1914,32 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
         $sessionsValidFromSeen = (string) $row['sessionsValidFrom'];
     }
 
-    // ✅ Success - reset the failure counter and record the login.
+    return ['ok' => true, 'result' => [], 'row' => $row, 'sessionsValidFromSeen' => $sessionsValidFromSeen];
+}
+
+/**
+ * ✅ After a correct password: reset the failure counter (and, for a real
+ *    sign-in, note when it happened), and quietly re-hash an old-style
+ *    password hash. Shared by loginUser() and the email sign-in (0038).
+ *
+ * @param array<string, mixed> $row           The row loginUserCheckPassword() read
+ * @param string               $plainPassword The password just checked
+ * @param bool                 $markSignedIn  Also set lastLoginAt (false while an email sign-in waits)
+ *
+ * @return void
+ */
+function loginUserAfterPassword(array $row, #[\SensitiveParameter] string $plainPassword, bool $markSignedIn): void
+{
+    $userID = (int) $row['userID'];
+
+    if ($markSignedIn) {
+        $resetSql = 'UPDATE `tblUsers` SET `failedLoginCount` = 0, `lockedUntil` = NULL, `lastLoginAt` = NOW() WHERE `userID` = ?';
+    } else {
+        $resetSql = 'UPDATE `tblUsers` SET `failedLoginCount` = 0, `lockedUntil` = NULL WHERE `userID` = ?';
+    }
+
     try {
-        $resetStmt = dbQuery(
-            'UPDATE `tblUsers` SET `failedLoginCount` = 0, `lockedUntil` = NULL, `lastLoginAt` = NOW() '
-            . 'WHERE `userID` = ?',
-            'i',
-            [$userID]
-        );
+        $resetStmt = dbQuery($resetSql, 'i', [$userID]);
         $resetStmt->close();
     } catch (\Throwable $e) {
         if (function_exists('logError')) {
@@ -1908,8 +1955,8 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
     //    back over the new one.
     if (function_exists('passwordNeedsRehash') && passwordNeedsRehash((string) $row['passwordHash'])) {
         try {
-            $newHash      = hashPassword($plainPassword);
-            $rehashStmt   = dbQuery(
+            $newHash    = hashPassword($plainPassword);
+            $rehashStmt = dbQuery(
                 'UPDATE `tblUsers` SET `passwordHash` = ? WHERE `userID` = ? AND `passwordHash` = ?',
                 'sis',
                 [$newHash, $userID, (string) $row['passwordHash']]
@@ -1921,13 +1968,55 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
             }
         }
     }
+}
+
+/**
+ * 🚪 Authenticate a user by email + password and issue a session on success.
+ *
+ * ANTI-ENUMERATION: every failure path (no such account, wrong password,
+ * locked account, unverified/pending account, suspended account) returns the
+ * SAME generic 401 message and error code - none of these states are
+ * distinguishable from the response. password_verify() is ALWAYS invoked
+ * (against a fixed dummy hash when no account row exists) so response timing
+ * does not leak account existence either. (#163: the checks live in
+ * loginUserCheckPassword(), shared with the no-JavaScript email sign-in.)
+ *
+ * On success the result also carries 'userID' at the TOP level (never inside
+ * 'data', which the JSON route sends to the browser), so the human check can
+ * note a sign-in let through during an outage (decision 0037).
+ *
+ * @param string $email         Candidate email address
+ * @param string $plainPassword Candidate plaintext password
+ * @param string $ipAddress     Client IP address (for the session + lockout audit trail)
+ * @param string $userAgent     Client user agent string (for the session audit trail)
+ *
+ * @return array{success: bool, httpCode: int, errorCode: string|null, message: string, data: array, userID?: int}
+ *
+ * @see loginUserCheckPassword()
+ * @see issueUserSession()
+ * @see recordFailedLogin()
+ * @see fn_password.php - verifyPassword(), cuercodeDummyPasswordHash()
+ */
+function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, string $ipAddress, string $userAgent): array
+{
+    $check = loginUserCheckPassword($email, $plainPassword);
+
+    if (!$check['ok']) {
+        return $check['result'];
+    }
+
+    $row    = $check['row'];
+    $userID = (int) $row['userID'];
+
+    // ✅ Success - reset the failure counter and record the login.
+    loginUserAfterPassword($row, $plainPassword, true);
 
     // 🎫 Refused (empty) when the password was reset while this sign-in was
     //    being checked: the person sees the usual "invalid" answer.
-    $issuedSession = issueUserSession($userID, $ipAddress, $userAgent, $sessionsValidFromSeen);
+    $issuedSession = issueUserSession($userID, $ipAddress, $userAgent, $check['sessionsValidFromSeen']);
 
     if ($issuedSession === '') {
-        return $genericFailResult;
+        return loginUserGenericFailure();
     }
 
     return [
@@ -1941,6 +2030,7 @@ function loginUser(string $email, #[\SensitiveParameter] string $plainPassword, 
                 'display_name' => $row['displayName'],
             ],
         ],
+        'userID'    => $userID,
     ];
 }
 

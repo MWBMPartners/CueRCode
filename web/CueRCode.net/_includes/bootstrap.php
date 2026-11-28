@@ -249,6 +249,10 @@ $functionFiles = [
     // fn_oauth.php (it reuses oauthApplyCurlSafety()). Off until a Global
     // Admin enters a provider's keys, so loading it makes no outbound call.
     'fn_human_check.php',
+    // ✉️ #163 (decision 0038): the email-confirmed route for visitors without
+    // JavaScript (strict limits; the email sign-in link). Loaded after
+    // fn_human_check.php and fn_auth.php, whose functions it uses.
+    'fn_no_script_route.php',
 ];
 
 foreach ($functionFiles as $functionFile) {

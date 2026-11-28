@@ -1591,11 +1591,11 @@ assertEquals(
 
 // --- link lifetimes and the expiry rule --------------------------------------------------
 assertEquals(
-    ['verification' => CUERCODE_EMAIL_VERIFICATION_TTL_HOURS * 3600, 'password_reset' => CUERCODE_PASSWORD_RESET_TTL_MINUTES * 60],
+    ['verification' => CUERCODE_EMAIL_VERIFICATION_TTL_HOURS * 3600, 'password_reset' => CUERCODE_PASSWORD_RESET_TTL_MINUTES * 60, 'email_sign_in' => CUERCODE_NO_SCRIPT_SIGN_IN_TTL_MINUTES * 60],
     emailQueueLinkLifetimes(),
     "emailQueueLinkLifetimes() reads fn_auth.php's constants"
 );
-assertEquals(['verification' => 86400, 'password_reset' => 3600], emailQueueLinkLifetimes(), "emailQueueLinkLifetimes() reads fn_auth.php's constants: today's lifetimes are 24 hours and 60 minutes");
+assertEquals(['verification' => 86400, 'password_reset' => 3600, 'email_sign_in' => 900], emailQueueLinkLifetimes(), "emailQueueLinkLifetimes() reads fn_auth.php's constants: today's lifetimes are 24 hours, 60 minutes and (no-JavaScript email sign-in, #163) 15 minutes");
 assertEquals(
     ['verification' => 86400],
     normaliseEmailQueueLinkLifetimes(['verification' => 86400, 'nope' => 5, 'password_reset' => 0, 'receipt' => '60']),

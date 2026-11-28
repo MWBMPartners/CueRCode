@@ -316,6 +316,7 @@ function isValidEmailTemplateKey(string $key): bool
         'password_reset',
         'invitation',
         'receipt',
+        'email_sign_in',
     ];
 
     if (!in_array($key, $allowedKeys, true)) {
@@ -1194,6 +1195,7 @@ if (!defined('CUERCODE_EMAIL_QUEUE_REQUIRED_LINK_PARAMS')) {
         'verification'   => 'verificationUrl',
         'password_reset' => 'resetUrl',
         'invitation'     => 'inviteUrl',
+        'email_sign_in'  => 'confirmUrl',
     ]);
 }
 
@@ -2013,6 +2015,11 @@ function emailQueueLinkLifetimes(): array
 
     if (defined('CUERCODE_PASSWORD_RESET_TTL_MINUTES')) {
         $lifetimes['password_reset'] = (int) CUERCODE_PASSWORD_RESET_TTL_MINUTES * 60;
+    }
+
+    // ✉️ #163 (decision 0038): the no-JavaScript email sign-in link (also a fn_auth.php constant).
+    if (defined('CUERCODE_NO_SCRIPT_SIGN_IN_TTL_MINUTES')) {
+        $lifetimes['email_sign_in'] = (int) CUERCODE_NO_SCRIPT_SIGN_IN_TTL_MINUTES * 60;
     }
 
     return $lifetimes;

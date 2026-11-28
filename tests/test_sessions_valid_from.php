@@ -91,12 +91,19 @@ assertContains("if ((int) \$row['validFromMatches'] !== 1) {", $svCurrent, 'curr
 assertTrue(strpos($svCurrent, 'validFromMatches\'] !== 1') < strpos($svCurrent, 'UPDATE `tblUserSessions` SET `lastSeenAt`'), '...before it touches the session');
 assertContains("'sessionsValidFrom' => \$sessionsValidFrom,", $svCurrent, 'currentUser() returns the mark (for the Google/Microsoft link check)');
 
-$svLogin = svBody($svAuth, 'loginUser');
-assertContains("\$validFromColumn = ', `sessionsValidFrom`';", $svLogin, 'loginUser() reads the mark...');
-assertTrue(strpos($svLogin, '`failedLoginCount`, `lockedUntil`\' . $validFromColumn') !== false, '...in the SAME statement as the password hash');
-assertContains('issueUserSession($userID, $ipAddress, $userAgent, $sessionsValidFromSeen)', $svLogin, 'loginUser() passes the mark it read');
+// 🔐 #163: loginUser() is split so the no-JavaScript email sign-in shares
+//    its password check (loginUserCheckPassword()) and its after-password
+//    step (loginUserAfterPassword()); the same rules are checked there.
+$svLogin        = svBody($svAuth, 'loginUser');
+$svCheck        = svBody($svAuth, 'loginUserCheckPassword');
+$svAfter        = svBody($svAuth, 'loginUserAfterPassword');
+assertContains("\$validFromColumn = ', `sessionsValidFrom`';", $svCheck, 'loginUserCheckPassword() reads the mark...');
+assertTrue(strpos($svCheck, '`failedLoginCount`, `lockedUntil`\' . $validFromColumn') !== false, '...in the SAME statement as the password hash');
+assertContains("'sessionsValidFromSeen' => \$sessionsValidFromSeen", $svCheck, '... and hands it back with the row');
+assertContains('$check = loginUserCheckPassword($email, $plainPassword);', $svLogin, 'loginUser() uses that password check');
+assertContains("issueUserSession(\$userID, \$ipAddress, \$userAgent, \$check['sessionsValidFromSeen'])", $svLogin, 'loginUser() passes the mark it read');
 assertContains("if (\$issuedSession === '') {", $svLogin, 'loginUser() reports a failure when the session was refused');
-assertContains('WHERE `userID` = ? AND `passwordHash` = ?', $svLogin, 'F1: the automatic re-hash never writes the OLD password back over a reset one');
+assertContains('WHERE `userID` = ? AND `passwordHash` = ?', $svAfter, 'F1: the automatic re-hash never writes the OLD password back over a reset one');
 
 $svDoors = svBody($svAuth, 'accountRemoveOtherWaysIn');
 assertTrue(strpos($svDoors, 'authMoveSessionsValidFrom($userID);') !== false && strpos($svDoors, 'authMoveSessionsValidFrom($userID);') < strpos($svDoors, '$statements = ['), 'accountRemoveOtherWaysIn() (reset AND admin grant) moves the mark first');
@@ -129,7 +136,8 @@ foreach ([CUERCODE_FUNCTIONS_DIR, $svSiteRoot . 'public_html' . DIRECTORY_SEPARA
 }
 sort($svCallers);
 assertEquals([
-    '_functions/fn_auth.php: $userID, $ipAddress, $userAgent, $sessionsValidFromSeen',
+    "_functions/fn_auth.php: \$userID, \$ipAddress, \$userAgent, \$check['sessionsValidFromSeen']",
+    "_functions/fn_no_script_route.php: (int) \$row['userID'], \$ip, \$userAgent, \$seen",
     'callback/index.php: (int) $resolvedUserId, $clientIp, $userAgent, $sessionsValidFromSeen',
 ], $svCallers, 'exactly two places make a session (password, Google/Microsoft) and both pass the mark (passkeys are not built yet)');
 
