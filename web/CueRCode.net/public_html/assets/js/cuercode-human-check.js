@@ -77,6 +77,13 @@
     var scriptTimer = null;
 
     /**
+     * 🔢 Which script load is the current one (second Codex review). Each
+     *    loadScript() call gets the next number; a "could not load" from an
+     *    older script is ignored, so a late failure never skips a provider.
+     */
+    var loadGeneration = 0;
+
+    /**
      * 🎨 The site's current colour scheme, for the widget's theme.
      *
      * @returns {string} 'dark' or 'light'
@@ -259,11 +266,17 @@
      * @param {string} source
      */
     function loadScript(source) {
+        loadGeneration = loadGeneration + 1;
+        var myGeneration = loadGeneration;
         var script = document.createElement('script');
         script.src = source;
         script.async = true;
         script.defer = true;
         script.onerror = function () {
+            /* 📌 A script that is no longer the current one: nothing to do. */
+            if (myGeneration !== loadGeneration) {
+                return;
+            }
             if (scriptTimer !== null) {
                 window.clearTimeout(scriptTimer);
                 scriptTimer = null;
@@ -284,8 +297,17 @@
 
     /**
      * 📥 Called by the provider's script once it has loaded (onload=...).
+     *
+     * All three providers call this SAME name, so a provider whose script
+     * arrives after the page has already moved on to the next one calls it
+     * too (second Codex review). The timer is stopped only when the CURRENT
+     * provider has really loaded; otherwise the current provider's timer
+     * keeps running, so the next fallback is still tried if it never answers.
      */
     window.cuercodeHumanCheckLoaded = function () {
+        if (boxes.length === 0 || providerApi(boxes[0].getAttribute('data-provider')) === null) {
+            return;
+        }
         if (scriptTimer !== null) {
             window.clearTimeout(scriptTimer);
             scriptTimer = null;

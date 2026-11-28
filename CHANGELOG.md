@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - A late provider script can no longer stop the human check moving on (second Codex review, 2026-11-28)
+
+- The widget script waits 8 seconds for a provider's script, then tries the next configured provider. All three providers answer through the same function, so a provider that answered late, after the page had moved on, stopped the next provider's 8-second timer. If that provider never answered, the third was never tried. A late "could not load" from an earlier script also made it skip a provider.
+- Now each script load is numbered and an older load's failure is ignored. The shared answer stops the timer only when the current provider has really loaded.
+- Shown failing first: the new `tests/test_human_check_widget_script.php` runs the real script under Node.js with a stand-in page and timers. With the old script hCaptcha was never tried and reCAPTCHA was skipped (6 of 9 checks failed). Now all 9 pass. Where Node.js is missing, the behaviour part is skipped with a note; GitHub's ubuntu-latest runners have it.
+
 ### Security - The human check follows decision 0037 exactly during an outage (second Codex review, 2026-11-28)
 
 - **No "refuse" choice any more.** The setting "If every provider cannot be reached" offered "refuse sign-in too", which decision 0037 rules out. It is removed from `/admin/settings/`. A value saved earlier (or typed into the database) is no longer read, so the 0037 rule always applies: during an outage only sign-in is let through, and it is recorded. (Upgrade 0005 still adds the old row; it is left unused.)
