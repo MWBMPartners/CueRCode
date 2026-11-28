@@ -39,8 +39,13 @@
  *       and its answer never says whether a password was right, so counting
  *       them let anyone keep anyone locked out from one address. Past this
  *       number the route stops checking passwords for that mailbox (a right
- *       one too) until the day is over, with the same answer as always; the
- *       normal form is not affected. A right password gives its place back.
+ *       one too) until the day is over, with the same answer as always. The
+ *       account is never locked and the normal form is not affected, but a
+ *       person WITHOUT JavaScript has only this route, so a stranger who uses
+ *       up the number keeps them out of it for the day: an accepted risk
+ *       (decision 0044), not a way round a limit. A right password gives its
+ *       place back. A look-alike spelling of the address finds no account
+ *       (emailExactMatchSql(), fourth-round review Medium 1).
  *   Only an email that was really queued counts against the email limits: a
  *   forgot-password request for an address with no account, or a wrong
  *   password, uses up no email (review L1, L2). Counted in

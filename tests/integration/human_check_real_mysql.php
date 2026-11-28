@@ -994,9 +994,10 @@ if ($hcLockName !== '') {
 hcCheck('N', $hcLockName !== '' && str_contains($hcPost['body'], 'busy just now') && !str_contains($hcPost['body'], 'from your connection'), 'I2: the route\'s lock held elsewhere: the answer says the route is busy, not that the visitor sent too many');
 
 // ==============================================================================
-// R. Third-round review Medium 1: the route can never lock an account out
+// R. Third-round review Medium 1: the route never locks the account (its own
+//    per-account number can still stop the route for a day: decision 0044)
 // ==============================================================================
-echo PHP_EOL . 'R. No-JavaScript sign-in cannot lock anyone out (third-round review, Medium 1)' . PHP_EOL;
+echo PHP_EOL . 'R. No-JavaScript sign-in never locks the account (third-round review, Medium 1)' . PHP_EOL;
 $hcServer->query('DELETE FROM `tblNoScriptRequests`');
 $hcServer->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'no_script_route_password_per_day'");
 foreach (['no_script_route_ip_per_hour' => '5', 'no_script_route_email_per_day' => '3', 'no_script_route_site_per_hour' => '100'] as $hcLimitKey => $hcLimitValue) {

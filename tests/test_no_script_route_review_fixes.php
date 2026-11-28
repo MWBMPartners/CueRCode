@@ -323,7 +323,9 @@ assertFalse(str_contains($nsMigrationText, "AND `settingValue` = \\'none\\'"), '
 assertContains('`emailSent`', $nsMigrationText, 'L1: 0005: the route\'s record says which uses actually sent an email (only those count against the email limits)');
 
 // ==============================================================================
-// Third-round review, Medium 1: the route can never lock an account out
+// Third-round review, Medium 1: the route never locks the ACCOUNT (its own
+// per-account number can still keep a person without JavaScript out of the
+// route for a day: an accepted risk, decision 0044)
 // ==============================================================================
 
 $nsBounds = noScriptRouteBounds();

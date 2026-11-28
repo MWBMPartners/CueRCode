@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation - No more "nobody is locked out" for the no-JavaScript route; the clean-ups need the cron job (fourth-round review, Low 1 and Info 4, 2026-11-28)
+
+- **Low 1 (accepted risk, decision 0044):** the admin help for "Most wrong passwords checked for one account in 24 hours", DEV_NOTES, `docs/INSTALL.md`, the code comments and the third-round changelog entry said nobody could be locked out by the no-JavaScript route. The account is never locked and the normal form keeps working for anyone with JavaScript. But a person without JavaScript has only that route, so a stranger who uses up the daily number keeps them out of it for the day. The documents now say so. The limits themselves are unchanged, as decided.
+- **Info 4:** `docs/INSTALL.md` step 7 now says the cron job also does the privacy clean-ups the privacy page promises. Without it, old email records, error-log entries and visitor details are not removed.
+
 ### Tests - A right password's check place is given back: now tested (fourth-round review, Low 5, 2026-11-28)
 
 - Nothing tested that a right password on the no-JavaScript sign-in gives its "password check" place back. Without it, a person's own sign-ins would count as wrong passwords, and after 10 in a day they could not sign in that way. Scenario R of `human_check_real_mysql.php` now signs in correctly 11 times through the route, with the email limit raised, and expects all 11 emails. With the give-back removed (the reviewer's change) the check fails, with 10 emails; with it, 11.
@@ -73,10 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The test-server guard checks it can see every database (Low 4).** It refuses an account without the server-wide right to list all databases, because such an account would not see a live database it has no rights to.
 - **Smaller hardening (Info 1, 2, 4):** the "the price columns would round this" rule is tested on its own; a widening step in a database upgrade may contain nothing after the column type except a number default and a description; the shared test runner removes each test database after its script.
 
-### Security - Signing in without JavaScript can no longer keep someone locked out (third-round review, Medium 1, 2026-11-28)
+### Security - Signing in without JavaScript can no longer lock someone's account (third-round review, Medium 1, 2026-11-28)
 
 - **The fault:** the email-confirmed sign-in for visitors without JavaScript has no human check, and wrong passwords typed through it counted toward the account's lock-out. Five posts with wrong passwords from one internet address (inside its limit of 5 an hour) locked any account for 15 minutes, and one more post every quarter of an hour kept it locked.
-- **The fix:** wrong passwords typed through that route no longer count toward the lock-out. Guessing stays bounded per address (5 an hour, as before) and now also per account: the route checks at most 10 wrong passwords for one account in 24 hours (new setting "Most wrong passwords checked for one account in 24 hours", 1-100, on `/admin/settings/`, Human check section). After that it stops checking that account's passwords until the day is over, with the same answer as always. The normal sign-in form, its lock-out and the route's one answer are unchanged. No database upgrade.
+- **The fix:** wrong passwords typed through that route no longer count toward the lock-out. Guessing stays bounded per address (5 an hour, as before) and now also per account: the route checks at most 10 wrong passwords for one account in 24 hours (new setting "Most wrong passwords checked for one account in 24 hours", 1-100, on `/admin/settings/`, Human check section). After that it stops checking that account's passwords until the day is over, with the same answer as always. The normal sign-in form, its lock-out and the route's one answer are unchanged. No database upgrade. (Corrected after the fourth-round review: a person without JavaScript has only this route, so a stranger who uses up the 10 checks still keeps them out of it for the day. Decision 0044 accepts that risk.)
 - Shown failing first over real HTTP (new scenario R in `human_check_real_mysql.php`, MySQL 8.0.36): after five wrong route posts the right password through the normal form was refused; now it signs in.
 
 ### Security - The admin area refuses inline scripts (#154, 2026-11-28)
