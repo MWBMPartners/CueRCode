@@ -340,7 +340,36 @@ assertEquals(
     $asOptionalKeys,
     'only the two #179 log periods, trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
 );
-assertEquals(9, count(adminSettingsSections()), 'there are nine sections (plan §7.2, plus the website address section, #113 B9)');
+assertEquals(10, count(adminSettingsSections()), 'there are ten sections (plan §7.2, plus the website address section, #113 B9, and dynamic QR codes, #165)');
+
+// 🔗 #165: the dynamic QR (Go2My.Link) section.
+assertEquals(
+    ['go2mylink_api_base_url', 'go2mylink_api_key', 'go2mylink_timeout_seconds', 'dynamic_redirect_base_url', 'link_safety_webrisk_api_key'],
+    array_keys(adminSettingsFieldsForSection('dynamic')),
+    '#165: the dynamic QR section: API address, API key, waiting time, short-link address, then the Web Risk key'
+);
+assertEquals('go2mylink_key', $asRegistry['go2mylink_api_key']['secretFormat'], '#165: the Go2My.Link key is checked against Go2My.Link\'s key shape');
+assertTrue(adminSettingsFieldIsSecret($asRegistry['go2mylink_api_key']) && adminSettingsFieldIsSecret($asRegistry['link_safety_webrisk_api_key']), '#165: both keys are secrets (stored encrypted, never shown)');
+$asG2Key = 'g2ml_AbC-_9xY_' . str_repeat('Q', 40) . '-_z';
+assertTrue($asSecretCheck($asG2Key, 'go2mylink_key')['ok'], '#165: a key of Go2My.Link\'s shape (g2ml_ + 8 + _ + 43) is accepted');
+foreach (['g2ml_short_' . str_repeat('a', 43), 'G2ML_AbCdEfGh_' . str_repeat('a', 43), 'g2ml_AbCdEfGh_' . str_repeat('a', 42), 'g2ml_AbCdEfGh_' . str_repeat('a', 44), 'g2ml_AbCdEfGh-' . str_repeat('a', 43), 'g2ml_AbCdEfGh_' . str_repeat('a', 42) . '!', 'sk_live_abc'] as $asBadKey) {
+    $asKeyResult = $asSecretCheck($asBadKey, 'go2mylink_key');
+    assertFalse($asKeyResult['ok'], '#165: not a Go2My.Link key: ' . substr($asBadKey, 0, 16) . '...');
+    assertFalse(str_contains($asKeyResult['error'], $asBadKey), '#165: the refusal does not repeat what was typed');
+}
+assertTrue($asValidate('go2mylink_api_base_url', 'https://go2my.link/api/v1')['ok'], '#165: the production API address is accepted');
+foreach (['http://go2my.link/api/v1', 'https://127.0.0.1/api/v1', 'https://localhost/api/v1', 'https://go2my.link:8443/api/v1', 'https://user:pw@go2my.link/api/v1', ''] as $asBadApi) {
+    assertFalse($asValidate('go2mylink_api_base_url', $asBadApi)['ok'], '#165: the API address refuses ' . var_export($asBadApi, true));
+}
+assertTrue($asValidate('go2mylink_timeout_seconds', '2')['ok'] && $asValidate('go2mylink_timeout_seconds', '15')['ok'], '#165: waiting time 2 to 15 seconds');
+assertFalse($asValidate('go2mylink_timeout_seconds', '1')['ok'] || $asValidate('go2mylink_timeout_seconds', '16')['ok'], '#165: a waiting time outside 2 to 15 is refused');
+assertEquals('https://alpha.qrmy.link', $asValidate('dynamic_redirect_base_url', 'https://alpha.QRmy.Link/')['value'], '#165 (decision 0030): the alpha short-link address is accepted (website name only)');
+foreach (['https://QRmy.Link/r', 'http://QRmy.Link', 'https://10.0.0.1', ''] as $asBadBase) {
+    assertFalse($asValidate('dynamic_redirect_base_url', $asBadBase)['ok'], '#165: the short-link address refuses ' . var_export($asBadBase, true));
+}
+assertFalse(adminSettingsKeyIsLocked('dynamic_redirect_base_url'), '#165: the short-link address can be set');
+assertTrue(adminSettingsKeyIsLocked('dynamic_qr_enabled'), '#165: dynamic QR itself stays locked off');
+assertEquals(10, CUERCODE_ADMIN_TEST_GO2MYLINK_MAX, '#165: at most 10 Go2My.Link connection checks per 10 minutes');
 
 // 🔐 Every seeded secret is on the screen, or deliberately not (runtime caches, SIGNula, inert).
 $asKnownLeftOut = ['graph_token_cache', 'sso_signula_client_id', 'sso_signula_client_secret'];
@@ -786,6 +815,17 @@ assertTrue(strpos($asGraphBody, 'adminSettingsWriteTestAttempt(') < strpos($asGr
 $asEmailBody = (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsSendTestEmail('), 6000);
 assertTrue(strpos($asEmailBody, 'adminSettingsWriteTestAttempt(') < strpos($asEmailBody, '$sender($address'), 'the test email writes its audit row BEFORE it is sent');
 assertContains('so no email was sent', $asEmailBody, 'a test email that cannot be recorded is not sent, and the message says so');
+// 🔗 #165: the Go2My.Link check follows the same rules: audit row first, the limit from the audit log, then the check.
+$asG2Body = (string) substr($asFunctions, (int) strpos($asFunctions, 'function adminSettingsTestGo2MyLink('), 4200);
+assertTrue(
+    strpos($asG2Body, "adminSettingsWriteTestAttempt(\$admin, 'setting.test_go2mylink'") < strpos($asG2Body, "adminSettingsAttemptWithinLimit(\$admin, 'setting.test_go2mylink', 'go2mylink_connection', \$now, CUERCODE_ADMIN_TEST_GO2MYLINK_MAX)")
+    && strpos($asG2Body, 'adminSettingsAttemptWithinLimit(') < strpos($asG2Body, '$tester()'),
+    '#165: the Go2My.Link check writes its audit row first, counts the limit (including it), then runs'
+);
+assertTrue(in_array('setting.test_go2mylink', adminAuditActionNames(), true) && in_array('setting.test_go2mylink.started', adminAuditActionNames(), true), '#165: the audit log accepts the Go2My.Link check\'s two names');
+assertContains("\$settingsAction === 'test_go2mylink'", $asPage, '#165: the page handles the Test connection button');
+assertContains('name="settings_action" value="test_go2mylink"', $asPage, '#165: the page shows the Test connection button');
+assertContains("adminRedirect('/admin/settings/#section-dynamic')", $asPage, '#165: after the check the page returns to the dynamic QR section');
 
 // 📋 M5: a drop-down never silently changes a saved value.
 $asDrop = static function (string $asKey, ?string $asSaved, array $asView = []) use ($asRegistry): string {

@@ -104,6 +104,12 @@ if (!function_exists('moneyParseCurrencyList')) {
     require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_money.php';
 }
 
+// 🔗 #165: the Go2My.Link waiting-time limits and the "Test connection"
+//    check live in ONE place. Pure on loading.
+if (!function_exists('go2mylinkTestConnection')) {
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_go2mylink.php';
+}
+
 // 🗑️ #179: the error-log and visitor-details periods' defaults
 //    (CUERCODE_ERROR_LOG_RETENTION_DAYS_DEFAULT and friends) live in
 //    fn_email.php with the clean-up that uses them. That file defines
@@ -134,6 +140,11 @@ if (!defined('CUERCODE_ADMIN_TEST_EMAIL_WINDOW_SECONDS')) {
 /** @var int "Check Microsoft connection" attempts allowed per window, per admin (counted from the audit log). */
 if (!defined('CUERCODE_ADMIN_TEST_GRAPH_MAX')) {
     define('CUERCODE_ADMIN_TEST_GRAPH_MAX', 10);
+}
+
+/** @var int Go2My.Link "Test connection" attempts allowed per window, per admin (counted from the audit log, #165). */
+if (!defined('CUERCODE_ADMIN_TEST_GO2MYLINK_MAX')) {
+    define('CUERCODE_ADMIN_TEST_GO2MYLINK_MAX', 10);
 }
 
 /**
@@ -272,6 +283,12 @@ function adminSettingsSections(): array
             'title' => 'Human check (bot protection)',
             'icon'  => 'fa-solid fa-robot',
             'intro' => 'A short check that a visitor is a person, on the forms to create an account, sign in, reset a password and ask for a new verification link (and the same JSON routes). It stays off until a provider\'s site key AND secret key are both entered. On "Automatic", every provider with both keys is used, in the order Cloudflare Turnstile, Google reCAPTCHA, hCaptcha: the next one takes over while one is down. Get the keys from the provider\'s own dashboard and add this site\'s address there. The privacy page names the providers in use. If the check ever locks everyone out (including you), run php _includes/cli/human_check.php off on the server.',
+        ],
+        'dynamic' => [
+            'saveLabel' => 'Save dynamic QR settings',
+            'title' => 'Dynamic QR codes (Go2My.Link)',
+            'icon'  => 'fa-solid fa-arrows-rotate',
+            'intro' => 'A dynamic code prints a short address on QRmy.Link, and Go2My.Link (the sister link service) sends each scan on to the code\'s destination. Enter the Go2My.Link API address and key, save, then use "Test connection": it only reads, and changes nothing on Go2My.Link. Dynamic codes stay switched off for everyone until the rest of the feature is built and checked.',
         ],
         'paypal' => [
             'saveLabel' => 'Save PayPal settings',
@@ -562,6 +579,42 @@ function adminSettingsRegistry(): array
             'description' => 'No-JavaScript email route (decision 0038): ' . strtolower($noScriptText[0]) . '.',
         ]);
     }
+
+    // ------------------------------------- 4b. Dynamic QR codes (Go2My.Link, #165)
+    $fields[] = adminSettingsField([
+        'key' => 'go2mylink_api_base_url', 'section' => 'dynamic', 'kind' => 'https_url', 'group' => 'redirects', 'type' => 'url',
+        'label' => 'Go2My.Link API address',
+        'help' => 'Normally https://go2my.link/api/v1. A test (alpha) database that uses a different Go2My.Link sets that address here (decision 0030). Must start with https://.',
+        'allowEmpty' => false, 'maxLength' => 255,
+        'description' => 'Go2My.Link API address used for dynamic codes (production by default; an alpha test database sets its own, decision 0030)',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'go2mylink_api_key', 'section' => 'dynamic', 'kind' => 'secret', 'group' => 'redirects', 'type' => 'string',
+        'label' => 'Go2My.Link API key',
+        'help' => 'Made on the Go2My.Link dashboard for the CueRCode organisation, with the permissions qr:link, urls:read and urls:write (urls:delete and analytics:read are planned; account:read lets "Test connection" list them). It starts with g2ml_. Stored encrypted and never shown again.',
+        'secretFormat' => 'go2mylink_key',
+        'description' => 'Go2My.Link API key (scopes qr:link, urls:read, urls:write) - stored encrypted and never shown back',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'go2mylink_timeout_seconds', 'section' => 'dynamic', 'kind' => 'int', 'group' => 'redirects', 'type' => 'integer',
+        'label' => 'How long to wait for Go2My.Link (seconds)',
+        'help' => 'Whole seconds, ' . CUERCODE_GO2MYLINK_MIN_TIMEOUT . ' to ' . CUERCODE_GO2MYLINK_MAX_TIMEOUT . '. The default is ' . CUERCODE_GO2MYLINK_DEFAULT_TIMEOUT . '. After this a new code or a change is refused with "try again later"; scans are not affected (Go2My.Link answers them).',
+        'min' => CUERCODE_GO2MYLINK_MIN_TIMEOUT, 'max' => CUERCODE_GO2MYLINK_MAX_TIMEOUT,
+        'description' => 'Go2My.Link: seconds to wait for an answer. Whole number 2-15; anything else means the default of 5.',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'dynamic_redirect_base_url', 'section' => 'dynamic', 'kind' => 'site_url', 'group' => 'redirects', 'type' => 'url',
+        'label' => 'Short-link address printed in dynamic codes',
+        'help' => 'https://QRmy.Link for real codes; https://alpha.QRmy.Link on the alpha test database (decision 0030). It must be the CueRCode organisation\'s default short domain on Go2My.Link: a link Go2My.Link makes on any other domain is refused, never printed. Only the website name, no path.',
+        'allowEmpty' => false, 'maxLength' => 253,
+        'description' => 'The short-link address printed in dynamic codes ({address}/{short code}); must be the CueRCode organisation\'s default short domain on Go2My.Link',
+    ]);
+    $fields[] = adminSettingsField([
+        'key' => 'link_safety_webrisk_api_key', 'section' => 'dynamic', 'subgroup' => 'Link-safety check (Google Web Risk)', 'kind' => 'secret', 'group' => 'link_safety', 'type' => 'string',
+        'label' => 'Google Web Risk API key',
+        'help' => 'From a Google Cloud project with the Web Risk API switched on; restrict the key to that API. Saved now, used when the link-safety check is built (#168). Stored encrypted and never shown again.',
+        'description' => 'Google Web Risk API key (restricted to the Web Risk API) - stored encrypted and never shown back',
+    ]);
 
     // ----------------------------------------------------------------- 5. PayPal
     $fields[] = adminSettingsField([
@@ -892,6 +945,12 @@ function adminSettingsCheckSecretValue(#[\SensitiveParameter] string $typed, str
     } elseif ($format === 'guid_or_domain') {
         if (!adminSettingsIsGuid($value) && !adminSettingsIsDomainName($value)) {
             return ['ok' => false, 'value' => '', 'error' => 'That does not look right. It should be the tenant ID (letters and numbers in groups separated by dashes) or a domain name such as example.com.'];
+        }
+    } elseif ($format === 'go2mylink_key') {
+        // 🔗 #165: Go2My.Link's key shape (g2ml_apiGenerateKey(): "g2ml_",
+        //    8 characters, "_", 43 characters, all letters, digits, - or _).
+        if (preg_match('/^g2ml_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$/D', $value) !== 1) {
+            return ['ok' => false, 'value' => '', 'error' => 'That does not look like a Go2My.Link API key. It starts with g2ml_ and is 57 characters long. Copy it again from the Go2My.Link dashboard.'];
         }
     }
 
@@ -2496,6 +2555,92 @@ function adminSettingsTestGraph(array $admin, ?callable $tokenFetcher = null, ?i
     }
 
     return ['ok' => false, 'message' => 'Could not connect. Check the tenant ID, app ID and app secret (and that the secret has not expired). More detail is in the activity log (the "email failed" entries).' . $recordNote];
+}
+
+/**
+ * 🔗 "Test connection" for Go2My.Link (#165): runs go2mylinkTestConnection(),
+ *    which only reads (and tries to change a code that cannot exist), so
+ *    NOTHING changes on Go2My.Link. Never returns the key or Go2My.Link's
+ *    own wording.
+ *
+ * Audit (setting.test_go2mylink): a row is written BEFORE the check (if it
+ * cannot be written the check is not run), and a second row says how it
+ * ended. At most CUERCODE_ADMIN_TEST_GO2MYLINK_MAX attempts per 10 minutes
+ * per admin, counted from the first kind of row - the same rules as the
+ * Microsoft check.
+ *
+ * @param array<string, mixed> $admin  From requireGlobalAdminPage()
+ * @param callable|null        $tester Stand-in for go2mylinkTestConnection() (tests); null = the real one
+ * @param int|null             $now    Stand-in clock (tests); null = now
+ * @return array{ok: bool, message: string}
+ */
+function adminSettingsTestGo2MyLink(array $admin, ?callable $tester = null, ?int $now = null): array
+{
+    if (!adminTableExists('tblAdminAuditLog')) {
+        return ['ok' => false, 'message' => 'Database upgrades are waiting, so this cannot be checked yet.'];
+    }
+
+    if ($now === null) {
+        $now = time();
+    }
+
+    if ($tester === null) {
+        $tester = 'go2mylinkTestConnection';
+    }
+
+    // 🧾 Record the attempt FIRST: no record, no check.
+    if (!adminSettingsWriteTestAttempt($admin, 'setting.test_go2mylink', 'go2mylink_connection')) {
+        return ['ok' => false, 'message' => 'This check could not be recorded in the admin change log, so it was not run. Please try again.'];
+    }
+
+    // 🚦 At most 10 in 10 minutes for this admin, counted from the audit log.
+    $limit = adminSettingsAttemptWithinLimit($admin, 'setting.test_go2mylink', 'go2mylink_connection', $now, CUERCODE_ADMIN_TEST_GO2MYLINK_MAX);
+    if ($limit['unreadable']) {
+        return ['ok' => false, 'message' => 'The limit on checks could not be read, so nothing was checked. Please try again.'];
+    }
+    if (!$limit['allowed']) {
+        $minutes = (int) ceil($limit['waitSeconds'] / 60);
+        return ['ok' => false, 'message' => 'Too many connection checks just now (the limit is ' . CUERCODE_ADMIN_TEST_GO2MYLINK_MAX . ' in 10 minutes). Try again in about ' . $minutes . ' minute(s).'];
+    }
+
+    $passed = false;
+    $lines  = [];
+    try {
+        $answer = $tester();
+        if (is_array($answer)) {
+            if (isset($answer['ok']) && $answer['ok'] === true) {
+                $passed = true;
+            }
+            if (isset($answer['lines']) && is_array($answer['lines'])) {
+                foreach ($answer['lines'] as $line) {
+                    if (is_string($line)) {
+                        $lines[] = $line;
+                    }
+                }
+            }
+        }
+    } catch (\Throwable $e) {
+        $passed = false;
+        if (function_exists('logError')) {
+            logError('error', 'Go2My.Link connection check threw', get_class($e));
+        }
+    }
+
+    $recorded   = adminSettingsWriteTestResult($admin, 'setting.test_go2mylink', 'go2mylink_connection', $passed);
+    $recordNote = '';
+    if (!$recorded) {
+        $recordNote = ' (The result could not be written to the admin change log.)';
+    }
+
+    $summary = 'Could not connect to Go2My.Link.';
+    if ($passed) {
+        $summary = 'Connected to Go2My.Link.';
+    }
+    if ($lines === []) {
+        $lines[] = 'The check could not be completed. More detail is in the error log.';
+    }
+
+    return ['ok' => $passed, 'message' => $summary . ' ' . implode(' ', $lines) . $recordNote];
 }
 
 /**

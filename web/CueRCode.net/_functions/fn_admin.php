@@ -576,6 +576,8 @@ function adminAuditActionNames(): array
         'setting.test_graph', 'setting.test_email',
         // 🧾 Final review N-2: the row written BEFORE a test runs.
         'setting.test_graph.started', 'setting.test_email.started',
+        // 🔗 #165: the Go2My.Link "Test connection" button (before and after).
+        'setting.test_go2mylink', 'setting.test_go2mylink.started',
         'plan.create', 'plan.update', 'plan.update_reduction', 'plan.new_version', 'plan.retire', 'plan.restore', 'plan.delete',
         'price.create', 'price.update', 'price.retire', 'price.delete',
         'entitlement.update', 'apikeys.resync',

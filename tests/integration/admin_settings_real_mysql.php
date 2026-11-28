@@ -58,6 +58,15 @@
  *   N. The test actions write their audit row BEFORE acting (a forced audit
  *      failure means nothing is sent), and the limits are counted from the
  *      audit rows (10 connection checks, 5 test emails per 10 minutes).
+ *   Q. Dynamic QR (#164, #165): the Go2My.Link key must have Go2My.Link's
+ *      shape and is stored encrypted; the connection code reads the real
+ *      settings (and alpha.QRmy.Link, decision 0030); "Test connection" is
+ *      audited before and after, never shows the key, and is limited to 10
+ *      in 10 minutes; through the real page it runs the REAL check, pointed
+ *      at 127.0.0.1 port 1 where nothing listens (so nothing is sent to the
+ *      real Go2My.Link); a Global Admin's own limit for one person changes
+ *      limitFor() for that limit only, needs a reason, is audited, and can be
+ *      removed (decision 0031).
  *
  * It is NOT run by tests/run.php (which only picks up tests/test_*.php), as
  * it needs a database. How to run it (Docker example):
@@ -1112,7 +1121,7 @@ if (getenv('CUERCODE_IT_DUMP_PAGE') !== false) {
 }
 asCheck('J', $asPage['exit'] === 0 && str_contains($asPage['html'], '<h1'), 'GET (unlocked): the page renders (exit ' . $asPage['exit'] . ', ' . strlen($asPage['html']) . ' bytes)' . ($asPage['err'] !== '' ? ' stderr: ' . substr($asPage['err'], 0, 300) : ''));
 asCheck('J', substr_count($asPage['html'], '<h1') === 1, 'exactly one h1');
-asCheck('J', substr_count($asPage['html'], '<section id=') === 0 && substr_count($asPage['html'], 'id="section-') === 9, 'nine sections');
+asCheck('J', substr_count($asPage['html'], '<section id=') === 0 && substr_count($asPage['html'], 'id="section-') === 10, 'ten sections (dynamic QR added, #165)');
 asCheck('J', !str_contains($asPage['html'], $asSecrets['page']), 'the page does not contain the stored secret text');
 asCheck('J', !str_contains($asPage['html'], $asStoredCipher) && !str_contains($asPage['html'], substr($asStoredCipher, 0, 24)), 'the page does not contain the stored ciphertext');
 asCheck('J', str_contains($asPage['html'], 'Set - last changed'), 'the page says the secret is Set, and when it was last changed');
@@ -1122,7 +1131,7 @@ asCheck('J', str_contains($asPage['html'], 'Editing unlocked until') && !str_con
 foreach (array_keys(adminSettingsSections()) as $asSectionId) {
     asCheck('J', str_contains($asPage['html'], '<input type="hidden" name="fp" value="' . asFingerprint($asSectionId) . '">'), 'the ' . $asSectionId . ' form carries the current fingerprint');
 }
-asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 9, 'all nine forms have the unsaved-changes warning');
+asCheck('J', substr_count($asPage['html'], 'data-admin-dirty-check') === 10, 'all ten forms have the unsaved-changes warning');
 asCheck('J', str_contains($asPage['html'], 'Save PayPal settings') && str_contains($asPage['html'], 'Save prices, VAT and refunds') && str_contains($asPage['html'], 'Save email settings') && !str_contains($asPage['html'], 'Save email (microsoft'), 'each section has its own button words');
 asCheck('J', str_contains($asPage['html'], '(required)') && str_contains($asPage['html'], 'data-admin-confirm-check="Remove this stored secret?"'), 'required boxes say so and the Remove tick asks for confirmation');
 asCheck('J', str_contains($asPage['html'], 'name="f[password_reset_request_daily_cap]"') && str_contains($asPage['html'], 'name="f[verification_resend_min_gap_seconds]"'), 'the emailed-link limits are on the page');
@@ -1213,6 +1222,89 @@ if (isset($asTested['state']['flash'])) {
     $asTestedFlash = $asTested['state']['flash'];
 }
 asCheck('J', str_contains(json_encode($asTestedFlash), 'Could not connect') && count(asAuditRows($asServer, 'setting.test_graph')) === $asGraphRowsBeforeJ + 2, 'the page\'s connection check says Could not connect (nothing is filled in) and is audited (an attempt row and a result row)');
+
+// ==============================================================================
+// Q. Dynamic QR (#164, #165): the Go2My.Link key, "Test connection", and a
+//    person's own limit (decision 0031). No real Go2My.Link is ever called:
+//    the in-process checks use stand-ins, and the page's REAL check is
+//    pointed at 127.0.0.1 port 1, where nothing listens.
+// ==============================================================================
+echo PHP_EOL . 'Q. Dynamic QR: Go2My.Link key, Test connection, a person\'s own limit' . PHP_EOL;
+require_once $asSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin_limits.php';
+$asSecrets['go2mylink'] = 'g2ml_ItTestAb_' . substr(bin2hex(random_bytes(32)), 0, 43);
+
+$asResult = adminSaveSetting(['key' => 'go2mylink_api_key'], 'not-a-go2mylink-key', $asAdmin);
+asCheck('Q', $asResult['ok'] === false && asConfig('go2mylink_api_key') === '', 'a key that is not of Go2My.Link\'s shape is refused and nothing is saved');
+$asResult = adminSaveSetting(['key' => 'go2mylink_api_key'], $asSecrets['go2mylink'], $asAdmin);
+asCheck('Q', $asResult['ok'] === true && asConfig('go2mylink_api_key') === $asSecrets['go2mylink'], 'a Go2My.Link key is saved and reads back exactly');
+asCheck('Q', !str_contains((string) asSetting($asServer, 'go2mylink_api_key')['settingValue'], $asSecrets['go2mylink']) && (int) asSetting($asServer, 'go2mylink_api_key')['isSensitive'] === 1, '... and is stored encrypted');
+clearConfigCache();
+$asG2Settings = go2mylinkReadSettings();
+asCheck('Q', $asG2Settings['problem'] === '' && $asG2Settings['apiKey'] === $asSecrets['go2mylink'] && $asG2Settings['apiBaseUrl'] === 'https://go2my.link/api/v1' && $asG2Settings['timeout'] === 5 && $asG2Settings['shortLinkBase'] === 'https://QRmy.Link', 'the connection code reads the real settings: production address, the key, 5 seconds, QRmy.Link');
+$asResult = adminSaveSetting(['key' => 'dynamic_redirect_base_url'], 'https://alpha.QRmy.Link', $asAdmin);
+clearConfigCache();
+asCheck('Q', $asResult['ok'] === true && go2mylinkReadSettings()['shortLinkBase'] === 'https://alpha.qrmy.link', 'decision 0030: an alpha database can print codes on alpha.QRmy.Link');
+adminSaveSetting(['key' => 'dynamic_redirect_base_url'], 'https://qrmy.link', $asAdmin);
+
+// 🔌 The Go2My.Link check, with stand-ins.
+$asG2Tester = static function (): array {
+    return ['ok' => true, 'reason' => '', 'lines' => ['Connected to go2my.link: the certificate was checked and the API key was accepted.']];
+};
+$asResult = adminSettingsTestGo2MyLink($asAdmin, $asG2Tester);
+asCheck('Q', $asResult['ok'] === true && str_contains($asResult['message'], 'Connected to Go2My.Link.'), 'a working Go2My.Link connection says Connected');
+$asAudit = asAuditRows($asServer, 'setting.test_go2mylink');
+asCheck('Q', count($asAudit) === 2 && $asAudit[0]['action'] === 'setting.test_go2mylink.started' && $asAudit[1]['action'] === 'setting.test_go2mylink' && $asAudit[1]['outcome'] === 'success' && $asAudit[1]['changesJSON'] === null, 'audited: a started row, then a success row, no details');
+$asG2Throwing = static function () use ($asSecrets): array {
+    throw new \RuntimeException('transport said ' . $asSecrets['go2mylink']);
+};
+$asResult = adminSettingsTestGo2MyLink($asAdmin, $asG2Throwing);
+asCheck('Q', $asResult['ok'] === false && !str_contains(json_encode($asResult), $asSecrets['go2mylink']), 'a check that throws (with the key in its text) says Could not connect and never shows the key');
+asCheck('Q', count(asAuditRows($asServer, 'setting.test_go2mylink')) === 4, 'both checks were audited before and after');
+for ($asI = 0; $asI < 8; $asI++) {
+    adminSettingsTestGo2MyLink($asAdmin, $asG2Tester);
+}
+$asResult = adminSettingsTestGo2MyLink($asAdmin, $asG2Tester);
+asCheck('Q', $asResult['ok'] === false && str_contains($asResult['message'], 'Too many'), 'the 11th check within 10 minutes is refused (counted from the audit log)');
+
+// 🔌 Through the page, the REAL check, pointed at a port where nothing listens.
+setConfig('go2mylink_api_base_url', 'https://127.0.0.1:1/api/v1', ['group' => 'redirects', 'type' => 'url']);
+$asServer->query("UPDATE `tblAdminAuditLog` SET `createdAt` = DATE_SUB(`createdAt`, INTERVAL 11 MINUTE) WHERE `action` IN ('setting.test_go2mylink', 'setting.test_go2mylink.started')");
+$asG2RowsBefore = count(asAuditRows($asServer, 'setting.test_go2mylink'));
+$asG2Tested = asRenderPage($asDbName, array_merge($asBase, ['method' => 'POST', 'post' => ['csrf_token' => $asBase['csrf'], 'settings_action' => 'test_go2mylink']]));
+$asG2Flash = [];
+if (isset($asG2Tested['state']['flash'])) {
+    $asG2Flash = $asG2Tested['state']['flash'];
+}
+asCheck('Q', str_contains(json_encode($asG2Flash), 'Could not connect') && count(asAuditRows($asServer, 'setting.test_go2mylink')) === $asG2RowsBefore + 2, 'the page\'s Test connection button runs the real check: nothing listens, so it says Could not connect, and it is audited: ' . substr(json_encode($asG2Flash), 0, 300));
+asCheck('Q', !str_contains($asG2Tested['out'] . $asG2Tested['err'], $asSecrets['go2mylink']), 'the key is nowhere in the page or its output');
+setConfig('go2mylink_api_base_url', 'https://go2my.link/api/v1', ['group' => 'redirects', 'type' => 'url']);
+
+// 🎚️ A person's own limit (decision 0031).
+$asInsert = $asServer->prepare("INSERT INTO `tblUsers` (`email`, `emailVerifiedAt`, `passwordHash`, `displayName`, `status`) VALUES ('limits@it.cuercode.invalid', '2026-11-01 09:00:00', 'x', 'IT limits', 'active')");
+$asInsert->execute();
+$asLimitUserID = (int) $asServer->insert_id;
+$asInsert->close();
+featuresCacheStore('clearAll');
+$asPlanLimit = limitFor('dynamic_codes', $asLimitUserID);
+asCheck('Q', $asPlanLimit === 3, 'with no own number, the Free plan\'s 3 dynamic codes apply (' . $asPlanLimit . ')');
+$asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', 10, 'Approved for the pilot shop');
+asCheck('Q', $asResult['ok'] === true && limitFor('dynamic_codes', $asLimitUserID) === 10, 'a Global Admin approves 10 for this person: limitFor() now says 10');
+asCheck('Q', limitFor('saved_codes', $asLimitUserID) === 25, '... and only for that limit (saved codes still the plan\'s 25)');
+$asAudit = asAuditRows($asServer, 'entitlement.update', (string) $asLimitUserID);
+// (The JSON column may store the keys in its own order, so they are compared one by one.)
+$asLimitChange = json_decode((string) $asAudit[0]['changesJSON'], true);
+asCheck('Q', count($asAudit) === 1 && $asAudit[0]['entityType'] === 'user' && $asAudit[0]['reason'] === 'Approved for the pilot shop' && is_array($asLimitChange) && array_keys($asLimitChange) === ['dynamic_codes'] && array_key_exists('old', $asLimitChange['dynamic_codes']) && $asLimitChange['dynamic_codes']['old'] === null && $asLimitChange['dynamic_codes']['new'] === 10,'it is in the admin change log with the reason and old/new numbers: ' . json_encode($asAudit));
+$asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', 10, 'Same again');
+asCheck('Q', $asResult['ok'] === true && str_contains($asResult['message'], 'Nothing was different') && count(asAuditRows($asServer, 'entitlement.update', (string) $asLimitUserID)) === 1, 'the same number again changes nothing and writes no row');
+$asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', 20, '');
+asCheck('Q', $asResult['ok'] === false && limitFor('dynamic_codes', $asLimitUserID) === 10, 'without a reason nothing is saved');
+$asResult = adminSetUserLimitOverride($asAdmin, 999999, 'dynamic_codes', 20, 'No such person');
+asCheck('Q', $asResult['ok'] === false && asCount($asServer, 'SELECT COUNT(*) FROM `tblUserLimitOverrides` WHERE `userID` = 999999') === 0, 'a person who does not exist: nothing is saved');
+$asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', null, 'Pilot finished');
+asCheck('Q', $asResult['ok'] === true && limitFor('dynamic_codes', $asLimitUserID) === 3 && asCount($asServer, 'SELECT COUNT(*) FROM `tblUserLimitOverrides`') === 0, 'removing it: the plan\'s 3 applies again and the row is gone');
+asCheck('Q', count(asAuditRows($asServer, 'entitlement.update', (string) $asLimitUserID)) === 2, '... and that is in the change log too');
+featuresCacheStore('clearAll');
+asCheck('Q', limitFor('dynamic_codes', null) === 0, 'an anonymous visitor still has 0 dynamic codes');
 
 // ==============================================================================
 // K. No secret anywhere in the logs

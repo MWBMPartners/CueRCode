@@ -11,7 +11,10 @@
  *   1. Email (Microsoft 365) - with "Check Microsoft connection" and "Send me
  *      a test email"
  *   2. Email records       3. Sign in with Microsoft or Google
- *   4. Bot protection      5. PayPal
+ *   4. Bot protection
+ *   4b. Dynamic QR codes (Go2My.Link) - with "Test connection", which only
+ *      reads (#165)
+ *   5. PayPal
  *   6. Prices, VAT and refunds (the charging switches are shown "Off (locked)")
  *   7. Free trials         8. Admin security
  *
@@ -117,6 +120,16 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
         }
         adminFlashAdd($settingsType, $settingsResult['message']);
         adminRedirect('/admin/settings/#section-email');
+    } elseif ($settingsAction === 'test_go2mylink') {
+        // 🔗 #165: reads only; changes nothing on Go2My.Link.
+        $settingsResult = adminSettingsTestGo2MyLink($adminUser);
+        adminReauthTouch($adminUser);
+        $settingsType = 'danger';
+        if ($settingsResult['ok']) {
+            $settingsType = 'success';
+        }
+        adminFlashAdd($settingsType, $settingsResult['message']);
+        adminRedirect('/admin/settings/#section-dynamic');
     } elseif ($settingsAction === 'save_section') {
         $settingsSectionID = '';
         if (isset($_POST['section']) && is_string($_POST['section'])) {
@@ -417,6 +430,23 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </button>
                                 </form>
                             </div>
+                            <?php } ?>
+
+                            <?php if ($settingsSectionKey === 'dynamic') { ?>
+                            <hr>
+                            <h3 class="h6">Try it out</h3>
+                            <p class="small text-body-secondary">
+                                "Test connection" checks that Go2My.Link answers, that its security certificate is good, that the saved key is
+                                accepted and which permissions it has. It only reads (and tries to change a code that cannot exist), so nothing is
+                                created or changed on Go2My.Link. At most 10 in 10 minutes. Save your changes first.
+                            </p>
+                            <form method="POST" action="/admin/settings/">
+                                <?php echo csrfField(); ?>
+                                <input type="hidden" name="settings_action" value="test_go2mylink">
+                                <button type="submit" class="btn btn-outline-primary" <?php if (!$settingsCanEdit) { ?>disabled<?php } ?>>
+                                    <i class="fa-solid fa-plug me-1" aria-hidden="true"></i> Test connection
+                                </button>
+                            </form>
                             <?php } ?>
                         </div>
                     </div>

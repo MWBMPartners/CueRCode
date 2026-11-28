@@ -88,7 +88,7 @@ erasure, on a real database.
 `tests/test_admin_csp.php` fails if the admin policy allows inline scripts
 again, or if a page the admin area can show contains one.
 
-## Current suite (2026-11-28, Codex review fixes of task 7n Phase 2: the table below was re-measured; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-28, dynamic QR groundwork #164/#165: the table below was re-measured; before that 2026-11-28, Codex review fixes of task 7n Phase 2; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; earlier rounds are in git history)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -111,9 +111,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_client_ip.php` | 260 |
 | `test_commercial_literals.php` | 9 |
 | `test_core.php` | 146 |
-| `test_credentials_template.php` | 9 |
+| `test_credentials_template.php` | 8 |
 | `test_curl_content_decoding_guard.php` | 3 |
 | `test_deploy_test_gate.php` | 107 |
+| `test_dynamic_qr_schema.php` | 97 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
@@ -125,6 +126,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_expiry_clock.php` | 6 |
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
+| `test_go2mylink.php` | 389 |
 | `test_human_check.php` | 410 |
 | `test_human_check_fallbacks.php` | 129 |
 | `test_human_check_review_fixes.php` | 84 |
@@ -161,6 +163,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 Run `php tests/run.php` at any time to reproduce this table live.
 
 **Fourth-round review and second Codex review fixes (2026-11-28)** added three files: `test_email_exact_match.php` (18 checks: an email address is matched byte for byte, and no bare `email = ?` comparison is left in the site code), `test_offline_worker_privacy.php` (16: the offline worker never keeps a no-store or private page, `/admin` and `/install` are private, the cache version moved on) and `test_human_check_widget_script.php` (9: the real widget script under Node.js - a late provider answer cannot stop the fallback; skipped with a note where Node.js is missing). Checks were added to `test_admin_csp.php`, `test_log_mask.php`, `test_integration_web_server.php`, `test_human_check_fallbacks.php`, `test_human_check.php`, `test_pricing_page.php` and `test_migrations.php`, and old wording checks were updated in `test_account_recovery.php`, `test_admin_access.php`, `test_auth.php`, `test_admin_settings.php` and `test_human_check_review_fixes.php`. Real-database scripts gained scenario EX (`account_recovery`), 12d and the Low 3 check (`email_queue`), the look-alike spellings and eleven right sign-ins in R plus three outage checks in F (`human_check`), and P7-P9 (`migrations`). Each was shown failing on the code before its fix. Suite: **9470** in 62 files.
+
+**Dynamic QR groundwork (2026-11-28, #164, #165)** added `test_go2mylink.php` (389 checks, about 10 seconds) and `test_dynamic_qr_schema.php` (97). `test_go2mylink.php` starts `tests/lib/go2mylink_standin_server.php`, a small HTTPS server on 127.0.0.1 that answers like Go2My.Link's API, with a throwaway certificate authority from `tests/lib/test_tls.php` (PHP's own OpenSSL functions; nothing installed). It proves success, 403, 409, 422, 429 (Retry-After), a time limit, a bad certificate (no request reaches the server), a web page or wrong-shaped JSON, a reply too large, a redirect not followed and the safe retry, then stops the server (closing its input stops it) and deletes the certificates. Nothing is sent to the real Go2My.Link. Both files failed first (the code did not exist yet); weakening the certificate check and following redirects in the code made 3 checks fail. Real-database parts: `migrations_real_mysql.php` scenario Q (upgrade 0007) and `admin_settings_real_mysql.php` section Q. Suite: **9972** in 61 files.
 
 **Test web servers always stopped (2026-11-28)** added `test_integration_web_server.php` (13 checks, about 10 seconds): with a real `php -S` server on a free port, the helper `tests/lib/web_server.php` stops it when the script calls `itWebServerStop()`, exits with a failure code, throws, stops on a fatal error, or is sent SIGTERM, SIGINT or SIGKILL; a control case starts the server the old way and shows it still running after its script is killed (then stops it); and every `*_real_mysql.php` script that starts a server must use the helper. On the old `human_check_real_mysql.php` those last checks failed (3), and killing that script with kill -9 left its server running (process 43974 in the run on 2026-11-28); after the change kill -9, SIGINT and SIGTERM each left none. Suite: **9377** in 59 files.
 

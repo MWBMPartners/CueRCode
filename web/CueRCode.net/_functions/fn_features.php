@@ -666,11 +666,103 @@ function limitFor(string $limitKey, ?int $userID = null): int
 {
     $plan = effectivePlanForGating($userID);
 
-    if (!array_key_exists($limitKey, $plan['limits'])) {
-        return 0;
+    $planLimit = 0;
+    if (array_key_exists($limitKey, $plan['limits'])) {
+        $planLimit = (int) $plan['limits'][$limitKey];
     }
 
-    return (int) $plan['limits'][$limitKey];
+    // 🎚️ Decision 0031: a Global Admin may set this one person's own number
+    //    for a limit (tblUserLimitOverrides, upgrade 0007). It replaces the
+    //    plan's number; with none set, the plan's number stands.
+    if ($userID === null) {
+        return $planLimit;
+    }
+
+    return resolveLimitWithOverride($planLimit, userLimitOverrideFor($userID, $limitKey));
+}
+
+/**
+ * 🎚️ The limit that applies: a person's own number when a Global Admin set
+ *    one, otherwise the plan's (decision 0031). PURE.
+ *
+ * @param int      $planLimit The plan's number (-1 = no limit)
+ * @param int|null $override  The person's own number, or null when none is set
+ * @return int
+ */
+function resolveLimitWithOverride(int $planLimit, ?int $override): int
+{
+    if ($override === null) {
+        return $planLimit;
+    }
+
+    return $override;
+}
+
+/**
+ * 🎚️ The number a Global Admin set for one person for one limit, or null
+ *    when none is set (decision 0031). Cached for the request.
+ *
+ * Before upgrade 0007 the table does not exist; then, and on any other
+ * failure to read it, the answer is "none set", so the plan's number is used
+ * (it is the starting rule; an override only ever replaces it on purpose).
+ *
+ * @param int    $userID   The person
+ * @param string $limitKey A plan limit key, for example dynamic_codes
+ * @return int|null
+ */
+function userLimitOverrideFor(int $userID, string $limitKey): ?int
+{
+    $cacheKey = 'limit_override:' . $userID . ':' . $limitKey;
+    if (featuresCacheStore('has', $cacheKey)) {
+        return featuresCacheStore('get', $cacheKey);
+    }
+
+    if (!function_exists('dbQuery')) {
+        return null;
+    }
+
+    // 🧱 Asked once per request: is upgrade 0007's table there? (Without
+    //    this, every page would write an "SQL Prepare Failed" line to the
+    //    error log until the upgrade is applied.)
+    if (!featuresCacheStore('has', 'limit_override_table')) {
+        $tableThere = false;
+        try {
+            $tableStmt = dbQuery(
+                'SELECT COUNT(*) AS `found` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?',
+                's',
+                ['tblUserLimitOverrides']
+            );
+            $tableRow = $tableStmt->get_result()->fetch_assoc();
+            $tableStmt->close();
+            $tableThere = (is_array($tableRow) && (int) $tableRow['found'] === 1);
+        } catch (\Throwable $e) {
+            $tableThere = false;
+        }
+        featuresCacheStore('set', 'limit_override_table', $tableThere);
+    }
+    if (featuresCacheStore('get', 'limit_override_table') !== true) {
+        return null;
+    }
+
+    $override = null;
+    try {
+        $stmt = dbQuery(
+            'SELECT `limitValue` FROM `tblUserLimitOverrides` WHERE `userID` = ? AND `limitKey` = ? LIMIT 1',
+            'is',
+            [$userID, $limitKey]
+        );
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (is_array($row) && isset($row['limitValue'])) {
+            $override = (int) $row['limitValue'];
+        }
+    } catch (\Throwable $e) {
+        $override = null;
+    }
+
+    featuresCacheStore('set', $cacheKey, $override);
+
+    return $override;
 }
 
 // ==============================================================================
