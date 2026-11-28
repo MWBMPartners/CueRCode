@@ -1030,7 +1030,7 @@ itCheck('12e abuse reports kept 12 months (decision 0046)', $itHasAbuse, 'set-up
 if ($itHasAbuse) {
     itExec('DELETE FROM `tblAbuseReports` WHERE `reportID` > ?', 'i', [0]);
     // [code, status, days since it was dealt with (null = not dealt with)]
-    foreach ([['it-old-act', 'actioned', 400], ['it-old-dis', 'dismissed', 366], ['it-recent', 'actioned', 300], ['it-open', 'new', null], ['it-review', 'reviewing', null]] as $itAbuse) {
+    foreach ([['it-old-act', 'actioned', 400], ['it-old-dis', 'dismissed', 366], ['it-recent', 'actioned', 300], ['it-open', 'new', null], ['it-review', 'reviewing', null], ['it-reopened', 'reviewing', 400]] as $itAbuse) {
         itExec(
             "INSERT INTO `tblAbuseReports` (`shortCode`, `category`, `details`, `reporterEmailEncrypted`, `reporterAddressHash`, `status`, `createdAt`) VALUES (?, 'phishing', 'Call me on 07700 900123', 'IT-ENCRYPTED-EMAIL', REPEAT('a', 64), ?, DATE_SUB(UTC_TIMESTAMP(), INTERVAL 500 DAY))",
             'ss',
@@ -1055,8 +1055,9 @@ if ($itHasAbuse) {
         'it-old-dis' => 'dismissed|phishing|removed',
         'it-open'    => 'new|phishing|kept',
         'it-recent'  => 'actioned|phishing|kept',
+        'it-reopened' => 'reviewing|phishing|kept',
         'it-review'  => 'reviewing|phishing|kept',
-    ], 'reports dealt with 400 and 366 days ago lose the email, description and address hash (the bare record stays); one dealt with 300 days ago and two not yet dealt with keep them: ' . json_encode([$itAbuseChanged, $itAbuseState()]));
+    ], 'reports dealt with 400 and 366 days ago lose the email, description and address hash (the bare record stays); one dealt with 300 days ago, two not yet dealt with and one reopened (handled 400 days ago, now being reviewed again) keep them: ' . json_encode([$itAbuseChanged, $itAbuseState()]));
     itCheck('12e abuse reports kept 12 months (decision 0046)', clearOldAbuseReportDetails(365, CUERCODE_EMAIL_QUEUE_TIDY_BATCH) === 0, 'run again: nothing more to do');
     $itResult = runEmailQueueBatch($itGateway, $itOkSender, ['abuseReportRetentionDays' => 200]);
     itCheck('12e abuse reports kept 12 months (decision 0046)', ($itResult['abuseReportDetailsCleared'] ?? null) === 1 && $itResult['housekeepingFailures'] === 0 && $itAbuseState()['it-recent'] === 'actioned|phishing|removed', 'the cron clean-up uses the period an admin sets (200 days): the 300-day-old report is done too, and no step failed: ' . json_encode([$itResult['abuseReportDetailsCleared'] ?? null, $itResult['housekeepingFailures']]));
