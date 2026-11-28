@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - The admin area refuses inline scripts (#154, 2026-11-28)
+
+- The admin security policy (`public_html/admin/.htaccess`) no longer allows inline scripts: scripts may only come from files on this site and from cdn.jsdelivr.net. The admin pages also send the same script rule themselves, in case a host ignores `.htaccess`.
+- The inline scripts of the shared header and footer and of the "page not found" page moved, unchanged in behaviour, into `assets/js/cuercode-head.js`, `cuercode-fallback-jquery.js`, `cuercode-fallback-bootstrap.js`, `cuercode-page.js` and `cuercode-error.js`; the avatar's `onerror="..."` became a `data-` attribute. The offline cache lists the new files (version v4). The public site's policy is unchanged (some public pages still have inline scripts).
+- Shown failing first: `tests/test_admin_csp.php` (20 checks), and in headless Microsoft Edge the tight policy on the old pages blocked 9 scripts on each admin page. After the change no admin page, the non-admin "not found" answer or the checked public pages reported a blocked script; light/dark and colourblind buttons, "Go back", the offline worker and the fallbacks with the CDNs blocked all worked. Apache itself was not used.
+
 ### Fixed - Email addresses in the activity log are no longer kept for ever (#129, 2026-11-28)
 
 - **Deleted after a set period:** the activity log's email entries (they name the recipient) are now removed by the email queue runner's clean-up: queued, sent and skipped ones after the "sent and skipped email records" period (default 30 days), failed ones after the "given-up" period (default 90). These are the two settings a Global Admin already edits on `/admin/settings/`; their wording says they now cover the log too. Other activity-log entries are not touched. No database upgrade.

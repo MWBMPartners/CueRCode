@@ -16,9 +16,11 @@
 #   - The Content-Security-Policy is the SITE policy from public_html/.htaccess
 #     with frame-ancestors 'none', and WITHOUT the human-check providers'
 #     addresses (#163: no admin page shows a human check, so none of them is
-#     allowed here). Scripts still come only from this site and
-#     https://cdn.jsdelivr.net - no new script source. Keep the two in step
-#     (tests/test_admin_access.php checks it).
+#     allowed here). Scripts come only from files on this site and
+#     https://cdn.jsdelivr.net, and INLINE scripts and on...="" attributes are
+#     refused (#154): put admin script in a file under /assets/js/. Apart from
+#     that, keep the two in step (tests/test_admin_access.php and
+#     tests/test_admin_csp.php check it).
 #
 # Each header must be sent ONCE. "Header always set" alone does NOT do that:
 # public_html/.htaccess uses plain "Header set" (which Apache keeps in a
@@ -69,7 +71,7 @@
     Header always set X-Frame-Options "DENY"
     Header always set Cache-Control "no-store"
     Header always set X-Robots-Tag "noindex, nofollow"
-    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
 </IfModule>
 
 # 📁 No folder listings

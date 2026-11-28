@@ -792,7 +792,7 @@ assertContains('NO: Apache\'s OWN error page for a file under /admin/', $aaHtacc
 assertContains('Header always set Cache-Control "no-store"', $aaHtaccess, 'admin .htaccess: Cache-Control no-store');
 assertContains('Header always set X-Robots-Tag "noindex, nofollow"', $aaHtaccess, 'admin .htaccess: X-Robots-Tag noindex, nofollow');
 assertContains("frame-ancestors 'none'", $aaHtaccess, "admin .htaccess: CSP frame-ancestors 'none'");
-assertContains("script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;", $aaHtaccess, 'admin .htaccess: no new script sources');
+assertContains("script-src 'self' https://cdn.jsdelivr.net;", $aaHtaccess, 'admin .htaccess: no new script sources, and no inline scripts (#154)');
 $aaSiteHtaccess = (string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . '.htaccess');
 preg_match('/Header set Content-Security-Policy "([^"]+)"/', $aaSiteHtaccess, $aaSiteCsp);
 preg_match('/Header always set Content-Security-Policy "([^"]+)"/', $aaHtaccess, $aaAdminCsp);
@@ -811,9 +811,13 @@ $aaSiteCspForAdmin = str_replace(
 );
 assertFalse(str_contains((string) $aaAdminCsp[1], 'hcaptcha') || str_contains((string) $aaAdminCsp[1], 'recaptcha') || str_contains((string) $aaAdminCsp[1], 'challenges.cloudflare.com'), 'admin CSP: no human-check provider is allowed in the admin area (#163)');
 assertEquals(
-    str_replace("frame-ancestors 'self'", "frame-ancestors 'none'", $aaSiteCspForAdmin),
+    str_replace(
+        ["frame-ancestors 'self'", "script-src 'self' 'unsafe-inline' "],
+        ["frame-ancestors 'none'", "script-src 'self' "],
+        $aaSiteCspForAdmin
+    ),
     (string) $aaAdminCsp[1],
-    "admin CSP = the site CSP with frame-ancestors 'none' and without the human-check providers (the two stay in step)"
+    "admin CSP = the site CSP with frame-ancestors 'none', no inline scripts (#154) and without the human-check providers (the two stay in step)"
 );
 assertFalse(str_contains((string) file_get_contents($aaSiteRoot . 'public_html' . DIRECTORY_SEPARATOR . 'robots.txt'), 'admin'), 'robots.txt does not advertise /admin/');
 

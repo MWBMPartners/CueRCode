@@ -1807,9 +1807,11 @@ function adminSendSecurityHeaders(): void
     header('Pragma: no-cache');
     header('X-Frame-Options: DENY');
     header('X-Robots-Tag: noindex, nofollow');
-    // 🖼️ Only the frame rule: the full site policy comes from .htaccess, and
-    //    two policies are both enforced, so this can only ever tighten it.
-    header("Content-Security-Policy: frame-ancestors 'none'");
+    // 🖼️ Only the frame and script rules: the full admin policy comes from
+    //    admin/.htaccess (which replaces this header), and where a host ignores
+    //    that file two policies are both enforced, so this can only tighten.
+    //    No inline scripts in the admin area (#154).
+    header("Content-Security-Policy: frame-ancestors 'none'; script-src 'self' https://cdn.jsdelivr.net");
 }
 
 /**

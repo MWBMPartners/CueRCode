@@ -317,36 +317,6 @@ if ($headerCurrentUser !== null && isset($headerCurrentUser['roleID']) && $heade
           integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
           crossorigin="anonymous"
           id="bootstrap-css">
-    <script>
-        <?php /* 🔄 Bootstrap CSS CDN fallback to local copy */ ?>
-        (function() {
-            var testEl = document.createElement('div');
-            testEl.className = 'visually-hidden';
-            if (document.body) {
-                document.body.appendChild(testEl);
-            } else {
-                document.addEventListener('DOMContentLoaded', function() {
-                    document.body.appendChild(testEl);
-                });
-            }
-            setTimeout(function() {
-                var style;
-                if (window.getComputedStyle) {
-                    style = window.getComputedStyle(testEl);
-                } else {
-                    style = testEl.currentStyle;
-                }
-                if (!style || style.position !== 'absolute') {
-                    var link = document.createElement('link');
-                    link.rel = 'stylesheet';
-                    link.href = '/assets/vendor/bootstrap/css/bootstrap.min.css';
-                    document.head.appendChild(link);
-                }
-                if (testEl.parentNode) { testEl.parentNode.removeChild(testEl); }
-            }, 3000);
-        })();
-    </script>
-
     <?php /* ====================================================================
          🎨 CSS: FontAwesome (CDN with local fallback)
          @see https://fontawesome.com/docs
@@ -359,42 +329,6 @@ if ($headerCurrentUser !== null && isset($headerCurrentUser['roleID']) && $heade
           rel="stylesheet"
           crossorigin="anonymous"
           id="fontawesome-css">
-    <script>
-        <?php /* 🔄 FontAwesome CSS CDN fallback to local copy (#119, #137) -
-           same approach as the Bootstrap check above: if the CDN stylesheet
-           loaded, an icon element's font-family names "Font Awesome"; if
-           not, load the committed copy in /assets/vendor/fontawesome/. */ ?>
-        (function() {
-            var testIcon = document.createElement('i');
-            testIcon.className = 'fa-solid fa-check';
-            testIcon.setAttribute('aria-hidden', 'true');
-            testIcon.style.position = 'absolute';
-            testIcon.style.left = '-9999px';
-            if (document.body) {
-                document.body.appendChild(testIcon);
-            } else {
-                document.addEventListener('DOMContentLoaded', function() {
-                    document.body.appendChild(testIcon);
-                });
-            }
-            setTimeout(function() {
-                var iconStyle;
-                if (window.getComputedStyle) {
-                    iconStyle = window.getComputedStyle(testIcon);
-                } else {
-                    iconStyle = testIcon.currentStyle;
-                }
-                if (!iconStyle || String(iconStyle.fontFamily).indexOf('Font Awesome') === -1) {
-                    var faLink = document.createElement('link');
-                    faLink.rel = 'stylesheet';
-                    faLink.href = '/assets/vendor/fontawesome/css/all.min.css';
-                    document.head.appendChild(faLink);
-                }
-                if (testIcon.parentNode) { testIcon.parentNode.removeChild(testIcon); }
-            }, 3000);
-        })();
-    </script>
-
     <?php /* ====================================================================
          🎨 CSS: Custom CueRCode Styles
          ==================================================================== */ ?>
@@ -406,42 +340,13 @@ if ($headerCurrentUser !== null && isset($headerCurrentUser['roleID']) && $heade
     <?php } ?>
 
     <?php /* ====================================================================
-         🎨 CSS: Dark/Light Mode Auto-Detection
+         🎨 Early page setup: CDN style fallbacks, light/dark mode and the
+         colourblind palette (FG-023), applied before first paint. It must stay
+         here as a blocking file script. No inline scripts in this file: the
+         admin area refuses them (#154).
          @see https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
          ==================================================================== */ ?>
-    <script>
-        <?php /* 🌙 Auto-detect and apply colour scheme preference */ ?>
-        (function() {
-            var theme = localStorage.getItem('cuercode-theme');
-            if (theme === 'dark' || theme === 'light') {
-                document.documentElement.setAttribute('data-bs-theme', theme);
-            } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                document.documentElement.setAttribute('data-bs-theme', 'dark');
-            } else {
-                document.documentElement.setAttribute('data-bs-theme', 'light');
-            }
-        })();
-    </script>
-
-    <?php /* ====================================================================
-         ♿ Colourblind (CVD) Palette - apply persisted choice before paint
-         Mirrors the theme block above so the chosen colourblind-safe palette
-         is applied to <html> before first paint, avoiding a flash of the
-         default brand colours. The data-cuercode-cvd attribute is consumed
-         by the [data-cuercode-cvd="..."] rules in cuercode.css. (FG-023)
-         @see https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors
-         ==================================================================== */ ?>
-    <script>
-        <?php /* ♿ Apply saved colourblind palette preference pre-paint */ ?>
-        (function() {
-            var cvd = localStorage.getItem('cuercode-cvd');
-            var valid = ['protanopia', 'deuteranopia', 'tritanopia'];
-            if (valid.indexOf(cvd) !== -1) {
-                document.documentElement.setAttribute('data-cuercode-cvd', cvd);
-            }
-            <?php /* 'none' or absent leaves the attribute off => default brand palette */ ?>
-        })();
-    </script>
+    <script src="/assets/js/cuercode-head.js"></script>
 </head>
 <body class="<?php echo htmlspecialchars($bodyClass, ENT_QUOTES, 'UTF-8'); ?>">
     <a href="#main-content" class="visually-hidden-focusable">Skip to main content</a>
@@ -574,7 +479,7 @@ if ($headerCurrentUser !== null && isset($headerCurrentUser['roleID']) && $heade
                                 aria-expanded="false" aria-label="Account menu for <?php echo htmlspecialchars($headerUserDisplayName, ENT_QUOTES, 'UTF-8'); ?>">
                             <img src="<?php echo htmlspecialchars($headerAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>"
                                  alt="" width="28" height="28" class="rounded-circle"
-                                 onerror="this.onerror=null;this.src='/assets/img/branding/avatar-default.svg';">
+                                 data-cuercode-fallback-src="/assets/img/branding/avatar-default.svg">
                             <span class="d-none d-md-inline"><?php echo htmlspecialchars($headerUserDisplayName, ENT_QUOTES, 'UTF-8'); ?></span>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end" role="menu" aria-label="Account menu">

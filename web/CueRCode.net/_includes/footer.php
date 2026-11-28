@@ -150,12 +150,8 @@ if (function_exists('isDebugMode')) {
          guess a hash: an incorrect integrity value BLOCKS the resource. */ ?>
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
             crossorigin="anonymous"></script>
-    <script>
-        <?php /* 🔄 jQuery CDN fallback to local copy */ ?>
-        if (typeof jQuery === 'undefined') {
-            document.write('<script src="/assets/vendor/jquery/jquery.min.js"><\/script>');
-        }
-    </script>
+    <?php /* 🔄 jQuery CDN fallback to the local copy (a file, not inline: #154) */ ?>
+    <script src="/assets/js/cuercode-fallback-jquery.js"></script>
 
     <?php /* ====================================================================
          📦 JavaScript: Bootstrap 5.3 Bundle (CDN with local fallback)
@@ -166,12 +162,8 @@ if (function_exists('isDebugMode')) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
             integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
             crossorigin="anonymous"></script>
-    <script>
-        <?php /* 🔄 Bootstrap JS CDN fallback to local copy */ ?>
-        if (typeof bootstrap === 'undefined') {
-            document.write('<script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"><\/script>');
-        }
-    </script>
+    <?php /* 🔄 Bootstrap JS CDN fallback to the local copy */ ?>
+    <script src="/assets/js/cuercode-fallback-bootstrap.js"></script>
 
     <?php /* ====================================================================
          📦 JavaScript: CueRCode Common Utilities
@@ -184,59 +176,9 @@ if (function_exists('isDebugMode')) {
     <?php } ?>
 
     <?php /* ====================================================================
-         🌙 Dark/Light Mode Toggle Script
+         🌙 Dark/light button and 📱 service worker registration
          ==================================================================== */ ?>
-    <script>
-        <?php /* 🌙 Theme toggle functionality */ ?>
-        (function() {
-            var toggleBtn = document.getElementById('theme-toggle');
-            if (toggleBtn) {
-                toggleBtn.addEventListener('click', function() {
-                    var currentTheme = document.documentElement.getAttribute('data-bs-theme');
-                    var newTheme;
-                    if (currentTheme === 'dark') {
-                        newTheme = 'light';
-                    } else {
-                        newTheme = 'dark';
-                    }
-                    document.documentElement.setAttribute('data-bs-theme', newTheme);
-                    localStorage.setItem('cuercode-theme', newTheme);
-
-                    <?php /* Update toggle icon */ ?>
-                    var icon = this.querySelector('i');
-                    if (icon) {
-                        if (newTheme === 'dark') {
-                            icon.className = 'fa-solid fa-sun';
-                        } else {
-                            icon.className = 'fa-solid fa-moon';
-                        }
-                    }
-                });
-
-                <?php /* Set initial icon based on current theme */ ?>
-                var currentTheme = document.documentElement.getAttribute('data-bs-theme');
-                var icon = toggleBtn.querySelector('i');
-                if (icon && currentTheme === 'dark') {
-                    icon.className = 'fa-solid fa-sun';
-                }
-            }
-        })();
-    </script>
-
-    <?php /* ====================================================================
-         📱 PWA Service Worker Registration
-         @see https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerContainer/register
-         ==================================================================== */ ?>
-    <script>
-        <?php /* 📱 Register service worker for offline support and caching */ ?>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function() {
-                navigator.serviceWorker.register('/sw.js').catch(function() {
-                    <?php /* ⚠️ Service worker registration failed - not critical */ ?>
-                });
-            });
-        }
-    </script>
+    <script src="/assets/js/cuercode-page.js"></script>
 
     <?php if ($isDebug) { ?>
     <?php /* ====================================================================

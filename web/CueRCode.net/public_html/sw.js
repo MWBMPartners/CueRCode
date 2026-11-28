@@ -47,9 +47,10 @@
  * v3: bumped so every older cache is deleted - the old pages cache may hold
  * copies of private pages (account, reset-password, verify-email) that earlier
  * versions of this worker stored.
+ * v4: the page scripts that used to be inline are now files (#154).
  * @type {string}
  */
-var CACHE_VERSION = 'cuercode-v3';
+var CACHE_VERSION = 'cuercode-v4';
 
 /**
  * 📌 Static assets cache name.
@@ -86,7 +87,12 @@ var ACTIVE_CACHES = [STATIC_CACHE, PAGES_CACHE, CDN_CACHE];
  */
 var PRECACHE_ASSETS = [
     '/assets/css/cuercode.css',
+    '/assets/js/cuercode-head.js',
+    '/assets/js/cuercode-fallback-jquery.js',
+    '/assets/js/cuercode-fallback-bootstrap.js',
     '/assets/js/cuercode-common.js',
+    '/assets/js/cuercode-page.js',
+    '/assets/js/cuercode-error.js',
     '/assets/js/cuercode-generator.js',
     '/assets/img/branding/favicon.ico',
     '/assets/img/branding/favicon-32.png',

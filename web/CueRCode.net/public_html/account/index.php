@@ -647,7 +647,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                             <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>"
                                  alt="Your avatar" class="rounded-circle mb-2" width="128" height="128"
                                  id="account-avatar-preview"
-                                 onerror="this.onerror=null;this.src='/assets/img/branding/avatar-default.svg';">
+                                 data-cuercode-fallback-src="/assets/img/branding/avatar-default.svg">
                             <?php if ($avatarPath !== null && trim((string) $avatarPath) !== '') { ?>
                             <form method="POST" action="/account/#profile-section">
                                 <?php echo csrfField(); ?>

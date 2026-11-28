@@ -82,6 +82,11 @@ from one log entry; `email_queue_real_mysql.php` (scenario 12b) checks the
 time limits and `account_recovery_real_mysql.php` (section CX) checks account
 erasure, on a real database.
 
+## Admin script policy (#154)
+
+`tests/test_admin_csp.php` fails if the admin policy allows inline scripts
+again, or if a page the admin area can show contains one.
+
 ## Current suite (2026-11-28, Codex review fixes of task 7n Phase 2: the table below was re-measured; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:

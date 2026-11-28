@@ -66,7 +66,7 @@ $pageDescription = 'We could not find the page you asked for. Try the QR code ge
 $pageNoIndex     = true; // 🚫 Keep out of search results (#137)
 $bodyClass       = 'page-error page-404';
 $pageCSS         = [];
-$pageJS          = [];
+$pageJS          = ['/assets/js/cuercode-error.js']; // ⬅️ "Go back" (no inline script: #154)
 
 // ==============================================================================
 // 📄 Render Page
@@ -116,8 +116,8 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                     </nav>
 
                     <?php /* ⬅️ "Go back" is only useful if there is somewhere to go back to.
-                             It starts hidden and the script below reveals it when the visitor
-                             arrived from another page. Without JavaScript it simply stays hidden. */ ?>
+                             It starts hidden and /assets/js/cuercode-error.js reveals it when the
+                             visitor arrived from another page. Without JavaScript it simply stays hidden. */ ?>
                     <button type="button" class="btn btn-outline-secondary" id="error-go-back" hidden>
                         <i class="fa-solid fa-arrow-left me-1" aria-hidden="true"></i> Go back
                     </button>
@@ -125,25 +125,6 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
             </div>
         </div>
     </section>
-
-    <script>
-        (function () {
-            <?php /* ⬅️ Show "Go back" only when the visitor has a page to return to: */ ?>
-            <?php /* a non-empty referrer (they followed a link) and more than one */ ?>
-            <?php /* history entry. Direct visits (typed address, scanned QR code, */ ?>
-            <?php /* new tab) get no dead button. */ ?>
-            var backButton = document.getElementById('error-go-back');
-            if (!backButton) {
-                return;
-            }
-            if (document.referrer !== '' && window.history.length > 1) {
-                backButton.hidden = false;
-                backButton.addEventListener('click', function () {
-                    window.history.back();
-                });
-            }
-        }());
-    </script>
 
 <?php
 require_once CUERCODE_INCLUDES_DIR . 'footer.php';

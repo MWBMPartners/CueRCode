@@ -1512,6 +1512,10 @@ The connection sets `time_zone = '+00:00'`, so every `DATETIME` the database wri
 
 Not changed: the "Saved", "Linked", "Created" and "last used" dates on `/account/` still print the stored UTC time without converting it to the site's zone (a display matter; no expiry depends on it).
 
+## 🛡️ No inline scripts in the admin area (2026-11-28, #154)
+
+`public_html/admin/.htaccess` allows scripts only from this site's files and cdn.jsdelivr.net (`adminSendSecurityHeaders()` says the same). So anything an admin address can show - admin pages, `header.php`, `footer.php`, the admin menu, `error/404.php` - must have **no** inline `<script>`, no `on...="..."` attribute and no `javascript:` address: put the code in a file under `assets/js/`, pass values in `data-` attributes, and add the file to `sw.js`. `tests/test_admin_csp.php` checks this. `cuercode-head.js` and the two `cuercode-fallback-*.js` files must stay plain blocking scripts. The public policy still allows inline scripts (home, account and API docs pages use them).
+
 ## 🧪 Testing
 
 A dependency-free PHP characterization test harness lives under `tests/` at the repo root. It requires no Composer or external packages and can be run on any machine with PHP 8.4+.
