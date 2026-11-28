@@ -137,6 +137,11 @@ if (!defined('CUERCODE_GO2MYLINK_DEFAULT_SHORT_LINK_BASE')) {
     define('CUERCODE_GO2MYLINK_DEFAULT_SHORT_LINK_BASE', 'https://QRmy.Link');
 }
 
+/** @var string The live short-link host. Decision 0030: an alpha or beta copy never prints on it (review L11). */
+if (!defined('CUERCODE_GO2MYLINK_LIVE_SHORT_HOST')) {
+    define('CUERCODE_GO2MYLINK_LIVE_SHORT_HOST', 'qrmy.link');
+}
+
 /** @var int Seconds to wait for Go2My.Link by default, and the bounds an admin may set. */
 if (!defined('CUERCODE_GO2MYLINK_DEFAULT_TIMEOUT')) {
     define('CUERCODE_GO2MYLINK_DEFAULT_TIMEOUT', 5);
@@ -329,6 +334,49 @@ function go2mylinkHostOf(string $url): string
 }
 
 /**
+ * 🧪 Is this an alpha or beta copy of the site (review L11, decision 0030)?
+ *    'alpha', 'beta' or '' (the live copy, or not detectable). PURE.
+ *
+ * Signs, any one of which is enough:
+ *   - the web folder (DOCUMENT_ROOT or SCRIPT_FILENAME) is public_html_dev_alpha
+ *     or public_html_dev_beta (also the older public_html_alpha / _beta, the
+ *     same rule as infoAppVer.php);
+ *   - the site address (site_url) or the Go2My.Link API address starts with
+ *     "alpha." or "beta." (this also works on the command line, which has
+ *     no web folder).
+ * A copy that shows none of these cannot be told apart from the live one.
+ *
+ * @param array<string, mixed> $server     $_SERVER (or a test's stand-in)
+ * @param string               $siteUrl    The site_url setting
+ * @param string               $apiBaseUrl The Go2My.Link API address
+ * @return string
+ */
+function go2mylinkTestCopyName(array $server, string $siteUrl, string $apiBaseUrl): string
+{
+    foreach (['DOCUMENT_ROOT', 'SCRIPT_FILENAME'] as $pathKey) {
+        if (!isset($server[$pathKey]) || !is_string($server[$pathKey])) {
+            continue;
+        }
+        foreach (['alpha', 'beta'] as $copy) {
+            if (str_contains($server[$pathKey], 'public_html_dev_' . $copy) || str_contains($server[$pathKey], 'public_html_' . $copy)) {
+                return $copy;
+            }
+        }
+    }
+
+    foreach ([$siteUrl, $apiBaseUrl] as $address) {
+        $host = go2mylinkHostOf($address);
+        foreach (['alpha', 'beta'] as $copy) {
+            if (str_starts_with($host, $copy . '.')) {
+                return $copy;
+            }
+        }
+    }
+
+    return '';
+}
+
+/**
  * ⚙️ Read the Go2My.Link settings (Global Admin settings, /admin/settings/).
  *
  *   go2mylink_api_base_url    - the API address (production by default; an
@@ -338,13 +386,21 @@ function go2mylinkHostOf(string $url): string
  *   dynamic_redirect_base_url - the short-link address printed in codes
  *                               (https://QRmy.Link; alpha: https://alpha.QRmy.Link)
  *
- * @param callable|null $configGetter Stand-in for getConfig() (tests); null = the site's
- * @param callable|null $storedState  Stand-in for configStoredValueState() (tests); null = the site's
+ * An alpha or beta copy (go2mylinkTestCopyName()) whose short-link address
+ * is the live QRmy.Link is refused with 'test_copy_live_domain', so nothing
+ * is sent (review L11, decision 0030).
+ *
+ * @param callable|null             $configGetter Stand-in for getConfig() (tests); null = the site's
+ * @param callable|null             $storedState  Stand-in for configStoredValueState() (tests); null = the site's
+ * @param array<string, mixed>|null $server       Stand-in for $_SERVER (tests); null = the real one
  * @return array{apiBaseUrl: string, apiKey: string, keyUnreadable: bool, timeout: int, shortLinkBase: string, problem: string}
- *         problem: '' (ready), 'not_configured' or 'key_unreadable'
+ *         problem: '' (ready), 'not_configured', 'key_unreadable' or 'test_copy_live_domain'
  */
-function go2mylinkReadSettings(?callable $configGetter = null, ?callable $storedState = null): array
+function go2mylinkReadSettings(?callable $configGetter = null, ?callable $storedState = null, ?array $server = null): array
 {
+    if ($server === null) {
+        $server = $_SERVER;
+    }
     if ($configGetter === null) {
         $configGetter = 'humanCheckSiteConfig';
     }
@@ -372,6 +428,12 @@ function go2mylinkReadSettings(?callable $configGetter = null, ?callable $stored
         $problem = 'key_unreadable';
     } elseif ($key['value'] === '' || $apiBaseUrl === '' || go2mylinkHostOf($shortLinkBase) === '') {
         $problem = 'not_configured';
+    } elseif (
+        go2mylinkHostOf($shortLinkBase) === CUERCODE_GO2MYLINK_LIVE_SHORT_HOST
+        && go2mylinkTestCopyName($server, trim(humanCheckText($configGetter('site_url', ''))), $apiBaseUrl) !== ''
+    ) {
+        // 🧪 Decision 0030: test codes are never printed on the live address.
+        $problem = 'test_copy_live_domain';
     }
 
     return [
@@ -442,6 +504,7 @@ function go2mylinkReasonFacts(string $reason): array
         'timeout'            => [CUERCODE_GO2MYLINK_MEMBER_UNREACHABLE, 'Go2My.Link did not answer in time, or the connection dropped part-way.', 503],
         'tls_failed'         => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link\'s security certificate could not be checked, so nothing was sent. Check the certificate on the API address.', 503],
         'bad_reply'          => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link gave an answer CueRCode did not expect or could not read (not the usual shape, broken, too large, or a redirect).', 502],
+        'test_copy_live_domain' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'This is an alpha or beta copy of the site, but its short-link address is the live https://QRmy.Link. Test codes are never printed there (decision 0030), so nothing was sent to Go2My.Link. Set "Short-link address printed in dynamic codes" to https://alpha.QRmy.Link (or the beta address) on the settings page.', 503],
         'wrong_short_domain' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link made the link on a different short domain from the one this site prints in codes. The link exists on Go2My.Link, but it is not printed and is not tried again. Make the short-link address on the settings page the CueRCode organisation\'s default short domain on Go2My.Link (and verify that domain there), then deal with this code by hand.', 503],
         'domain_unconfirmed' => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but its look-up does not say which short domain the link is on, so CueRCode cannot confirm that the printed address would work. The code is held: it is not printed and is not tried again. Check the link on the Go2My.Link dashboard. (Go2My.Link has been asked to include the short address in its look-up: Go2My.Link issue #276.)', 503],
         'link_switched_off'  => [CUERCODE_GO2MYLINK_MEMBER_UNAVAILABLE, 'Go2My.Link has a link with this code, but it is switched off there, so it is not printed. CueRCode cannot switch a link back on; look at it on the Go2My.Link dashboard.', 409],

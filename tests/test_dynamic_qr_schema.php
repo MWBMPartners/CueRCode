@@ -69,6 +69,7 @@ assertEquals([
     'insert_if_missing tblSettings setting go2mylink_api_base_url',
     'insert_if_missing tblSettings setting go2mylink_api_key',
     'insert_if_missing tblSettings setting go2mylink_timeout_seconds',
+    'update_if_unchanged tblSettings description of dynamic_redirect_base_url',
     'insert_if_missing tblSettings setting link_safety_providers',
     'insert_if_missing tblSettings setting link_safety_webrisk_api_key',
     'insert_if_missing tblSettings setting abuse_auto_suspend_reports',
@@ -103,6 +104,7 @@ $dqAllSql = '';
 foreach ($dqDefinition['steps'] as $dqStep) {
     $dqAllSql .= "\n" . $dqStep['sql'];
 }
+assertContains("WHERE `settingKey` = 'dynamic_redirect_base_url' AND `description` = 'Base URL prefixed to /r/{uuid}", $dqAllSql, 'L11: the old "/r/{uuid}" description of dynamic_redirect_base_url is replaced, only while it is still the seeded wording');
 assertFalse(str_contains($dqAllSql, 'dynamic_qr_enabled'), 'upgrade 0007 never touches dynamic_qr_enabled (dynamic QR stays switched off)');
 foreach (migrationSeedProtectionTables() as $dqSeedTable) {
     assertFalse(str_contains($dqAllSql, '`' . $dqSeedTable . '`'), 'upgrade 0007 never writes to ' . $dqSeedTable . ' (only seed_data.sql fills it)');

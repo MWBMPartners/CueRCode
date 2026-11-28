@@ -34,7 +34,9 @@
  *      but allow global admin to specifically approve beyond 3 on a per-user
  *      basis"). Any plan limit can be overridden this way, not only
  *      dynamic_codes, so no commercial rule is fixed in code.
- *   4. Starting settings a Global Admin can change:
+ *   4. The short-link address's seeded description is corrected (it still
+ *      said /r/{uuid}), only while it is the seeded wording (review L11).
+ *   5. Starting settings a Global Admin can change:
  *        - Go2My.Link: API address (production; an alpha database sets its
  *          own, decision 0030), API key (stored encrypted), waiting time;
  *        - link safety: the providers to ask, in order, as a list
@@ -240,6 +242,18 @@ return [
             'sql'   => 'INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`)'
                 . ' VALUES (\'redirects\', \'go2mylink_timeout_seconds\', \'5\', \'integer\', 0, 1, \'Go2My.Link: seconds to wait for an answer. Whole number 2-15; anything else means the default of 5.\')'
                 . ' ON DUPLICATE KEY UPDATE `settingKey` = `settingKey`',
+        ],
+
+        // 📝 Review L11: the seeded description of the short-link address
+        //    still said codes print as /r/{uuid}. Replaced ONLY while it is
+        //    still exactly the seeded wording (seed_data.sql).
+        [
+            'type'  => 'update_if_unchanged',
+            'table' => 'tblSettings',
+            'label' => 'description of dynamic_redirect_base_url',
+            'sql'   => 'UPDATE `tblSettings` SET `description` = \'The short-link address printed in dynamic codes ({address}/{short code}); must be the CueRCode organisation\'\'s default short domain on Go2My.Link (https://QRmy.Link; an alpha or beta copy uses https://alpha.QRmy.Link, decision 0030)\''
+                . ' WHERE `settingKey` = \'dynamic_redirect_base_url\''
+                . ' AND `description` = \'Base URL prefixed to /r/{uuid} when building a dynamic QR payload (buildPayload_dynamic_url(), fn_qr_payloads.php) - owner-confirmable before any code is printed for real; see LAUNCH_DECISIONS.md O-11 (defaults to the tertiary domain QRmy.Link to partition redirect-abuse reputation away from the primary product domain)\'',
         ],
 
         // ======================================================================

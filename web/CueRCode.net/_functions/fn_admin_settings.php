@@ -605,7 +605,7 @@ function adminSettingsRegistry(): array
     $fields[] = adminSettingsField([
         'key' => 'dynamic_redirect_base_url', 'section' => 'dynamic', 'kind' => 'site_url', 'group' => 'redirects', 'type' => 'url',
         'label' => 'Short-link address printed in dynamic codes',
-        'help' => 'https://QRmy.Link for real codes; https://alpha.QRmy.Link on the alpha test database (decision 0030). It must be the CueRCode organisation\'s default short domain on Go2My.Link: a link Go2My.Link makes on any other domain is refused, never printed. Only the website name, no path.',
+        'help' => 'https://QRmy.Link for real codes; https://alpha.QRmy.Link on the alpha test database (decision 0030). An alpha or beta copy of the site that can be recognised (its folder, or an address starting alpha. or beta.) refuses to make codes on the live https://QRmy.Link. It must be the CueRCode organisation\'s default short domain on Go2My.Link: a link Go2My.Link makes on any other domain, or one whose domain cannot be confirmed, is held and never printed. Only the website name, no path.',
         'allowEmpty' => false, 'maxLength' => 253,
         'description' => 'The short-link address printed in dynamic codes ({address}/{short code}); must be the CueRCode organisation\'s default short domain on Go2My.Link',
     ]);

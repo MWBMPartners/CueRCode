@@ -1326,8 +1326,8 @@ itCheck(
         && $itUpN['migrations'][0]['outcome'] === 'applied' && $itUpN['migrations'][0]['stepsRun'] === 31 && $itUpN['migrations'][0]['stepsSkipped'] === 0
         && $itUpN['migrations'][1]['key'] === '0005_human_check_settings' && $itUpN['migrations'][1]['outcome'] === 'applied' && $itUpN['migrations'][1]['stepsRun'] === 12
         && $itUpN['migrations'][2]['key'] === '0006_three_decimal_money_columns' && $itUpN['migrations'][2]['outcome'] === 'applied' && $itUpN['migrations'][2]['stepsRun'] === 6
-        && $itUpN['migrations'][3]['key'] === '0007_dynamic_qr_go2mylink' && $itUpN['migrations'][3]['outcome'] === 'applied' && $itUpN['migrations'][3]['stepsRun'] === 20,
-    'the upgrade applies 0004 (all 31 steps), 0005 (all 12 steps: 2 updates, 6 settings, 4 tables) then 0006 (6 columns) and 0007 (20 steps): ' . json_encode($itUpN['migrations'])
+        && $itUpN['migrations'][3]['key'] === '0007_dynamic_qr_go2mylink' && $itUpN['migrations'][3]['outcome'] === 'applied' && $itUpN['migrations'][3]['stepsRun'] === 21,
+    'the upgrade applies 0004 (all 31 steps), 0005 (all 12 steps: 2 updates, 6 settings, 4 tables) then 0006 (6 columns) and 0007 (21 steps): ' . json_encode($itUpN['migrations'])
 );
 // 📝 Decision 0022 (#161): the starting descriptions mark unbuilt features as coming soon.
 itCheck('N upgrade from 0003', itValue($itN, "SELECT `description` FROM `tblSubscriptionPlans` WHERE `planKey` = 'pro'") === 'For individuals who need dynamic QR codes, analytics and automation (all coming soon).', '#161: the starting Pro description now marks the unbuilt features as coming soon');
@@ -1939,7 +1939,8 @@ itCheck('Q 0007 dynamic QR', $itQ->query("SHOW TABLES LIKE 'tblAbuseReports'")->
 itQExec($itQ, "INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) VALUES ('abuse', 'abuse_mailbox', 'reports@example.com', 'email', 0, 1, 'owner')");
 itQExec($itQ, "INSERT INTO `tblQRRedirects` (`redirectUUID`, `destinationURL`) VALUES ('3fa85f64-5717-4562-b3fc-2c963f66afa6', 'https://example.com/old')");
 $itUpQ = migrationRun($itQ, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('Q 0007 dynamic QR', $itUpQ['status'] === 'ok' && count($itUpQ['migrations']) === 1 && $itUpQ['migrations'][0]['key'] === '0007_dynamic_qr_go2mylink' && $itUpQ['migrations'][0]['stepsRun'] === 20, '0007 applies, all 20 steps: ' . json_encode($itUpQ['migrations']));
+itCheck('Q 0007 dynamic QR', $itUpQ['status'] === 'ok' && count($itUpQ['migrations']) === 1 && $itUpQ['migrations'][0]['key'] === '0007_dynamic_qr_go2mylink' && $itUpQ['migrations'][0]['stepsRun'] === 21, '0007 applies, all 21 steps: ' . json_encode($itUpQ['migrations']));
+itCheck('Q 0007 dynamic QR', str_starts_with(itValue($itQ, "SELECT `description` FROM `tblSettings` WHERE `settingKey` = 'dynamic_redirect_base_url'"), 'The short-link address printed in dynamic codes ({address}/{short code})'), 'L11: the seeded "/r/{uuid}" description of the short-link address is replaced');
 
 $itQColumns = $itQ->query(
     "SELECT `COLUMN_NAME`, `DATA_TYPE`, `CHARACTER_MAXIMUM_LENGTH`, `IS_NULLABLE`, `COLUMN_DEFAULT` FROM `information_schema`.`COLUMNS`"
@@ -2019,7 +2020,7 @@ itQExec($itQ, "UPDATE `tblSettings` SET `settingValue` = '9' WHERE `settingKey` 
 itQExec($itQ, "DELETE FROM `tblSchemaMigrations` WHERE `migrationKey` = '0007_dynamic_qr_go2mylink'");
 $itSchemaBeforeAgainQ = itSchemaSnapshot($itQ);
 $itAgainQ = migrationRun($itQ, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('Q 0007 dynamic QR', $itAgainQ['status'] === 'ok' && $itAgainQ['migrations'][0]['stepsSkipped'] === 11 && $itAgainQ['migrations'][0]['stepsRun'] === 9 && itSchemaSnapshot($itQ) === $itSchemaBeforeAgainQ, 'forced to run again: the 11 structure steps are skipped, the 9 setting inserts change nothing: ' . json_encode($itAgainQ['migrations']));
+itCheck('Q 0007 dynamic QR', $itAgainQ['status'] === 'ok' && $itAgainQ['migrations'][0]['stepsSkipped'] === 11 && $itAgainQ['migrations'][0]['stepsRun'] === 10 && itSchemaSnapshot($itQ) === $itSchemaBeforeAgainQ, 'forced to run again: the 11 structure steps are skipped, the 9 setting inserts and the description update change nothing: ' . json_encode($itAgainQ['migrations']));
 itCheck('Q 0007 dynamic QR', itValue($itQ, "SELECT CONCAT(`settingValue`) FROM `tblSettings` WHERE `settingKey` = 'go2mylink_timeout_seconds'") === '9' && itValue($itQ, "SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = 'abuse_mailbox'") === 'reports@example.com', '...the owner\'s waiting time (9) and abuse mailbox are kept');
 itCheck('Q 0007 dynamic QR', itSchemaSnapshot($itQ) === $itSchemaA, 'the upgraded database\'s structure is byte-for-byte the fresh install\'s');
 itDropDb($itEnv, $itPort, $itDbQ);
@@ -2034,7 +2035,7 @@ foreach (array_slice($itSteps0007, 0, 4) as $itHalfStep) {
     $itQ->query($itHalfStep['sql']);
 }
 $itHalfQ = migrationRun($itQ, 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
-itCheck('Q 0007 dynamic QR', $itHalfQ['status'] === 'ok' && $itHalfQ['migrations'][0]['stepsSkipped'] === 4 && $itHalfQ['migrations'][0]['stepsRun'] === 16 && itSchemaSnapshot($itQ) === $itSchemaA, 'half-applied: the four done steps are skipped, the other 16 run, and the result is the fresh install\'s: ' . json_encode($itHalfQ['migrations']));
+itCheck('Q 0007 dynamic QR', $itHalfQ['status'] === 'ok' && $itHalfQ['migrations'][0]['stepsSkipped'] === 4 && $itHalfQ['migrations'][0]['stepsRun'] === 17 && itSchemaSnapshot($itQ) === $itSchemaA, 'half-applied: the four done steps are skipped, the other 17 run, and the result is the fresh install\'s: ' . json_encode($itHalfQ['migrations']));
 itDropDb($itEnv, $itPort, $itDbQ);
 
 foreach ((array) glob($itDir0006 . '*') as $itTempFile) {

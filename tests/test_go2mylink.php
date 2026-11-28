@@ -140,6 +140,36 @@ $g2Settings = go2mylinkReadSettings($g2Config([]), static function (string $g2Ke
 });
 assertEquals('key_unreadable', $g2Settings['problem'], 'settings: a stored key that cannot be decrypted is reported as such, not as "not set"');
 
+// 🧪 L11 (decision 0030): an alpha or beta copy never prints on the live QRmy.Link.
+$g2Prod = ['DOCUMENT_ROOT' => '/home/cuercode/CueRCode.net/public_html', 'SCRIPT_FILENAME' => '/home/cuercode/CueRCode.net/public_html/admin/settings/index.php'];
+$g2Alpha = ['DOCUMENT_ROOT' => '/home/cuercode/CueRCode.net/public_html_dev_alpha', 'SCRIPT_FILENAME' => '/home/cuercode/CueRCode.net/public_html_dev_alpha/admin/settings/index.php'];
+$g2Beta = ['SCRIPT_FILENAME' => '/home/cuercode/CueRCode.net/public_html_dev_beta/index.php'];
+assertEquals('', go2mylinkTestCopyName($g2Prod, 'https://cuercode.net', 'https://go2my.link/api/v1'), 'L11: the live copy is not a test copy');
+assertEquals('alpha', go2mylinkTestCopyName($g2Alpha, 'https://cuercode.net', 'https://go2my.link/api/v1'), 'L11: an alpha copy is known by its folder (public_html_dev_alpha)');
+assertEquals('beta', go2mylinkTestCopyName($g2Beta, '', ''), 'L11: a beta copy is known by its folder (public_html_dev_beta)');
+assertEquals('alpha', go2mylinkTestCopyName([], 'https://alpha.cuercode.net', ''), 'L11: ...or by the site address (alpha.), for example on the command line');
+assertEquals('beta', go2mylinkTestCopyName([], 'https://cuercode.net', 'https://beta.go2my.link/api/v1'), 'L11: ...or by the Go2My.Link address (beta.)');
+assertEquals('', go2mylinkTestCopyName([], 'https://alphabet.example', ''), 'L11: a name that only starts with the letters "alpha" is not a test copy');
+
+$g2Base = ['go2mylink_api_key' => $g2Key, 'dynamic_redirect_base_url' => 'https://QRmy.Link'];
+$g2Settings = go2mylinkReadSettings($g2Config($g2Base), $g2NoRow, $g2Alpha);
+assertEquals('test_copy_live_domain', $g2Settings['problem'], 'L11: an alpha copy whose short-link address is the live https://QRmy.Link is refused before anything is sent');
+assertContains('alpha.QRmy.Link', go2mylinkReasonFacts('test_copy_live_domain')['adminMessage'], 'L11: ...and the admin is told to use https://alpha.QRmy.Link (decision 0030)');
+$g2Settings = go2mylinkReadSettings($g2Config(array_merge($g2Base, ['dynamic_redirect_base_url' => 'https://qrmy.link/'])), $g2NoRow, $g2Beta);
+assertEquals('test_copy_live_domain', $g2Settings['problem'], 'L11: ...whatever the capitals or a trailing slash (beta copy)');
+$g2Settings = go2mylinkReadSettings($g2Config(array_merge($g2Base, ['dynamic_redirect_base_url' => 'https://alpha.QRmy.Link'])), $g2NoRow, $g2Alpha);
+assertEquals('', $g2Settings['problem'], 'L11: an alpha copy on https://alpha.QRmy.Link is fine');
+$g2Settings = go2mylinkReadSettings($g2Config($g2Base), $g2NoRow, $g2Prod);
+assertEquals('', $g2Settings['problem'], 'L11: the live copy prints on https://QRmy.Link');
+$g2Settings = go2mylinkReadSettings($g2Config(array_merge($g2Base, ['site_url' => 'https://alpha.cuercode.net'])), $g2NoRow, []);
+assertEquals('test_copy_live_domain', $g2Settings['problem'], 'L11: on the command line (no folder) the alpha site address is enough to refuse');
+$g2BlockedSeen = [];
+$g2Blocked = go2mylinkTestConnection(['settings' => go2mylinkReadSettings($g2Config($g2Base), $g2NoRow, $g2Alpha), 'transport' => static function (array $g2Request, int $g2Timeout) use (&$g2BlockedSeen): array {
+    $g2BlockedSeen[] = $g2Request;
+    return ['ok' => false, 'errno' => 7];
+}]);
+assertTrue(!$g2Blocked['ok'] && $g2Blocked['reason'] === 'test_copy_live_domain' && $g2BlockedSeen === [], 'L11: "Test connection" on such a copy says so and sends nothing (so the key goes nowhere)');
+
 // ==============================================================================
 // 🧰 A scripted transport: records every request, answers from a list
 // ==============================================================================
