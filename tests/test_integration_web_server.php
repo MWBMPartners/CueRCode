@@ -14,7 +14,10 @@
  *   - exits with a failure code (a check failed);
  *   - throws an uncaught exception, or stops on a fatal error;
  *   - is stopped with SIGTERM (kill) or SIGINT (Ctrl+C);
- *   - is killed outright with SIGKILL (kill -9), which no code can catch.
+ *   - is killed outright with SIGKILL (kill -9), which no code can catch;
+ *   - outlives its supervisor: the supervisor itself is killed with SIGKILL
+ *     (fourth-round review, Info 1), and the script then stops the server
+ *     by its own process number.
  * A control case starts the server the OLD way (proc_open of php -S straight
  * from the script) and kills the script: that server is still running
  * afterwards, which shows this test can see an orphaned server. It is then
@@ -126,6 +129,14 @@ echo 'up ' . $wsPort . ' ' . $wsServerPid . "\n";
 if ($wsMode === 'stop') {
     itWebServerStop($wsServer);
     sleep(30);
+} elseif ($wsMode === 'supervisor-killed') {
+    // 🔪 Info 1: the supervisor dies first (kill -9), the server lives on;
+    //    then the script's normal stop must still stop the server.
+    posix_kill((int) proc_get_status($wsServer['process'])['pid'], 9);
+    usleep(500000);
+    itWebServerStop($wsServer);
+    echo "stopped\n";
+    sleep(30);
 } elseif ($wsMode === 'fail') {
     exit(1);
 } elseif ($wsMode === 'throw') {
@@ -147,6 +158,10 @@ $wsCases = [
     'SIGKILL (kill -9, cannot be caught)'  => ['sleep', 9],
     'CONTROL: the old way, then SIGKILL'   => ['old', 9],
 ];
+// 🔪 Info 1 needs posix_kill() to kill the supervisor from the child.
+if (function_exists('posix_kill')) {
+    $wsCases['its supervisor was killed with SIGKILL first (Info 1)'] = ['supervisor-killed', null];
+}
 foreach ($wsCases as $wsLabel => [$wsMode, $wsSignal]) {
     $wsPort  = wsFreePort();
     $wsPipes = [];
@@ -157,7 +172,21 @@ foreach ($wsCases as $wsLabel => [$wsMode, $wsSignal]) {
     if ($wsSignal !== null) {
         proc_terminate($wsChild, $wsSignal);
     }
+    if ($wsMode === 'supervisor-killed') {
+        // ⏳ Wait for the child to have called itWebServerStop().
+        fgets($wsPipes[1]);
+    }
     $wsClosed = wsWaitClosed($wsPort, 8.0);
+    if (!$wsClosed && $wsMode !== 'old') {
+        // 🧹 A failing case must not leave its server behind either.
+        $wsFound = [];
+        exec('lsof -t -i tcp:' . (int) $wsPort . ' -sTCP:LISTEN 2>/dev/null', $wsFound);
+        foreach ($wsFound as $wsFoundPid) {
+            if ((int) $wsFoundPid > 0 && function_exists('posix_kill')) {
+                posix_kill((int) $wsFoundPid, 9);
+            }
+        }
+    }
     fclose($wsPipes[0]);
     fclose($wsPipes[1]);
     proc_terminate($wsChild, 9);

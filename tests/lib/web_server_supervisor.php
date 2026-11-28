@@ -66,6 +66,16 @@ if (!is_resource($supervisorServer)) {
     exit(1);
 }
 
+// 🔢 Fourth-round review, Info 1: tell the test script the server's own
+//    process number (pipe 3), so it can still stop the server if this
+//    supervisor is killed. (An array command is run without a shell, so this
+//    is the php -S process itself.)
+$supervisorPidPipe = @fopen('php://fd/3', 'w');
+if (is_resource($supervisorPidPipe)) {
+    fwrite($supervisorPidPipe, 'pid ' . (int) proc_get_status($supervisorServer)['pid'] . "\n");
+    fclose($supervisorPidPipe);
+}
+
 // 🔔 A stop signal (Ctrl+C, kill) ends the watch below, so the server is
 //    still stopped. Without pcntl the pipe closing does the same job.
 $supervisorStop = false;

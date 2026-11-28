@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests - Test web servers are stopped even if their supervisor dies; the admin change-log check always runs (fourth-round review, Info 1 and Info 3, 2026-11-28)
+
+- **Info 1:** if the small supervisor that stops a test web server was itself killed (kill -9), or had to be killed after its 10-second wait, the PHP web server kept running. The supervisor now tells the test script the server's own process number, and `itWebServerStop()` stops the server by that number while it still answers on its address. A new case in `tests/test_integration_web_server.php` kills the supervisor first. It failed before the change (the server was left running; the test then stopped it) and passes now.
+- **Info 3:** in `email_queue_real_mysql.php` the check that the clean-up never touches the admin change log never ran, because that script's database had no such table. The script now applies the database upgrades when the table is missing, and its absence counts as a failure.
+
 ### Documentation - No more "nobody is locked out" for the no-JavaScript route; the clean-ups need the cron job (fourth-round review, Low 1 and Info 4, 2026-11-28)
 
 - **Low 1 (accepted risk, decision 0044):** the admin help for "Most wrong passwords checked for one account in 24 hours", DEV_NOTES, `docs/INSTALL.md`, the code comments and the third-round changelog entry said nobody could be locked out by the no-JavaScript route. The account is never locked and the normal form keeps working for anyone with JavaScript. But a person without JavaScript has only that route, so a stranger who uses up the daily number keeps them out of it for the day. The documents now say so. The limits themselves are unchanged, as decided.

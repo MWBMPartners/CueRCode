@@ -913,11 +913,21 @@ foreach (['old' => 91, 'new' => 89] as $itTag => $itDays) {
         ['it_179_' . $itTag, $itDays]
     );
 }
-// 📌 The admin change log comes from upgrade 0002; this script loads only
-//    install.sql, so the check runs only where the table is there (CI's
-//    run loads the upgrades into other scripts; tests/test_email_queue_runner.php
-//    also checks the clean-up never names that table).
-$itHasAuditLog = (int) itSelect("SELECT COUNT(*) AS `n` FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?", 's', ['tblAdminAuditLog'])[0]['n'] === 1;
+// 📌 The admin change log comes from upgrade 0002, and this script loads only
+//    install.sql. Fourth-round review, Info 3: so the check below never ran in
+//    CI. The upgrades are now applied here when the table is missing (the
+//    database is this script's own throwaway one), and its absence is a
+//    failure, so the check always runs.
+$itAuditLogExists = static function (): bool {
+    return (int) itSelect("SELECT COUNT(*) AS `n` FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = ?", 's', ['tblAdminAuditLog'])[0]['n'] === 1;
+};
+$itHasAuditLog = $itAuditLogExists();
+if (!$itHasAuditLog) {
+    require_once $itSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_migrations.php';
+    $itUpgrade     = migrationRun(getDB(), 'apply', 'test', migrationDefaultDirectory(), migrationDefaultInstallSqlPath());
+    $itHasAuditLog = $itAuditLogExists();
+    itCheck('12c error log and visitor details (#179)', $itUpgrade['status'] === 'ok' && $itHasAuditLog, 'set-up (fourth-round review Info 3): the database upgrades were applied, so the admin change log exists and the "not touched" check runs (' . $itUpgrade['status'] . ')');
+}
 if ($itHasAuditLog) {
     itExec(
         "INSERT INTO `tblAdminAuditLog` (`actorType`, `actorLabel`, `action`, `entityType`, `entityKey`, `outcome`, `requestIP`, `userAgent`, `createdAt`) VALUES ('cli', 'cli:it', ?, 'setting', 'it_179', 'success', '203.0.113.179', 'IT browser', DATE_SUB(NOW(), INTERVAL 400 DAY))",
@@ -937,7 +947,7 @@ itCheck('12c error log and visitor details (#179)', count($itNewEntry) === 1 && 
 if ($itHasAuditLog) {
     itCheck('12c error log and visitor details (#179)', $itCount179("SELECT COUNT(*) AS `n` FROM `tblAdminAuditLog` WHERE `action` = ? AND `requestIP` = '203.0.113.179' AND `userAgent` = 'IT browser'", 'it_179') === 1, 'the admin change log is not touched (a 400-day-old row keeps its address and browser name)');
 } else {
-    echo '    note the admin change log is not in this database (it comes from upgrade 0002); the code check in tests/test_email_queue_runner.php covers it' . PHP_EOL;
+    itCheck('12c error log and visitor details (#179)', false, 'the admin change log is missing even after the upgrades, so the "not touched" check could not run');
 }
 itCheck('12c error log and visitor details (#179)', ($itResult['errorLogPurged'] ?? 0) >= 1 && ($itResult['visitorDetailsCleared'] ?? 0) >= 1 && $itResult['housekeepingFailures'] === 0, 'the run reports what it removed, and no clean-up step failed: ' . json_encode([$itResult['errorLogPurged'] ?? null, $itResult['visitorDetailsCleared'] ?? null]));
 $itResult = runEmailQueueBatch($itGateway, $itOkSender, ['errorLogRetentionDays' => 30, 'visitorDetailsRetentionDays' => 30]);
