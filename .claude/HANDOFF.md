@@ -15,16 +15,17 @@ Owner (2026-11-27): work autonomously until the **first version** can be launche
 - Owner decisions 0023-0039 recorded 2026-11-27. First-launch plan: `.claude/plans/first-launch-plan.md`; dynamic QR issues #164-#172; later second link checker #173.
 - **Not verified anywhere:** real browser pass; DreamHost; real Microsoft mail; real human-check providers; HTTPS/HSTS; MySQL 8.4 for the newest scenarios.
 
-### In flight (watched, this session) — 2026-11-28 about 04:20
-Committed up to `550b1ed` (code up to `d5dd065`: unit suite 9377/9377; 9 real-database scripts on MySQL 8.0.36, 8.4.13, MariaDB 10.6.28). Nothing pushed.
-1. **Opus check** of `35e87c2..d5dd065`. Report: `.claude/plans/launch-round4-review-report.md`.
-2. **Codex review** (background script, waits until 04:52): human check, no-JavaScript route, pricing and CI. Default model, effort high.
-3. **Opus builder in a separate worktree:** dynamic QR WP4a and WP4b (#164, #165), from `d5dd065`. Merge only after the current work is pushed, then review it.
+### In flight (watched, this session) — 2026-11-28 about 08:10
+**Sent to GitHub `work-in-progress` up to `1dba97d`** (Opus-checked, decision 0008). Later commits are local only.
+Local since then: dynamic QR WP4a/b merged and its review fixed (`fb2d323..b7c6b7a`; suite 10190/10190; real-database scripts pass on MySQL 8.0.36, 8.4.13 (one timing check passed on rerun), MariaDB 10.6.28); secret-scan allowlist (#180).
+1. **Opus check** of `1dba97d..HEAD`. Report `.claude/plans/launch-round6-review-report.md`.
+2. **Opus builder:** WP4c and the admin control for personal limits (#166).
 
 ### Next (order)
-1. Review findings → fix → repeat until clean → push `work-in-progress` (decision 0008) → comment/close #31, #129, #130, #154, #155, #158-#161, #163, #174-#179 → move finished review reports to `.claude/plans/history/`.
-2. Merge and review WP4a/b → WP4c-j (#166-#172) → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
-- Only GitHub can prove: the database-test jobs and the deploy gate (first push to `alpha`).
+Fix review findings → Codex (still owed since `1dba97d`) → send to GitHub → WP4d-j (#167-#172) → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
+- Move finished review reports in `.claude/plans/` to `history/` with an outcome line.
+- Owner to add to Go2My.Link key scopes: `account:read`. Alpha database must never be a copy of live. Go2My.Link must add the short address to its look-up (its issue 276).
+- Only GitHub can prove: the database-test jobs and the deploy gate (#155, #174).
 - Model tiers (decision 0001): gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium (money and security = Opus); every check or review = Opus.
 
 ### Waiting on the owner
