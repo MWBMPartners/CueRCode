@@ -173,7 +173,7 @@ assertTrue($lgmFirst, 'bootstrap.php loads fn_log_mask.php before fn_error_handl
 assertContains('cleanLogText(', $lgmFunctionBody($lgmEmailSource, 'logEmailAttempt'), "fn_email.php: logEmailAttempt()'s fallback goes through cleanLogText()");
 
 $lgmMaskBody = $lgmFunctionBody($lgmErrorSource, 'maskSensitiveForLog');
-assertContains('maskEmailAddresses(', $lgmMaskBody, 'fn_error_handler.php: maskSensitiveForLog() hides email addresses');
+assertContains('maskLogSecrets(', $lgmMaskBody, 'fn_error_handler.php: maskSensitiveForLog() hides email addresses (and, since the fourth-round review Low 3, one-time links)');
 assertContains('is_string($masked)', $lgmMaskBody, 'fn_error_handler.php: maskSensitiveForLog() never passes on a failed replace');
 
 // ==============================================================================
@@ -317,3 +317,31 @@ assertEquals(0, $lgmChild['exit'], $lgmLabel . ': the child exits 0');
 assertContains('done', $lgmChild['stdout'], $lgmLabel . ': the child ran to the end');
 assertContains('a [address] b', $lgmChild['stdout'], $lgmLabel . ': the address becomes [address]');
 assertContains('[SQL REDACTED]', $lgmChild['stdout'], $lgmLabel . ': the SQL text is still redacted');
+
+// ==============================================================================
+// ✅ Fourth-round review, Low 3: written-out addresses and one-time links
+// ==============================================================================
+// A browser sends a form field in a page address as "alice%40example.test"
+// (the @ written out as %40), which the plain pattern did not see; and a page
+// address or Referer can carry a live one-time link (?token=...).
+$lgmToken = str_repeat('ab12', 16);
+assertEquals('/reset-password/?email=[address]', maskEmailAddresses('/reset-password/?email=alice%40example.test'), 'Low 3: an address with the @ written out as %40 is masked');
+assertEquals('?to=[address]&x=1', maskEmailAddresses('?to=bob%2540example.org&x=1'), 'Low 3: ...and written out twice (%2540)');
+assertEquals('[address]', maskEmailAddresses('alice%40m%C3%BCnchen.de'), 'Low 3: ...with a written-out non-English domain, masked whole');
+assertEquals('100%40 off', maskEmailAddresses('100%40 off'), 'Low 3: "%40" with no address shape round it is left alone (nothing to hide)');
+assertTrue(function_exists('maskSecretQueryValues'), 'Low 3: there is a helper for one-time links in addresses');
+if (function_exists('maskSecretQueryValues')) {
+    assertEquals('/reset-password/?token=[removed]&lang=en', maskSecretQueryValues('/reset-password/?token=' . $lgmToken . '&lang=en'), 'Low 3: a one-time link\'s token is removed, the rest of the address kept');
+    assertEquals('/auth/callback/?code=[removed]&state=[removed]', maskSecretQueryValues('/auth/callback/?code=abc.DEF-123&state=' . $lgmToken), 'Low 3: a Google/Microsoft sign-in code and state are removed');
+    assertEquals('/login/?next=%2Fverify-email%2F%3Ftoken%3D[removed]', maskSecretQueryValues('/login/?next=%2Fverify-email%2F%3Ftoken%3D' . $lgmToken), 'Low 3: ...also inside a written-out address in another one');
+    assertEquals('/pricing/?currency=GBP&barcode=1', maskSecretQueryValues('/pricing/?currency=GBP&barcode=1'), 'Low 3: other values (and names merely ending in "code") are left alone');
+}
+assertTrue(function_exists('maskLogSecrets'), 'Low 3: one helper does both, for the error log');
+if (function_exists('maskLogSecrets')) {
+    assertEquals('/reset-password/?token=[removed]&email=[removed]', maskLogSecrets('/reset-password/?token=' . $lgmToken . '&email=alice%40example.test'), 'Low 3: the reviewer\'s page address: no token, no address');
+    assertEquals('Referer: https://webmail.example/?to=[address]', maskLogSecrets('Referer: https://webmail.example/?to=bob%40example.org'), 'Low 3: the reviewer\'s Referer: no address');
+}
+$lgmHandlerCode = (string) file_get_contents(CUERCODE_SITE_ROOT . '_functions' . DIRECTORY_SEPARATOR . 'fn_error_handler.php');
+foreach (['$title', '$detail', '$requestURL', '$sanitisedHeaders', '$userAgent'] as $lgmField) {
+    assertTrue(preg_match('/' . preg_quote($lgmField, '/') . '\s*=\s*maskLogSecrets\(' . preg_quote($lgmField, '/') . '\);/', $lgmHandlerCode) === 1, 'Low 3: logError() passes ' . $lgmField . ' through maskLogSecrets()');
+}

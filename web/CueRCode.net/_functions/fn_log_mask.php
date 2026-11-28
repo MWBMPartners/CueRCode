@@ -79,9 +79,34 @@ if (basename($scriptFilename) === basename(__FILE__)) {
  * It deliberately matches "something@something" loosely rather than following
  * the full address rules: in a log line, hiding a little too much is harmless,
  * while missing a real address is the fault this file exists to prevent.
+ *
+ * 🔒 Fourth-round review, Low 3 (2026-11-28): the @ may also be written out as
+ * %40 (how a browser sends a form field in a page address: ?email=alice%40...)
+ * or %2540 (written out twice), and the domain may hold written-out letters
+ * (%C3%BC), so "%" is allowed after the @ too. Before, a page address or a
+ * Referer header with such an address was stored in clear.
  */
 if (!defined('CUERCODE_LOG_MASK_EMAIL_PATTERN')) {
-    define('CUERCODE_LOG_MASK_EMAIL_PATTERN', '/[A-Za-z0-9._%+\-\x80-\xFF]+@[A-Za-z0-9.\-\x80-\xFF]+/');
+    define('CUERCODE_LOG_MASK_EMAIL_PATTERN', '/[A-Za-z0-9._%+\-\x80-\xFF]+(?:@|%(?:25)*40)[A-Za-z0-9.%\-\x80-\xFF]+/');
+}
+
+/**
+ * @var string Fourth-round review, Low 3: a query value that can be a live
+ * one-time link or sign-in secret - token (password reset, email check, email
+ * sign-in), code and state (Google/Microsoft sign-in) - and email. The name
+ * must follow ?, & or ; (or their written-out forms %3F and %26, for an
+ * address carried inside another one, such as ?next=...), so "barcode=" is
+ * not touched. The value runs to the next &, #, space or quote mark.
+ */
+if (!defined('CUERCODE_LOG_MASK_QUERY_PATTERN')) {
+    define('CUERCODE_LOG_MASK_QUERY_PATTERN', '/((?:[?&;]|%3F|%26)(?:token|code|state|email)(?:=|%3D))[^&#\s"\'<>]*/i');
+}
+
+/**
+ * @var string What such a value is replaced with.
+ */
+if (!defined('CUERCODE_LOG_MASK_QUERY_REPLACEMENT')) {
+    define('CUERCODE_LOG_MASK_QUERY_REPLACEMENT', '[removed]');
 }
 
 /**
@@ -277,4 +302,54 @@ function activityLogEntryWithoutAddress(string $detail, ?string $additionalData,
     }
 
     return ['detail' => $newDetail, 'additionalData' => $newData];
+}
+
+// ==============================================================================
+// 🎫 maskSecretQueryValues() - remove one-time links from page addresses
+// ==============================================================================
+
+/**
+ * 🎫 Replace the value of every token, code, state and email query parameter
+ *    with "[removed]" (fourth-round review, Low 3).
+ *
+ * A fault on the reset-password, verify-email or email sign-in page used to
+ * store its whole address, with a one-time link that might still work, in the
+ * error log. The rest of the address is kept, so the log still says which
+ * page it was.
+ *
+ * 🛡️ Fails CLOSED, like maskEmailAddresses(): '' if the replace fails.
+ *
+ * @param string $text Text that may hold page addresses
+ * @return string
+ */
+function maskSecretQueryValues(string $text): string
+{
+    if ($text === '') {
+        return '';
+    }
+
+    $masked = preg_replace(CUERCODE_LOG_MASK_QUERY_PATTERN, '$1' . CUERCODE_LOG_MASK_QUERY_REPLACEMENT, $text);
+
+    if (!is_string($masked)) {
+        return '';
+    }
+
+    return $masked;
+}
+
+// ==============================================================================
+// 🙈 maskLogSecrets() - both, for the error log
+// ==============================================================================
+
+/**
+ * 🙈 maskSecretQueryValues() then maskEmailAddresses(): no one-time link and
+ *    no email address. Used for every free-text field of the error log
+ *    (logError()) and its error_log() fallback (maskSensitiveForLog()).
+ *
+ * @param string $text
+ * @return string '' if either replace failed (never the raw text)
+ */
+function maskLogSecrets(string $text): string
+{
+    return maskEmailAddresses(maskSecretQueryValues($text));
 }

@@ -493,16 +493,20 @@ function logError(
     // instead and fails closed (an empty string, never the raw text). The
     // SQL text and file paths stay readable here (this table is
     // access-controlled); the error_log() fallback below masks those too.
-    $title              = maskEmailAddresses($title);
-    $detail             = maskEmailAddresses($detail);
-    $requestURL         = maskEmailAddresses($requestURL);
-    $sanitisedHeaders   = maskEmailAddresses($sanitisedHeaders);
-    $userAgent          = maskEmailAddresses($userAgent);
+    //
+    // 🎫 Fourth-round review, Low 3: maskLogSecrets() also hides an address
+    // written as alice%40example.test, and the value of token, code, state
+    // and email in a page address (a one-time link that may still work).
+    $title              = maskLogSecrets($title);
+    $detail             = maskLogSecrets($detail);
+    $requestURL         = maskLogSecrets($requestURL);
+    $sanitisedHeaders   = maskLogSecrets($sanitisedHeaders);
+    $userAgent          = maskLogSecrets($userAgent);
     if ($backtrace !== null) {
-        $backtrace = maskEmailAddresses((string) $backtrace);
+        $backtrace = maskLogSecrets((string) $backtrace);
     }
     if ($additionalDataJSON !== null && $additionalDataJSON !== false) {
-        $additionalDataJSON = maskEmailAddresses($additionalDataJSON);
+        $additionalDataJSON = maskLogSecrets($additionalDataJSON);
         if ($additionalDataJSON === '') {
             $additionalDataJSON = null;
         }
@@ -696,7 +700,8 @@ function maskSensitiveForLog(string $message): string
     if (!is_string($masked)) {
         return '';
     }
-    $masked = maskEmailAddresses($masked);
+    // 🎫 Fourth-round review, Low 3: also %40 addresses and one-time links.
+    $masked = maskLogSecrets($masked);
 
     return $masked;
 }

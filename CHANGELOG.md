@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - The error log no longer keeps written-out email addresses or one-time links (fourth-round review, Low 3, 2026-11-28)
+
+- **The fault:** the error log hid an email address only when it had a real `@`. A browser sends a form field in a page address as `alice%40example.test`, so such an address (in the page address or the Referer header) was stored in clear for 90 days. A fault on the reset-password, verify-email or email sign-in page also stored the whole page address, including a one-time link that might still work.
+- **The fix:** the shared masking rule (`fn_log_mask.php`) now also sees `%40` and `%2540`, and the new `maskSecretQueryValues()` replaces the value of `token`, `code`, `state` and `email` in any address with `[removed]` (also inside an address carried in another one, such as `?next=`). `logError()` and its plain-text fallback use both, through `maskLogSecrets()`, on every text field. Entries written before this change keep what they hold until the 90 days pass. The privacy page now says one-time link codes are never kept either.
+- Shown failing first: 10 new checks in `tests/test_log_mask.php`, and on MySQL 8.4 a real error-log row (`email_queue_real_mysql.php`) held the full token and `it-low3-url%40…`. Both pass now.
+
 ### Security - Admin pages run scripts only from the two pinned CDN folders; jQuery has its integrity hash (fourth-round review, Low 2 and Info 2, 2026-11-28)
 
 - **The fault:** the admin area's security policy allowed scripts from anywhere on `cdn.jsdelivr.net`. jsDelivr serves any public npm package or GitHub file, so a single injected `<script src>` tag could still run anyone's code on an admin page. jQuery was also loaded with no integrity hash.

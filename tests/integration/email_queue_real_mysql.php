@@ -953,6 +953,17 @@ logError('warning', 'it-179-mask for it-179-title@it.cuercode.invalid', "Duplica
 $_SERVER = $itServerBefore;
 $itMasked = itSelect("SELECT CONCAT_WS('|', `errorTitle`, `errorDetail`, `errorBacktrace`, `requestURL`, `requestHeaders`, `userAgent`, CAST(`additionalData` AS CHAR)) AS `everything` FROM `tblErrorLog` WHERE `errorTitle` LIKE ?", 's', ['it-179-mask%']);
 itCheck('12c error log and visitor details (#179)', count($itMasked) === 1 && !str_contains((string) $itMasked[0]['everything'], '@it.cuercode.invalid') && str_contains((string) $itMasked[0]['everything'], '[address]'), 'an error-log row written with addresses in its title, detail, backtrace, page address, headers and extra data holds none of them, only "[address]": ' . substr((string) ($itMasked[0]['everything'] ?? ''), 0, 400));
+// 🎫 Fourth-round review, Low 3: the reviewer's case - an address written out
+//    as %40 (how a browser sends a form field in a page address) and a live
+//    one-time link, in the page address and the Referer header.
+$itLinkToken = bin2hex(random_bytes(32));
+$_SERVER['REQUEST_URI']  = '/reset-password/?token=' . $itLinkToken . '&email=it-low3-url%40it.cuercode.invalid';
+$_SERVER['HTTP_REFERER'] = 'https://webmail.example/?to=it-low3-referer%40it.cuercode.invalid&next=%2Fverify-email%2F%3Ftoken%3D' . $itLinkToken;
+logError('warning', 'it-179-low3', 'a fault on the reset page');
+$_SERVER = $itServerBefore;
+$itLow3 = itSelect("SELECT CONCAT_WS('|', `requestURL`, `requestHeaders`) AS `everything` FROM `tblErrorLog` WHERE `errorTitle` = ?", 's', ['it-179-low3']);
+$itLow3Text = (string) ($itLow3[0]['everything'] ?? '');
+itCheck('12c error log and visitor details (#179)', count($itLow3) === 1 && !str_contains($itLow3Text, $itLinkToken) && !str_contains($itLow3Text, 'it-low3-') && str_contains($itLow3Text, '?token=[removed]') && str_contains($itLow3Text, '[address]'), 'fourth-round review Low 3: a page address and Referer with a %40 address and a one-time link are stored with neither (only "[removed]" and "[address]"): ' . substr($itLow3Text, 0, 400));
 itExec('DELETE FROM `tblErrorLog` WHERE `errorTitle` LIKE ?', 's', ['it-179-%']);
 
 // ==============================================================================
