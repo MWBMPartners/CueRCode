@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Test web servers are always stopped (2026-11-28)
+
+- The real-HTTP test script (`human_check_real_mysql.php`) stopped its PHP web server only when it reached its last scenarios, so a failed check, a crash, Ctrl+C or a killed run left the server running (three were found). Servers are now started through `tests/lib/web_server.php`, which runs them under a small supervisor that stops the server as soon as the script ends in any way, including kill -9.
+- Shown first: killing the old script with kill -9 left its server running; with the change, kill -9, SIGINT and SIGTERM left none. The new `tests/test_integration_web_server.php` proves seven ways of ending with a real server, plus a control case that shows the old way leaving one behind.
+
 ### Fixed - The error log and visitor details in the activity log are no longer kept for ever (#179, 2026-11-28)
 
 - **Time limits:** the email queue job's clean-up now deletes error-log entries after 90 days, and removes the visitor's internet address and browser name from other activity-log entries after 90 days (the entries themselves, saying what happened and when, are kept). Both periods are new settings a Global Admin can change (1 to 3650 days) in the "Email records and logs" section of `/admin/settings/`. 90 days is a starting value, not an owner decision. The admin change log is not touched. No database upgrade. Needs the cron job, like the email-record clean-up.

@@ -129,6 +129,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_human_check_review_fixes.php` | 82 |
 | `test_install_checks.php` | 101 |
 | `test_installer_load_order.php` | 9 |
+| `test_integration_web_server.php` | 13 |
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
@@ -152,9 +153,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9364** |
+| **Total** | **9377** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Test web servers always stopped (2026-11-28)** added `test_integration_web_server.php` (13 checks, about 10 seconds): with a real `php -S` server on a free port, the helper `tests/lib/web_server.php` stops it when the script calls `itWebServerStop()`, exits with a failure code, throws, stops on a fatal error, or is sent SIGTERM, SIGINT or SIGKILL; a control case starts the server the old way and shows it still running after its script is killed (then stops it); and every `*_real_mysql.php` script that starts a server must use the helper. On the old `human_check_real_mysql.php` those last checks failed (3), and killing that script with kill -9 left its server running (process 43974 in the run on 2026-11-28); after the change kill -9, SIGINT and SIGTERM each left none. Suite: **9377** in 59 files.
 
 **#179: time limits for the error log and visitor details, no email address in the error log (2026-11-28)** added 17 checks to `test_email_queue_runner.php` (the two new clean-up steps with the default 90 days, admin periods, bad periods falling back to 90, no clean-up without the lock, a failing step reported, the report lines, the two steps never naming the admin change log and never deleting other activity entries; the four option checks now include the two periods), 4 to `test_email_log_privacy.php` (the two admin-editable settings; the privacy page states both periods) and 10 to `test_admin_settings.php` (the registry's own checks for each new field; the two may lack a seeded row). On the old code 12 runner checks and 4 privacy checks failed. `email_queue_real_mysql.php` gained scenario 12c (7 checks): an error-log row 91 days old deleted and one 89 days old kept; an activity entry 91 days old kept without its address and browser name, one 89 days old untouched; 30-day admin periods apply; the run reports what it removed; and a real `logError()` call with addresses in the title, detail, backtrace, page address, Referer header and extra data stores only `[address]` - on MySQL 8.4.13 that check FAILED before the masking change (every address was stored). The admin change-log part of 12c runs only where that table exists (this script loads `install.sql` alone, without upgrade 0002); the unit code check covers it there. Suite: **9364** in 58 files.
 

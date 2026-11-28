@@ -21,7 +21,9 @@
  *      (actor cli:...); "off" again changes nothing and writes no row; "on"
  *      stores "auto"; a bad option exits 2; no key is ever printed.
  *   D. Real HTTP (PHP's built-in web server, with curl_init SWITCHED OFF in
- *      that server so it can never reach Cloudflare, Google or hCaptcha):
+ *      that server so it can never reach Cloudflare, Google or hCaptcha;
+ *      started through tests/lib/web_server.php, so it is stopped however
+ *      this script ends, kill -9 included):
  *      with the check off, the sign-up form has no widget and works.
  *   E. With Turnstile keys entered: the four forms show the widget with the
  *      site key (never the secret); each form sent WITHOUT a token is refused
@@ -490,11 +492,12 @@ if ($hcProbe !== false) {
 }
 $hcRouter = __DIR__ . DIRECTORY_SEPARATOR . 'human_check_http_router.php';
 $hcWebEnv = ['CUERCODE_IT_HC_DB' => $hcDbName, 'CUERCODE_IT_ENCRYPTION_KEY' => ENCRYPTION_KEY] + getenv();
-$hcWeb = proc_open(
-    [PHP_BINARY, '-d', 'disable_functions=curl_init', '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . $hcServerLog, '-S', '127.0.0.1:' . $hcHttpPort, '-t', $hcSiteRoot . 'public_html', $hcRouter],
-    [0 => ['pipe', 'r'], 1 => ['file', $hcServerLog . '.out', 'a'], 2 => ['file', $hcServerLog . '.out', 'a']],
-    $hcWebPipes,
-    null,
+// 🛑 Started through tests/lib/web_server.php, so the server is stopped
+//    however this script ends: a failed check, a crash, Ctrl+C or kill -9.
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'web_server.php';
+$hcWeb = itWebServerStart(
+    ['-d', 'disable_functions=curl_init', '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . $hcServerLog, '-S', '127.0.0.1:' . $hcHttpPort, '-t', $hcSiteRoot . 'public_html', $hcRouter],
+    $hcServerLog . '.out',
     $hcWebEnv
 );
 $hcBase = 'http://127.0.0.1:' . $hcHttpPort;
@@ -1131,8 +1134,9 @@ $hcServer->query("UPDATE `tblSettings` SET `settingValue` = '30' WHERE `settingK
 // G. No key in any log
 // ==============================================================================
 echo PHP_EOL . 'G. Logs' . PHP_EOL;
-proc_terminate($hcWeb);
-proc_close($hcWeb);
+if ($hcWeb !== null) {
+    itWebServerStop($hcWeb);
+}
 $hcLogText = (string) @file_get_contents($hcServerLog) . (string) @file_get_contents($hcServerLog . '.out');
 // 🎫 The email sign-in links: in no log TABLE. (The web server's own access
 //    log lists every address it was asked for, so it holds each emailed link,
