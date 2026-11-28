@@ -777,7 +777,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 </p>
                                 <p class="small text-body-secondary mb-2">
                                     <?php echo htmlspecialchars(strtoupper((string) $savedCode['qrOutputFormat']), ENT_QUOTES, 'UTF-8'); ?>
-                                    &middot; Saved <?php echo htmlspecialchars(date('j M Y', strtotime((string) $savedCode['createdAt'])), ENT_QUOTES, 'UTF-8'); ?>
+                                    &middot; Saved <?php echo htmlspecialchars(siteFormatDatabaseTime((string) $savedCode['createdAt'], 'j M Y'), ENT_QUOTES, 'UTF-8'); ?>
                                     &middot; <?php echo (int) $savedCode['downloadCount']; ?> download<?php echo ((int) $savedCode['downloadCount'] === 1) ? '' : 's'; ?>
                                 </p>
                                 <div class="mt-auto d-flex gap-2 flex-wrap">
@@ -956,7 +956,7 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                 <strong><?php echo htmlspecialchars($linkedProvider['display_name'], ENT_QUOTES, 'UTF-8'); ?></strong>
                                 <div class="small text-body-secondary">
                                     <code><?php echo htmlspecialchars($linkedProvider['masked_subject'], ENT_QUOTES, 'UTF-8'); ?></code>
-                                    &middot; Linked <?php echo htmlspecialchars(date('j M Y', strtotime($linkedProvider['linked_at'])), ENT_QUOTES, 'UTF-8'); ?>
+                                    &middot; Linked <?php echo htmlspecialchars(siteFormatDatabaseTime((string) $linkedProvider['linked_at'], 'j M Y'), ENT_QUOTES, 'UTF-8'); ?>
                                 </div>
                             </div>
                             <?php if ($isOnlyCredential) { ?>
@@ -1150,11 +1150,11 @@ require_once CUERCODE_INCLUDES_DIR . 'header.php';
                                     </div>
                                     <div class="small text-body-secondary">
                                         <code><?php echo htmlspecialchars((string) $apiKeyItem['prefix'], ENT_QUOTES, 'UTF-8'); ?>&hellip;</code>
-                                        &middot; Created <?php echo htmlspecialchars(date('j M Y', strtotime((string) $apiKeyItem['created_at'])), ENT_QUOTES, 'UTF-8'); ?>
+                                        &middot; Created <?php echo htmlspecialchars(siteFormatDatabaseTime((string) $apiKeyItem['created_at'], 'j M Y'), ENT_QUOTES, 'UTF-8'); ?>
                                         &middot; Last used
                                         <?php
                                         if ($apiKeyItem['last_used_at'] !== null) {
-                                            echo htmlspecialchars(date('j M Y H:i', strtotime((string) $apiKeyItem['last_used_at'])), ENT_QUOTES, 'UTF-8');
+                                            echo htmlspecialchars(siteFormatDatabaseTime((string) $apiKeyItem['last_used_at'], 'j M Y H:i'), ENT_QUOTES, 'UTF-8');
                                         } else {
                                             echo 'never';
                                         }

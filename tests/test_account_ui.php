@@ -519,3 +519,27 @@ assertContains(
     $authIndexPageSource,
     'F-028 parity check: public_html/auth/index.php\'s own CSRF gate ALSO fails closed when validateCSRFToken() is unavailable (the convention account/index.php now matches)'
 );
+
+// ==============================================================================
+// #178: the account page shows stored times in the site's time zone
+// ==============================================================================
+// The database writes UTC; PHP's clock follows site_timezone. strtotime() read
+// a UTC value as if it were local, so the page showed the UTC wall time.
+assertTrue(function_exists('siteFormatDatabaseTime'), '#178: there is one helper that shows a stored (UTC) time in the site\'s time zone');
+if (function_exists('siteFormatDatabaseTime')) {
+    assertEquals('29 Nov 2026', siteFormatDatabaseTime('2026-11-28 23:30:00', 'j M Y', 'Asia/Tokyo'), '#178: 23:30 UTC on 28 November is already 29 November in Tokyo');
+    assertEquals('28 Nov 2026 18:30', siteFormatDatabaseTime('2026-11-28 23:30:00', 'j M Y H:i', 'America/New_York'), '#178: and 18:30 the same day in New York');
+    assertEquals('28 Nov 2026 23:30', siteFormatDatabaseTime('2026-11-28 23:30:00', 'j M Y H:i', 'UTC'), '#178: unchanged when the site zone is UTC');
+    assertEquals('1 Jul 2026 01:05', siteFormatDatabaseTime('2026-07-01 00:05:00', 'j M Y H:i', 'Europe/London'), '#178: summer time is followed (London is UTC+1 in July)');
+    assertEquals('', siteFormatDatabaseTime('yesterday', 'j M Y', 'UTC'), '#178: anything that is not a stored date-time shows nothing, never a guess');
+    assertEquals('', siteFormatDatabaseTime(null, 'j M Y', 'UTC'), '#178: no value shows nothing');
+    assertEquals('', siteFormatDatabaseTime('2026-02-30 10:00:00', 'j M Y', 'UTC'), '#178: an impossible date shows nothing');
+    assertEquals('28 Nov 2026', siteFormatDatabaseTime('2026-11-28 12:00:00', 'j M Y', 'Not/AZone'), '#178: an unknown zone falls back to UTC');
+    $auZoneBefore = date_default_timezone_get();
+    date_default_timezone_set('Asia/Tokyo');
+    assertEquals('29 Nov 2026', siteFormatDatabaseTime('2026-11-28 23:30:00', 'j M Y'), '#178: with no zone given, the site\'s own (PHP\'s, set from site_timezone) is used');
+    date_default_timezone_set($auZoneBefore);
+}
+$auAccountCode = (string) file_get_contents($accountIndexPagePath);
+assertFalse(str_contains($auAccountCode, 'strtotime('), '#178: the account page no longer reads stored times with strtotime()');
+assertEquals(4, substr_count($auAccountCode, 'siteFormatDatabaseTime('), '#178: the four stored times (saved, linked, created, last used) all go through the helper');

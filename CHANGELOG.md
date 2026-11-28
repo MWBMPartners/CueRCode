@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - The account page shows dates in the site's time zone (#178, 2026-11-28)
+
+- The "Saved", "Linked", "Created" and "Last used" dates on `/account/` showed the time as the database stores it (UTC), not in the site's time zone, so near midnight they could show the wrong day. They now use one helper, `siteFormatDatabaseTime()`. Nothing changes on a site whose time zone is UTC (the default). Display only.
+- Shown failing first (3 of the new checks in `tests/test_account_ui.php`), then passing.
+
 ### Security - Per-address limits count an IPv6 connection once (#177, 2026-11-28)
 
 - **The fault:** the limits on "forgot password", "send a new verification link", the human-check form limit and the API's limit for callers without a key counted each full IPv6 address separately. One home or phone connection is normally given a whole block of IPv6 addresses (a "/64"), so one visitor could pick a fresh address for every request and never reach a limit. The no-JavaScript route already counted the /64.

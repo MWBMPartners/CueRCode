@@ -97,7 +97,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_accessibility.php` | 43 |
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
-| `test_account_ui.php` | 70 |
+| `test_account_ui.php` | 82 |
 | `test_admin_access.php` | 664 |
 | `test_admin_csp.php` | 38 |
 | `test_admin_plans.php` | 652 |
@@ -152,9 +152,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9319** |
+| **Total** | **9331** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**#178: account page dates in the site's time zone (2026-11-28)** added 12 checks to `test_account_ui.php` (`siteFormatDatabaseTime()` across Tokyo, New York, London summer time and UTC; nothing shown for an unreadable or impossible value; an unknown zone falls back to UTC; the page uses the helper for its four dates and no longer calls `strtotime()`). On the old code 3 failed (the helper did not exist; the page still used `strtotime()`). Suite: **9331** in 58 files.
 
 **#177: per-address limits count an IPv6 address as its /64 (2026-11-28)** added 14 checks to `test_client_ip.php` (the shared `clientAddressCountingKey()` rule, and that the request log, the API's anonymous limit, the emailed-link and form limits, their lock and the no-JavaScript route all use it); `test_no_script_route_review_fixes.php` now checks the route uses the shared rule instead of its own (6 checks moved). On the old code 7 of the new unit checks failed. `account_recovery_real_mysql.php` grew to 203 checks with scenario V6 (ten forgot-password requests from ten addresses in one /64, then an eleventh: refused; another /64 is let through and its reset record keeps the real address; the API's anonymous limit is shared by one /64; IPv4 recorded as itself): 4 failed on the old code on MySQL 8.4.13. Suite: **9319** in 58 files.
 

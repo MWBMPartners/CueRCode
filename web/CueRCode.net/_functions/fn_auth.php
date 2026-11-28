@@ -201,6 +201,54 @@ function hashToken(string $rawToken): string
 // ------------------------------------------------------------------------------
 
 /**
+ * 🕰️ Show a time the database stored (UTC, "Y-m-d H:i:s") in the site's
+ *    time zone. PURE when $timezone is given.
+ *
+ * WHY: the database connection works in UTC (time_zone '+00:00'), while
+ * PHP's clock follows the site_timezone setting (bootstrap.php). Reading a
+ * stored value with strtotime() treats it as LOCAL time, so a page showed
+ * the UTC wall time: with a Tokyo site, 23:30 UTC on 28 November appeared as
+ * "28 Nov" instead of "29 Nov". This reads the value as UTC first.
+ *
+ * @param string|null $utc      Stored value (null = nothing to show)
+ * @param string      $format   A date() format, for example 'j M Y'
+ * @param string|null $timezone Zone to show it in; null = PHP's (the site's)
+ * @return string '' when the value is not a real stored date-time (never a guess)
+ *
+ * @see tests/test_account_ui.php - fails if the account page uses strtotime() again
+ */
+function siteFormatDatabaseTime(?string $utc, string $format, ?string $timezone = null): string
+{
+    if ($utc === null) {
+        return '';
+    }
+
+    $utc = trim($utc);
+    if (preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$/', $utc) !== 1) {
+        return '';
+    }
+
+    $moment = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $utc, new \DateTimeZone('UTC'));
+    if ($moment === false || $moment->format('Y-m-d H:i:s') !== $utc) {
+        return '';
+    }
+
+    if ($timezone === null) {
+        $timezone = date_default_timezone_get();
+    }
+
+    // 🌍 An unknown zone name falls back to UTC (the seeded default).
+    try {
+        $zone = new \DateTimeZone($timezone);
+    } catch (\Throwable $e) {
+        $zone = new \DateTimeZone('UTC');
+    }
+
+    return $moment->setTimezone($zone)->format($format);
+}
+
+
+/**
  * 🔢 Compute the Unix timestamp an account should remain locked until, given
  * the failed-login count immediately AFTER this attempt.
  *
