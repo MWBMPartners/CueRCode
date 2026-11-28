@@ -16,8 +16,8 @@
  *      only seed_data.sql fills, and back-quotes every name.
  *   2. The reporter-address hash: an IPv6 address counts as its /64, an IPv4
  *      address written as IPv6 counts as itself, and the hash is keyed.
- *   3. A person's own limit (decision 0031): replaces the plan's number;
- *      what an admin may type.
+ *   3. A person's own limit (decisions 0031 and 0045): a raise only, ignored
+ *      while a payment is overdue; what an admin may type.
  *
  * House rules: every variable is prefixed $dq; nothing here defines dbQuery(),
  * getConfig(), logError() or logActivity().
@@ -178,7 +178,12 @@ assertFalse(abuseReporterHashKey() === noScriptHashKey(),'the reporter key is no
 assertEquals(3, resolveLimitWithOverride(3, null), 'no own number: the plan\'s 3 stands');
 assertEquals(10, resolveLimitWithOverride(3, 10), 'a Global Admin approved 10 for this person: 10');
 assertEquals(-1, resolveLimitWithOverride(3, -1), '-1: no limit for this person');
-assertEquals(1, resolveLimitWithOverride(3, 1), 'the own number replaces the plan\'s, whichever is larger (the admin\'s explicit choice)');
+assertEquals(3, resolveLimitWithOverride(3, 1), 'decision 0045: a lower own number never lowers the plan\'s 3 (a raise only)');
+assertEquals(100, resolveLimitWithOverride(100, 10), 'decision 0045: someone raised to 10 who then buys a plan with 100 gets 100');
+assertEquals(-1, resolveLimitWithOverride(-1, 10), 'decision 0045: a plan with no limit stays without a limit');
+assertEquals(3, resolveLimitWithOverride(3, 10, true), 'decision 0045: while a payment is overdue the own number is ignored (the plan\'s number for gating stands)');
+assertEquals(3, resolveLimitWithOverride(3, -1, true), 'decision 0045: ...also "no limit"');
+assertEquals(10, resolveLimitWithOverride(3, 10, false), 'decision 0045: not overdue: the own number applies');
 assertEquals(0, limitFor('dynamic_codes', null), 'without a database an anonymous visitor still has the fail-safe 0');
 
 $dqGood = adminUserLimitOverrideCheck('dynamic_codes', '10', 'Approved for the pilot shop');
@@ -187,8 +192,8 @@ assertTrue(adminUserLimitOverrideCheck('dynamic_codes', '-1', 'Unlimited for tes
 $dqClear = adminUserLimitOverrideCheck('dynamic_codes', '  ', 'Back to the plan');
 assertTrue($dqClear['ok'] && $dqClear['value'] === null, 'own limit: empty means "use the plan\'s number again"');
 assertTrue(adminUserLimitOverrideCheck('dynamic_codes', '1000000', 'x')['ok'], 'own limit: 1,000,000 is the most');
-foreach (['1000001', '-2', '1.5', '010', '1e3', 'ten', '+5'] as $dqBadNumber) {
-    assertFalse(adminUserLimitOverrideCheck('dynamic_codes', $dqBadNumber, 'reason')['ok'], 'own limit refuses ' . var_export($dqBadNumber, true));
+foreach (['0', '1000001', '-2', '1.5', '010', '1e3', 'ten', '+5'] as $dqBadNumber) {
+    assertFalse(adminUserLimitOverrideCheck('dynamic_codes', $dqBadNumber, 'reason')['ok'], 'own limit refuses ' . var_export($dqBadNumber, true) . ' (0 could never raise anything, decision 0045)');
 }
 foreach (['', '   ', str_repeat('a', 501), "two\nlines"] as $dqBadReason) {
     assertFalse(adminUserLimitOverrideCheck('dynamic_codes', '10', $dqBadReason)['ok'], 'own limit needs a one-line reason of up to 500 characters: ' . var_export(substr($dqBadReason, 0, 12), true));

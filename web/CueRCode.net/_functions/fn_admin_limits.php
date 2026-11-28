@@ -14,9 +14,14 @@
  *   admin change log ("entitlement.update"), so a change never exists
  *   without its record. limitFor() in fn_features.php then uses it.
  *
- *   Any plan limit can be set this way (not only dynamic_codes), so no
- *   commercial rule is fixed in code. The screen that calls this is WP4c/WP4d
- *   (#166, #167); nothing on the site calls it yet.
+ *   Decision 0045: the number only ever RAISES the plan's number (the person
+ *   gets the higher of the two) and is ignored while a payment is overdue.
+ *
+ *   Any limit that some plan has can be set this way (not only
+ *   dynamic_codes), so no commercial rule is fixed in code; a name no plan
+ *   has is refused. The function checks itself that the caller is a working
+ *   Global Admin. The screen that calls it is WP4c/WP4d (#166, #167);
+ *   nothing on the site calls it yet.
  *
  * House rules: full multi-line PHP; MySQLi prepared statements (through
  * dbQuery()); back-quoted SQL names. Loading defines functions only.
@@ -59,7 +64,8 @@ if (!defined('CUERCODE_ADMIN_LIMIT_OVERRIDE_MAX')) {
  *
  *   - the limit name: lower-case letters and underscores (a plan limit key);
  *   - the number: empty = remove the person's own number (back to the plan),
- *     -1 = no limit, or a whole number 0 to 1,000,000 written plainly;
+ *     -1 = no limit, or a whole number 1 to 1,000,000 written plainly (0 is
+ *     refused: decision 0045 makes it a raise only, and 0 raises nothing);
  *   - the reason: required, up to 500 characters, one line.
  *
  * @param string $limitKey
@@ -89,11 +95,42 @@ function adminUserLimitOverrideCheck(string $limitKey, string $valueText, string
     if ($valueText === '-1') {
         return ['ok' => true, 'value' => -1, 'reason' => $reason, 'error' => ''];
     }
-    if (preg_match('/^(?:0|[1-9][0-9]{0,6})$/D', $valueText) !== 1 || (int) $valueText > CUERCODE_ADMIN_LIMIT_OVERRIDE_MAX) {
-        return $refuse('Type a whole number from 0 to ' . number_format(CUERCODE_ADMIN_LIMIT_OVERRIDE_MAX) . ', -1 for no limit, or leave it empty to use the plan\'s number again.');
+    if (preg_match('/^[1-9][0-9]{0,6}$/D', $valueText) !== 1 || (int) $valueText > CUERCODE_ADMIN_LIMIT_OVERRIDE_MAX) {
+        return $refuse('Type a whole number from 1 to ' . number_format(CUERCODE_ADMIN_LIMIT_OVERRIDE_MAX) . ', -1 for no limit, or leave it empty to use the plan\'s number again. A person\'s own number only ever raises their plan\'s number.');
     }
 
     return ['ok' => true, 'value' => (int) $valueText, 'reason' => $reason, 'error' => ''];
+}
+
+/**
+ * 🏷️ Does any plan (tblSubscriptionPlans.limitsJSON) have this limit? The
+ *    list comes from the plans themselves, so a new limit an admin adds to
+ *    a plan is recognised with no code change.
+ *
+ * @param string $limitKey Already checked by adminUserLimitOverrideCheck()
+ * @return bool|null Null when the plans could not be read
+ */
+function adminLimitKeyIsKnown(string $limitKey): ?bool
+{
+    try {
+        $stmt = dbQuery('SELECT `limitsJSON` FROM `tblSubscriptionPlans`', '', []);
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'The plan limits could not be read', get_class($e));
+        }
+        return null;
+    }
+
+    foreach ($rows as $row) {
+        $limits = json_decode((string) $row['limitsJSON'], true);
+        if (is_array($limits) && array_key_exists($limitKey, $limits)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
@@ -120,6 +157,26 @@ function adminSetUserLimitOverride(array $admin, int $userID, string $limitKey, 
 
     if (!adminTableExists('tblUserLimitOverrides') || !adminTableExists('tblAdminAuditLog')) {
         return ['ok' => false, 'message' => 'Database upgrades are waiting, so this cannot be saved yet.'];
+    }
+
+    // 🛡️ Review M3: checked HERE, not only by the page that calls this: the
+    //    caller must be a working Global Admin, read fresh from the database.
+    $adminUserID = 0;
+    if (isset($admin['userID']) && is_int($admin['userID'])) {
+        $adminUserID = $admin['userID'];
+    }
+    if (adminAccessDecision(['userID' => $adminUserID], adminLoadAccessRow($adminUserID)) !== 'admin') {
+        return ['ok' => false, 'message' => 'Only a Global Admin can set a person\'s own limit, so nothing was saved.'];
+    }
+
+    // 🏷️ Review M3: only a limit some plan actually has (a typo would be
+    //    saved and do nothing).
+    $known = adminLimitKeyIsKnown($limitKey);
+    if ($known === null) {
+        return ['ok' => false, 'message' => 'The plans could not be read, so nothing was saved. Please try again.'];
+    }
+    if ($known === false) {
+        return ['ok' => false, 'message' => 'That limit was not recognised: no plan has a limit called "' . $limitKey . '", so nothing was saved.'];
     }
 
     try {

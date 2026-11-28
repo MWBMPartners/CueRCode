@@ -29,11 +29,12 @@
  *      as every other limit, clientAddressCountingKey()), so "3 reports from
  *      different people in 24 hours" (owner answer O-4, decision 0034) can
  *      be counted.
- *   3. tblUserLimitOverrides: a limit a Global Admin set for ONE person,
- *      replacing their plan's number for that limit (decision 0031: "keep 3
- *      but allow global admin to specifically approve beyond 3 on a per-user
- *      basis"). Any plan limit can be overridden this way, not only
- *      dynamic_codes, so no commercial rule is fixed in code.
+ *   3. tblUserLimitOverrides: a limit a Global Admin set for ONE person
+ *      (decision 0031: "keep 3 but allow global admin to specifically approve
+ *      beyond 3 on a per-user basis"). Decision 0045: it only ever RAISES
+ *      their plan's number (they get the higher of the two) and is ignored
+ *      while a payment is overdue. Any limit a plan has can be raised this
+ *      way, not only dynamic_codes, so no commercial rule is fixed in code.
  *   4. The short-link address's seeded description is corrected (it still
  *      said /r/{uuid}), only while it is the seeded wording (review L11).
  *   5. Starting settings a Global Admin can change:
@@ -200,8 +201,8 @@ return [
             'table' => 'tblUserLimitOverrides',
             'sql'   => 'CREATE TABLE IF NOT EXISTS `tblUserLimitOverrides` ('
                 . ' `userID` INT UNSIGNED NOT NULL COMMENT \'👤 FK tblUsers - whose limit this is\','
-                . ' `limitKey` VARCHAR(64) NOT NULL COMMENT \'🏷️ The plan limit replaced, for example dynamic_codes\','
-                . ' `limitValue` INT NOT NULL COMMENT \'🔢 The number used instead of the plan\'\'s (-1 = no limit)\','
+                . ' `limitKey` VARCHAR(64) NOT NULL COMMENT \'🏷️ The plan limit raised, for example dynamic_codes (a name some plan has)\','
+                . ' `limitValue` INT NOT NULL COMMENT \'🔢 The person\'\'s own number: they get the higher of this and their plan\'\'s (-1 = no limit); ignored while a payment is overdue (decision 0045)\','
                 . ' `reason` VARCHAR(500) NULL COMMENT \'📝 Why the Global Admin set it\','
                 . ' `setByUserID` INT UNSIGNED NULL COMMENT \'👤 FK tblUsers - the Global Admin who set it\','
                 . ' `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'📅 When it was first set (UTC)\','
@@ -213,7 +214,7 @@ return [
                 . ' CONSTRAINT `fk_limit_override_set_by` FOREIGN KEY (`setByUserID`)'
                 . ' REFERENCES `tblUsers` (`userID`) ON DELETE SET NULL ON UPDATE CASCADE'
                 . ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-                . ' COMMENT=\'🎚️ A Global Admin\'\'s limit for one person, replacing their plan\'\'s number for that limit (decision 0031)\'',
+                . ' COMMENT=\'🎚️ A Global Admin\'\'s raised limit for one person: the higher of this and their plan\'\'s number applies (decisions 0031, 0045)\'',
         ],
 
         // ======================================================================

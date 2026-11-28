@@ -672,30 +672,42 @@ function limitFor(string $limitKey, ?int $userID = null): int
     }
 
     // 🎚️ Decision 0031: a Global Admin may set this one person's own number
-    //    for a limit (tblUserLimitOverrides, upgrade 0007). It replaces the
-    //    plan's number; with none set, the plan's number stands.
+    //    for a limit (tblUserLimitOverrides, upgrade 0007). Decision 0045: it
+    //    only ever RAISES the plan's number, and is ignored while a payment
+    //    is overdue (past_due keeps blocking new gated objects).
     if ($userID === null) {
         return $planLimit;
     }
 
-    return resolveLimitWithOverride($planLimit, userLimitOverrideFor($userID, $limitKey));
+    $pastDue = ($plan['subscriptionStatus'] === 'past_due');
+
+    return resolveLimitWithOverride($planLimit, userLimitOverrideFor($userID, $limitKey), $pastDue);
 }
 
 /**
- * 🎚️ The limit that applies: a person's own number when a Global Admin set
- *    one, otherwise the plan's (decision 0031). PURE.
+ * 🎚️ The limit that applies (decisions 0031 and 0045). PURE.
+ *
+ *   - no own number, or a payment overdue -> the plan's number;
+ *   - otherwise the HIGHER of the two, where -1 (no limit) is highest.
+ *     A person's own number never lowers their allowance, so someone
+ *     raised to 10 who later buys a plan with 100 gets 100.
  *
  * @param int      $planLimit The plan's number (-1 = no limit)
  * @param int|null $override  The person's own number, or null when none is set
+ * @param bool     $pastDue   True while the person's payment is overdue
  * @return int
  */
-function resolveLimitWithOverride(int $planLimit, ?int $override): int
+function resolveLimitWithOverride(int $planLimit, ?int $override, bool $pastDue = false): int
 {
-    if ($override === null) {
+    if ($override === null || $pastDue) {
         return $planLimit;
     }
 
-    return $override;
+    if ($planLimit === -1 || $override === -1) {
+        return -1;
+    }
+
+    return max($planLimit, $override);
 }
 
 /**

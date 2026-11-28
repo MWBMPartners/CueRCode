@@ -1303,6 +1303,43 @@ asCheck('Q', $asResult['ok'] === false && asCount($asServer, 'SELECT COUNT(*) FR
 $asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', null, 'Pilot finished');
 asCheck('Q', $asResult['ok'] === true && limitFor('dynamic_codes', $asLimitUserID) === 3 && asCount($asServer, 'SELECT COUNT(*) FROM `tblUserLimitOverrides`') === 0, 'removing it: the plan\'s 3 applies again and the row is gone');
 asCheck('Q', count(asAuditRows($asServer, 'entitlement.update', (string) $asLimitUserID)) === 2, '... and that is in the change log too');
+
+// 🎚️ Decision 0045: a raise only, ignored while a payment is overdue.
+$asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', 2, 'Lower than the plan');
+asCheck('Q', $asResult['ok'] === true && limitFor('dynamic_codes', $asLimitUserID) === 3, 'decision 0045: an own number of 2 never lowers the plan\'s 3 (' . limitFor('dynamic_codes', $asLimitUserID) . ')');
+adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', 10, 'Pilot shop again');
+$asFreePlanID = asCount($asServer, "SELECT `planID` FROM `tblSubscriptionPlans` WHERE `planKey` = 'free'");
+$asServer->query('INSERT INTO `tblSubscriptions` (`userID`, `planID`, `status`) VALUES (' . (int) $asLimitUserID . ', ' . (int) $asFreePlanID . ", 'past_due')");
+featuresCacheStore('clearAll');
+asCheck('Q', limitFor('dynamic_codes', $asLimitUserID) === 3, 'decision 0045: while the payment is overdue the own 10 is ignored: 3 (' . limitFor('dynamic_codes', $asLimitUserID) . ')');
+$asServer->query('DELETE FROM `tblSubscriptions` WHERE `userID` = ' . (int) $asLimitUserID);
+featuresCacheStore('clearAll');
+asCheck('Q', limitFor('dynamic_codes', $asLimitUserID) === 10, 'decision 0045: ...and applies again once nothing is overdue: 10');
+
+// 🏷️ Review M3: a limit name no plan has is refused (a typo would do nothing).
+$asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_code', 50, 'Typo in the name');
+asCheck('Q', $asResult['ok'] === false && str_contains($asResult['message'], 'not recognised') && asCount($asServer, "SELECT COUNT(*) FROM `tblUserLimitOverrides` WHERE `limitKey` = 'dynamic_code'") === 0, 'a limit name no plan has (dynamic_code) is refused and nothing is saved: ' . $asResult['message']);
+
+// 🛡️ Review M3: only a working Global Admin may set one (checked here, not only by the page).
+$asInsert = $asServer->prepare("INSERT INTO `tblUsers` (`email`, `emailVerifiedAt`, `passwordHash`, `displayName`, `status`) VALUES ('not-admin@it.cuercode.invalid', '2026-11-01 09:00:00', 'x', 'IT not admin', 'active')");
+$asInsert->execute();
+$asNotAdminID = (int) $asServer->insert_id;
+$asInsert->close();
+$asAuditBefore = count(asAuditRows($asServer, 'entitlement.update', (string) $asLimitUserID));
+$asResult = adminSetUserLimitOverride(array_merge($asAdmin, ['userID' => $asNotAdminID]), $asLimitUserID, 'dynamic_codes', 500, 'Not an admin');
+asCheck('Q', $asResult['ok'] === false && limitFor('dynamic_codes', $asLimitUserID) === 10 && count(asAuditRows($asServer, 'entitlement.update', (string) $asLimitUserID)) === $asAuditBefore, 'an account that is not a Global Admin cannot set a limit, even calling the function directly: ' . $asResult['message']);
+
+// 🧾 Review L2: no change without its audit row. The audit insert is made
+//    to fail (a trigger refuses it); the limit must stay as it was.
+$asServer->query('DROP TRIGGER IF EXISTS `trg_it_refuse_entitlement_audit`');
+$asTriggerMade = $asServer->query("CREATE TRIGGER `trg_it_refuse_entitlement_audit` BEFORE INSERT ON `tblAdminAuditLog` FOR EACH ROW BEGIN IF NEW.`action` = 'entitlement.update' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'IT: audit refused'; END IF; END");
+featuresCacheStore('clearAll');
+$asResult = adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', 15, 'Audit will fail');
+$asServer->query('DROP TRIGGER IF EXISTS `trg_it_refuse_entitlement_audit`');
+featuresCacheStore('clearAll');
+asCheck('Q', $asTriggerMade === true && $asResult['ok'] === false && asCount($asServer, "SELECT `limitValue` FROM `tblUserLimitOverrides` WHERE `userID` = " . (int) $asLimitUserID . " AND `limitKey` = 'dynamic_codes'") === 10 && limitFor('dynamic_codes', $asLimitUserID) === 10, 'L2: when the audit row cannot be written the change is rolled back (still 10): ' . $asResult['message']);
+adminSetUserLimitOverride($asAdmin, $asLimitUserID, 'dynamic_codes', null, 'Tests finished');
+$asServer->query('DELETE FROM `tblUsers` WHERE `userID` = ' . (int) $asNotAdminID);
 featuresCacheStore('clearAll');
 asCheck('Q', limitFor('dynamic_codes', null) === 0, 'an anonymous visitor still has 0 dynamic codes');
 
