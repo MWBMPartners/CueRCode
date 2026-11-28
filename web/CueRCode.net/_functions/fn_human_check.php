@@ -412,7 +412,7 @@ function humanCheckOutageModes(): array
 {
     return [
         'signin_only' => 'Let only sign-in through, and record it in the activity log (decision 0037, recommended)',
-        'refuse'      => 'Refuse every form, including sign-in, until a provider can be reached',
+        'refuse'      => 'Refuse sign-in too, until a provider can be reached (the email-confirmed route for visitors without JavaScript stays open)',
     ];
 }
 
@@ -2160,9 +2160,11 @@ function humanCheckStatusLines(#[\SensitiveParameter] array $settings, array $he
     }
 
     if ($settings['whenUnreachable'] === 'refuse') {
-        $lines[] = 'If every provider cannot be reached: every form is refused, including sign-in (and it is logged).';
+        // 🗣️ The email-confirmed route (decision 0038) asks no provider, so it
+        //    stays open during an outage, in both modes.
+        $lines[] = 'If every provider cannot be reached: the four forms sent the normal way are refused, including sign-in (and it is logged). The email-confirmed route for visitors without JavaScript stays open, with its own limits.';
     } else {
-        $lines[] = 'If every provider cannot be reached: only sign-in is let through, without the check, and it is recorded in the activity log (decision 0037). The other forms are refused.';
+        $lines[] = 'If every provider cannot be reached: only sign-in is let through, without the check, and it is recorded in the activity log (decision 0037). The other forms sent the normal way are refused; the email-confirmed route for visitors without JavaScript stays open, with its own limits.';
     }
 
     return $lines;

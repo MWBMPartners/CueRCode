@@ -99,7 +99,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
 | `test_human_check.php` | 411 |
-| `test_human_check_fallbacks.php` | 113 |
+| `test_human_check_fallbacks.php` | 119 |
 | `test_human_check_review_fixes.php` | 82 |
 | `test_install_checks.php` | 101 |
 | `test_installer_load_order.php` | 9 |
@@ -126,9 +126,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9192** |
+| **Total** | **9198** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Admin status wording during an outage (2026-11-28)** added 6 checks to `test_human_check_fallbacks.php`: the status lines in both outage modes and the "refuse" choice say the email-confirmed route for visitors without JavaScript stays open (it asks no provider); 5 of them failed on the old wording. Suite: **9198**.
 
 **Three decimal places and larger prices (#176, decision 0042, 2026-11-28)** changed and added checks in `test_money.php` (all seven three-decimal currencies offered, the new limit 999,999,999,999 and why it cannot overflow, the DECIMAL(15,3) text such as "6.990" read back, the export text), `test_migrations.php` (the new `widen_decimal_column` step: valid shape, every refused shape, skip/run/refuse decisions, and upgrade 0006 widening exactly the DECIMAL columns install.sql has), `test_admin_plans.php`, `test_pricing.php` and `test_pricing_page.php` (KWD prices, "6.990" in every display path, "From KWD 99"). On the code before the change 36 of them failed, with `test_money.php` and `test_migrations.php` stopping early at a function that did not exist yet. Suite: **9192**. Real databases (Linux PHP 8.4.27 container, non-root): `migrations_real_mysql.php` with the new scenario P and `admin_plans_real_mysql.php` (169 checks) with the new scenario O passed on MySQL 8.0.36, MySQL 8.4.13 and MariaDB 10.6.28, with every other script; on the old code they failed (on MySQL 8.4: KWD refused, KWD 2.125 not stored, the columns still DECIMAL(10,2), and the migrations script stopping where it loads 0006). The first MariaDB run of scenario P failed one check because MariaDB reports a column's missing default as the text NULL where MySQL gives a real NULL; the test now reads both as "none" (a test fault, not an upgrade fault).
 

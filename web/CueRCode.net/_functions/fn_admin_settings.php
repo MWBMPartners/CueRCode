@@ -476,7 +476,7 @@ function adminSettingsRegistry(): array
     $fields[] = adminSettingsField([
         'key' => 'bot_protection_when_unreachable', 'section' => 'bot', 'kind' => 'choice', 'group' => 'security', 'type' => 'string',
         'label' => 'If every provider cannot be reached',
-        'help' => 'While one provider is down the next one with keys is used. This choice only matters when EVERY provider with keys is down, judged by a test call the server makes itself (nothing a visitor sends can cause it). Decision 0037: let only sign-in through - the password, the wrong-password lock-out and the limits still apply - and record it in the activity log; sign-up, forgot password and new links are refused. Wrong or unreadable keys are always refused.',
+        'help' => 'While one provider is down the next one with keys is used. This choice only matters when EVERY provider with keys is down, judged by a test call the server makes itself (nothing a visitor sends can cause it). Decision 0037: let only sign-in through - the password, the wrong-password lock-out and the limits still apply - and record it in the activity log; sign-up, forgot password and new links sent the normal way are refused. In both choices the email-confirmed route for visitors without JavaScript stays open, with its own limits. Wrong or unreadable keys are always refused.',
         'options' => humanCheckOutageModes(),
         'description' => 'Human check: what happens when EVERY configured provider cannot be reached (by a test call the server makes itself) - signin_only (decision 0037: only sign-in is let through, recorded in the activity log) or refuse (every form is refused).',
     ]);

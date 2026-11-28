@@ -511,3 +511,24 @@ assertTrue(isValidEmailTemplateKey('email_sign_in'), '0038: the email sign-in te
 assertEquals('confirmUrl', emailQueueRequiredLinkParam('email_sign_in'), '0038: an email sign-in email without its link is never sent');
 $fbLifetimes = emailQueueLinkLifetimes();
 assertEquals(CUERCODE_NO_SCRIPT_SIGN_IN_TTL_MINUTES * 60, $fbLifetimes['email_sign_in'], '0038: a queued sign-in email whose link has expired is not sent late');
+
+// ==============================================================================
+// 🗣️ The admin status wording during an outage (decisions 0037 and 0038)
+// ==============================================================================
+// The email-confirmed route for visitors without JavaScript does not ask a
+// provider, so it stays open while every provider is down - in both outage
+// modes. The admin screen used to say "every form is refused" (refuse) and
+// "the other forms are refused" (sign-in only), which was not true of it.
+foreach (['refuse', 'signin_only'] as $fbOutageMode) {
+    $fbOutageLines = implode("\n", humanCheckStatusLines(humanCheckReadSettings(static function (string $fbKey, mixed $fbDefault) use ($fbOutageMode): mixed {
+        if ($fbKey === 'bot_protection_when_unreachable') {
+            return $fbOutageMode;
+        }
+        return $fbDefault;
+    })));
+    assertFalse(str_contains($fbOutageLines, 'every form is refused'), 'status wording (' . $fbOutageMode . '): does not say every form is refused');
+    assertContains('without JavaScript', $fbOutageLines, 'status wording (' . $fbOutageMode . '): says the email-confirmed route for visitors without JavaScript stays open');
+}
+$fbOutageOptions = humanCheckOutageModes();
+assertFalse(str_contains($fbOutageOptions['refuse'], 'Refuse every form'), 'status wording: the "refuse" choice no longer says it refuses every form');
+assertContains('without JavaScript', $fbOutageOptions['refuse'], 'status wording: the "refuse" choice says the no-JavaScript route stays open');
