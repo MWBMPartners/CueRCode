@@ -40,7 +40,7 @@ The runner:
 Colour is auto-disabled when output is piped/redirected or when `NO_COLOR` is
 set.
 
-## Current suite (2026-11-27, human check #163: the table below was re-measured; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
+## Current suite (2026-11-28, human check #163 review fixes and decisions 0037/0038: the table below was re-measured; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; before that 2026-11-25, after the Codex re-check of the review fixes, round 3 - 4 findings; before that round 2 - 6 findings; before that the independent Codex cross-system review F2 - 29 findings C1-C6; earlier the final review of 68ad1fb..bffdff3, the independent review of decisions 0013/0014, decision 0010 #31, #151, #112, #122/#123/#126)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -50,9 +50,9 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
-| `test_admin_access.php` | 663 |
-| `test_admin_plans.php` | 580 |
-| `test_admin_settings.php` | 1296 |
+| `test_admin_access.php` | 664 |
+| `test_admin_plans.php` | 600 |
+| `test_admin_settings.php` | 1346 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -62,9 +62,9 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_client_ip.php` | 246 |
 | `test_commercial_literals.php` | 9 |
 | `test_core.php` | 146 |
-| `test_credentials_template.php` | 8 |
+| `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
-| `test_deploy_test_gate.php` | 9 |
+| `test_deploy_test_gate.php` | 32 |
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
@@ -73,13 +73,15 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_error_catalogue.php` | 144 |
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
-| `test_human_check.php` | 377 |
+| `test_human_check.php` | 411 |
+| `test_human_check_fallbacks.php` | 116 |
+| `test_human_check_review_fixes.php` | 82 |
 | `test_install_checks.php` | 101 |
 | `test_installer_load_order.php` | 9 |
 | `test_library_updates.php` | 177 |
 | `test_log_mask.php` | 56 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 478 |
+| `test_migrations.php` | 492 |
 | `test_money.php` | 161 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
@@ -92,13 +94,13 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_predefined_logo_png.php` | 264 |
 | `test_pricing.php` | 122 |
 | `test_pricing_flex.php` | 51 |
-| `test_pricing_page.php` | 124 |
+| `test_pricing_page.php` | 133 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
-| `test_sessions_valid_from.php` | 81 |
+| `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **8026** |
+| **Total** | **8378** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
 
@@ -106,7 +108,13 @@ Run `php tests/run.php` at any time to reproduce this table live.
 
 **Task 7n Phase 2 slice 2d (2026-11-26)** added `test_pricing_page.php` (the kind filter and sale dates, a stand-in database in a child process including one without upgrade 0004, the "Contact us" card and its link, hidden prices, the rendered cards, the preview and its access rules) and `test_commercial_literals.php` (the whole-site guard against hard-coded plan keys and prices). Each new rule was broken on purpose (28 changes) and the tests failed every time. The whole suite is then **7513** on PHP 8.5.12.
 
+**Human check review fixes and decisions 0037/0038 (#163, 2026-11-28)** added `test_human_check_review_fixes.php` (review findings M1, M2, L1, L2, L3, L5 and the per-visitor form limit, with stand-ins for the token record, the stored-row question and the counter) and `test_human_check_fallbacks.php` (decision 0037: only the server's own test call decides "down", bounded test calls and log rows, only sign-in and only with every configured provider down, fallback providers, no unconfigured provider; decision 0038: the route's limits, the keyed email hash, the `<noscript>` button, the email sign-in link decisions and the pages' order of checks). Both were first run against the code before the change: the review-fixes file failed 33 checks (M1 7, M2 5, L1 5, L5 1, form limit 4, L3 11; four sections also stopped on functions that did not exist yet, and the L2 case was reproduced on its own: a token from evil.example passed when the request claimed Host: evil.example) and the fallbacks file stopped at once (its function file was missing). Commenting out the human-check call on `/login/` and in `handleAuthLogin()` (the review's own L3 mutation) now fails 11 checks; before the fix it failed none. `test_human_check.php`, `test_admin_settings.php`, `test_sessions_valid_from.php`, `test_email_queue_runner.php` and `test_resend_verification.php` (L4: the double-quoted string) were updated for the new behaviour. The whole suite is then **8378** on PHP 8.5.12, with no PHP warning. On PHP 8.4.27 (the bare `php:8.4-cli` Docker image, which has no gd, intl, bcmath or mysqli and runs as root) every human-check file and every file this change touched passed; the 20 failures there are all in files that need those missing extensions or a non-root user.
+
 **Human check (#163, 2026-11-27)** added `test_human_check.php` (377 assertions: each of the three providers with stand-in replies - success, failure, provider unreachable, error page, reply that is not JSON, missing or bad token, keys absent, wrong host name, replayed or expired token, wrong keys, published test keys - plus the widget, the command-line options, static checks that every page and JSON route makes the call, the exact content security policy and the migration rules). No real provider is called. It was first run before the code existed (it failed: the function file was missing), then with the functions but before the pages were wired (49 of 377 checks failed). The table above was re-measured on PHP 8.5.12 the same day: **8026** assertions, all passing.
+
+### Real-database and HTTP runs for the human check review fixes and decisions 0037/0038 (#163, 2026-11-28)
+
+On throwaway Docker **MySQL 8.0.36** and **MariaDB 10.6.28**, one after the other, every script in `tests/integration/` passed: `human_check_real_mysql.php` 115 checks in 12 scenarios on each (A to L: the new settings and tables after the upgrades; keys; the command line; real HTTP with `curl_init` switched off in the web server - every token counted as "our set-up is wrong", never "down", with ONE error-log line for seven such requests; F, every configured provider down by the server's own test row: sign-in without a token let through with one activity row and one per-account row, five wrong passwords during the outage still lock the account, sign-up, forgot password and new link still refused, the JSON sign-in let through and the JSON sign-up refused, "refuse" refuses sign-in, an old "down" is tested again; K, the no-JavaScript route over real HTTP: wrong password and unknown address give the same answer and no email, the right password gives one email whose link is stored only as a hash, opening the link in another browser changes nothing and its button only approves, the link works once, Continue signs the first browser in, the same browser is signed in directly, a moved "sessions valid from" mark and an expired link are refused, the per-address limit stops the email before the password, sign-up gives the same answer for an existing and a new address in at least 0.4 seconds, forgot password the same answer with one reset email for the real account only; L, the fourth junk token from one address is refused before any call with a limit of 3; G, no key or sign-in link in any log table; H, a token accepted once is refused the second time and eight processes with one token at the same moment give exactly one acceptance; I, a damaged stored secret makes the forms refuse instead of switching the check off; J, the route's limits per email address, per visitor address and site-wide, and twelve processes at once for one address let exactly 3 through); `migrations_real_mysql.php` 195 on each (0005 now 12 steps, its four tables allowed for in the schema comparison); `email_queue_real_mysql.php` 77 in 16 scenarios (the new 15-minute link lifetime); `account_recovery_real_mysql.php` 192, `admin_access_real_mysql.php` 167, `admin_plans_real_mysql.php` 135, `admin_settings_real_mysql.php` 232 and `resend_verification_real_mysql.php` 32 on each. Scenario L first FAILED: the form limit was never recorded on the web pages (a helper file was not loaded there); fixed before commit. No real browser and no real provider were used.
 
 ### Real-database and HTTP runs for the human check (#163, 2026-11-27)
 
