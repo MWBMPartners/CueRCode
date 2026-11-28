@@ -15,16 +15,18 @@ Owner (2026-11-27): work autonomously until the **first version** can be launche
 - Owner decisions 0023-0039 recorded 2026-11-27. First-launch plan: `.claude/plans/first-launch-plan.md`; dynamic QR issues #164-#172; later second link checker #173.
 - **Not verified anywhere:** real browser pass; DreamHost; real Microsoft mail; real human-check providers; HTTPS/HSTS; MySQL 8.4 for the newest scenarios.
 
-### In flight (watched, this session) — 2026-11-28 about 08:10
-**Sent to GitHub `work-in-progress` up to `1dba97d`** (Opus-checked, decision 0008). Later commits are local only.
-Local since then: dynamic QR WP4a/b merged and its review fixed (`fb2d323..b7c6b7a`; suite 10190/10190; real-database scripts pass on MySQL 8.0.36, 8.4.13 (one timing check passed on rerun), MariaDB 10.6.28); secret-scan allowlist (#180).
-1. **Opus check** of `1dba97d..HEAD`. Report `.claude/plans/launch-round6-review-report.md`.
-2. **Opus builder:** WP4c and the admin control for personal limits (#166).
+### In flight (watched, this session) — 2026-11-28 about 09:30
+**Sent to GitHub `work-in-progress` up to `82855d0`.** Later commits are local only.
+Local since then: dynamic QR flows WP4c and #181 (`62d30d4..4365dc6`; suite 10450/10450; 10 real-database scripts on MySQL 8.0.36, 8.4.13, MariaDB 10.6.28).
+1. **Opus check** of `82855d0..4365dc6`. Report `.claude/plans/launch-round7-review-report.md`.
+2. **Opus builder:** WP4e link safety (#168), WP4f abuse reports (#169), WP4g monitoring email (#170).
+3. **Codex** (background script, waits until 09:54): `87ecdae..82855d0`.
 
 ### Next (order)
-Fix review findings → Codex (still owed since `1dba97d`) → send to GitHub → WP4d-j (#167-#172) → real-browser and polish pass → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
+Fix findings → send reviewed commits to GitHub → WP4d member screens (#167), WP4i documents (#171), WP4j whole-feature review (#172) → real-browser and polish pass (#137, #163) → **ask the owner**, then the one pull request into `alpha` (#162, decision 0026).
 - Move finished review reports in `.claude/plans/` to `history/` with an outcome line.
-- Owner to add to Go2My.Link key scopes: `account:read`. Alpha database must never be a copy of live. Go2My.Link must add the short address to its look-up (its issue 276).
+- Cron on each server copy must declare `CUERCODE_SITE_COPY` (see docs/INSTALL.md).
+- Owner to add to Go2My.Link key scopes: `account:read`. Alpha database must never be a copy of live. Go2My.Link must return the short address and QR id from its look-up (its issue 276).
 - Only GitHub can prove: the database-test jobs and the deploy gate (#155, #174).
 - Model tiers (decision 0001): gather = Sonnet/Haiku medium; plan = Opus high; build = Sonnet/Haiku medium (money and security = Opus); every check or review = Opus.
 
