@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - The visitor-details clean-up no longer re-reads the whole activity log on every run (fourth-round review, Low 4, 2026-11-28)
+
+- **The fault:** the clean-up that removes the visitor's address and browser name from activity entries after 90 days searched the whole log for "old and still has details" on every queue run. That included the run at the end of a page that queued an email. It therefore read again every old entry it had already cleared: about 600,000 rows and 1.6 to 2.6 seconds a run with a million cleared entries.
+- **The fix:** it now works through the log in row-number order from a remembered mark (an internal, non-editable `tblSettings` row, `activity_visitor_details_cleared_to`). It looks at no more than 500 entries a run and never moves past an entry that is not 90 days old yet, so an entry written out of time order is only delayed, never missed. No database upgrade; on a site with a long existing log the first runs work through it 500 entries at a time.
+- Shown failing first on MySQL 8.0 (new scenario 12d in `email_queue_real_mysql.php`): with 16,384 cleared old entries, one run read 16,387 rows to clear one entry. Now it reads 7. Removing the "never past an entry that is not old yet" rule fails the same scenario.
+
 ### Security - The error log no longer keeps written-out email addresses or one-time links (fourth-round review, Low 3, 2026-11-28)
 
 - **The fault:** the error log hid an email address only when it had a real `@`. A browser sends a form field in a page address as `alice%40example.test`, so such an address (in the page address or the Referer header) was stored in clear for 90 days. A fault on the reset-password, verify-email or email sign-in page also stored the whole page address, including a one-time link that might still work.

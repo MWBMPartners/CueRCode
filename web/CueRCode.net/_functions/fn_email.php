@@ -4038,6 +4038,17 @@ function purgeOldErrorLogRows(int $olderThanDays, int $limit): ?int
 }
 
 /**
+ * @var string The tblSettings row holding how far the visitor-details clean-up
+ * has got: every activity entry up to this activityID is already done
+ * (fourth-round review, Low 4). Internal (isEditable = 0), not a setting an
+ * admin changes; deleting the row only makes the clean-up start again from
+ * the first entry.
+ */
+if (!defined('CUERCODE_VISITOR_DETAILS_MARK_KEY')) {
+    define('CUERCODE_VISITOR_DETAILS_MARK_KEY', 'activity_visitor_details_cleared_to');
+}
+
+/**
  * 🙈 #179: clear the visitor's address and browser name (tblActivityLog
  *    requestIP and userAgent) of activity entries older than $olderThanDays.
  *
@@ -4047,23 +4058,110 @@ function purgeOldErrorLogRows(int $olderThanDays, int $limit): ?int
  * The admin change log (tblAdminAuditLog) has its own address column and is
  * not touched.
  *
- * Only ever called under the queue lock (runEmailQueueHousekeeping()).
+ * 📈 Fourth-round review, Low 4 (2026-11-28): the first version looked for
+ * "old AND still has details" across the whole log on every run, so it read
+ * again every old entry it had already cleared (about 600,000 rows and 1.6 to
+ * 2.6 seconds a run on MySQL 8.0 with a million cleared entries), on every
+ * queue run, including the one at the end of a page. It now works through the
+ * log in row-number order from a remembered mark (the
+ * CUERCODE_VISITOR_DETAILS_MARK_KEY row in tblSettings):
+ *   1. read at most $limit entries after the mark, by row number (the primary
+ *      key, so only those rows are read);
+ *   2. the new mark is the last of them before the first entry that is NOT
+ *      old yet - it never moves past one, so an entry written out of time
+ *      order (a clock change) is only delayed, never missed;
+ *   3. clear the details of the entries between the old and the new mark,
+ *      and save the new mark.
+ * Each run therefore reads at most $limit rows twice, however long the log.
+ *
+ * Only ever called under the queue lock (runEmailQueueHousekeeping()), so two
+ * runs never move the mark at once.
  *
  * @param int $olderThanDays Age limit.
- * @param int $limit         Most rows changed by this call.
+ * @param int $limit         Most entries looked at (and changed) by this call.
  *
  * @return int|null How many entries were changed, or null on a database error.
  */
 function clearOldActivityVisitorDetails(int $olderThanDays, int $limit): ?int
 {
-    return emailQueueChangeRows(
+    if (!function_exists('dbQuery')) {
+        return null;
+    }
+
+    try {
+        // 1️⃣ Where the last run stopped (0 = start from the first entry).
+        $markStmt = dbQuery(
+            'SELECT `settingValue` FROM `tblSettings` WHERE `settingKey` = ? LIMIT 1',
+            's',
+            [CUERCODE_VISITOR_DETAILS_MARK_KEY]
+        );
+        $markRow = $markStmt->get_result()->fetch_assoc();
+        $markStmt->close();
+
+        $mark = 0;
+        if (is_array($markRow) && is_string($markRow['settingValue']) && ctype_digit($markRow['settingValue'])) {
+            $mark = (int) $markRow['settingValue'];
+        }
+
+        // 2️⃣ The next entries by row number, and whether each is old yet
+        //    (decided by the database clock, like every expiry on this site).
+        $chunkStmt = dbQuery(
+            'SELECT `activityID`, (`createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY)) AS `isOld` '
+            . 'FROM `tblActivityLog` WHERE `activityID` > ? ORDER BY `activityID` LIMIT ?',
+            'iii',
+            [$olderThanDays, $mark, $limit]
+        );
+        $chunk = $chunkStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $chunkStmt->close();
+
+        $newMark = $mark;
+        foreach ($chunk as $entry) {
+            if ((int) $entry['isOld'] !== 1) {
+                break;
+            }
+            $newMark = (int) $entry['activityID'];
+        }
+
+        if ($newMark === $mark) {
+            // ✅ Nothing old after the mark: nothing to do.
+            return 0;
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('logError')) {
+            logError('error', 'Activity-log visitor details clean-up failed', $e->getMessage());
+        }
+        return null;
+    }
+
+    // 3️⃣ Clear those entries' details, then remember how far this run got.
+    $changed = emailQueueChangeRows(
         'UPDATE `tblActivityLog` SET `requestIP` = NULL, `userAgent` = NULL '
-        . 'WHERE `createdAt` < DATE_SUB(NOW(), INTERVAL ? DAY) AND (`requestIP` IS NOT NULL OR `userAgent` IS NOT NULL) '
-        . 'LIMIT ?',
+        . 'WHERE `activityID` > ? AND `activityID` <= ? AND (`requestIP` IS NOT NULL OR `userAgent` IS NOT NULL)',
         'ii',
-        [$olderThanDays, $limit],
+        [$mark, $newMark],
         'Activity-log visitor details clean-up failed'
     );
+
+    if ($changed === null) {
+        return null;
+    }
+
+    $saved = emailQueueChangeRows(
+        "INSERT INTO `tblSettings` (`settingGroup`, `settingKey`, `settingValue`, `settingType`, `isSensitive`, `isEditable`, `description`) "
+        . "VALUES ('email', ?, ?, 'integer', 0, 0, 'Internal: the visitor-details clean-up has done every activity entry up to this number') "
+        . 'ON DUPLICATE KEY UPDATE `settingValue` = ?',
+        'sss',
+        [CUERCODE_VISITOR_DETAILS_MARK_KEY, (string) $newMark, (string) $newMark],
+        'Activity-log visitor details clean-up could not save how far it got'
+    );
+
+    if ($saved === null) {
+        // 📌 The details ARE cleared; the next run looks at the same entries
+        //    again (cheap) and saves the mark then. Reported as a failure.
+        return null;
+    }
+
+    return $changed;
 }
 
 /**

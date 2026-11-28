@@ -894,7 +894,13 @@ itExec("DELETE FROM `tblActivityLog` WHERE `entityType` = ? OR `activityType` = 
 // the admin change log is never touched.
 // ------------------------------------------------------------------------------
 itExec('DELETE FROM `tblErrorLog` WHERE `errorTitle` LIKE ?', 's', ['it-179-%']);
-itExec("DELETE FROM `tblActivityLog` WHERE `activityType` LIKE ?", 's', ['it_179_%']);
+// 📌 Fourth-round review, Low 4: the clean-up now works through the activity
+//    log in row-number order and never moves past an entry that is not old
+//    yet. On a real site row numbers follow time; here the earlier scenarios
+//    wrote recent entries first, so they are removed (the database is this
+//    script's own throwaway one) and the old entry is written first.
+itExec('DELETE FROM `tblActivityLog` WHERE `activityID` > ?', 'i', [0]);
+itExec('DELETE FROM `tblSettings` WHERE `settingKey` = ?', 's', ['activity_visitor_details_cleared_to']);
 foreach (['old' => 91, 'new' => 89] as $itTag => $itDays) {
     itExec(
         "INSERT INTO `tblErrorLog` (`errorSeverity`, `errorTitle`, `requestIP`, `userAgent`, `createdAt`) VALUES ('warning', ?, '203.0.113.179', 'IT browser', DATE_SUB(NOW(), INTERVAL ? DAY))",
@@ -965,6 +971,43 @@ $itLow3 = itSelect("SELECT CONCAT_WS('|', `requestURL`, `requestHeaders`) AS `ev
 $itLow3Text = (string) ($itLow3[0]['everything'] ?? '');
 itCheck('12c error log and visitor details (#179)', count($itLow3) === 1 && !str_contains($itLow3Text, $itLinkToken) && !str_contains($itLow3Text, 'it-low3-') && str_contains($itLow3Text, '?token=[removed]') && str_contains($itLow3Text, '[address]'), 'fourth-round review Low 3: a page address and Referer with a %40 address and a one-time link are stored with neither (only "[removed]" and "[address]"): ' . substr($itLow3Text, 0, 400));
 itExec('DELETE FROM `tblErrorLog` WHERE `errorTitle` LIKE ?', 's', ['it-179-%']);
+
+// 📈 Fourth-round review, Low 4: entries whose visitor details were already
+//    cleared are not read again on every run. 16,384 old entries with no
+//    details, then one old entry with them and one recent one. After the
+//    clean-up has worked through the table once, ONE more run must clear the
+//    new old entry while reading far fewer rows than the table holds (the
+//    database's own count of rows read, Handler_read_*).
+$itHandlerReads = static function (): int {
+    $itTotal  = 0;
+    $itStatus = getDB()->query("SHOW SESSION STATUS LIKE 'Handler_read%'");
+    while ($itStatusRow = $itStatus->fetch_row()) {
+        $itTotal += (int) $itStatusRow[1];
+    }
+    $itStatus->free();
+    return $itTotal;
+};
+itExec('DELETE FROM `tblActivityLog` WHERE `activityID` > ?', 'i', [0]);
+itExec('DELETE FROM `tblSettings` WHERE `settingKey` = ?', 's', ['activity_visitor_details_cleared_to']);
+itExec("INSERT INTO `tblActivityLog` (`activityType`, `activityDetail`, `createdAt`) VALUES (?, 'IT low 4', DATE_SUB(NOW(), INTERVAL 200 DAY))", 's', ['it_low4_cleared']);
+for ($itDouble = 0; $itDouble < 14; $itDouble++) {
+    itExec('INSERT INTO `tblActivityLog` (`activityType`, `activityDetail`, `createdAt`) SELECT `activityType`, `activityDetail`, `createdAt` FROM `tblActivityLog` WHERE `activityType` = ?', 's', ['it_low4_cleared']);
+}
+$itLow4Cleared = (int) itSelect('SELECT COUNT(*) AS `n` FROM `tblActivityLog` WHERE `activityType` = ?', 's', ['it_low4_cleared'])[0]['n'];
+for ($itPass = 0; $itPass < 40; $itPass++) {
+    clearOldActivityVisitorDetails(90, CUERCODE_EMAIL_QUEUE_TIDY_BATCH);
+}
+foreach (['it_low4_old' => 100, 'it_low4_new' => 10] as $itLow4Type => $itLow4Days) {
+    itExec("INSERT INTO `tblActivityLog` (`activityType`, `activityDetail`, `requestIP`, `userAgent`, `createdAt`) VALUES (?, 'IT low 4', '203.0.113.4', 'IT browser', DATE_SUB(NOW(), INTERVAL ? DAY))", 'si', [$itLow4Type, $itLow4Days]);
+}
+$itReadsBefore = $itHandlerReads();
+$itLow4Changed = clearOldActivityVisitorDetails(90, CUERCODE_EMAIL_QUEUE_TIDY_BATCH);
+$itLow4Reads   = $itHandlerReads() - $itReadsBefore;
+$itLow4Rows    = itSelect("SELECT `activityType`, `requestIP` FROM `tblActivityLog` WHERE `activityType` IN ('it_low4_old', 'it_low4_new') ORDER BY `activityType`");
+itCheck('12d visitor-details clean-up cost (fourth-round review Low 4)', $itLow4Cleared === 16384, 'set-up: ' . $itLow4Cleared . ' old entries already without details');
+itCheck('12d visitor-details clean-up cost (fourth-round review Low 4)', $itLow4Changed === 1 && count($itLow4Rows) === 2 && $itLow4Rows[1]['requestIP'] === null && $itLow4Rows[0]['requestIP'] === '203.0.113.4', 'one run clears the new old entry (and only it): the recent entry keeps its details (' . json_encode($itLow4Rows) . ')');
+itCheck('12d visitor-details clean-up cost (fourth-round review Low 4)', $itLow4Reads < 2000, 'that run read ' . $itLow4Reads . ' rows, not the ' . $itLow4Cleared . ' already-cleared old entries again');
+itExec('DELETE FROM `tblActivityLog` WHERE `activityType` LIKE ?', 's', ['it_low4_%']);
 
 // ==============================================================================
 // 1️⃣3️⃣ #122: an email whose details were cleared is never sent
