@@ -11,9 +11,13 @@
  *   - Cache-first for static assets (CSS, JS, images, fonts)
  *   - Runtime caching for CDN resources (Bootstrap, FontAwesome, jQuery)
  *   - API requests (/api/) are NEVER cached
- *   - Private and one-time pages (account, sign-in, registration, password
- *     reset, e-mail verification, /auth and any address with a `token`
- *     query parameter) are NEVER cached - they always go to the network
+ *   - Private and one-time pages (account, admin, installer, sign-in,
+ *     registration, password reset, e-mail verification, /auth and any
+ *     address with a `token` query parameter) are NEVER cached - they always
+ *     go to the network
+ *   - A response the server marks "no-store" or "private" (every admin page,
+ *     and every page drawn for a signed-in visitor) is NEVER kept, whatever
+ *     its address (fourth-round review, Medium 2)
  *   - Offline fallback page when network unavailable and no cache hit
  *
  * Lifecycle:
@@ -48,9 +52,13 @@
  * copies of private pages (account, reset-password, verify-email) that earlier
  * versions of this worker stored.
  * v4: the page scripts that used to be inline are now files (#154).
+ * v5: bumped so every older cache is deleted - earlier versions kept copies
+ * of admin pages and of pages drawn for a signed-in visitor (with their email
+ * address in the menu), readable offline after signing out (fourth-round
+ * review, Medium 2).
  * @type {string}
  */
-var CACHE_VERSION = 'cuercode-v4';
+var CACHE_VERSION = 'cuercode-v5';
 
 /**
  * 📌 Static assets cache name.
@@ -112,6 +120,8 @@ var PRECACHE_ASSETS = [
  */
 var PRIVATE_PATH_PREFIXES = [
     '/account',
+    '/admin',
+    '/install',
     '/login',
     '/register',
     '/forgot-password',
@@ -297,8 +307,8 @@ self.addEventListener('fetch', function (event) {
 
                 /* 📌 Cache miss - fetch from network and store in CDN cache */
                 return fetch(request).then(function (networkResponse) {
-                    /* 📌 Only cache successful responses */
-                    if (networkResponse && networkResponse.ok) {
+                    /* 📌 Only cache successful responses the server lets us keep */
+                    if (mayKeepCopy(networkResponse)) {
                         var responseClone = networkResponse.clone();
                         caches.open(CDN_CACHE).then(function (cache) {
                             cache.put(request, responseClone);
@@ -324,6 +334,12 @@ self.addEventListener('fetch', function (event) {
     // If the network fails, fall back to a cached version. If no cached
     // version exists, show the offline fallback page.
     //
+    // 🔒 Fourth-round review, Medium 2: a copy is kept only when the server
+    // allows it (mayKeepCopy()). The site's own PHP pages are all sent with
+    // "no-store" (bootstrap.php), so in practice none of them is kept and an
+    // offline visitor gets the offline page; only a page the server lets
+    // browsers keep is stored.
+    //
     // @see https://developer.mozilla.org/en-US/docs/Web/API/Request/headers
     // @see https://developer.mozilla.org/en-US/docs/Web/API/Headers/get
     // --------------------------------------------------------------------------
@@ -331,8 +347,9 @@ self.addEventListener('fetch', function (event) {
     if (isNavigationRequest(request)) {
         event.respondWith(
             fetch(request).then(function (networkResponse) {
-                /* 📌 Network success - cache the fresh page and return it */
-                if (networkResponse && networkResponse.ok) {
+                /* 📌 Network success - keep a copy (unless the server says
+                   never to: no-store / private) and return it */
+                if (mayKeepCopy(networkResponse)) {
                     var responseClone = networkResponse.clone();
                     caches.open(PAGES_CACHE).then(function (cache) {
                         cache.put(request, responseClone);
@@ -376,7 +393,7 @@ self.addEventListener('fetch', function (event) {
 
                 /* 📌 Cache miss - fetch from network and cache the response */
                 return fetch(request).then(function (networkResponse) {
-                    if (networkResponse && networkResponse.ok) {
+                    if (mayKeepCopy(networkResponse)) {
                         var responseClone = networkResponse.clone();
                         caches.open(STATIC_CACHE).then(function (cache) {
                             cache.put(request, responseClone);
@@ -530,6 +547,35 @@ function isStaticAsset(url) {
 }
 
 /**
+ * 🔒 May this response be kept in a cache? (fourth-round review, Medium 2)
+ *
+ * Only a successful response, and never one whose Cache-Control header says
+ * "no-store" or "private": the server sends those on every admin page and on
+ * every page drawn for a signed-in visitor, so such pages can never be read
+ * from this worker's caches after signing out. EVERY cache.put() in this file
+ * goes through here.
+ *
+ * @param {Response} response - The network response
+ * @returns {boolean} True if a copy may be stored
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control
+ */
+function mayKeepCopy(response) {
+    if (!response || !response.ok) {
+        return false;
+    }
+
+    /* 📌 Header names are case-insensitive in Headers.get(); the values may
+       be in any case and combined with others (e.g. "no-store, no-cache") */
+    var cacheControl = (response.headers.get('Cache-Control') || '').toLowerCase();
+    if (cacheControl.indexOf('no-store') !== -1 || cacheControl.indexOf('private') !== -1) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * 🔄 Background fetch-and-cache-update (stale-while-revalidate helper)
  *
  * Fetches a fresh copy of the resource in the background and updates
@@ -543,7 +589,7 @@ function isStaticAsset(url) {
  */
 function fetchAndUpdateCache(request, cacheName) {
     fetch(request).then(function (networkResponse) {
-        if (networkResponse && networkResponse.ok) {
+        if (mayKeepCopy(networkResponse)) {
             caches.open(cacheName).then(function (cache) {
                 cache.put(request, networkResponse);
             });

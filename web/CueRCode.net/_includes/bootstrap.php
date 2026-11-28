@@ -327,6 +327,14 @@ if (session_status() === PHP_SESSION_NONE && php_sapi_name() !== 'cli') {
     // 🔑 Set session name (avoid default PHPSESSID which reveals PHP usage)
     session_name('CUERCODE_SID');
 
+    // 🚫 Fourth-round review, Medium 2: every page is sent with "Cache-Control:
+    //    no-store" (PHP's "nocache" setting), so no browser, and not the
+    //    offline worker (sw.js mayKeepCopy()), keeps a copy of a page that can
+    //    hold a signed-in person's details or a one-time security token. It is
+    //    PHP's own default, set here so a host's php.ini cannot change it.
+    // @see https://www.php.net/manual/en/function.session-cache-limiter.php
+    session_cache_limiter('nocache');
+
     // ▶️ Start the session
     session_start();
 }
