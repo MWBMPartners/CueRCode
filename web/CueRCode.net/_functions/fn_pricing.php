@@ -1070,13 +1070,10 @@ function pricingAllowedDisplayKeys(): array
             'status' => 'coming_soon',
         ],
 
-        // 🚧 COMING SOON - Dynamic QR codes (#27/#82). The owner-facing
-        // destination-management API exists and is reachable
-        // (fn_api_redirects.php), but its own file header calls
-        // createDynamicRedirectForOwner() "deliberately NOT wired to any
-        // live route" - there is no public /r/{uuid} redirect endpoint for a
-        // scanned code to ever resolve through, so a customer cannot
-        // actually make a "dynamic" QR code do anything dynamic yet.
+        // 🚧 COMING SOON - Dynamic QR codes (#27). The create and change flows
+        // exist (WP4c, #166, fn_api_redirects.php) but stay switched off
+        // (dynamic_qr_enabled) until Go2My.Link is live (decision 0027);
+        // this wording moves to "available" with WP4i (#171, decision 0022).
         'dynamic_qr' => [
             'label'  => 'Dynamic QR codes (editable destination)',
             'status' => 'coming_soon',
@@ -1156,9 +1153,8 @@ function pricingAllowedDisplayKeys(): array
         ],
 
         // 🚧 COMING SOON - Dynamic (editable) QR codes. The quota this limit
-        // governs belongs to the SAME not-yet-wired dynamic-redirect feature
-        // as 'dynamic_qr' above - limitFor('dynamic_codes') is only ever
-        // read by the dark createDynamicRedirectForOwner() helper.
+        // governs is read by createDynamicRedirectForOwner() (WP4c, #166),
+        // which stays switched off with 'dynamic_qr' above.
         'dynamic_codes' => [
             'label'  => 'Dynamic (editable) QR codes',
             'status' => 'coming_soon',

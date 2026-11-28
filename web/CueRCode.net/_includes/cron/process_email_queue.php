@@ -57,6 +57,12 @@
  * line hides every email address ("[address]"); it still includes the
  * subject, which is fixed text for sign-up and password-reset emails.
  *
+ * It also runs the dynamic-code tidy step (WP4c, #166, Step 9 below). On a
+ * site whose copies share these files, start the cron line with the copy's
+ * name so that step may call Go2My.Link (#181), for example:
+ *
+ *     CUERCODE_SITE_COPY=live /usr/local/php84/bin/php /home/<user>/<path>/CueRCode.net/_includes/cron/process_email_queue.php --quiet
+ *
  * It also runs the queue clean-up (#122/#123) - see fn_email.php
  * runEmailQueueHousekeeping(): one-time links are removed once an email is
  * sent, emails whose link has expired are skipped, and old records are
@@ -217,6 +223,43 @@ try {
     }
 
     $exitCode = CUERCODE_EMAIL_RUNNER_EXIT_CRASH;
+}
+
+// ==============================================================================
+// 🔗 Step 9 (WP4c, #166): the dynamic-code tidy step
+// ==============================================================================
+// Codes whose create answer from Go2My.Link was lost stay "pending" (they
+// count towards the owner's limit and are never printed). After 10 minutes
+// this step looks each one up and settles it - working, held for an admin,
+// or not made (dynamicQrTidyPendingRows(), fn_api_redirects.php). Not on
+// --check (which changes nothing). It only calls Go2My.Link when this run
+// declares which copy of the site it is (CUERCODE_SITE_COPY in front of the
+// cron command, #181) and Go2My.Link is set up. A problem here can turn a
+// clean exit into 3 (database problem); it never hides an email problem.
+// ==============================================================================
+if ($parsedArguments['check'] !== true) {
+    try {
+        require_once CUERCODE_FUNCTIONS_DIR . 'fn_api_redirects.php';
+        $dynamicTidy = dynamicQrTidyPendingRows();
+        foreach (dynamicQrTidyLines($dynamicTidy) as $dynamicTidyLine) {
+            if ($dynamicTidy['ok'] !== true) {
+                fwrite(STDERR, $dynamicTidyLine . PHP_EOL);
+            } elseif ($parsedArguments['quiet'] !== true) {
+                fwrite(STDOUT, $dynamicTidyLine . PHP_EOL);
+            }
+        }
+        if ($dynamicTidy['ok'] !== true && $exitCode === CUERCODE_EMAIL_RUNNER_EXIT_OK) {
+            $exitCode = CUERCODE_EMAIL_RUNNER_EXIT_DATABASE;
+        }
+    } catch (\Throwable $exception) {
+        fwrite(STDERR, 'CueRCode dynamic codes: the tidy step stopped (' . get_class($exception) . ') - see the error log.' . PHP_EOL);
+        if (function_exists('logError')) {
+            logError('error', 'Dynamic code tidy step crashed', get_class($exception));
+        }
+        if ($exitCode === CUERCODE_EMAIL_RUNNER_EXIT_OK) {
+            $exitCode = CUERCODE_EMAIL_RUNNER_EXIT_DATABASE;
+        }
+    }
 }
 
 // 🏁 The run reached its own end - the Step 4 shutdown function must NOT print

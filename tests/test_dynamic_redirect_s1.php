@@ -191,40 +191,53 @@ assertTrue(
     'structural guard: fn_api_redirects.php was readable for static inspection'
 );
 
-// 🔐 404-not-403 IDOR convention: this file NEVER manufactures a literal 403
-// response itself - the ONLY 403 a caller of these two routes can ever see
-// comes from the ROUTER's own scope-enforcement layer (INSUFFICIENT_SCOPE),
-// never from an ownership check inside this file.
+// 🔐 404-not-403 IDOR convention: an ownership check in this file never
+// answers 403. Since WP4c (#166) the ONE 403 the file can give is
+// EMAIL_NOT_CONFIRMED (a signed-in owner whose email is not confirmed, about
+// their OWN account - it says nothing about anyone else's code).
+preg_match_all("/'httpCode' => 403, 'errorCode' => '([A-Z_]+)'/", $redirectsApiSource, $forbiddenMatches);
+assertEquals(
+    ['EMAIL_NOT_CONFIRMED'],
+    array_values(array_unique($forbiddenMatches[1])),
+    'structural guard: the only 403 in fn_api_redirects.php is EMAIL_NOT_CONFIRMED (404-not-403 for ownership)'
+);
 assertFalse(
     str_contains($redirectsApiSource, ', 403,'),
-    'structural guard: fn_api_redirects.php never emits a literal 403 response itself (404-not-403 IDOR convention - a 403 would confirm a UUID exists and belongs to someone else)'
+    'structural guard: fn_api_redirects.php never calls errorResponse() with a literal 403'
 );
 
-// 🔐 Both handlers report a non-owned/missing row as 404 NOT_FOUND.
+// 🔐 Not owned or missing: 404 NOT_FOUND (GET handler, change flow, image gate).
 assertTrue(
-    substr_count($redirectsApiSource, "404, 'NOT_FOUND'") >= 2,
-    'structural guard: fn_api_redirects.php reports "not found or not owned" as 404 NOT_FOUND at least twice (GET + PATCH)'
+    substr_count($redirectsApiSource, "404, 'NOT_FOUND'") + substr_count($redirectsApiSource, "'httpCode' => 404, 'errorCode' => 'NOT_FOUND'") >= 3,
+    'structural guard: fn_api_redirects.php reports "not found or not owned" as 404 NOT_FOUND in the GET handler, the change flow and the image gate'
 );
 
-// 🎯 PATCH re-runs validateRedirectDestination() - not merely trusting the
-// create-time validation forever.
+// 🎯 Every write re-validates the destination (create here, change in the
+// pure planner dynamicQrPlanChange(), fn_redirects.php).
 assertContains(
     'validateRedirectDestination(',
     $redirectsApiSource,
-    'structural guard: fn_api_redirects.php calls validateRedirectDestination() (PATCH re-validates every destination write)'
+    'structural guard: fn_api_redirects.php calls validateRedirectDestination() (create re-validates)'
+);
+$redirectsPureSource = (string) file_get_contents(CUERCODE_FUNCTIONS_DIR . 'fn_redirects.php');
+assertContains(
+    'validateRedirectDestination(dynamicQrPrepareDestination($body[\'destination_url\'])',
+    $redirectsPureSource,
+    'structural guard: the change planner re-validates every new destination'
 );
 
-// 🚫 The abuse-suspension block: disabledReason==='abuse' rejects the WHOLE
-// PATCH with 409 REDIRECT_SUSPENDED, checked BEFORE any field is read.
+// 🚫 A suspended code (abuse, admin, or a suspension time) refuses EVERY
+// owner change with 409 REDIRECT_SUSPENDED, checked before any field is read.
 assertContains(
-    "\$row['disabledReason'] === 'abuse'",
-    $redirectsApiSource,
-    'structural guard: fn_api_redirects.php checks disabledReason===\'abuse\' before allowing any PATCH'
+    "in_array(\$row['disabledReason'], ['abuse', 'admin'], true)",
+    $redirectsPureSource,
+    'structural guard: dynamicQrRowIsSuspended() treats abuse and admin take-downs as suspended'
 );
-assertContains(
-    "409,\n            'REDIRECT_SUSPENDED'",
-    $redirectsApiSource,
-    'structural guard: fn_api_redirects.php rejects an abuse-suspended PATCH with 409 REDIRECT_SUSPENDED'
+$suspendedPos = strpos($redirectsPureSource, "'errorCode' => 'REDIRECT_SUSPENDED'");
+$fieldsPos    = strpos($redirectsPureSource, "array_key_exists('destination_url', \$body)");
+assertTrue(
+    $suspendedPos !== false && $fieldsPos !== false && $suspendedPos < $fieldsPos,
+    'structural guard: the planner rejects a suspended code with 409 REDIRECT_SUSPENDED before reading any field'
 );
 
 // 🔒 F-023-style advisory lock: acquireDynamicCodeLimitLock()/

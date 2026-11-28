@@ -118,7 +118,7 @@ $apiFunctionFiles = [
     'fn_api_account.php',    // 👤 Own-account dashboard API: profile/avatar, sessions, change-password (Epic E3 stage 2b, #52/#12/#14/#23/#24)
     'fn_api_keys.php',       // 🔑 Self-service API keys: /keys CRUD, scope taxonomy, ownership predicates (Epic E7 stage 1, #54)
     'fn_redirects.php',      // 🔗 Dynamic-redirect pure core: validateRedirectDestination(), redirectIsWritableBy() (Epic E1a Stage S0, #27/#71/#33 - dark/inert, no public /r/ endpoint exists yet)
-    'fn_api_redirects.php',  // 🔗 Dynamic-redirect owner API: GET/PATCH qrcodes/{uuid}/destination, createDynamicRedirectForOwner() (Epic E1a Stage S1, #27 - dark/inert)
+    'fn_api_redirects.php',  // 🔗 Dynamic codes (WP4c, #166): create (from /generate), GET/PATCH qrcodes/{uuid}/destination, the download gate
 ];
 
 foreach ($apiFunctionFiles as $apiFile) {
@@ -1110,7 +1110,8 @@ if (function_exists('logActivity')) {
 // 📌 Dispatch based on handler type
 switch ($handlerFunction) {
     case 'handleGenerate':
-        handleGenerate($requestBody);
+        // 🔗 WP4c (#166): the sign-in details, for type "dynamic_url".
+        handleGenerate($requestBody, $auth);
         break;
 
     case 'handlePreview':

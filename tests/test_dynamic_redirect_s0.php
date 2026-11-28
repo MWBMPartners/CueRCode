@@ -255,10 +255,16 @@ assertTrue(
 // 📦 Section 5: buildPayload_dynamic_url() - UUID accept/reject + base-host
 // ==============================================================================
 
-assertEquals(
-    'https://QRmy.Link/r/a1b2c3d4-e5f6-4890-abcd-ef1234567890',
-    buildPayload_dynamic_url(['redirect_uuid' => 'a1b2c3d4-e5f6-4890-abcd-ef1234567890']),
-    'buildPayload_dynamic_url(): composes "{default_base}/r/{uuid}" when no tblSettings override is loaded (getConfig() unavailable in this DB-independent harness -> falls back to the hard-coded default \'https://QRmy.Link\')'
+// 📌 WP4c (#166): the code now prints "{base}/{short code}" and is drawn ONLY
+//    for a code the create flow has just allowed and whose row is "active"
+//    (tests/test_dynamic_qr_flows.php and the real-database script cover
+//    the success path). With no database here, every call is refused.
+assertThrows(
+    function () {
+        buildPayload_dynamic_url(['redirect_uuid' => 'a1b2c3d4-e5f6-4890-abcd-ef1234567890']);
+    },
+    'buildPayload_dynamic_url(): a well-formed id typed into a request is refused (WP4c: no dynamic code from typed-in details)',
+    \InvalidArgumentException::class
 );
 
 assertThrows(
@@ -284,14 +290,6 @@ assertThrows(
     },
     'buildPayload_dynamic_url(): throws InvalidArgumentException for a non-v4 UUID (wrong version nibble)',
     \InvalidArgumentException::class
-);
-
-// 📌 A trailing/leading-whitespace UUID is trimmed and accepted (mirrors
-// buildPayload_url()'s own trim()-first convention throughout this file).
-assertEquals(
-    'https://QRmy.Link/r/a1b2c3d4-e5f6-4890-abcd-ef1234567890',
-    buildPayload_dynamic_url(['redirect_uuid' => '  a1b2c3d4-e5f6-4890-abcd-ef1234567890  ']),
-    'buildPayload_dynamic_url(): trims surrounding whitespace from redirect_uuid before validating/encoding'
 );
 
 // ==============================================================================

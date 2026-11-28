@@ -206,6 +206,32 @@ function handleDownload(string $uuid, array $auth = []): void
     }
 
     // ==================================================================
+    // 🔗 Step 2b (WP4c, #166): a DYNAMIC code's picture is for its owner
+    // only, and only while the code is "active" - the only state whose
+    // picture any route may give out. Not the owner, or no code linked to
+    // the picture: the same 404. Suspended, switched off or not ready: 409.
+    // Checked before any file is opened. Without the gate (an older copy of
+    // fn_api_redirects.php), a dynamic picture is never given out.
+    // @see fn_api_redirects.php - dynamicQrImageGate()
+    // ==================================================================
+    if (isset($row['typeName']) && strtolower((string) $row['typeName']) === 'dynamic_url') {
+        $dynamicCallerId = null;
+        if (function_exists('resolveUserIdFromAuth')) {
+            $dynamicCallerId = resolveUserIdFromAuth($auth);
+        }
+
+        $dynamicGate = ['allowed' => false, 'httpCode' => 404, 'errorCode' => 'NOT_FOUND', 'message' => 'QR code not found. The identifier may be invalid or the code may have been deleted.'];
+        if (function_exists('dynamicQrImageGate')) {
+            $dynamicGate = dynamicQrImageGate((int) $row['qrID'], $dynamicCallerId);
+        }
+
+        if ($dynamicGate['allowed'] !== true) {
+            errorResponse((string) $dynamicGate['message'], (int) $dynamicGate['httpCode'], (string) $dynamicGate['errorCode']);
+            return;
+        }
+    }
+
+    // ==================================================================
     // 📌 Step 3: Locate the file on the filesystem
     // ==================================================================
     if (isset($row['qrFilePath'])) {

@@ -238,7 +238,12 @@ function validateRequestFieldLengths(array $requestData): ?string
  *    frame overlay guide; 'avery_5160'/'avery_l7160' render an Avery label
  *    sheet with this code filling one label. @see fn_qr_accessible_pdf.php
  *
+ * 🔗 type="dynamic_url" (WP4c, #166) makes a DYNAMIC code instead: input
+ *    {"destination_url": "https://..."}; see handleGenerateDynamic(). It
+ *    needs a signed-in account (session or API key) with a confirmed email.
+ *
  * @param array $requestData The parsed JSON request body
+ * @param array $auth        The router's sign-in details (fn_api_auth.php); only the dynamic_url type reads them
  *
  * @return void (sends JSON/XML response and exits)
  *
@@ -248,9 +253,9 @@ function validateRequestFieldLengths(array $requestData): ?string
  * @example
  *   // Called from the API router:
  *   $body = json_decode(file_get_contents('php://input'), true);
- *   handleGenerate($body);
+ *   handleGenerate($body, $auth);
  */
-function handleGenerate(array $requestData): void
+function handleGenerate(array $requestData, array $auth = []): void
 {
     // ==================================================================
     // 🔐 F-007: enforce per-field length limits before any processing
@@ -392,6 +397,16 @@ function handleGenerate(array $requestData): void
     }
 
     // ==================================================================
+    // 🔗 Step 4b (WP4c, #166): a dynamic code has its own flow. Checked
+    //    AFTER the customisation, so a bad colour or logo never takes up
+    //    one of the person's dynamic-code places.
+    // ==================================================================
+    if (strtolower($typeName) === 'dynamic_url') {
+        handleGenerateDynamic($inputData, $customization, $auth, $accessibleMeta);
+        return;
+    }
+
+    // ==================================================================
     // 📌 Step 5: Call the core generation function
     // @see fn_qr_generate.php - generateQRCode()
     // ==================================================================
@@ -478,6 +493,112 @@ function handleGenerate(array $requestData): void
     }
 
     successResponse($responseData, 'QR code generated successfully.');
+}
+
+// ==============================================================================
+// 🔗 handleGenerateDynamic() - POST /api/v1/generate with type "dynamic_url"
+// ==============================================================================
+
+/**
+ * 🔗 Make a dynamic code and draw its picture (WP4c, #166).
+ *
+ *   1. The caller must be signed in (session or API key); the account is
+ *      resolved from the sign-in, never from the request (401 otherwise).
+ *   2. input.destination_url is required (400 MISSING_FIELD).
+ *   3. createDynamicRedirectForOwner() (fn_api_redirects.php) does the
+ *      checks, the per-person lock and the Go2My.Link call; any refusal is
+ *      answered as it says (Retry-After when it gives one).
+ *   4. Only a code that came back "active" is drawn: permission to draw this
+ *      one code is granted for the drawing and taken back straight after
+ *      (dynamicQrPayloadPermit()); the picture is linked to the code so the
+ *      download gate can find it.
+ *   5. The answer is the usual generate answer plus "dynamic" (the code's
+ *      id for qrcodes/{uuid}/destination, its short address and its state).
+ *
+ * @param array      $inputData      The request's "input"
+ * @param array      $customization  Already checked by handleGenerate()
+ * @param array      $auth           The router's sign-in details
+ * @param array|null $accessibleMeta The accessible preset's details, when used
+ *
+ * @return void (sends the response and exits)
+ */
+function handleGenerateDynamic(array $inputData, array $customization, array $auth, ?array $accessibleMeta): void
+{
+    $ownerUserId = null;
+    if (function_exists('resolveUserIdFromAuth')) {
+        $ownerUserId = resolveUserIdFromAuth($auth);
+    }
+    if ($ownerUserId === null) {
+        errorResponse('Dynamic codes need a signed-in account. Sign in, or use an API key that belongs to your account.', 401, 'AUTH_REQUIRED');
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    if (!isset($inputData['destination_url']) || !is_string($inputData['destination_url']) || trim($inputData['destination_url']) === '') {
+        errorResponse('Missing required field: input.destination_url. Give the web address the dynamic code should send people to.', 400, 'MISSING_FIELD');
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    if (!function_exists('createDynamicRedirectForOwner') || !function_exists('generateQRCode')) {
+        errorResponse('The dynamic-code service is temporarily unavailable.', 503, 'SERVICE_UNAVAILABLE');
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    // 🔒 The checks, the lock and Go2My.Link (the lock is let go inside).
+    $outcome = createDynamicRedirectForOwner($ownerUserId, $inputData['destination_url']);
+    if ($outcome['ok'] !== true) {
+        dynamicQrSendErrorResponse($outcome);
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    $codeRow = $outcome['row'];
+    $codeId  = (string) $codeRow['redirectUUID'];
+
+    // 🎫 Draw THIS code only, and take the permission back at once.
+    dynamicQrPayloadPermit('grant', $codeId);
+    try {
+        $result = generateQRCode('dynamic_url', ['redirect_uuid' => $codeId], $customization);
+    } finally {
+        dynamicQrPayloadPermit('revoke', $codeId);
+    }
+
+    if (!$result['success']) {
+        // ✅ The code exists and works; only its picture failed. Its id and
+        //    short address are given so nothing is lost.
+        errorResponse(
+            'The dynamic code was made, but its picture could not be drawn. Please try again, or use its short address.',
+            500,
+            'GENERATION_FAILED',
+            ['dynamic' => dynamicQrPublicView($codeRow)]
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
+    dynamicQrLinkImage((int) $codeRow['redirectID'], (string) $result['uuid']);
+
+    if (isset($customization['format'])) {
+        $format = strtolower(trim($customization['format']));
+    } else {
+        $format = 'png';
+    }
+
+    $responseData = [
+        'uuid'         => $result['uuid'],
+        'image'        => $result['data'],
+        'download_url' => '/api/v1/download/' . $result['uuid'],
+        'mime_type'    => $result['mimeType'],
+        'format'       => $format,
+        'dynamic'      => dynamicQrPublicView($codeRow),
+    ];
+
+    if ($accessibleMeta !== null) {
+        $responseData['metadata'] = [
+            'accessible'                => true,
+            'contrast_ratio'            => $accessibleMeta['contrast_ratio'],
+            'recommended_print_size_mm' => $accessibleMeta['recommended_print_size_mm'],
+        ];
+    }
+
+    successResponse($responseData, 'Dynamic QR code created successfully.');
 }
 
 // ==============================================================================

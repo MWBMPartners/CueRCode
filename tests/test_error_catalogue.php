@@ -368,12 +368,16 @@ $scannedFiles = [
     //    _UNAVAILABLE) are built in humanCheckResult() and passed on by
     //    requireHumanCheckForApi() in fn_api_accounts.php.
     'fn_human_check.php'   => [CUERCODE_FUNCTIONS_DIR . 'fn_human_check.php', false],
+    // 🔗 WP4c (#166): the change planner (dynamicQrPlanChange()) and the
+    //    Go2My.Link failure answers (dynamicQrServiceErrorFacts()) build
+    //    codes that fn_api_redirects.php passes on to the response.
+    'fn_redirects.php'     => [CUERCODE_FUNCTIONS_DIR . 'fn_redirects.php', false],
 ];
 
 assertEquals(
-    15,
+    16,
     count($scannedFiles),
-    'the scanned-file allowlist has exactly the 15 files the plan specifies (14, plus fn_human_check.php for #163)'
+    'the scanned-file allowlist has exactly the 16 files the plan specifies (14, plus fn_human_check.php for #163 and fn_redirects.php for WP4c, #166)'
 );
 
 foreach ($scannedFiles as $fileLabel => $fileInfo) {
@@ -498,9 +502,13 @@ assertEquals(
 );
 
 assertEquals(
-    99,
+    112,
     count($xErrorCodes),
-    'ErrorResponse.x-error-codes has exactly 99 entries (HUMAN_CHECK_REQUIRED, HUMAN_CHECK_FAILED, '
+    'ErrorResponse.x-error-codes has exactly 112 entries (the 13 dynamic-code codes of WP4c, #166: '
+    . 'EMAIL_NOT_CONFIRMED, DYNAMIC_QR_UNAVAILABLE, DYNAMIC_CODES_LIMIT_REACHED, DYNAMIC_LOCK_BUSY, '
+    . 'DESTINATION_UNSAFE, LINK_SERVICE_UNAVAILABLE, LINK_SERVICE_BUSY, LINK_SERVICE_REJECTED, '
+    . 'LINK_NOT_CONFIRMED, REDIRECT_NOT_READY, INVALID_ACTIVE, DYNAMIC_CODE_NOT_ACTIVE, '
+    . 'DYNAMIC_CODE_NOT_SAVEABLE - plus the 99 earlier codes: HUMAN_CHECK_REQUIRED, HUMAN_CHECK_FAILED, '
     . 'HUMAN_CHECK_UNAVAILABLE - #163, fn_human_check.php humanCheckResult(): the human check on '
     . 'register, login and request-password-reset - plus the 96 earlier codes: DATABASE_UPGRADE_NEEDED - '
     . 'independent review, Codex C3 finding 4, fn_auth.php authUpgradeNeededResult(): a '

@@ -19,8 +19,9 @@
  *       scans (go2mylinkScanTotal(), decision 0033: totals only);
  *     - check the connection without changing anything
  *       (go2mylinkTestConnection(), the admin "Test connection" button).
- *   Nothing calls it yet: the create and edit flows are WP4c (#166), and the
- *   feature stays switched off (dynamic_qr_enabled is locked at 0).
+ *   Its callers are the create, change and tidy flows of WP4c (#166,
+ *   fn_api_redirects.php) and the admin "Test connection" button; the
+ *   feature is off by default (dynamic_qr_enabled).
  *
  * WHAT GO2MY.LINK EXPECTS (read from its code, not only its documents, on
  * 2026-11-28: branch feat/2026-09-21-linkspage-and-sweep, files

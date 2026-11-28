@@ -16,10 +16,10 @@
  * `Location` header sourced from a value THIS function already approved), so
  * it must be exhaustively testable without a database or a live host.
  *
- * ⚠️ DARK / INERT this stage: nothing in this file is reachable from any
- * public route. There is no `public_html/r/` endpoint anywhere in this
- * codebase yet - see the design doc's Stage S2 (gated on owner sign-off
- * G-007, `LAUNCH_DECISIONS.md`).
+ * 🔗 Since WP4c (#166) dynamic codes run on Go2My.Link (decision 0027), not
+ * a CueRCode /r/ route, and the rules for making, changing and drawing them
+ * are here too (the section "Dynamic codes on Go2My.Link: the pure rules"
+ * at the end). Still pure: the database work is fn_api_redirects.php.
  *
  * Functions in this file:
  *   - validateRedirectDestination() - the destination allowlist validator
@@ -32,6 +32,10 @@
  *                                     fn_features.php's evaluateCreditSpend())
  *   - cuercodeIpInCidr()            - small IPv4/IPv6 CIDR-membership helper
  *     backing the private/loopback/link-local/reserved IP-literal rejection
+ *   - dynamicQr*()                  - WP4c (#166): which codes may be drawn,
+ *     who may change them, the change planner, the tidy step's choice, the
+ *     member answers for Go2My.Link failures, the drawing permission and
+ *     the one link-safety hook (dynamicQrCheckDestinationSafety(), #168)
  *
  * @package     CueRCode
  * @subpackage  Redirects
@@ -91,6 +95,30 @@ if (!defined('CUERCODE_REDIRECT_DESTINATION_MAX_LEN')) {
  */
 if (!defined('CUERCODE_REDIRECT_SELF_HOSTS')) {
     define('CUERCODE_REDIRECT_SELF_HOSTS', ['cuercode.net', 'cuercode.me', 'qrmy.link']);
+}
+
+/**
+ * @var array Short-link addresses (WP4c, #166; plan section 0.7). A dynamic
+ * code's destination may never be on one of these, or on any address under
+ * them (alpha.qrmy.link, www.g2my.link, ...), whatever the path: every path
+ * there is itself a short link, so the code would send people on to another
+ * short link (a chain that hides where it really goes, and could loop).
+ * QRmy.Link is CueRCode's own; go2my.link, g2my.link and lnks.page are
+ * Go2My.Link's (decision 0027). Callers may replace the list through
+ * $opts['short_link_hosts'] (tests).
+ */
+if (!defined('CUERCODE_REDIRECT_SHORT_LINK_HOSTS')) {
+    define('CUERCODE_REDIRECT_SHORT_LINK_HOSTS', ['qrmy.link', 'go2my.link', 'g2my.link', 'lnks.page']);
+}
+
+/** @var string The page a switched-off code points at (lead choice L2; WP4f completes the page). */
+if (!defined('CUERCODE_DYNAMIC_QR_UNAVAILABLE_PATH')) {
+    define('CUERCODE_DYNAMIC_QR_UNAVAILABLE_PATH', '/unavailable/');
+}
+
+/** @var string The only syncState whose code may ever be drawn, downloaded or changed (fn_go2mylink.php go2mylinkSyncStateFor()). */
+if (!defined('CUERCODE_DYNAMIC_QR_STATE_ACTIVE')) {
+    define('CUERCODE_DYNAMIC_QR_STATE_ACTIVE', 'active');
 }
 
 /**
@@ -333,6 +361,12 @@ function validateRedirectDestination(string $url, array $opts = []): array
         $selfHosts = CUERCODE_REDIRECT_SELF_HOSTS;
     }
 
+    if (isset($opts['short_link_hosts']) && is_array($opts['short_link_hosts'])) {
+        $shortLinkHosts = $opts['short_link_hosts'];
+    } else {
+        $shortLinkHosts = CUERCODE_REDIRECT_SHORT_LINK_HOSTS;
+    }
+
     // ==================================================================
     // a. Length + control-character guard (on the RAW input, before any
     //    trimming - a control character must never be silently trimmed away
@@ -377,7 +411,11 @@ function validateRedirectDestination(string $url, array $opts = []): array
     }
 
     if (!in_array($scheme, $allowedSchemes, true)) {
-        return $invalid('Destination scheme "' . $scheme . '" is not allowed. Only https is permitted' . ($allowHttp ? ' (and http, per configuration)' : '') . '.');
+        $schemeNote = '';
+        if ($allowHttp) {
+            $schemeNote = ' (and http, per configuration)';
+        }
+        return $invalid('Destination scheme "' . $scheme . '" is not allowed. Only https is permitted' . $schemeNote . '.');
     }
 
     // ==================================================================
@@ -474,6 +512,24 @@ function validateRedirectDestination(string $url, array $opts = []): array
 
         if ($isSelfHost && str_starts_with($path, '/r/')) {
             return $invalid('Destination URL points back at this platform\'s own redirect layer, which would create a redirect loop.');
+        }
+    }
+
+    // ==================================================================
+    // e2. (WP4c, #166) No destination on a short-link address, whatever the
+    //     path: every path there is another short link (see
+    //     CUERCODE_REDIRECT_SHORT_LINK_HOSTS). The address itself and every
+    //     address under it ("alpha.", "www.", ...) are refused; a look-alike
+    //     such as notqrmy.link is not.
+    // ==================================================================
+    foreach ($shortLinkHosts as $shortLinkHost) {
+        $shortLinkHostLower = strtolower((string) $shortLinkHost);
+        if ($shortLinkHostLower === '') {
+            continue;
+        }
+
+        if ($host === $shortLinkHostLower || str_ends_with($host, '.' . $shortLinkHostLower)) {
+            return $invalid('Destination URL is a short link (' . $shortLinkHostLower . '). A dynamic code cannot send people on to another short link: use the full address it leads to.');
         }
     }
 
@@ -593,4 +649,458 @@ function evaluateDynamicCodeQuota(int $currentActiveCount, int $limit): array
     }
 
     return ['allowed' => true, 'reason' => null];
+}
+
+// ==============================================================================
+// 🔗 Dynamic codes on Go2My.Link: the pure rules (WP4c, #166)
+// ==============================================================================
+// Everything below decides from the values it is given. The database work and
+// the calls to Go2My.Link are in fn_api_redirects.php, which uses these.
+// ==============================================================================
+
+/**
+ * 🖨️ May this tblQRRedirects row be drawn as a QR picture, downloaded or
+ *    changed? ONLY when all of these hold (the brief for WP4c: "active is the
+ *    only state whose QR may be produced or downloaded by any route"):
+ *      - syncState is "active" (Go2My.Link has the link on the confirmed short
+ *        domain; never pending, unconfirmed, failed or unlinked);
+ *      - it is switched on (isActive = 1) and has no switched-off reason;
+ *      - it is not suspended (no suspension time);
+ *      - it has a short code Go2My.Link would accept.
+ *    PURE.
+ *
+ * @param array<string, mixed> $row A tblQRRedirects row
+ * @return bool
+ */
+function dynamicQrRowIsPrintable(array $row): bool
+{
+    if (!isset($row['syncState']) || $row['syncState'] !== CUERCODE_DYNAMIC_QR_STATE_ACTIVE) {
+        return false;
+    }
+
+    if (!isset($row['isActive']) || (int) $row['isActive'] !== 1) {
+        return false;
+    }
+
+    if (isset($row['disabledReason']) && (string) $row['disabledReason'] !== '') {
+        return false;
+    }
+
+    if (dynamicQrRowIsSuspended($row)) {
+        return false;
+    }
+
+    if (!isset($row['shortCode']) || !is_string($row['shortCode'])) {
+        return false;
+    }
+
+    return dynamicQrShortCodeIsUsable($row['shortCode']);
+}
+
+/**
+ * 🚫 Is this code suspended (taken down)? A suspension time, or switched off
+ *    by an admin or for abuse. The owner can change nothing about a
+ *    suspended code (it cannot be edited or switched on around a takedown).
+ *    PURE.
+ *
+ * @param array<string, mixed> $row A tblQRRedirects row
+ * @return bool
+ */
+function dynamicQrRowIsSuspended(array $row): bool
+{
+    if (isset($row['suspendedAt']) && (string) $row['suspendedAt'] !== '') {
+        return true;
+    }
+
+    if (isset($row['disabledReason']) && in_array($row['disabledReason'], ['abuse', 'admin'], true)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * 🔤 Is this a short code Go2My.Link would accept? Its own check when the
+ *    connection code is loaded (pattern and reserved words), otherwise its
+ *    pattern alone. PURE.
+ *
+ * @param string $shortCode
+ * @return bool
+ */
+function dynamicQrShortCodeIsUsable(string $shortCode): bool
+{
+    if (function_exists('go2mylinkCodeIsAllowed')) {
+        return go2mylinkCodeIsAllowed($shortCode);
+    }
+
+    return preg_match('/^[A-Za-z0-9_-]{3,50}$/D', $shortCode) === 1;
+}
+
+/**
+ * 👤 May this account make or change dynamic codes? Only an account that is
+ *    "active" AND has a confirmed email address (no anonymous codes, and no
+ *    codes from an address nobody has proved they own). PURE.
+ *
+ * @param array<string, mixed>|null $account tblUsers status and emailVerifiedAt; null = no account
+ * @return bool
+ */
+function dynamicQrAccountMayChangeCodes(?array $account): bool
+{
+    if ($account === null) {
+        return false;
+    }
+
+    if (!isset($account['status']) || $account['status'] !== 'active') {
+        return false;
+    }
+
+    if (!isset($account['emailVerifiedAt']) || trim((string) $account['emailVerifiedAt']) === '') {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * 📄 The address a switched-off code points at (lead choice L2): this site's
+ *    /unavailable/ page with the code, for example
+ *    https://cuercode.net/unavailable/?code=Ab3dE9x. Go2My.Link's own
+ *    switched-off page says "disabled by its owner" and its API cannot switch
+ *    a link back on, so CueRCode points the link here instead. '' when the
+ *    site address is not an https address or the code is not a usable code
+ *    (switching off is then refused). PURE.
+ *
+ * @param string $siteUrl   The site_url setting
+ * @param string $shortCode The code's short code
+ * @return string
+ */
+function dynamicQrUnavailablePageUrl(string $siteUrl, string $shortCode): string
+{
+    $siteUrl = trim($siteUrl);
+
+    if (stripos($siteUrl, 'https://') !== 0) {
+        return '';
+    }
+
+    $host = parse_url($siteUrl, PHP_URL_HOST);
+    if (!is_string($host) || $host === '') {
+        return '';
+    }
+
+    if (!dynamicQrShortCodeIsUsable($shortCode)) {
+        return '';
+    }
+
+    return rtrim($siteUrl, '/') . CUERCODE_DYNAMIC_QR_UNAVAILABLE_PATH . '?code=' . rawurlencode($shortCode);
+}
+
+/**
+ * 🔤 A destination as typed, made ready for validateRedirectDestination():
+ *    spaces and non-English letters after the website name become %XX codes,
+ *    the form Go2My.Link stores (go2mylinkEncodeDestination(), #181 Low 3),
+ *    so a pasted "https://example.com/café menu" can be accepted. Text with a
+ *    control character (or a line break) is passed on UNCHANGED, so the
+ *    validator still refuses it - nothing is ever silently removed. The
+ *    validator's own checks are not changed. PURE.
+ *
+ * @param string $typed
+ * @return string
+ */
+function dynamicQrPrepareDestination(string $typed): string
+{
+    if (preg_match('/[\x00-\x1F\x7F]/', $typed) === 1 || !function_exists('go2mylinkEncodeDestination')) {
+        return $typed;
+    }
+
+    return go2mylinkEncodeDestination($typed);
+}
+
+/**
+ * 🛡️ THE link-safety hook: the ONE place a dynamic code's destination is
+ *    checked against a link-safety service before it can go live. It is
+ *    called in exactly two places (a source test counts them): when a code
+ *    is made (createDynamicRedirectForOwner()) and on every change of where
+ *    a code sends people (dynamicQrChangeForOwner(): a new destination, or
+ *    switching a code back on).
+ *
+ *    ⏳ NOT BUILT YET: the check itself is WP4e (#168, decisions 0029 and
+ *    0035: Google Web Risk now, a second provider later). Until then every
+ *    destination is allowed and the answer says "not_checked_yet". #168
+ *    replaces the body of this function only; its name, parameters and
+ *    answer stay the same, so the two callers need no change. (An "unsafe"
+ *    answer is refused with 422 DESTINATION_UNSAFE; an unreachable provider
+ *    lets the destination through and is logged, design section 2.3.)
+ *
+ * @param string $destinationUrl The destination, already through validateRedirectDestination()
+ * @param string $occasion       'create' or 'change'
+ * @return array{allowed: bool, reason: string, message: string}
+ */
+function dynamicQrCheckDestinationSafety(string $destinationUrl, string $occasion): array
+{
+    // 📌 Both are read so #168 has them; nothing is decided from them yet.
+    unset($destinationUrl, $occasion);
+
+    return ['allowed' => true, 'reason' => 'not_checked_yet', 'message' => ''];
+}
+
+/**
+ * 🧭 What does a PATCH of one code mean? (The change, switch-off and
+ *    switch-on flow, lead choice L2.) Decides everything without calling
+ *    anybody. PURE.
+ *
+ *   - A suspended code refuses every change (409 REDIRECT_SUSPENDED).
+ *   - Only an "active" code can be changed (409 REDIRECT_NOT_READY).
+ *   - "destination_url" is checked again (400 INVALID_DESTINATION).
+ *   - "active" must be true or false (400 INVALID_ACTIVE).
+ *   - What Go2My.Link must point at afterwards: the destination while the
+ *     code is on, the switched-off page while it is off. remoteTarget is that
+ *     address when it differs from what Go2My.Link points at now, otherwise
+ *     null (no call: for example a new destination while switched off is
+ *     only saved here, and sent when the code is switched on).
+ *   - checkDestination is what goes through the link-safety hook: a new
+ *     destination, or the saved one when the code is switched back on.
+ *
+ * @param array<string, mixed> $row     The code (tblQRRedirects)
+ * @param array<string, mixed> $body    The request: destination_url and/or active
+ * @param array<string, mixed> $context 'allowHttp' (bool, redirect_allow_http) and 'offPageUrl' (dynamicQrUnavailablePageUrl())
+ * @return array{ok: bool, httpCode: int, errorCode: string, message: string, nothing: bool, newDestination: string, newActive: bool, destinationChanged: bool, activeChanged: bool, remoteTarget: string|null, checkDestination: string}
+ */
+function dynamicQrPlanChange(array $row, array $body, array $context): array
+{
+    $plan = [
+        'ok'                 => false,
+        'httpCode'           => 200,
+        'errorCode'          => '',
+        'message'            => '',
+        'nothing'            => false,
+        'newDestination'     => '',
+        'newActive'          => false,
+        'destinationChanged' => false,
+        'activeChanged'      => false,
+        'remoteTarget'       => null,
+        'checkDestination'   => '',
+    ];
+
+    // 📌 Each refusal is written as 'errorCode' => 'X', so
+    //    tests/test_error_catalogue.php finds every code this can give.
+    $refuse = static function (array $facts) use ($plan): array {
+        $plan['httpCode']  = (int) $facts['httpCode'];
+        $plan['errorCode'] = (string) $facts['errorCode'];
+        $plan['message']   = (string) $facts['message'];
+        return $plan;
+    };
+
+    // 🚫 1. A takedown cannot be edited or switched around by the owner.
+    if (dynamicQrRowIsSuspended($row)) {
+        return $refuse(['httpCode' => 409, 'errorCode' => 'REDIRECT_SUSPENDED', 'message' => 'This dynamic code has been suspended and cannot be changed. Contact support if you believe this is a mistake.']);
+    }
+
+    // ⏳ 2. Only a code Go2My.Link has confirmed.
+    if (!isset($row['syncState']) || $row['syncState'] !== CUERCODE_DYNAMIC_QR_STATE_ACTIVE) {
+        return $refuse(['httpCode' => 409, 'errorCode' => 'REDIRECT_NOT_READY', 'message' => 'This dynamic code was not confirmed by the link service, so it cannot be changed yet. It is being checked; contact support if this lasts more than a day.']);
+    }
+
+    $destinationProvided = array_key_exists('destination_url', $body);
+    $activeProvided      = array_key_exists('active', $body);
+
+    if (!$destinationProvided && !$activeProvided) {
+        return $refuse(['httpCode' => 400, 'errorCode' => 'NO_FIELDS', 'message' => 'No updatable fields were supplied. Provide "destination_url" and/or "active".']);
+    }
+
+    $allowHttp = false;
+    if (isset($context['allowHttp']) && $context['allowHttp'] === true) {
+        $allowHttp = true;
+    }
+    $offPageUrl = '';
+    if (isset($context['offPageUrl']) && is_string($context['offPageUrl'])) {
+        $offPageUrl = $context['offPageUrl'];
+    }
+
+    $currentDestination = '';
+    if (isset($row['destinationURL'])) {
+        $currentDestination = (string) $row['destinationURL'];
+    }
+    $currentActive = (isset($row['isActive']) && (int) $row['isActive'] === 1);
+
+    // 🎯 3. A new destination is checked again, every time.
+    $newDestination = $currentDestination;
+    if ($destinationProvided) {
+        if (!is_string($body['destination_url'])) {
+            return $refuse(['httpCode' => 400, 'errorCode' => 'INVALID_DESTINATION', 'message' => 'Field "destination_url" must be a string.']);
+        }
+        $checked = validateRedirectDestination(dynamicQrPrepareDestination($body['destination_url']), ['allow_http' => $allowHttp]);
+        if (!$checked['valid']) {
+            return $refuse(['httpCode' => 400, 'errorCode' => 'INVALID_DESTINATION', 'message' => (string) $checked['error']]);
+        }
+        $newDestination = $checked['normalized'];
+        // 🔤 In the form Go2My.Link stores it (#181 Low 3), so the
+        //    comparisons below and on Go2My.Link's reply are exact.
+        if (function_exists('go2mylinkEncodeDestination')) {
+            $newDestination = go2mylinkEncodeDestination($newDestination);
+        }
+    }
+
+    // 🔘 4. "active" is a real true or false (never "false", 0 or 1).
+    $newActive = $currentActive;
+    if ($activeProvided) {
+        if (!is_bool($body['active'])) {
+            return $refuse(['httpCode' => 400, 'errorCode' => 'INVALID_ACTIVE', 'message' => 'Field "active" must be true or false.']);
+        }
+        $newActive = $body['active'];
+    }
+
+    $plan['newDestination']     = $newDestination;
+    $plan['newActive']          = $newActive;
+    $plan['destinationChanged'] = ($newDestination !== $currentDestination);
+    $plan['activeChanged']      = ($newActive !== $currentActive);
+
+    if (!$plan['destinationChanged'] && !$plan['activeChanged']) {
+        $plan['ok']      = true;
+        $plan['nothing'] = true;
+        return $plan;
+    }
+
+    // 📄 5. Switching off needs the page to point at.
+    if (!$newActive && $plan['activeChanged'] && $offPageUrl === '') {
+        return $refuse(['httpCode' => 503, 'errorCode' => 'DYNAMIC_QR_UNAVAILABLE', 'message' => 'Switching a dynamic code off is not available just now. Please try again later.']);
+    }
+
+    // 🌐 6. What Go2My.Link points at now, and afterwards.
+    $remoteNow = $offPageUrl;
+    if ($currentActive) {
+        $remoteNow = $currentDestination;
+    }
+    $remoteNew = $offPageUrl;
+    if ($newActive) {
+        $remoteNew = $newDestination;
+    }
+    if ($remoteNew !== $remoteNow && $remoteNew !== '') {
+        $plan['remoteTarget'] = $remoteNew;
+    }
+
+    // 🛡️ 7. Every change of where the code sends people goes through the hook.
+    if ($plan['destinationChanged']) {
+        $plan['checkDestination'] = $newDestination;
+    } elseif ($plan['activeChanged'] && $newActive) {
+        $plan['checkDestination'] = $newDestination;
+    }
+
+    $plan['ok'] = true;
+
+    return $plan;
+}
+
+/**
+ * 🧹 The tidy step's choice for a code left "pending" (its create answer was
+ *    lost), from looking its short code up on Go2My.Link. PURE.
+ *
+ *   'recover' - Go2My.Link has a link with our code: settle it with the safe
+ *               create (go2mylinkCreateLinkSafely()), which only ever marks
+ *               it active on a confirmed short domain and otherwise holds it
+ *               as "unconfirmed" for an admin - never a blind retry;
+ *   'failed'  - Go2My.Link has no such link: nothing was made, so the row
+ *               stops counting towards the owner's limit;
+ *   'wait'    - the look-up could not answer: leave it pending (it keeps
+ *               counting) and look again on the next run.
+ *
+ * @param array<string, mixed> $lookup A result from go2mylinkLookupLink()
+ * @return string
+ */
+function dynamicQrTidyActionFor(array $lookup): string
+{
+    if (isset($lookup['ok']) && $lookup['ok'] === true) {
+        return 'recover';
+    }
+
+    if (isset($lookup['reason']) && $lookup['reason'] === 'not_found') {
+        return 'failed';
+    }
+
+    return 'wait';
+}
+
+/**
+ * 🧾 A failed Go2My.Link call as the member's answer. Go2My.Link's own
+ *    wording and the admin wording are never used. PURE.
+ *
+ *   rate_limited          -> 429 LINK_SERVICE_BUSY (with its wait)
+ *   rejected              -> 422 LINK_SERVICE_REJECTED
+ *   may have been done, or done but not confirmed (outcomeUnknown, or
+ *   remoteExists)         -> 503 LINK_NOT_CONFIRMED
+ *   anything else         -> 503 LINK_SERVICE_UNAVAILABLE ("try again later")
+ *
+ * @param array<string, mixed> $result   A failed result from fn_go2mylink.php
+ * @param string               $occasion 'create' or 'change' (only the words differ)
+ * @return array{httpCode: int, errorCode: string, message: string, retryAfter: int}
+ */
+function dynamicQrServiceErrorFacts(array $result, string $occasion = 'create'): array
+{
+    $reason = '';
+    if (isset($result['reason']) && is_string($result['reason'])) {
+        $reason = $result['reason'];
+    }
+    $retryAfter = 0;
+    if (isset($result['retryAfter']) && is_int($result['retryAfter']) && $result['retryAfter'] > 0) {
+        $retryAfter = $result['retryAfter'];
+    }
+
+    $message = 'The link service could not be reached just now. Please try again in a few minutes.';
+    if (function_exists('go2mylinkReasonFacts')) {
+        $message = go2mylinkReasonFacts($reason)['message'];
+    }
+
+    if ($reason === 'rate_limited') {
+        return ['httpCode' => 429, 'errorCode' => 'LINK_SERVICE_BUSY', 'message' => $message, 'retryAfter' => $retryAfter];
+    }
+
+    if ($reason === 'rejected') {
+        return ['httpCode' => 422, 'errorCode' => 'LINK_SERVICE_REJECTED', 'message' => $message, 'retryAfter' => 0];
+    }
+
+    $unknown = (isset($result['outcomeUnknown']) && $result['outcomeUnknown'] === true)
+        || (isset($result['remoteExists']) && $result['remoteExists'] === true);
+    if ($unknown) {
+        $notConfirmed = 'The link service did not confirm the new dynamic code. It is checked again automatically and counts towards your limit until then. Please try again later.';
+        if ($occasion === 'change') {
+            $notConfirmed = 'The link service did not confirm the change, so nothing was changed here. Please try again in a few minutes.';
+        }
+        return ['httpCode' => 503, 'errorCode' => 'LINK_NOT_CONFIRMED', 'message' => $notConfirmed, 'retryAfter' => 0];
+    }
+
+    return ['httpCode' => 503, 'errorCode' => 'LINK_SERVICE_UNAVAILABLE', 'message' => $message, 'retryAfter' => 0];
+}
+
+/**
+ * 🎫 The permission to draw ONE dynamic code as a picture, held for the rest
+ *    of this request only. The create flow grants it for the code it has just
+ *    made (after the ownership and state checks) and takes it back straight
+ *    after drawing; buildPayload_dynamic_url() refuses without it. So no
+ *    route that draws from typed-in details (generate, preview, bulk, the
+ *    no-JavaScript form, or one added later) can ever draw a dynamic code:
+ *    nothing a visitor sends can set it.
+ *
+ * @param string $action 'grant', 'revoke' or 'check'
+ * @param string $uuid   The code's redirectUUID
+ * @return bool grant/revoke: done; check: held
+ */
+function dynamicQrPayloadPermit(string $action, string $uuid): bool
+{
+    static $permits = [];
+
+    $uuid = strtolower(trim($uuid));
+    if (!isValidRedirectUuid($uuid)) {
+        return false;
+    }
+
+    if ($action === 'grant') {
+        $permits[$uuid] = true;
+        return true;
+    }
+
+    if ($action === 'revoke') {
+        unset($permits[$uuid]);
+        return true;
+    }
+
+    return isset($permits[$uuid]);
 }

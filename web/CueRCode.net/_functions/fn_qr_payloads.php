@@ -134,7 +134,10 @@ function buildQRPayload(string $typeName, array $inputData): string
     // These types generate multi-line structured payloads (vCard, iCalendar, etc.)
     // that cannot be adequately represented by simple template replacement.
     // ==================================================================
-    $complexTypes = ['vcard', 'calendar', 'zoom', 'wifi'];
+    // 🔗 dynamic_url (WP4c, #166) is here too: its text never comes from a
+    //    template filled with typed-in details, even if a template were ever
+    //    stored for it, so buildPayload_dynamic_url()'s checks always run.
+    $complexTypes = ['vcard', 'calendar', 'zoom', 'wifi', 'dynamic_url'];
 
     if (in_array($typeName, $complexTypes, true)) {
         return buildPayloadByType($typeName, $inputData);
@@ -2692,106 +2695,88 @@ function buildPayload_gs1_product(array $inputData): string
 }
 
 // ==============================================================================
-// 🔗 buildPayload_dynamic_url() - Dynamic (editable) redirect payload (E1a, #27)
+// 🔗 buildPayload_dynamic_url() - Dynamic (editable) code payload (WP4c, #166)
 // ==============================================================================
 
 /**
- * 🔗 Build a dynamic-redirect payload for QR code encoding.
+ * 🔗 Build the text printed in a dynamic QR code: the short-link address plus
+ *    the code's short code, for example "https://QRmy.Link/Ab3dE9x" (plan
+ *    section 0.7; Go2My.Link answers that address, decision 0027).
  *
- * ⚠️ DARK / INERT this stage (Epic E1a Stage S0): the `dynamic_url` QR type
- * seeds with `isActive=0` (seed_data.sql) so it is invisible to GET
- * /api/v1/types, and there is no `public_html/r/` endpoint anywhere in this
- * codebase yet for the resulting URL to resolve against (Stage S2, gated on
- * owner sign-off G-007 - see .dev-team/dynamic_dualfn_design.md). This
- * function exists now purely so the payload-building half of the feature is
- * built, tested, and ready before the route that would ever invoke it.
+ * Unlike every OTHER builder in this file, nothing here comes from what the
+ * visitor typed. It is drawn ONLY when ALL of these hold, and refused
+ * (InvalidArgumentException) otherwise:
+ *   1. the create flow has granted permission for this very code in this
+ *      request (dynamicQrPayloadPermit(), fn_redirects.php) - so generate,
+ *      preview, bulk, the no-JavaScript form, or any route added later, can
+ *      never draw a dynamic code from typed-in details;
+ *   2. the code's row is read fresh from the database and is printable
+ *      (dynamicQrRowIsPrintable(): syncState "active", switched on, not
+ *      suspended - "active" is the only state ever drawn);
+ *   3. the short-link address (dynamic_redirect_base_url, https://QRmy.Link
+ *      by default; alpha uses https://alpha.QRmy.Link, decision 0030) is an
+ *      https address.
  *
- * Unlike every OTHER builder in this file, the encoded identifier is NOT
- * user-supplied content - it is a `redirectUUID` MINTED by the (future)
- * creation handler BEFORE payload build (createDynamicRedirectForOwner(),
- * fn_api_redirects.php), then passed in here via `$inputData['redirect_uuid']`
- * exactly like `buildPayload_gs1_product()`'s strict-reject GTIN check
- * (fn_qr_payloads.php, above) validates its own required field. This builder
- * stays PURE - it never touches the database itself, it only trusts (and
- * strictly re-validates the SHAPE of) the UUID it is handed.
+ * @param array $inputData Must contain 'redirect_uuid' (set by the create flow, never typed).
  *
- * The base host is READ FROM `tblSettings` (`dynamic_redirect_base_url`, seed
- * default `https://QRmy.Link` - LAUNCH_DECISIONS.md owner-decision O-11) via
- * getConfig() - domain-agnostic and zero-hard-coded, exactly like every other
- * admin-editable-config value in this codebase (mirrors
- * buildPayload_gs1_product()'s own `resolver` host default above).
+ * @return string The payload: "{short-link address}/{short code}".
  *
- * @param array $inputData Must contain 'redirect_uuid' - a UUID v4 string
- *                          minted by the caller (never user-typed).
+ * @throws \InvalidArgumentException When any of the above does not hold.
  *
- * @return string The payload string: "{base}/r/{redirect_uuid}".
- *
- * @throws \InvalidArgumentException If 'redirect_uuid' is missing or is not
- *                                    a well-formed UUID v4 (strict-reject,
- *                                    same posture as the GS1 GTIN check).
- *
- * @see _functions/fn_redirects.php     - isValidRedirectUuid()
- * @see _functions/fn_api_redirects.php - createDynamicRedirectForOwner() (mints the UUID)
- * @see _functions/fn_config.php        - getConfig()
- * @see .dev-team/dynamic_dualfn_design.md §1.2
+ * @see _functions/fn_redirects.php     - dynamicQrPayloadPermit(), dynamicQrRowIsPrintable()
+ * @see _functions/fn_api_redirects.php - fetchRedirectRowByUuid(), createDynamicRedirectForOwner()
+ * @see _functions/fn_api_generate.php  - handleGenerateDynamic(), the only caller that grants permission
  *
  * @example
- *   buildPayload_dynamic_url(['redirect_uuid' => 'a1b2c3d4-e5f6-4890-abcd-ef1234567890']);
- *   // Returns: 'https://QRmy.Link/r/a1b2c3d4-e5f6-4890-abcd-ef1234567890'
+ *   dynamicQrPayloadPermit('grant', $uuid);
+ *   buildPayload_dynamic_url(['redirect_uuid' => $uuid]);
+ *   // Returns: 'https://QRmy.Link/Ab3dE9x'
  */
 function buildPayload_dynamic_url(array $inputData): string
 {
-    // 📌 Extract the redirect UUID from input data.
+    // 📌 Extract the code's id from input data.
     if (isset($inputData['redirect_uuid'])) {
         $redirectUuidValue = $inputData['redirect_uuid'];
     } else {
         $redirectUuidValue = '';
     }
-    $redirectUuid = trim((string) $redirectUuidValue);
+    $redirectUuid = strtolower(trim((string) $redirectUuidValue));
 
-    // ❌ Validate that a redirect UUID was provided.
-    if ($redirectUuid === '') {
+    // ❌ The id must be present and a well-formed UUID v4.
+    if ($redirectUuid === '' || !function_exists('isValidRedirectUuid') || !isValidRedirectUuid($redirectUuid)) {
+        throw new \InvalidArgumentException('A dynamic code is needed for this type of QR code.');
+    }
+
+    // 🎫 1. Only the create flow may draw a dynamic code.
+    if (!function_exists('dynamicQrPayloadPermit') || !dynamicQrPayloadPermit('check', $redirectUuid)) {
         throw new \InvalidArgumentException(
-            'A redirect UUID is required for dynamic-url-type QR codes.'
+            'Dynamic codes cannot be drawn from typed-in details. Make one with type "dynamic_url" and a "destination_url" on /api/v1/generate.'
         );
     }
 
-    // ✅ Strict-reject: the UUID must match the v4 shape - same posture as
-    //    buildPayload_gs1_product()'s GTIN check above (an allowlist regex,
-    //    never a best-effort guess). Falls back to an inline copy of the same
-    //    pattern if fn_redirects.php has not been loaded in this request,
-    //    so this builder never hard-depends on load order.
-    if (function_exists('isValidRedirectUuid')) {
-        $redirectUuidIsValid = isValidRedirectUuid($redirectUuid);
-    } else {
-        $redirectUuidIsValid = preg_match(
-            '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i',
-            $redirectUuid
-        ) === 1;
+    // 🖨️ 2. Read fresh, and only "active" is ever drawn.
+    $row = null;
+    if (function_exists('fetchRedirectRowByUuid')) {
+        $row = fetchRedirectRowByUuid($redirectUuid);
+    }
+    if ($row === null || !function_exists('dynamicQrRowIsPrintable') || !dynamicQrRowIsPrintable($row)) {
+        throw new \InvalidArgumentException('This dynamic code is not active, so it cannot be drawn.');
     }
 
-    if (!$redirectUuidIsValid) {
-        throw new \InvalidArgumentException(
-            'Invalid redirect UUID: "' . $redirectUuid . '". '
-            . 'Expected a well-formed UUID v4.'
-        );
-    }
-
-    // 📌 Resolve the base URL from tblSettings (owner-editable, zero-hard-
-    //    coded) - default 'https://QRmy.Link' when unset or the DB is
-    //    unavailable (matches this file's other getConfig()-backed defaults).
-    // @see LAUNCH_DECISIONS.md - O-11 (printed redirect domain)
+    // 🌐 3. The short-link address (owner-editable, decision 0030).
     $baseUrl = 'https://QRmy.Link';
-
     if (function_exists('getConfig')) {
         $configuredBaseUrl = getConfig('dynamic_redirect_base_url', 'https://QRmy.Link');
         if (is_string($configuredBaseUrl) && trim($configuredBaseUrl) !== '') {
             $baseUrl = trim($configuredBaseUrl);
         }
     }
-
-    // 🧹 Strip any trailing slash so concatenation never produces a doubled "//".
     $baseUrl = rtrim($baseUrl, '/');
 
-    return $baseUrl . '/r/' . $redirectUuid;
+    $baseHost = parse_url($baseUrl, PHP_URL_HOST);
+    if (stripos($baseUrl, 'https://') !== 0 || !is_string($baseHost) || $baseHost === '') {
+        throw new \InvalidArgumentException('The short-link address for dynamic codes is not set up.');
+    }
+
+    return $baseUrl . '/' . (string) $row['shortCode'];
 }

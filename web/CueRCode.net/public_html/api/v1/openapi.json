@@ -54,7 +54,7 @@
         },
         {
             "name": "Dynamic Redirects",
-            "description": "Manage a dynamic redirect's destination - own-scoped, GET/PATCH only. Not available yet: dynamic QR codes are coming soon. These endpoints work, but there is currently no public `/r/{uuid}` redirect address, so a destination managed here is not yet used to send visitors anywhere."
+            "description": "Your dynamic QR codes - codes whose destination you can change after printing (WP4c). Make one with POST /generate and type dynamic_url; read, change, switch off or switch on one with GET/PATCH /qrcodes/{uuid}/destination (your own codes only). The short address printed in a code is answered by Go2My.Link. The dynamic-code service is switched off until an administrator switches it on."
         },
         {
             "name": "SSO",
@@ -68,7 +68,7 @@
                     "Generation"
                 ],
                 "summary": "Generate a QR code",
-                "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.\n\nRequires authentication (API key or CSRF token). requiredScope: `generate` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "description": "Generate a full QR code with customisations. The generated code is saved to the database and filesystem, and the response includes a base64 data URI image, UUID identifier, and download URL.\n\nRequires authentication (API key or CSRF token). requiredScope: `generate` (API-key requests only; session/CSRF requests are never scope-limited).\n\n**Dynamic codes (type `dynamic_url`, WP4c):** send `{\"type\":\"dynamic_url\",\"input\":{\"destination_url\":\"https://...\"}}`. The code prints a short address on QRmy.Link (alpha copies: alpha.QRmy.Link) and Go2My.Link sends each scan on to the destination, which you can change later with PATCH /qrcodes/{uuid}/destination without reprinting. Needs a signed-in account (session, or an API key that belongs to it) whose email is confirmed (403 EMAIL_NOT_CONFIRMED), the dynamic-code service switched on (503 DYNAMIC_QR_UNAVAILABLE), dynamic codes in your plan and a free place under your limit (402 FEATURE_NOT_AVAILABLE or DYNAMIC_CODES_LIMIT_REACHED; every code counts except one that was not made, including switched-off codes). The destination is checked (400 INVALID_DESTINATION; 422 DESTINATION_UNSAFE once the link-safety check is switched on). If the link service cannot be reached the answer is 503 LINK_SERVICE_UNAVAILABLE (\"try again later\"); if it is busy, 429 LINK_SERVICE_BUSY; if it refuses the destination, 422 LINK_SERVICE_REJECTED; if its answer was lost, 503 LINK_NOT_CONFIRMED (the code is checked again automatically and counts until then). Two requests at once for the same account: 429 DYNAMIC_LOCK_BUSY with Retry-After. The answer adds `dynamic` (the code's id, short address and state). Only an active code's picture is ever drawn or downloaded.",
                 "operationId": "generateQRCode",
                 "security": [
                     {
@@ -313,6 +313,16 @@
                     },
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "402": {
+                        "description": "Dynamic codes only: not in your plan (FEATURE_NOT_AVAILABLE) or your limit is reached (DYNAMIC_CODES_LIMIT_REACHED, with plan_limit and upgrade_url).",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
                     },
                     "403": {
                         "$ref": "#/components/responses/InsufficientScope"
@@ -941,7 +951,7 @@
                     "Download"
                 ],
                 "summary": "Download a generated QR code",
-                "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.\n\nRequires authentication (API key or CSRF token). requiredScope: `download` (API-key requests only; session/CSRF requests are never scope-limited).\n\n**Owner-or-public access rule:** an unclaimed (never `POST /save`d) code is downloadable by any authenticated caller. A claimed code that is not marked `is_public` is downloadable only by its owner. A claimed code marked `is_public: true` is downloadable by any authenticated caller. In every denial case the response is an identical `404 NOT_FOUND` (never `403`) - this is a deliberate anti-enumeration measure so a non-owner cannot distinguish \"does not exist\" from \"exists but is private\".",
+                "description": "Download a previously generated QR code file by its UUID. The file is returned with the correct Content-Type header and a Content-Disposition header that triggers a browser download.\n\nRequires authentication (API key or CSRF token). requiredScope: `download` (API-key requests only; session/CSRF requests are never scope-limited).\n\n**Owner-or-public access rule:** an unclaimed (never `POST /save`d) code is downloadable by any authenticated caller. A claimed code that is not marked `is_public` is downloadable only by its owner. A claimed code marked `is_public: true` is downloadable by any authenticated caller. In every denial case the response is an identical `404 NOT_FOUND` (never `403`) - this is a deliberate anti-enumeration measure so a non-owner cannot distinguish \"does not exist\" from \"exists but is private\". A dynamic code's picture (type dynamic_url) is downloadable by the code's owner only (404 for anyone else) and only while the code is active (409 otherwise).",
                 "operationId": "downloadQRCode",
                 "security": [
                     {
@@ -1069,6 +1079,16 @@
                                             "timestamp": "2026-02-27T12:00:00+00:00"
                                         }
                                     }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "A dynamic code's picture while the code is not active: DYNAMIC_CODE_NOT_ACTIVE (switched off, or not confirmed by the link service) or REDIRECT_SUSPENDED (taken down). A dynamic code's picture is only ever given to its owner; anyone else gets 404.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
                                 }
                             }
                         }
@@ -2054,7 +2074,7 @@
                         }
                     },
                     "409": {
-                        "description": "Lost a race to a concurrent claim of the same code",
+                        "description": "Lost a race to a concurrent claim of the same code Also DYNAMIC_CODE_NOT_SAVEABLE: a dynamic code's picture cannot be added to saved codes (dynamic codes are managed through /qrcodes/{uuid}/destination); someone else's gets 404.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2499,8 +2519,8 @@
                 "tags": [
                     "Dynamic Redirects"
                 ],
-                "summary": "Fetch a dynamic redirect's destination (owner only)",
-                "description": "Own-scoped only - a redirect not owned by the caller is reported as 404 (never 403), identically to an unknown UUID (there is no \"is_public\" concept for a redirect destination). `{uuid}` here is the redirect's own UUID, which is different from the UUID of the saved QR code. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited). **Not available yet:** dynamic QR codes are coming soon. This endpoint works, but there is currently no public `/r/{uuid}` redirect address for a managed destination to be used with.",
+                "summary": "Fetch one of your dynamic codes",
+                "description": "Own-scoped only - a code that is not yours is reported as 404 (never 403), exactly like an unknown id. `{uuid}` is the dynamic code's own id (the `dynamic.uuid` returned by /generate), not the picture's uuid. The answer includes the code's state and, once the link service has confirmed it, its short address. requiredScope: `qrcodes:read` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "getRedirectDestination",
                 "security": [
                     {
@@ -2577,8 +2597,8 @@
                 "tags": [
                     "Dynamic Redirects"
                 ],
-                "summary": "Update a dynamic redirect's destination (owner only)",
-                "description": "Update the `destination_url` and/or `active` state of a dynamic redirect the caller owns. Ownership is checked before any other field is read - a non-owned redirect is reported as 404. A redirect suspended for abuse rejects the whole patch with `409 REDIRECT_SUSPENDED`, even from its owner - only an administrator can re-enable it. `destination_url` is re-validated on every write (allowed URL schemes only; embedded credentials, private IP addresses and self-referential redirect loops are rejected; international domain names are normalised) and every change is recorded in an audit log. Plan feature limits are not re-checked here (editing an existing code is not a new allocation). requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
+                "summary": "Change, switch off or switch on one of your dynamic codes",
+                "description": "Change where a code sends people (`destination_url`) and/or switch it off or on (`active`). The order is fixed: ownership first (not yours: 404, before anything else is read); an active account with a confirmed email (403 EMAIL_NOT_CONFIRMED); the dynamic-code service switched on (503 DYNAMIC_QR_UNAVAILABLE); then, one change at a time per account (429 DYNAMIC_LOCK_BUSY): a suspended code refuses everything (409 REDIRECT_SUSPENDED); a code the link service has not confirmed cannot be changed (409 REDIRECT_NOT_READY); the new destination is checked again (400 INVALID_DESTINATION; 422 DESTINATION_UNSAFE once the link-safety check is on). The link service (Go2My.Link) is changed FIRST and the change is saved here only once it has confirmed it: if it cannot be reached, 503 LINK_SERVICE_UNAVAILABLE; busy, 429 LINK_SERVICE_BUSY; refused, 422 LINK_SERVICE_REJECTED; answer lost, 503 LINK_NOT_CONFIRMED (nothing was changed here - send the same request again). Switching off points the short address at a neutral \"not in use\" page and keeps the destination; switching on points it back. A new destination while switched off is saved here and used when the code is switched on. Every change is recorded in the activity log. requiredScope: `qrcodes:write` (API-key requests only; session/CSRF requests are never scope-limited).",
                 "operationId": "patchRedirectDestination",
                 "security": [
                     {
@@ -2623,7 +2643,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid request - missing both updatable fields (error_code NO_FIELDS), an invalid UUID shape, or destination_url failed validation (error_code INVALID_DESTINATION - e.g. a disallowed scheme, embedded credentials, a private/loopback/link-local IP literal, or a self-referential redirect loop)",
+                        "description": "Invalid request - nothing to change (NO_FIELDS), an invalid id (INVALID_UUID), a destination that fails the check (INVALID_DESTINATION) or an \"active\" that is not true or false (INVALID_ACTIVE).",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2661,7 +2681,7 @@
                         }
                     },
                     "409": {
-                        "description": "The redirect is suspended for abuse and cannot be edited (error_code REDIRECT_SUSPENDED) - admin-only re-enable",
+                        "description": "The code is suspended (REDIRECT_SUSPENDED - only an administrator can lift it) or not confirmed by the link service (REDIRECT_NOT_READY).",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2678,6 +2698,16 @@
                                             "timestamp": "2026-02-27T12:00:00+00:00"
                                         }
                                     }
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "The destination was refused by the link-safety check (DESTINATION_UNSAFE) or by the link service (LINK_SERVICE_REJECTED).",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
                                 }
                             }
                         }
@@ -4409,14 +4439,15 @@
                             "instagram",
                             "rating",
                             "deeplink",
-                            "gs1_product"
+                            "gs1_product",
+                            "dynamic_url"
                         ],
-                        "description": "The QR code type identifier (one of 26 supported types). Use the /types endpoint to retrieve the definitive active list and each type's form field schema. Maximum 64 characters.",
+                        "description": "The QR code type identifier (one of 26 supported types, plus dynamic_url). Use the /types endpoint to retrieve the definitive active list and each type's form field schema. dynamic_url makes a DYNAMIC code (see the /generate description); it is not listed by /types until the dynamic-code screens are released. Maximum 64 characters.",
                         "example": "url"
                     },
                     "input": {
                         "type": "object",
-                        "description": "Type-specific input data. The required fields depend on the QR code type; use /types to obtain the form schema for each type. Each scalar field is limited to 4096 characters. Examples: url -> {\"url\":\"https://example.com\"}; wifi -> {\"ssid\":\"...\",\"password\":\"...\",\"encryption\":\"WPA\",\"hidden\":false}; vcard -> {\"first_name\":\"John\",\"last_name\":\"Doe\",...}; geo -> {\"latitude\":51.5074,\"longitude\":-0.1278,\"label\":\"London\"}; gs1_product -> {\"gtin\":\"09521234543213\",\"batch\":\"LOT42\"}.",
+                        "description": "Type-specific input data. The required fields depend on the QR code type; use /types to obtain the form schema for each type. Each scalar field is limited to 4096 characters. Examples: url -> {\"url\":\"https://example.com\"}; wifi -> {\"ssid\":\"...\",\"password\":\"...\",\"encryption\":\"WPA\",\"hidden\":false}; vcard -> {\"first_name\":\"John\",\"last_name\":\"Doe\",...}; geo -> {\"latitude\":51.5074,\"longitude\":-0.1278,\"label\":\"London\"}; gs1_product -> {\"gtin\":\"09521234543213\",\"batch\":\"LOT42\"}. dynamic_url -> {\"destination_url\":\"https://example.com/menu\"} (a signed-in account with a confirmed email only).",
                         "minProperties": 1,
                         "additionalProperties": true,
                         "example": {
@@ -4760,6 +4791,14 @@
                             },
                             "metadata": {
                                 "$ref": "#/components/schemas/AccessibleMetadata"
+                            },
+                            "dynamic": {
+                                "allOf": [
+                                    {
+                                        "$ref": "#/components/schemas/DynamicCode"
+                                    }
+                                ],
+                                "description": "Only for type dynamic_url: the new dynamic code. Its uuid is the one to use with /qrcodes/{uuid}/destination."
                             }
                         }
                     },
@@ -5239,7 +5278,7 @@
                     },
                     "error_code": {
                         "type": "string",
-                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, GLOBAL_ADMIN_CANNOT_ERASE, ERASE_FAILED, PASSWORD_CHANGED_MEANWHILE, DATABASE_UPGRADE_NEEDED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are reserved for pay-as-you-go credit consumption, which is not available yet, so no endpoint returns them today), HUMAN_CHECK_REQUIRED, HUMAN_CHECK_FAILED, HUMAN_CHECK_UNAVAILABLE (the human check on /auth/register, /auth/login and /auth/request-password-reset while it is switched on), INVALID_DESTINATION, REDIRECT_SUSPENDED (the dynamic-redirect destination-management API's own denial shapes; PATCH /qrcodes/{uuid}/destination re-validates the destination and rejects an abuse-suspended redirect). The full, exact, machine-readable set is the x-error-codes array on this schema.",
+                        "description": "Machine-readable error code for programmatic handling. Known codes include: MISSING_FIELD, FIELD_TOO_LONG, INVALID_JSON, INVALID_CUSTOMIZATION, UNSUPPORTED_MEDIA_TYPE, PAYLOAD_TOO_LARGE, GENERATION_FAILED, LOGO_SVG_REJECTED, AUTH_REQUIRED, INVALID_API_KEY, INVALID_CSRF_TOKEN, NOT_FOUND, ENDPOINT_NOT_FOUND, METHOD_NOT_ALLOWED, HANDLER_NOT_FOUND, UNKNOWN_HANDLER, RATE_LIMIT_EXCEEDED, FETCH_ERROR, LOOKUP_ERROR, FILE_NOT_FOUND, SERVICE_UNAVAILABLE, ZIP_UNAVAILABLE, BULK_NO_INPUT, BULK_PARSE_ERROR, BULK_INVALID_BODY, BULK_VALIDATION_ERROR, BULK_INVALID_ITEMS, BULK_EMPTY, BULK_INVALID_ITEM, BULK_INVALID_CSV, BULK_CSV_NO_HEADER, BULK_CSV_NO_TYPE, BULK_CSV_NO_INPUT, BULK_ITEM_MISSING_TYPE, BULK_ITEM_MISSING_INPUT, BULK_TOO_MANY_ITEMS, BULK_TEMP_FAILED, BULK_ZIP_FAILED, BULK_READ_FAILED, BULK_AVERY_ALL_FAILED, INVALID_EMAIL, WEAK_PASSWORD, INVALID_CREDENTIALS, VERIFICATION_TOKEN_INVALID, VERIFICATION_ALREADY_USED, RESET_TOKEN_INVALID, RESET_TOKEN_ALREADY_USED, CSRF_INVALID, HASH_FAILED, ACTIVATION_FAILED, RESET_FAILED, INVALID_UUID, INVALID_LABEL, NO_FIELDS, SAVED_CODES_LIMIT_REACHED, SAVE_CONFLICT, SAVE_FAILED, LIST_FAILED, UPDATE_FAILED, DELETE_FAILED, REGENERATION_FAILED, FILE_SAVE_FAILED, ACCESSIBLE_CONTRAST_TOO_LOW, SAVE_LOCK_BUSY, INVALID_AVATAR, AVATAR_SAVE_FAILED, AVATAR_REMOVE_FAILED, INVALID_CURRENT_PASSWORD, INVALID_PASSWORD, INVALID_REQUEST, CONFIRMATION_REQUIRED, ALREADY_ERASED, GLOBAL_ADMIN_CANNOT_ERASE, ERASE_FAILED, PASSWORD_CHANGED_MEANWHILE, DATABASE_UPGRADE_NEEDED, ACCOUNT_MANAGEMENT_FORBIDDEN, LOOKUP_FAILED, INSUFFICIENT_SCOPE, API_KEY_MANAGEMENT_FORBIDDEN, API_KEY_LIMIT_REACHED, FEATURE_NOT_AVAILABLE, INVALID_SCOPE, CREATE_FAILED, ROTATE_FAILED, JSON_ENCODE_ERROR, CREDIT_INVALID_REQUEST, CREDIT_PAYG_DISABLED, CREDIT_UNAVAILABLE, CREDIT_LOCK_BUSY, CREDIT_NOT_PERMITTED, CREDIT_INSUFFICIENT_BALANCE, CREDIT_SPEND_CAP_EXCEEDED, CREDIT_SERVICE_ERROR (the 8 CREDIT_* codes are reserved for pay-as-you-go credit consumption, which is not available yet, so no endpoint returns them today), HUMAN_CHECK_REQUIRED, HUMAN_CHECK_FAILED, HUMAN_CHECK_UNAVAILABLE (the human check on /auth/register, /auth/login and /auth/request-password-reset while it is switched on), INVALID_DESTINATION, REDIRECT_SUSPENDED, REDIRECT_NOT_READY, INVALID_ACTIVE (PATCH /qrcodes/{uuid}/destination: a destination that fails the check, a suspended code, a code the link service has not confirmed, an \"active\" that is not true or false), EMAIL_NOT_CONFIRMED, DYNAMIC_QR_UNAVAILABLE, DYNAMIC_CODES_LIMIT_REACHED, DYNAMIC_LOCK_BUSY, DESTINATION_UNSAFE, LINK_SERVICE_UNAVAILABLE, LINK_SERVICE_BUSY, LINK_SERVICE_REJECTED, LINK_NOT_CONFIRMED (making or changing a dynamic code: POST /generate with type dynamic_url, and PATCH /qrcodes/{uuid}/destination), DYNAMIC_CODE_NOT_ACTIVE, DYNAMIC_CODE_NOT_SAVEABLE (a dynamic code's picture: GET /download/{uuid} while the code is not active, and POST /save). The full, exact, machine-readable set is the x-error-codes array on this schema.",
                         "example": "MISSING_FIELD"
                     },
                     "timestamp": {
@@ -5288,6 +5327,13 @@
                     "CSRF_INVALID",
                     "DATABASE_UPGRADE_NEEDED",
                     "DELETE_FAILED",
+                    "DESTINATION_UNSAFE",
+                    "DYNAMIC_CODES_LIMIT_REACHED",
+                    "DYNAMIC_CODE_NOT_ACTIVE",
+                    "DYNAMIC_CODE_NOT_SAVEABLE",
+                    "DYNAMIC_LOCK_BUSY",
+                    "DYNAMIC_QR_UNAVAILABLE",
+                    "EMAIL_NOT_CONFIRMED",
                     "ENDPOINT_NOT_FOUND",
                     "ERASE_FAILED",
                     "FEATURE_NOT_AVAILABLE",
@@ -5303,6 +5349,7 @@
                     "HUMAN_CHECK_REQUIRED",
                     "HUMAN_CHECK_UNAVAILABLE",
                     "INSUFFICIENT_SCOPE",
+                    "INVALID_ACTIVE",
                     "INVALID_API_KEY",
                     "INVALID_AVATAR",
                     "INVALID_CREDENTIALS",
@@ -5318,6 +5365,10 @@
                     "INVALID_SCOPE",
                     "INVALID_UUID",
                     "JSON_ENCODE_ERROR",
+                    "LINK_NOT_CONFIRMED",
+                    "LINK_SERVICE_BUSY",
+                    "LINK_SERVICE_REJECTED",
+                    "LINK_SERVICE_UNAVAILABLE",
                     "LIST_FAILED",
                     "LOGO_SVG_REJECTED",
                     "LOOKUP_ERROR",
@@ -5329,6 +5380,7 @@
                     "PASSWORD_CHANGED_MEANWHILE",
                     "PAYLOAD_TOO_LARGE",
                     "RATE_LIMIT_EXCEEDED",
+                    "REDIRECT_NOT_READY",
                     "REDIRECT_SUSPENDED",
                     "REGENERATION_FAILED",
                     "RESET_FAILED",
@@ -5777,7 +5829,7 @@
             },
             "RedirectDestinationResponse": {
                 "type": "object",
-                "description": "Response envelope for GET/PATCH /qrcodes/{uuid}/destination.",
+                "description": "Response envelope for GET/PATCH /qrcodes/{uuid}/destination: the dynamic code, as its owner sees it.",
                 "properties": {
                     "success": {
                         "type": "boolean",
@@ -5788,51 +5840,7 @@
                         "example": "Dynamic redirect destination retrieved successfully."
                     },
                     "data": {
-                        "type": "object",
-                        "properties": {
-                            "uuid": {
-                                "type": "string",
-                                "format": "uuid",
-                                "description": "The redirect resource's own UUID - distinct from the saved QR code's UUID"
-                            },
-                            "destination_url": {
-                                "type": "string",
-                                "format": "uri",
-                                "maxLength": 2048
-                            },
-                            "previous_destination_url": {
-                                "type": "string",
-                                "format": "uri",
-                                "nullable": true,
-                                "description": "The destinationURL value immediately before the most recent PATCH (null if never changed)"
-                            },
-                            "destination_updated_at": {
-                                "type": "string",
-                                "format": "date-time",
-                                "nullable": true
-                            },
-                            "is_active": {
-                                "type": "boolean",
-                                "description": "0 means a visitor would get 410 Gone once the public /r/{uuid} route is available (coming soon - not available yet)"
-                            },
-                            "disabled_reason": {
-                                "type": "string",
-                                "enum": [
-                                    "owner",
-                                    "abuse",
-                                    "admin"
-                                ],
-                                "nullable": true
-                            },
-                            "created_at": {
-                                "type": "string",
-                                "format": "date-time"
-                            },
-                            "updated_at": {
-                                "type": "string",
-                                "format": "date-time"
-                            }
-                        }
+                        "$ref": "#/components/schemas/DynamicCode"
                     },
                     "timestamp": {
                         "type": "string",
@@ -5840,9 +5848,85 @@
                     }
                 }
             },
+            "DynamicCode": {
+                "type": "object",
+                "description": "A dynamic QR code as its owner sees it (WP4c, #166). Its picture prints short_url; Go2My.Link answers that address and sends each scan on to destination_url, which the owner can change later without reprinting.",
+                "properties": {
+                    "uuid": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The dynamic code's own id - use it with /qrcodes/{uuid}/destination. Different from the picture's uuid (the one /download uses)."
+                    },
+                    "state": {
+                        "type": "string",
+                        "enum": [
+                            "active",
+                            "switched_off",
+                            "suspended",
+                            "not_ready",
+                            "held",
+                            "failed"
+                        ],
+                        "description": "active = working; switched_off = switched off by its owner (scans see a 'not in use' page); suspended = taken down (only an administrator can lift it); not_ready = the link service's answer was lost and it is being checked automatically (it counts towards your limit until then); held = the link service holds a link that could not be confirmed, so an administrator must look; failed = not made (it does not count). Only an active code's picture can be downloaded."
+                    },
+                    "short_code": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "The part after the slash in short_url; null until the link service has confirmed the code.",
+                        "example": "Ab3dE9x"
+                    },
+                    "short_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "nullable": true,
+                        "description": "The address printed in the code; null until the link service has confirmed it.",
+                        "example": "https://QRmy.Link/Ab3dE9x"
+                    },
+                    "destination_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "maxLength": 2048,
+                        "description": "Where the code sends people while it is switched on (spaces and non-English letters after the website name are stored as %XX codes).",
+                        "example": "https://example.com/menu"
+                    },
+                    "previous_destination_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "nullable": true,
+                        "description": "The destination before the most recent change (null if never changed)."
+                    },
+                    "destination_updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "is_active": {
+                        "type": "boolean",
+                        "description": "false = switched off (by its owner, or taken down)."
+                    },
+                    "disabled_reason": {
+                        "type": "string",
+                        "enum": [
+                            "owner",
+                            "abuse",
+                            "admin"
+                        ],
+                        "nullable": true,
+                        "description": "Why it is switched off: owner = by its owner (can be switched on again); abuse or admin = taken down."
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
             "PatchRedirectDestinationRequest": {
                 "type": "object",
-                "description": "All fields optional, but at least one of destination_url/active must be present (else 400 NO_FIELDS). destination_url is re-validated on every PATCH (allowed URL schemes only; embedded credentials, private IP addresses and self-referential redirect loops are rejected; IDN normalisation).",
+                "description": "Send destination_url and/or active (at least one, else 400 NO_FIELDS). Each new destination is checked again (https only unless the site allows http; no embedded user name or password, private or reserved addresses, loops back into this site, or other short links such as QRmy.Link or Go2My.Link; non-English website names are converted). The link service (Go2My.Link) is changed FIRST; the change is saved here only once it has confirmed it.",
                 "properties": {
                     "destination_url": {
                         "type": "string",
@@ -5852,7 +5936,7 @@
                     },
                     "active": {
                         "type": "boolean",
-                        "description": "false = owner-initiated disable; true = re-enable a redirect you disabled yourself. A redirect already suspended for abuse rejects the whole PATCH with 409 REDIRECT_SUSPENDED before this field is ever read."
+                        "description": "true or false only (anything else: 400 INVALID_ACTIVE). false = switch the code off: scans see a neutral \"not in use\" page and the destination is kept; true = switch it back on (the destination is checked again first). Switched-off codes still count towards your limit. A suspended code refuses every change with 409 REDIRECT_SUSPENDED."
                     }
                 }
             },

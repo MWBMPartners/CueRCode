@@ -865,6 +865,28 @@ function handleSaveQRCode(array $requestBody, array $auth): void
         return;
     }
 
+    // 🔗 WP4c (#166): a DYNAMIC code's picture is never claimed into saved
+    // codes. A claimed picture could then be shown, re-drawn or made public
+    // through the saved-codes routes whatever the code's state, which would
+    // get round the rule that only an "active" code's picture is given out
+    // (dynamicQrImageGate()). Not the code's owner: the same 404 as unknown.
+    if (isset($row['typeName']) && strtolower((string) $row['typeName']) === 'dynamic_url') {
+        $dynamicOwnerId = null;
+        if (function_exists('dynamicQrImageGate')) {
+            $dynamicOwnerId = dynamicQrImageGate((int) $row['qrID'], $currentUserId)['ownerUserID'];
+        }
+        if ($dynamicOwnerId === null || $dynamicOwnerId !== $currentUserId) {
+            errorResponse('QR code not found.', 404, 'NOT_FOUND');
+            return;
+        }
+        errorResponse(
+            'Dynamic codes are kept with your dynamic codes, so they cannot be added to saved codes.',
+            409,
+            'DYNAMIC_CODE_NOT_SAVEABLE'
+        );
+        return; // @codeCoverageIgnore - errorResponse exits
+    }
+
     $isNewClaim = ($existingOwnerId === null);
 
     // 📌 Resolve the effective label/is_public to persist - an omitted field
