@@ -66,6 +66,10 @@ for MariaDB `-e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 mariadb:10.6`), run the
 command above, then `docker stop cuercode-it-ci`. The sections below describe
 each script and how to run one on its own.
 
+## Real-database check (dynamic QR flows, #166)
+
+`tests/integration/dynamic_qr_real_mysql.php` creates and drops its own `cuercode_it_` database and runs the dynamic-code flows on it (127 checks, scenarios A-N): who may make a code, what counts towards the limit, six processes at once against a limit of 3 (a trigger slows each insert to widen the race), the busy lock, lost answers and the cron tidy step (including its refusal without `CUERCODE_SITE_COPY`, #181), taken codes, changes and switching off and on, which pictures may be drawn or downloaded, the admin switch, the real `/admin/limits/` page in a child process, real HTTPS against `tests/lib/go2mylink_standin_server.php`, and the real HTTP routes through PHP's built-in web server (whose curl trusts only the stand-in's throwaway certificate authority). Nothing is sent to the real Go2My.Link. Run it with the usual `CUERCODE_IT_DB_*` variables; the shared script includes it.
+
 ## Real-database check (site time zone, #158, #130)
 
 `tests/integration/site_timezone_real_mysql.php` runs the real link, session,
@@ -88,7 +92,7 @@ erasure, on a real database.
 `tests/test_admin_csp.php` fails if the admin policy allows inline scripts
 again, or if a page the admin area can show contains one.
 
-## Current suite (2026-11-28, dynamic QR groundwork #164/#165: the table below was re-measured; before that 2026-11-28, Codex review fixes of task 7n Phase 2; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; earlier rounds are in git history)
+## Current suite (2026-11-28, dynamic QR flows #166 and the round-six fixes #181: the table below was re-measured; before that 2026-11-28, dynamic QR groundwork #164/#165; before that 2026-11-28, Codex review fixes of task 7n Phase 2; before that 2026-11-28, human check #163 review fixes and decisions 0037/0038; before that 2026-11-27, human check #163; before that 2026-11-26, task 7n Phase 2: slices 2a to 2d; earlier rounds are in git history)
 
 Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After round 2 the same suite also passed on PHP 8.4.27 with Imagick (ImageMagick 7.1.2, Alpine in Docker, run as a normal user): 6355/6355 (not repeated after round 3) - a few checks differ by machine (for example `test_qr_logo.php` takes its Imagick branch there, 205 checks). Counts on PHP 8.5.12:
 
@@ -101,7 +105,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_admin_access.php` | 668 |
 | `test_admin_csp.php` | 49 |
 | `test_admin_plans.php` | 660 |
-| `test_admin_settings.php` | 1462 |
+| `test_admin_settings.php` | 1488 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -114,19 +118,20 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_credentials_template.php` | 9 |
 | `test_curl_content_decoding_guard.php` | 3 |
 | `test_deploy_test_gate.php` | 107 |
+| `test_dynamic_qr_flows.php` | 173 |
 | `test_dynamic_qr_schema.php` | 117 |
-| `test_dynamic_redirect_s0.php` | 97 |
-| `test_dynamic_redirect_s1.php` | 41 |
+| `test_dynamic_redirect_s0.php` | 96 |
+| `test_dynamic_redirect_s1.php` | 43 |
 | `test_email.php` | 69 |
 | `test_email_exact_match.php` | 18 |
 | `test_email_log_privacy.php` | 15 |
 | `test_email_queue_runner.php` | 510 |
 | `test_emoji_logo.php` | 123 |
-| `test_error_catalogue.php` | 144 |
+| `test_error_catalogue.php` | 158 |
 | `test_expiry_clock.php` | 6 |
 | `test_features.php` | 91 |
-| `test_full_notation.php` | 40 |
-| `test_go2mylink.php` | 469 |
+| `test_full_notation.php` | 38 |
+| `test_go2mylink.php` | 503 |
 | `test_human_check.php` | 410 |
 | `test_human_check_fallbacks.php` | 129 |
 | `test_human_check_review_fixes.php` | 84 |
@@ -163,6 +168,8 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 Run `php tests/run.php` at any time to reproduce this table live.
 
 **Fourth-round review and second Codex review fixes (2026-11-28)** added three files: `test_email_exact_match.php` (18 checks: an email address is matched byte for byte, and no bare `email = ?` comparison is left in the site code), `test_offline_worker_privacy.php` (16: the offline worker never keeps a no-store or private page, `/admin` and `/install` are private, the cache version moved on) and `test_human_check_widget_script.php` (9: the real widget script under Node.js - a late provider answer cannot stop the fallback; skipped with a note where Node.js is missing). Checks were added to `test_admin_csp.php`, `test_log_mask.php`, `test_integration_web_server.php`, `test_human_check_fallbacks.php`, `test_human_check.php`, `test_pricing_page.php` and `test_migrations.php`, and old wording checks were updated in `test_account_recovery.php`, `test_admin_access.php`, `test_auth.php`, `test_admin_settings.php` and `test_human_check_review_fixes.php`. Real-database scripts gained scenario EX (`account_recovery`), 12d and the Low 3 check (`email_queue`), the look-alike spellings and eleven right sign-ins in R plus three outage checks in F (`human_check`), and P7-P9 (`migrations`). Each was shown failing on the code before its fix. Suite: **9470** in 62 files.
+
+**Dynamic QR flows (2026-11-28, WP4c #166) and round-six fixes (#181)** added `test_dynamic_qr_flows.php` (173: which codes may be drawn, suspended codes, who may make codes, short-link destinations, the switched-off page, the link-safety hook, the change planner, the tidy step's choice, member answers, the drawing permission, and source checks of the order of the create and change steps), more of `test_go2mylink.php` (503: exact code and short-address matches, the stored destination form, the declared site copy, and the two protections that had no test), `test_admin_settings.php` (the switch is no longer locked; switching on needs a passing test) and `test_error_catalogue.php` (13 new codes; fn_redirects.php scanned). New real-database script `dynamic_qr_real_mysql.php` (127 checks). The new file failed 30 of 35 checks before the code existed; the #181 checks failed on the old code; removing each protection made a check fail. Suite: **10450** in 65 files.
 
 **Dynamic QR review fixes (2026-11-28, H1, M1-M3, L1-L11; decisions 0045, 0046)** added checks to `test_go2mylink.php` (now 469: a link counts only on a confirmed short domain, found links switched off or pointing elsewhere, broken answers after sending, the alpha/beta block, the write-permission wording, ping must say pong, the 64 KB limit while reading), `test_dynamic_qr_schema.php` (117: the sync state word, raise-only limits, the abuse-report table for decision 0046, no published hash key), `test_admin_settings.php` (the key never follows the API address to another website; the abuse-report period) and `test_email_queue_runner.php` (the abuse-report clean-up). The stand-in server gained the scenarios `slowurl`, `garbled`, `nostatus`, `bigheaders` and `badlength`. Real-database parts: `email_queue_real_mysql.php` scenario 12e and more of `admin_settings_real_mysql.php` section Q (raise only, overdue payment, unknown limit name, not an admin, an audit row that cannot be written). Each was shown failing on the code before its fix, and removing each protection again makes a check fail. Suite: **10190** in 64 files.
 

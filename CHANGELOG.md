@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Dynamic QR codes: create, change, switch off and on (WP4c #166, 2026-11-28)
+
+Dynamic codes stay **switched off** by default, and the member screens are the next package (#167), so no visitor sees any of this yet.
+
+- **Make a dynamic code** through the API: `POST /api/v1/generate` with `{"type":"dynamic_url","input":{"destination_url":"https://..."}}`. Only for a signed-in account (session, or an API key that belongs to it) that is active with a **confirmed email**. The plan feature and limit (3 on Free, or the person's own raised number) are checked under the per-person lock together with the count and the new row, which is saved as "pending" before Go2My.Link is asked. The answer adds `dynamic` (the code's id, its short address on QRmy.Link and its state).
+- **What counts towards the limit:** every code except one Go2My.Link made nothing for. Waiting, held and switched-off codes count, so failures, retries, lost answers and requests sent at the same moment can never give anyone more codes than their limit.
+- **Only an "active" code's picture is ever drawn or downloaded, by any route.** The picture is drawn only by the create flow, for that one code, after it came back active; preview, bulk, typed-in details and the no-JavaScript form cannot draw one. `/download` gives it only to its owner and only while it is active; `/save` refuses to add it to saved codes.
+- **Change, switch off, switch on:** `PATCH /api/v1/qrcodes/{uuid}/destination` changes Go2My.Link first and saves here only once it has confirmed (a lost answer is confirmed by a look-up). Switching off points the short address at a new neutral `/unavailable/` page (lead choice L2; a minimal placeholder that WP4f, #169, completes) and keeps the destination; switching on points it back. Other people's codes answer 404; a suspended code refuses every change (409); a code not confirmed by Go2My.Link cannot be changed (409); `active` must be a real true or false.
+- **Go2My.Link unreachable:** "try again later" (503), nothing half-made counts for ever. **The cron job's new tidy step** settles codes whose answer was lost: after 10 minutes it looks each up and marks it working, held for an admin, or not made (no longer counted). It only calls Go2My.Link when the cron line declares the site copy (`CUERCODE_SITE_COPY=live`).
+- **One link-safety hook**, `dynamicQrCheckDestinationSafety()`, called on create and every change of where a code sends people; the check itself is WP4e (#168). Destinations on QRmy.Link or Go2My.Link's own short addresses are refused.
+- **Admin:** "Dynamic codes switched on" in the "Dynamic QR codes (Go2My.Link)" section of `/admin/settings/` (no longer locked), which can only be switched on within 60 minutes of a passing **Test connection** with no change to the connection settings since; and **`/admin/limits/`** ("People's own limits") to find a person by their exact email, see their plan's number, their own number, the number that applies and how many codes count, and set or remove their own number with a reason (decisions 0031, 0045).
+- **API description:** `openapi.json` documents the `dynamic_url` type, the new `DynamicCode` shape, and 13 new error codes.
+- Shown failing first (30 of 35 checks in the new `tests/test_dynamic_qr_flows.php` before the code existed), then passing. New real-database script `tests/integration/dynamic_qr_real_mysql.php` (127 checks, including six processes at once, real HTTPS against the stand-in Go2My.Link and the real HTTP routes); removing each key protection made a test fail.
+
+### Fixed - Go2My.Link connection: round-six review Low 1-5 (#181, 2026-11-28)
+
+- A link found by a look-up counts only when its code matches ours exactly (Go2My.Link ignores capitals, so it can answer another link), and nothing is ever changed on a link whose code differs.
+- A create reply's short address must be exactly `https://<our short-link host>/<code>`: a port, user name, password, "?" or "#" part is refused.
+- Destinations are stored and sent in the form Go2My.Link stores them (spaces and non-English letters after the website name as `%XX`), so a recovered or changed link can be matched exactly; a pasted address with a space or an accent is now accepted for that reason.
+- A cron run declares which copy of the site it is (`CUERCODE_SITE_COPY`), so an alpha or beta run is recognised; without it the tidy step never calls Go2My.Link.
+- The two untested protections (a resent destination must be confirmed; "a link exists" after "QR already linked" plus a lost look-up) now have tests, each shown to fail when the protection is removed.
+
 ### Fixed - Dynamic QR groundwork, after the Opus review (H1, M1-M3, L1-L11; decisions 0045 and 0046; 2026-11-28)
 
 Dynamic QR is still switched off, so no visitor sees any of this yet. Upgrade 0007 was changed in place: it has never been pushed or applied outside the tests.
