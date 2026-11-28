@@ -2303,8 +2303,17 @@ function applyOAuthAccountLink(
     $localAccountUserIDForEmail = null;
 
     if ($email !== null && $email !== '') {
+        // 📧 Fourth-round review, Medium 1: the provider's address must be
+        //    EXACTLY the account's, never an accented or full-width look-alike
+        //    (fn_email_match.php; require_once does nothing twice).
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_email_match.php';
+
         try {
-            $emailStmt = dbQuery('SELECT `userID` FROM `tblUsers` WHERE `email` = ? LIMIT 1', 's', [$email]);
+            $emailStmt = dbQuery(
+                'SELECT `userID` FROM `tblUsers` WHERE ' . emailExactMatchSql('email') . ' LIMIT 1',
+                'ss',
+                emailExactMatchParams($email)
+            );
             $emailRow  = $emailStmt->get_result()->fetch_assoc();
             $emailStmt->close();
 

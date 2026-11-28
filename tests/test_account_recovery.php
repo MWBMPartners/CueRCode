@@ -163,10 +163,10 @@ assertTrue(
     'M-1: Forgot password locks the account row, then reads the history, decides and writes the link - one transaction'
 );
 assertTrue(strpos($arRequest, "if (\$status !== 'active' && \$status !== 'pending') {") < strpos($arRequest, 'begin_transaction()'), 'M-1: an unknown address takes no lock at all (no gap lock on the address index)');
-assertFalse(str_contains($arRequest, '`email` = ? LIMIT 1 FOR UPDATE'), 'M-1: the address itself is never read with a lock');
+assertFalse(str_contains($arRequest, '`email` = ? LIMIT 1 FOR UPDATE') || str_contains($arRequest, "emailExactMatchSql('email') . ' LIMIT 1 FOR UPDATE"), 'M-1: the address itself is never read with a lock');
 $arHistory = arFunctionBody($arAuth, 'authLinkHistory');
 assertContains("if (\$table !== 'tblPasswordResets' && \$table !== 'tblEmailVerifications') {", $arHistory, 'M-1: the shared history reader accepts only the two link tables');
-assertTrue(strpos($arRequest, 'recordAPIRequest(') < strpos($arRequest, 'FROM `tblUsers` WHERE `email` = ?'), 'F3: ...before the account is even looked up');
+assertTrue(strpos($arRequest, 'recordAPIRequest(') < strpos($arRequest, "FROM `tblUsers` WHERE ' . emailExactMatchSql('email')"), 'F3: ...before the account is even looked up (by its exact address, fourth-round review Medium 1)');
 assertContains("limitedRowWrittenRecently((int) \$row['userID'], 'password_reset_request_limited')", $arRequest, 'F3: at most one "refused by the limit" row per account per hour');
 assertContains("\$decision['reason'] !== 'too_soon'", $arRequest, 'F3: a double-click inside the gap writes no row at all');
 assertFalse(str_contains($arRequest, "'httpCode'  => 429"), 'F3: a limited request gets the SAME 200 answer (never a different code)');

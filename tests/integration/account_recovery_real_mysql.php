@@ -57,6 +57,14 @@
  *     V  nit - a verification link for an already-active account says
  *        nothing changed; for a suspended one, the usual invalid answer
  *
+ *   Fourth-round review, Medium 1 and Info 5 (2026-11-28):
+ *     EX an accented, zero-width, control-character and full-width spelling
+ *        of an account's address (all the SAME address to the database's own
+ *        comparison) find nothing: no sign-in and no password check, no
+ *        reset or new link, no second account, no admin look-up, no
+ *        Google/Microsoft link; the command line's "cancel unsent emails"
+ *        and the erasure leave such an address's email records alone
+ *
  * Not run by tests/run.php (needs a database). CI syntax-checks it.
  *
  * ⚠️ SAFETY: it DELETES rows. It refuses to run (exit 2) unless the database
@@ -1398,6 +1406,71 @@ $arCwOut = arCollect($arCwChild);
 arCheck(isset($arCwOut['seconds']) && $arCwOut['seconds'] >= 0.25 && $arCwOut['seconds'] < 0.6, 'send me a new link (C3-5): a waiting account whose row is busy answers in the usual time (' . json_encode($arCwOut['seconds'] ?? $arCwOut) . ' s)');
 $arCwAgain = arCollect(arSpawn('resend', $arItEnv + ['CUERCODE_IT_CHILD_EMAIL' => 'ar-cw@ar.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.74']));
 arCheck(isset($arCwAgain['seconds']) && arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ? AND `usedAt` IS NULL', 'i', [$arCw]) === 1, 'send me a new link (C3-5): once the row is free again, asking again sends the link as usual');
+
+// ==============================================================================
+// EX. Fourth-round review, Medium 1: a typed address finds an account only when
+//     it is EXACTLY that account's address
+// ==============================================================================
+echo PHP_EOL . 'EX. A typed address must be exactly the account\'s (fourth-round review, Medium 1)' . PHP_EOL;
+
+// 📚 The admin command-line helpers and the Microsoft/Google sign-in code are
+//    not loaded by the bootstrap; require_once does nothing twice.
+require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_admin.php';
+require_once $arSiteRoot . '_functions' . DIRECTORY_SEPARATOR . 'fn_oauth.php';
+
+// 🔤 The database's own comparison (utf8mb4_unicode_ci) treats each of these
+//    as the same as ar-ex@ar.cuercode.invalid: an accented letter, a
+//    zero-width space, a control character and a full-width letter.
+arReset();
+$arEx      = arUser('ex', 'active', $arOwnerPassword, true);
+$arExWait  = arUser('exw', 'pending', $arOwnerPassword, false);
+$arExExact = 'ar-ex@ar.cuercode.invalid';
+$arExVariants = [
+    'accent'     => "ar-\u{00E9}x@ar.cuercode.invalid",
+    'zero-width' => "ar-e\u{200B}x@ar.cuercode.invalid",
+    'control'    => "ar-e\x01x@ar.cuercode.invalid",
+    'full-width' => "\u{FF41}r-ex@ar.cuercode.invalid",
+];
+$arExSameToDb = 0;
+foreach ($arExVariants as $arExVariant) {
+    $arExSameToDb += arCount('SELECT COUNT(*) FROM `tblUsers` WHERE `email` = ?', 's', [$arExVariant]);
+}
+arCheck($arExSameToDb === count($arExVariants), 'set-up: this server\'s own comparison finds the account for every one of the ' . count($arExVariants) . ' different spellings (' . $arExSameToDb . '), so the checks below mean something');
+
+$arExIp = 60;
+foreach ($arExVariants as $arExName => $arExVariant) {
+    $arExIp++;
+    $arExLogin = loginUser($arExVariant, $arOwnerPassword, '198.51.100.' . $arExIp, 'integration-check');
+    arCheck($arExLogin['success'] === false, 'sign-in, ' . $arExName . ' spelling with the RIGHT password: refused (it is not this account\'s address)');
+    loginUser($arExVariant, 'wrong-' . $arOwnerPassword, '198.51.100.' . $arExIp, 'integration-check');
+    $arExLoginCheck = loginUserCheckPassword($arExVariant, $arOwnerPassword, false);
+    arCheck($arExLoginCheck['ok'] === false && $arExLoginCheck['row'] === null, 'the shared password check (also used without JavaScript), ' . $arExName . ' spelling: no account found, so no password was checked against it');
+
+    requestPasswordReset($arExVariant, '198.51.100.' . $arExIp);
+    requestNewVerificationLink(str_replace('x@', 'xw@', $arExVariant), '198.51.100.' . $arExIp);
+
+    arCheck(adminCliFindAccounts($arExVariant) === [], 'admin command-line look-up, ' . $arExName . ' spelling: no account');
+
+    $arExSso = applyOAuthAccountLink('google', 'ex-subject-' . $arExName, $arExVariant, true, 'Ex', null, null);
+    arCheck($arExSso['success'] === false && arCount('SELECT COUNT(*) FROM `tblUserOAuth` WHERE `userID` = ?', 'i', [$arEx]) === 0, 'Google sign-in with a checked ' . $arExName . ' spelling: never linked to, or signed in as, this account');
+
+    registerUser($arExVariant, 'Plenty-Long-Pass-41');
+}
+arCheck(arOne('SELECT `failedLoginCount`, `lastLoginAt` FROM `tblUsers` WHERE `userID` = ?', 'i', [$arEx]) === ['failedLoginCount' => 0, 'lastLoginAt' => null], 'no spelling signed the account in or counted a wrong password against it');
+arCheck(arCount('SELECT COUNT(*) FROM `tblPasswordResets` WHERE `userID` = ?', 'i', [$arEx]) === 0 && arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `templateKey` = 'password_reset'") === 0, 'forgot password with each spelling: no reset link, no email');
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailVerifications` WHERE `userID` = ?', 'i', [$arExWait]) === 0 && arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `templateKey` = 'verification'") === 0, 'send me a new link with each spelling of a WAITING account: no link, no email');
+arCheck(arCount("SELECT COUNT(*) FROM `tblUsers` WHERE `email` LIKE 'ar-%@ar.cuercode.invalid'") === 2, 'sign-up with each spelling: no second account (the address is taken) and nothing sent');
+arCheck(count((array) adminCliFindAccounts($arExExact)) === 1 && loginUserCheckPassword($arExExact, $arOwnerPassword, false)['ok'] === true, 'control: the EXACT address still finds the account, and its right password is accepted');
+
+// 📧 The queue clean-ups touch only the account's own address: the command
+//    line's "cancel unsent emails" and the erasure.
+arExec("INSERT INTO `tblEmailQueue` (`toAddress`, `templateKey`, `subject`, `status`) VALUES (?, 'verification', 'Verify', 'queued')", 's', [$arExVariants['accent']]);
+arExec("INSERT INTO `tblEmailQueue` (`toAddress`, `templateKey`, `subject`, `status`, `sentAt`) VALUES (?, 'verification', 'Verify', 'sent', NOW())", 's', [$arExVariants['zero-width']]);
+arExec("INSERT INTO `tblEmailQueue` (`toAddress`, `templateKey`, `subject`, `status`) VALUES (?, 'verification', 'Verify', 'queued')", 's', [$arExExact]);
+$arExCancelled = adminCliCancelUnsentAccountEmails($arExExact);
+arCheck($arExCancelled['verification'] === 1 && arCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` = ? AND `status` = 'queued'", 's', [$arExVariants['accent']]) === 1, 'command line "cancel unsent emails": only the exact address\'s email is cancelled (' . json_encode($arExCancelled) . ')');
+arCheck(eraseUserAccount($arEx, $arOwnerPassword, true)['success'] === true, 'erase: the account is erased');
+arCheck(arCount('SELECT COUNT(*) FROM `tblEmailQueue` WHERE `toAddress` IN (?, ?)', 'ss', [$arExVariants['accent'], $arExVariants['zero-width']]) === 2, 'erase: the email records of a differently spelled address are left alone (fourth-round review, Info 5)');
 
 // 🧹 Tidy up.
 arUseSession(null);

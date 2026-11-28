@@ -67,6 +67,9 @@
  *      checked at all, and past it the right password gets the same answer
  *      and no email; the person then signs in with the right password
  *      through the NORMAL form; the normal form still locks after five.
+ *      Fourth-round review, Medium 1: an accented, zero-width,
+ *      control-character or full-width spelling of the address is not a way
+ *      round that number (right password: no email).
  *   P. Merged review L5, L6, I1: a stranger with their own waiting sign-in
  *      opening someone else's link is not signed in; the approve page shows
  *      when, from what browser and address; an approval runs out after 3
@@ -1031,6 +1034,22 @@ foreach ($hcWrongAnswers as $hcWrongBody) {
     }
 }
 hcCheck('R', $hcSameAsWrong && str_contains($hcPost['body'], 'If the email address and password are right') && $hcTargetMails() === 0, 'over that number the right password is not checked either: the same page as every wrong guess, and no email');
+// 🔤 Fourth-round review, Medium 1: a differently spelled address (an accent,
+//    a zero-width space, a control character, a full-width letter) is the
+//    same address to the database's own comparison, and is counted under its
+//    own spelling. It must NOT get a fresh set of checks against this account:
+//    with the right password, no email.
+$hcVariantSpellings = [
+    'accent'     => "lockout-targ\u{00E9}t@it.cuercode.invalid",
+    'zero-width' => "lockout-tar\u{200B}get@it.cuercode.invalid",
+    'control'    => "lockout-tar\x01get@it.cuercode.invalid",
+    'full-width' => "\u{FF4C}ockout-target@it.cuercode.invalid",
+];
+foreach ($hcVariantSpellings as $hcSpellingName => $hcSpelling) {
+    $hcPost = hcStartEmailSignIn($hcBase, tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_'), $hcSpelling, $hcTargetPassword);
+    hcCheck('R', hcValue($hcServer, "SELECT COUNT(*) FROM `tblUsers` WHERE `email` = '" . $hcServer->real_escape_string($hcSpelling) . "'") === '1', 'set-up: this server\'s own comparison treats the ' . $hcSpellingName . ' spelling as the account\'s address');
+    hcCheck('R', str_contains($hcPost['body'], 'If the email address and password are right') && $hcTargetMails() === 0, 'fourth-round review, Medium 1: the ' . $hcSpellingName . ' spelling with the RIGHT password gets the usual answer and NO email (it is not a way round the per-account number)');
+}
 // 3️⃣ The real person signs in through the normal form straight away.
 hcCli($hcDbName, ['off']);
 $hcNormalJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');

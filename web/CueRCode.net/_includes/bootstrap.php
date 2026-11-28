@@ -198,6 +198,10 @@ $functionFiles = [
     // 🔀 #151: cuercodeClampInt() and other version helpers. No dependencies, so it
     //    loads early; the files that use it also require_once it themselves.
     'fn_compat.php',
+    // 📧 Fourth-round review, Medium 1: emailExactMatchSql(), the one rule for
+    //    finding an email address in the database exactly. No dependencies;
+    //    the files that use it also require_once it themselves.
+    'fn_email_match.php',
     // 🌍 Decision 0014: getClientIP() - the visitor's address, trusting
     //    Cloudflare's header only from Cloudflare's own ranges and other
     //    forwarders only when listed in trusted_proxy_ips. Loaded on EVERY page

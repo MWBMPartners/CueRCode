@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - A look-alike spelling of an email address no longer finds someone's account (fourth-round review, Medium 1 and Info 5, 2026-11-28)
+
+- **The fault:** the database compares email addresses in a way that ignores accents, zero-width spaces, control characters and full-width letters, so `alicé@…` or `al​ice@…` found Alice's account. The no-JavaScript sign-in counts its daily password checks under the spelling typed, so each new spelling got a fresh 10 guesses at Alice's password, and a right guess sent Alice a real "approve this sign-in" email. The same comparison was used by the normal sign-in, sign-up, forgot password, "send me a new link", Google/Microsoft sign-in, the admin command line's look-up and its "cancel unsent emails" step, and the two erasure steps on the email queue.
+- **The fix:** all of these now use one rule, `emailExactMatchSql()` in the new `_functions/fn_email_match.php`. The ordinary comparison is kept, so the look-up stays instant, and a byte-for-byte comparison must also hold. Addresses are stored in lower case and typed addresses are lower-cased first, so only look-alikes are affected. Sign-up of a look-alike is still refused by the unique key, as "that address is taken". No database upgrade.
+- Shown failing first: new scenario EX in `account_recovery_real_mysql.php` failed 17 checks on MySQL 8.0, and the four look-alike spellings each got a sign-in email in scenario R of `human_check_real_mysql.php` on MySQL 8.4. Both pass with the fix. The new `tests/test_email_exact_match.php` (18 checks) fails if any bare comparison comes back.
+
 ### Fixed - Test web servers are always stopped (2026-11-28)
 
 - The real-HTTP test script (`human_check_real_mysql.php`) stopped its PHP web server only when it reached its last scenarios, so a failed check, a crash, Ctrl+C or a killed run left the server running (three were found). Servers are now started through `tests/lib/web_server.php`, which runs them under a small supervisor that stops the server as soon as the script ends in any way, including kill -9.

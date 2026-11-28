@@ -1063,7 +1063,7 @@ $aaCancelBody = substr($aaFnAdminSource, (int) $aaCancelStart, 1800);
 assertTrue(str_contains($aaCancelBody, "SET `status` = 'skipped'") && str_contains($aaCancelBody, '`paramsJSON` = NULL'), 'B9: waiting emails are marked skipped and their stored details cleared');
 assertTrue(str_contains($aaCancelBody, "`status` IN ('queued', 'failed') AND `attempts` < `maxAttempts`"), 'B9: only WAITING rows (queued, or failed with attempts left) are touched - never sending, sent or given-up rows');
 assertTrue(str_contains($aaCancelBody, "['verification', 'password_reset']"), 'B9: only the verification and password-reset templates');
-assertTrue(str_contains($aaCancelBody, 'WHERE `toAddress` = ? AND `templateKey` = ?'), 'B9: matched by recipient address and template, with a prepared statement');
+assertTrue(str_contains($aaCancelBody, "'WHERE ' . emailExactMatchSql('toAddress') . ' AND `templateKey` = ? '"), 'B9: matched by recipient address (exactly: fourth-round review Medium 1) and template, with a prepared statement');
 $aaGrantStart = strpos($aaFnAdminSource, 'function adminCliGrant(');
 $aaGrantBody  = substr($aaFnAdminSource, (int) $aaGrantStart, (int) strpos($aaFnAdminSource, 'function adminCliRevoke(') - (int) $aaGrantStart);
 assertTrue(str_contains($aaGrantBody, "if (\$decision['activates']) {\n            \$emailsCancelled = adminCliCancelUnsentAccountEmails("), 'B9: the grant cancels them only when it activates the account');

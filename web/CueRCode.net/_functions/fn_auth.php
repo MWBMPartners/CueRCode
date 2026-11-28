@@ -73,6 +73,11 @@ require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_compat.php';
 //    defines constants and functions only. require_once does nothing twice.
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_client_ip.php';
 
+// 📧 Fourth-round review, Medium 1: every look-up by a typed email address
+//    matches it EXACTLY (emailExactMatchSql()), never by the database's
+//    accent- and width-blind comparison alone. require_once does nothing twice.
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_email_match.php';
+
 // ==============================================================================
 // 🔧 Constants
 // ==============================================================================
@@ -564,9 +569,9 @@ function registerUser(string $email, #[\SensitiveParameter] string $plainPasswor
     // to the caller - only used internally to decide whether to insert.
     try {
         $existingStmt = dbQuery(
-            'SELECT `userID` FROM `tblUsers` WHERE `email` = ? LIMIT 1',
-            's',
-            [$normalizedEmail]
+            'SELECT `userID` FROM `tblUsers` WHERE ' . emailExactMatchSql('email') . ' LIMIT 1',
+            'ss',
+            emailExactMatchParams($normalizedEmail)
         );
         $existingRow = $existingStmt->get_result()->fetch_assoc();
         $existingStmt->close();
@@ -1266,9 +1271,9 @@ function requestNewVerificationLinkWork(string $email, string $ipAddress): array
 
     try {
         $stmt = dbQuery(
-            'SELECT `userID`, `displayName`, `status`, `emailVerifiedAt` FROM `tblUsers` WHERE `email` = ? LIMIT 1',
-            's',
-            [$normalizedEmail]
+            'SELECT `userID`, `displayName`, `status`, `emailVerifiedAt` FROM `tblUsers` WHERE ' . emailExactMatchSql('email') . ' LIMIT 1',
+            'ss',
+            emailExactMatchParams($normalizedEmail)
         );
         $account = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -1935,9 +1940,9 @@ function loginUserCheckPassword(string $email, #[\SensitiveParameter] string $pl
         $stmt = dbQuery(
             'SELECT `userID`, `email`, `passwordHash`, `displayName`, `status`, '
             . '`failedLoginCount`, (`lockedUntil` IS NOT NULL AND `lockedUntil` > NOW()) AS `isLocked`' . $validFromColumn . ' '
-            . 'FROM `tblUsers` WHERE `email` = ? LIMIT 1',
-            's',
-            [$normalizedEmail]
+            . 'FROM `tblUsers` WHERE ' . emailExactMatchSql('email') . ' LIMIT 1',
+            'ss',
+            emailExactMatchParams($normalizedEmail)
         );
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -3066,9 +3071,9 @@ function requestPasswordResetWork(string $email, string $ipAddress): array
     // 🔍 A plain read with no lock: an unknown address never takes a lock.
     try {
         $stmt = dbQuery(
-            'SELECT `userID`, `displayName`, `status` FROM `tblUsers` WHERE `email` = ? LIMIT 1',
-            's',
-            [$normalizedEmail]
+            'SELECT `userID`, `displayName`, `status` FROM `tblUsers` WHERE ' . emailExactMatchSql('email') . ' LIMIT 1',
+            'ss',
+            emailExactMatchParams($normalizedEmail)
         );
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();

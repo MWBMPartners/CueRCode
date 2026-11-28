@@ -3274,15 +3274,19 @@ function adminCliFindAccounts(string $email, bool $forUpdate = false): ?array
 
     // 🪪 displayName and createdAt are shown to the operator before they
     //    confirm (decision 0010). The password hash itself is never read here.
+    // 📧 Fourth-round review, Medium 1: the typed address must be EXACTLY the
+    //    account's (fn_email_match.php; require_once does nothing twice).
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_email_match.php';
+
     $sql = 'SELECT `userID`, `email`, `displayName`, `createdAt`, `roleID`, `status`, `emailVerifiedAt`, '
         . "(`passwordHash` IS NOT NULL AND `passwordHash` <> '') AS `hasPassword` "
-        . 'FROM `tblUsers` WHERE `email` = ? LIMIT 2';
+        . 'FROM `tblUsers` WHERE ' . emailExactMatchSql('email') . ' LIMIT 2';
     if ($forUpdate) {
         $sql .= ' FOR UPDATE';
     }
 
     try {
-        $stmt = dbQuery($sql, 's', [$email]);
+        $stmt = dbQuery($sql, 'ss', emailExactMatchParams($email));
         $result = $stmt->get_result();
         $rows = [];
         while (($row = $result->fetch_assoc()) !== null) {
@@ -3754,8 +3758,10 @@ function adminCliAskNewPasswordHash(): array
  * 'queued', or 'failed' with attempts left. A row being sent right now
  * ('sending'), one already sent, one given up and rows of any other template
  * are left alone. Matching is by the recipient address (the queue stores no
- * account number) and the template name; the column's collation ignores
- * capital letters, as the sign-up does.
+ * account number) and the template name. The address must be EXACTLY the
+ * account's (emailExactMatchSql(); fourth-round review, Medium 1): the
+ * column's own comparison would also cancel emails to an accented or
+ * full-width look-alike address.
  *
  * It runs INSIDE the caller's transaction and throws on a database error, so
  * a failure rolls the whole grant back. The returned counts are the only
@@ -3768,14 +3774,20 @@ function adminCliCancelUnsentAccountEmails(string $email): array
 {
     $cancelled = ['verification' => 0, 'password_reset' => 0];
 
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_email_match.php';
+
     foreach (['verification', 'password_reset'] as $templateKey) {
         $stmt = dbQuery(
             'UPDATE `tblEmailQueue` '
             . "SET `status` = 'skipped', `lastError` = ?, `paramsJSON` = NULL, `updatedAt` = NOW() "
-            . 'WHERE `toAddress` = ? AND `templateKey` = ? '
+            . 'WHERE ' . emailExactMatchSql('toAddress') . ' AND `templateKey` = ? '
             . "AND `status` IN ('queued', 'failed') AND `attempts` < `maxAttempts`",
-            'sss',
-            ['Cancelled: the account was activated at the command line, so this email is no longer needed', $email, $templateKey]
+            'ssss',
+            array_merge(
+                ['Cancelled: the account was activated at the command line, so this email is no longer needed'],
+                emailExactMatchParams($email),
+                [$templateKey]
+            )
         );
         $cancelled[$templateKey] = (int) $stmt->affected_rows;
         $stmt->close();

@@ -2112,13 +2112,17 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
         // link, name and address are removed. An email being sent at this
         // very moment is left to finish; already-sent emails are removed by
         // the queue's normal clean-up.
+        //    Fourth-round review, Info 5: only records for EXACTLY this
+        //    address (emailExactMatchSql()); the column's own comparison
+        //    would also catch an accented or full-width look-alike address.
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'fn_email_match.php';
         $erasedEmailAddress = (string) $lockedRow['email'];
         $queueStmt = dbQuery(
             "UPDATE `tblEmailQueue` SET `status` = 'skipped', `paramsJSON` = NULL, `toName` = NULL, `toAddress` = ?, "
             . "`lastError` = 'Account erased before this email was sent' "
-            . "WHERE `toAddress` = ? AND `status` IN ('queued', 'failed') AND `sentAt` IS NULL",
-            'ss',
-            [$anonymizedEmail, $erasedEmailAddress]
+            . 'WHERE ' . emailExactMatchSql('toAddress') . " AND `status` IN ('queued', 'failed') AND `sentAt` IS NULL",
+            'sss',
+            array_merge([$anonymizedEmail], emailExactMatchParams($erasedEmailAddress))
         );
         $queueStmt->close();
 
@@ -2126,9 +2130,9 @@ function eraseUserAccount(int $userID, #[\SensitiveParameter] string $currentPas
         // status and times for support, but lose the address, name and details.
         $finishedStmt = dbQuery(
             'UPDATE `tblEmailQueue` SET `toAddress` = ?, `toName` = NULL, `paramsJSON` = NULL, `updatedAt` = `updatedAt` '
-            . "WHERE `toAddress` = ? AND `status` IN ('sent', 'skipped', 'failed')",
-            'ss',
-            [$anonymizedEmail, $erasedEmailAddress]
+            . 'WHERE ' . emailExactMatchSql('toAddress') . " AND `status` IN ('sent', 'skipped', 'failed')",
+            'sss',
+            array_merge([$anonymizedEmail], emailExactMatchParams($erasedEmailAddress))
         );
         $finishedStmt->close();
 

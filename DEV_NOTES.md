@@ -119,6 +119,7 @@ delete stale branches).
 - **Table naming:** `tblTableName` (camelCase with `tbl` prefix)
 - **Column naming:** `camelCase` (e.g., `settingKey`, `createdAt`)
 - **Engine:** InnoDB with `utf8mb4_unicode_ci` collation
+- **Email addresses are matched exactly:** that collation ignores more than capitals. It treats an accented letter, a zero-width space, a control character or a full-width letter as the same as the plain letter. So every look-up or change by a typed email address uses `emailExactMatchSql()` (`_functions/fn_email_match.php`), never `` `email` = ? `` alone. `tests/test_email_exact_match.php` fails on a bare comparison anywhere in the site code (fourth-round review, Medium 1).
 - **Timestamps:** All tables include `createdAt` and `updatedAt` datetime columns
 
 ---

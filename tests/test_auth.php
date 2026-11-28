@@ -465,7 +465,7 @@ $registerUserBody = substr($fnAuthSource, $registerUserStart, $registerUserEnd -
 // one can return. Assert that ordering directly against the source.
 // --------------------------------------------------------------------------
 $hashCallPos   = strpos($registerUserBody, 'hashPassword($plainPassword)');
-$existingSqlPos = strpos($registerUserBody, 'SELECT `userID` FROM `tblUsers` WHERE `email` = ?');
+$existingSqlPos = strpos($registerUserBody, "SELECT `userID` FROM `tblUsers` WHERE ' . emailExactMatchSql('email')");
 
 assertTrue(
     $hashCallPos !== false,
