@@ -98,10 +98,10 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_data.php` | 116 |
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 82 |
-| `test_admin_access.php` | 664 |
-| `test_admin_csp.php` | 38 |
-| `test_admin_plans.php` | 654 |
-| `test_admin_settings.php` | 1364 |
+| `test_admin_access.php` | 665 |
+| `test_admin_csp.php` | 48 |
+| `test_admin_plans.php` | 653 |
+| `test_admin_settings.php` | 1351 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -117,6 +117,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
+| `test_email_exact_match.php` | 18 |
 | `test_email_log_privacy.php` | 15 |
 | `test_email_queue_runner.php` | 502 |
 | `test_emoji_logo.php` | 123 |
@@ -124,19 +125,21 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_expiry_clock.php` | 6 |
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
-| `test_human_check.php` | 411 |
-| `test_human_check_fallbacks.php` | 119 |
-| `test_human_check_review_fixes.php` | 82 |
+| `test_human_check.php` | 410 |
+| `test_human_check_fallbacks.php` | 129 |
+| `test_human_check_review_fixes.php` | 84 |
+| `test_human_check_widget_script.php` | 9 |
 | `test_install_checks.php` | 101 |
 | `test_installer_load_order.php` | 9 |
-| `test_integration_web_server.php` | 13 |
+| `test_integration_web_server.php` | 14 |
 | `test_library_updates.php` | 177 |
-| `test_log_mask.php` | 56 |
+| `test_log_mask.php` | 73 |
 | `test_login_next_url.php` | 21 |
-| `test_migrations.php` | 559 |
+| `test_migrations.php` | 576 |
 | `test_money.php` | 709 |
 | `test_no_script_route_review_fixes.php` | 80 |
 | `test_oauth.php` | 136 |
+| `test_offline_worker_privacy.php` | 16 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
 | `test_php86_adoption.php` | 34 |
@@ -147,15 +150,17 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_predefined_logo_png.php` | 264 |
 | `test_pricing.php` | 132 |
 | `test_pricing_flex.php` | 51 |
-| `test_pricing_page.php` | 156 |
+| `test_pricing_page.php` | 163 |
 | `test_qr_logo.php` | 204 |
 | `test_qrcodes.php` | 83 |
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9377** |
+| **Total** | **9470** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Fourth-round review and second Codex review fixes (2026-11-28)** added three files: `test_email_exact_match.php` (18 checks: an email address is matched byte for byte, and no bare `email = ?` comparison is left in the site code), `test_offline_worker_privacy.php` (16: the offline worker never keeps a no-store or private page, `/admin` and `/install` are private, the cache version moved on) and `test_human_check_widget_script.php` (9: the real widget script under Node.js - a late provider answer cannot stop the fallback; skipped with a note where Node.js is missing). Checks were added to `test_admin_csp.php`, `test_log_mask.php`, `test_integration_web_server.php`, `test_human_check_fallbacks.php`, `test_human_check.php`, `test_pricing_page.php` and `test_migrations.php`, and old wording checks were updated in `test_account_recovery.php`, `test_admin_access.php`, `test_auth.php`, `test_admin_settings.php` and `test_human_check_review_fixes.php`. Real-database scripts gained scenario EX (`account_recovery`), 12d and the Low 3 check (`email_queue`), the look-alike spellings and eleven right sign-ins in R plus three outage checks in F (`human_check`), and P7-P9 (`migrations`). Each was shown failing on the code before its fix. Suite: **9470** in 62 files.
 
 **Test web servers always stopped (2026-11-28)** added `test_integration_web_server.php` (13 checks, about 10 seconds): with a real `php -S` server on a free port, the helper `tests/lib/web_server.php` stops it when the script calls `itWebServerStop()`, exits with a failure code, throws, stops on a fatal error, or is sent SIGTERM, SIGINT or SIGKILL; a control case starts the server the old way and shows it still running after its script is killed (then stops it); and every `*_real_mysql.php` script that starts a server must use the helper. On the old `human_check_real_mysql.php` those last checks failed (3), and killing that script with kill -9 left its server running (process 43974 in the run on 2026-11-28); after the change kill -9, SIGINT and SIGTERM each left none. Suite: **9377** in 59 files.
 
