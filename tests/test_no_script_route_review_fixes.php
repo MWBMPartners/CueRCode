@@ -323,3 +323,22 @@ assertContains("CAST(`settingValue` AS BINARY) = CAST(\\'none\\' AS BINARY)", $n
 assertContains('CAST(`description` AS BINARY) = CAST(', $nsMigrationText, '0005: the starting description is matched byte for byte');
 assertFalse(str_contains($nsMigrationText, "AND `settingValue` = \\'none\\'"), '0005: no case-blind compare of "none" is left');
 assertContains('`emailSent`', $nsMigrationText, 'L1: 0005: the route\'s record says which uses actually sent an email (only those count against the email limits)');
+
+// ==============================================================================
+// Third-round review, Medium 1: the route can never lock an account out
+// ==============================================================================
+
+$nsBounds = noScriptRouteBounds();
+assertTrue(isset($nsBounds['password_per_day']) && $nsBounds['password_per_day']['default'] === 10 && $nsBounds['password_per_day']['min'] === 1 && $nsBounds['password_per_day']['max'] === 100, 'Medium 1: there is a per-account number of wrong passwords the route checks a day (default 10, 1-100), so guessing stays bounded per account without the lock-out');
+assertEquals(10, noScriptRouteSettings(nsGetter([]))['passwordPerDay'] ?? null, 'Medium 1: nothing saved means the default of 10');
+assertEquals(1, noScriptRouteSettings(nsGetter(['no_script_route_password_per_day' => '0']))['passwordPerDay'] ?? null, 'Medium 1: 0 is pulled up to 1 (never "no limit")');
+assertEquals(100, noScriptRouteSettings(nsGetter(['no_script_route_password_per_day' => '5000']))['passwordPerDay'] ?? null, 'Medium 1: a huge number is pulled down to 100');
+assertContains("loginUserCheckPassword(\$email, \$password, false)", $nsStartBody, 'Medium 1: the route checks the password WITHOUT counting a wrong one toward the lock-out');
+assertContains("noScriptRouteGate('login', \$email, \$ip, false, true)", $nsStartBody, 'Medium 1: the route asks the gate for a password-check place before the password');
+assertContains('cuercodeDummyPasswordHash()', $nsStartBody, 'Medium 1: past the per-account number the same time is spent on a stand-in check (the answer and timing stay the same)');
+$nsAuthCode  = nsCodeOnly((string) file_get_contents($nsSiteRoot . '_functions' . $nsDs . 'fn_auth.php'));
+$nsCheckBody = substr($nsAuthCode, (int) strpos($nsAuthCode, 'function loginUserCheckPassword('), 6000);
+$nsCheckBody = substr($nsCheckBody, 0, (int) strpos($nsCheckBody, "\nfunction "));
+assertContains('if ($countWrongPassword && !$isLocked', $nsCheckBody, 'Medium 1: a wrong password is counted toward the lock-out only when the caller asks (the normal sign-in does)');
+$nsLoginBody = substr($nsAuthCode, (int) strpos($nsAuthCode, 'function loginUser('), 3000);
+assertContains('loginUserCheckPassword($email, $plainPassword);', $nsLoginBody, 'Medium 1: the normal sign-in still counts wrong passwords (the default)');

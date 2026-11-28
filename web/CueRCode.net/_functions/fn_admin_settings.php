@@ -519,15 +519,24 @@ function adminSettingsRegistry(): array
         'ip_per_hour'   => ['Most uses from one visitor address in an hour', 'Whatever the email address, all four forms together, counted before any password is looked at. An IPv6 address counts as its whole /64 network.'],
         'email_per_day' => ['Most emails to one mailbox in 24 hours', 'Whoever asks, so nobody can fill one person\'s inbox. "+tag" spellings (and, for Gmail, dots) count as the same mailbox. A wrong password or an address with no account uses up nothing.'],
         'site_per_hour' => ['Most emails each form sends in an hour, for the whole site', 'A ceiling on the emails this route can cause, counted for each of the four forms separately, so a flood on one form cannot block another (for example a real person\'s sign-in).'],
+        'password_per_day' => ['Most wrong passwords checked for one account in 24 hours', 'Wrong passwords typed through this route never lock the account (so nobody can keep a person locked out), so this number bounds guessing instead. Past it the route stops checking passwords for that account until the day is over, with the same answer as always; the normal form is not affected.'],
     ];
     foreach ($noScriptWords as $noScriptSuffix => $noScriptText) {
         $noScriptBound = $noScriptBounds[$noScriptSuffix];
+        // 📌 Third-round review, Medium 1: the per-account number of password
+        //    checks came after upgrade 0005, so it has no seeded row; the code
+        //    uses its default until an admin saves one (like the link limits).
+        $noScriptRowOptional = ($noScriptSuffix === 'password_per_day');
+        $noScriptDefault     = null;
+        if ($noScriptRowOptional) {
+            $noScriptDefault = $noScriptBound['default'];
+        }
         $fields[] = adminSettingsField([
             'key' => 'no_script_route_' . $noScriptSuffix, 'section' => 'bot', 'subgroup' => 'Without JavaScript: the email-confirmed route (decision 0038)',
             'kind' => 'int', 'group' => 'security', 'type' => 'integer',
             'label' => $noScriptText[0],
             'help' => $noScriptText[1] . ' Visitors without JavaScript cannot see the human check, so they confirm by email instead; these limits stop that from being used to send unlimited email or try passwords. Whole numbers, ' . $noScriptBound['min'] . ' to ' . $noScriptBound['max'] . '. The default is ' . $noScriptBound['default'] . '. A smaller number is stricter.',
-            'min' => $noScriptBound['min'], 'max' => $noScriptBound['max'],
+            'min' => $noScriptBound['min'], 'max' => $noScriptBound['max'], 'rowOptional' => $noScriptRowOptional, 'default' => $noScriptDefault,
             'description' => 'No-JavaScript email route (decision 0038): ' . strtolower($noScriptText[0]) . '.',
         ]);
     }

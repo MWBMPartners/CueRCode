@@ -1832,16 +1832,24 @@ function loginUserGenericFailure(): array
  * (fn_no_script_route.php), so both apply exactly the same rules: the same
  * look-up, the same always-paid password check (a dummy hash when there is no
  * account, so the time taken does not show whether one exists), the same
- * refusal for a locked, waiting or suspended account, and the same
- * wrong-password counting and lock-out (recordFailedLogin()).
+ * refusal for a locked, waiting or suspended account, and (for the normal
+ * sign-in) the same wrong-password counting and lock-out (recordFailedLogin()).
  *
- * @param string $email         Candidate email address
- * @param string $plainPassword Candidate plaintext password
+ * 🔒 Third-round review, Medium 1 (2026-11-28): the no-JavaScript route
+ *    passes $countWrongPassword = false. Its answer never says whether the
+ *    password was right, and it has no human check, so if its wrong
+ *    passwords counted, anyone could keep anyone's account locked from one
+ *    address. It bounds guessing with its own per-account number of
+ *    password checks instead (fn_no_script_route.php).
+ *
+ * @param string $email              Candidate email address
+ * @param string $plainPassword      Candidate plaintext password
+ * @param bool   $countWrongPassword Count a wrong password toward the lock-out (normal sign-in: true)
  *
  * @return array{ok: bool, result: array, row: array<string, mixed>|null, sessionsValidFromSeen: string|null}
  *         ok=false: 'result' is the answer to give (generic, or 503 with no database)
  */
-function loginUserCheckPassword(string $email, #[\SensitiveParameter] string $plainPassword): array
+function loginUserCheckPassword(string $email, #[\SensitiveParameter] string $plainPassword, bool $countWrongPassword = true): array
 {
     $genericFailResult = loginUserGenericFailure();
     $refused           = ['ok' => false, 'result' => $genericFailResult, 'row' => null, 'sessionsValidFromSeen' => null];
@@ -1912,7 +1920,7 @@ function loginUserCheckPassword(string $email, #[\SensitiveParameter] string $pl
         // already-locked or not-yet-active account has nothing new to record.
         // (Review finding 7: the counter is raised by the database itself,
         // so wrong passwords sent at the same moment all count.)
-        if (!$isLocked && $status === 'active' && !$passwordOk) {
+        if ($countWrongPassword && !$isLocked && $status === 'active' && !$passwordOk) {
             recordFailedLogin($userID);
         }
         return $refused;

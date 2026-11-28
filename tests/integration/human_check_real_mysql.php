@@ -54,11 +54,17 @@
  *      time, and the same sign-in page, Continue and Start again afterwards.
  *   N. Merged review L1, L2, L3, L5, I2, I3 over real HTTP: made-up addresses
  *      and a sign-up flood do not use up a real person's sign-in; a
- *      stranger's wrong guesses do not block them (and still count toward
- *      the lock-out); "+tag" sign-ups share one mailbox's limit; over the
- *      per-address limit the other three forms do nothing and sign-in is
- *      answered at once about "your connection"; the lock held elsewhere is
- *      "busy".
+ *      stranger's wrong guesses do not block them (and, since the
+ *      third-round review's Medium 1, do NOT count toward the lock-out);
+ *      "+tag" sign-ups share one mailbox's limit; over the per-address limit
+ *      the other three forms do nothing and sign-in is answered at once
+ *      about "your connection"; the lock held elsewhere is "busy".
+ *   R. Third-round review, Medium 1: wrong passwords through the route never
+ *      lock the account (five from one address, then the per-address limit;
+ *      thirteen in all); only the per-account daily number of them (10) is
+ *      checked at all, and past it the right password gets the same answer
+ *      and no email; the person then signs in with the right password
+ *      through the NORMAL form; the normal form still locks after five.
  *   P. Merged review L5, L6, I1: a stranger with their own waiting sign-in
  *      opening someone else's link is not signed in; the approve page shows
  *      when, from what browser and address; an approval runs out after 3
@@ -81,7 +87,8 @@
  *      mailbox (+tags count as one), uses per visitor address (IPv6 per
  *      /64), emails per form site-wide, a place given back, and twelve
  *      processes at the same moment for one mailbox: exactly the limit gets
- *      an email place.
+ *      an email place; twelve for one account with password checks set to
+ *      3: exactly 3 have their password checked.
  *
  * It is NOT run by tests/run.php. How to run it (Docker example):
  *     docker run -d --rm --name cuercode-it-hc -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
@@ -202,6 +209,9 @@ if (isset($hcArguments[0]) && $hcArguments[0] === '--race') {
     }
     if ($hcRaceMode === 'claim') {
         echo humanCheckClaimToken((string) getenv('CUERCODE_IT_CHILD_HASH'), 'turnstile');
+    } elseif ($hcRaceMode === 'password') {
+        // 🔑 Third-round review Medium 1: asks for a password-check place only.
+        echo json_encode(noScriptRouteGate('login', (string) getenv('CUERCODE_IT_CHILD_EMAIL'), (string) getenv('CUERCODE_IT_CHILD_IP'), false, true));
     } elseif ($hcRaceMode === 'gate') {
         // ✉️ Asks for an email place too (the per-mailbox limit is on emails).
         echo json_encode(noScriptRouteGate('forgot', (string) getenv('CUERCODE_IT_CHILD_EMAIL'), (string) getenv('CUERCODE_IT_CHILD_IP'), true));
@@ -738,7 +748,7 @@ $hcPage = hcHttp('GET', $hcBase . '/login/', $hcJarA);
 hcCheck('K', str_contains($hcPage['body'], 'name="human_check_email_route"') && strpos($hcPage['body'], '<noscript>') < strpos($hcPage['body'], 'name="human_check_email_route"'), 'GET /login/: the "Sign in by email confirmation instead" button is inside <noscript>');
 $hcFailsBefore = $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID);
 $hcPost = hcStartEmailSignIn($hcBase, $hcJarA, $hcUserEmail, 'wrong-password-email');
-hcCheck('K', str_contains($hcPost['body'], 'If the email address and password are right') && !str_contains($hcPost['body'], 'Invalid email or password') && $hcSignInMails() === 0 && $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID) === $hcFailsBefore + 1, 'wrong password: the SAME "if the email address and password are right" answer as a right one (review M1), NO email, and the wrong password is counted');
+hcCheck('K', str_contains($hcPost['body'], 'If the email address and password are right') && !str_contains($hcPost['body'], 'Invalid email or password') && $hcSignInMails() === 0 && $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID) === $hcFailsBefore, 'wrong password: the SAME "if the email address and password are right" answer as a right one (review M1), NO email, and NOT counted toward the lock-out (third-round review Medium 1)');
 $hcPost = hcStartEmailSignIn($hcBase, $hcJarA, 'nobody@it.cuercode.invalid', 'whatever-password');
 hcCheck('K', str_contains($hcPost['body'], 'If the email address and password are right') && $hcSignInMails() === 0, 'no such account: the same answer, no email');
 hcHttp('POST', $hcBase . '/login/', $hcJarA, ['csrf_token' => hcCsrf(hcHttp('GET', $hcBase . '/login/', $hcJarA)['body']), 'login_email_cancel' => '1']);
@@ -891,7 +901,7 @@ foreach ($hcSeen as $hcCase => $hcWhat) {
     $hcTimes[$hcCase] = round($hcWhat['seconds'], 3);
 }
 hcCheck('M', min($hcTimes) >= 0.4 && max($hcTimes) - min($hcTimes) < 0.15, 'every case takes at least the minimum 0.4 s and they are within 0.15 s of each other: ' . json_encode($hcTimes));
-hcCheck('M', $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID) === 0 && $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcLockedID) === 5, 'the wrong password was counted and the right one then cleared it (as any sign-in does); the locked account\'s count was not changed');
+hcCheck('M', $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcUserID) === 0 && $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcLockedID) === 5, 'the wrong password was not counted toward the lock-out (third-round review Medium 1); the locked account\'s count was not changed');
 
 // ==============================================================================
 // N. Review L1, L2, L3 and the per-address limit over real HTTP
@@ -935,7 +945,7 @@ for ($hcI = 1; $hcI <= 3; $hcI++) {
 $hcFailsAfterGuesses = $hcCount('SELECT `failedLoginCount` FROM `tblUsers` WHERE `userID` = ' . $hcVictimID);
 hcStartEmailSignIn($hcBase, tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_'), $hcVictimEmail, $hcVictimPassword);
 hcCheck('N', $hcVictimMails() === 2, 'L2: three wrong guesses by a stranger (the daily per-mailbox number) do not block the person: their right password still gets an email');
-hcCheck('N', $hcFailsAfterGuesses === $hcFailsBefore + 3, 'L2: ... while each wrong guess still counts toward the lock-out, so guessing stays bounded (' . $hcFailsBefore . ' -> ' . $hcFailsAfterGuesses . ')');
+hcCheck('N', $hcFailsAfterGuesses === $hcFailsBefore, 'L2 and third-round review Medium 1: ... and the wrong guesses are NOT counted toward the lock-out (the route has its own per-account number of password checks instead, scenario R): ' . $hcFailsBefore . ' -> ' . $hcFailsAfterGuesses);
 $hcServer->query("UPDATE `tblSettings` SET `settingValue` = '100' WHERE `settingKey` = 'no_script_route_site_per_hour'");
 for ($hcI = 1; $hcI <= 4; $hcI++) {
     $hcRouteForm('register', ['register_submit' => '1', 'email' => 'Target+' . $hcI . '@it.cuercode.invalid', 'password' => 'Plenty-Long-Pass-41', 'password_confirm' => 'Plenty-Long-Pass-41']);
@@ -974,6 +984,67 @@ if ($hcLockName !== '') {
     $hcServer->query("SELECT RELEASE_LOCK('" . $hcServer->real_escape_string($hcLockName) . "')");
 }
 hcCheck('N', $hcLockName !== '' && str_contains($hcPost['body'], 'busy just now') && !str_contains($hcPost['body'], 'from your connection'), 'I2: the route\'s lock held elsewhere: the answer says the route is busy, not that the visitor sent too many');
+
+// ==============================================================================
+// R. Third-round review Medium 1: the route can never lock an account out
+// ==============================================================================
+echo PHP_EOL . 'R. No-JavaScript sign-in cannot lock anyone out (third-round review, Medium 1)' . PHP_EOL;
+$hcServer->query('DELETE FROM `tblNoScriptRequests`');
+$hcServer->query("DELETE FROM `tblSettings` WHERE `settingKey` = 'no_script_route_password_per_day'");
+foreach (['no_script_route_ip_per_hour' => '5', 'no_script_route_email_per_day' => '3', 'no_script_route_site_per_hour' => '100'] as $hcLimitKey => $hcLimitValue) {
+    hcSet($hcLimitKey, $hcLimitValue);
+}
+$hcTargetEmail    = 'lockout-target@it.cuercode.invalid';
+$hcTargetPassword = 'Target-Pass-' . bin2hex(random_bytes(4));
+$hcTargetID       = hcAddUser($hcServer, $hcTargetEmail, $hcTargetPassword, 'active', null);
+$hcTargetMails    = static function () use ($hcCount, $hcTargetEmail): int {
+    return $hcCount("SELECT COUNT(*) FROM `tblEmailQueue` WHERE `templateKey` = 'email_sign_in' AND `toAddress` = '" . $hcTargetEmail . "'");
+};
+$hcTargetLockState = static function () use ($hcServer, $hcTargetID): string {
+    return hcValue($hcServer, "SELECT CONCAT(`failedLoginCount`, '|', `lockedUntil` IS NULL) FROM `tblUsers` WHERE `userID` = " . $hcTargetID);
+};
+// 1️⃣ The reviewer's case: five wrong posts from ONE address, inside the default per-address limit of 5.
+$hcWrongAnswers = [];
+for ($hcI = 1; $hcI <= 5; $hcI++) {
+    $hcWrongAnswers[] = hcStartEmailSignIn($hcBase, tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_'), $hcTargetEmail, 'stranger-guess-' . $hcI)['body'];
+}
+hcCheck('R', $hcTargetLockState() === '0|1', 'five wrong passwords through the route from one address: not counted toward the lock-out and the account is NOT locked (count|not locked = ' . $hcTargetLockState() . ')');
+$hcPost = hcStartEmailSignIn($hcBase, tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_'), $hcTargetEmail, 'stranger-guess-6');
+hcCheck('R', str_contains($hcPost['body'], 'from your connection'), 'the 6th post from that address is stopped by the per-address limit (guessing stays bounded per address)');
+// 2️⃣ More addresses (here: a higher per-address limit) still cannot lock it, and the
+//    route checks at most the per-account daily number of wrong passwords (default 10).
+hcSet('no_script_route_ip_per_hour', '100');
+for ($hcI = 7; $hcI <= 14; $hcI++) {
+    $hcWrongAnswers[] = hcStartEmailSignIn($hcBase, tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_'), $hcTargetEmail, 'stranger-guess-' . $hcI)['body'];
+}
+hcCheck('R', $hcTargetLockState() === '0|1', 'thirteen wrong passwords through the route in all: still not counted, still not locked (' . $hcTargetLockState() . ')');
+hcCheck('R', $hcCount("SELECT COUNT(*) FROM `tblNoScriptRequests` WHERE `purpose` = 'login_wrong'") === 10, 'only the first 10 wrong passwords (the per-account daily number) were checked at all, so guessing stays bounded per account (' . $hcCount("SELECT COUNT(*) FROM `tblNoScriptRequests` WHERE `purpose` = 'login_wrong'") . ')');
+$hcRightJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcPost = hcStartEmailSignIn($hcBase, $hcRightJar, $hcTargetEmail, $hcTargetPassword);
+$hcSameAsWrong = true;
+foreach ($hcWrongAnswers as $hcWrongBody) {
+    if (hcSameShape($hcWrongBody, $hcTargetEmail) !== hcSameShape($hcPost['body'], $hcTargetEmail)) {
+        $hcSameAsWrong = false;
+    }
+}
+hcCheck('R', $hcSameAsWrong && str_contains($hcPost['body'], 'If the email address and password are right') && $hcTargetMails() === 0, 'over that number the right password is not checked either: the same page as every wrong guess, and no email');
+// 3️⃣ The real person signs in through the normal form straight away.
+hcCli($hcDbName, ['off']);
+$hcNormalJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+$hcPage = hcHttp('GET', $hcBase . '/login/', $hcNormalJar);
+$hcPost = hcHttp('POST', $hcBase . '/login/', $hcNormalJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcTargetEmail, 'password' => $hcTargetPassword]);
+hcCheck('R', $hcPost['status'] === 302 && hcHttp('GET', $hcBase . '/account/', $hcNormalJar)['status'] === 200, 'after all those wrong route posts, the right password through the NORMAL form signs the person in (HTTP ' . $hcPost['status'] . ')');
+hcCli($hcDbName, ['on']);
+// 4️⃣ The normal form's own lock-out is unchanged: five wrong passwords there still lock.
+hcCli($hcDbName, ['off']);
+$hcNormalJar = tempnam(sys_get_temp_dir(), 'cuercode_it_hc_jar_');
+for ($hcI = 1; $hcI <= 5; $hcI++) {
+    $hcPage = hcHttp('GET', $hcBase . '/login/', $hcNormalJar);
+    hcHttp('POST', $hcBase . '/login/', $hcNormalJar, ['csrf_token' => hcCsrf($hcPage['body']), 'login_submit' => '1', 'email' => $hcTargetEmail, 'password' => 'normal-form-wrong-' . $hcI]);
+}
+hcCheck('R', $hcTargetLockState() === '5|0', 'the normal form still counts wrong passwords and locks after five (' . $hcTargetLockState() . ')');
+hcCli($hcDbName, ['on']);
+$hcServer->query('DELETE FROM `tblNoScriptRequests`');
 
 // ==============================================================================
 // P. Review L5 (a, c), L6 and I1: binding, security token, approvals, Start again
@@ -1219,6 +1290,26 @@ foreach ($hcRacers as $hcI => $hcRacer) {
     }
 }
 hcCheck('J', $hcRaceAllowed === 3 && $hcCount('SELECT COUNT(*) FROM `tblNoScriptRequests` WHERE `emailSent` = 1') === 3, 'twelve processes at the same moment for ONE email address: exactly 3 get an email place (' . $hcRaceAllowed . ')');
+$hcServer->query('DELETE FROM `tblNoScriptRequests`');
+hcSet('no_script_route_password_per_day', '3');
+$hcRaceStart = sprintf('%.6F', microtime(true) + 2.0);
+$hcRacers = [];
+$hcRacePipes = [];
+for ($hcI = 0; $hcI < 12; $hcI++) {
+    $hcRacers[] = proc_open([PHP_BINARY, __FILE__, '--race', 'password', $hcDbName], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $hcRacePipes[$hcI], null, ['CUERCODE_IT_ENCRYPTION_KEY' => ENCRYPTION_KEY, 'CUERCODE_IT_CHILD_START' => $hcRaceStart, 'CUERCODE_IT_CHILD_EMAIL' => 'race-password@it.cuercode.invalid', 'CUERCODE_IT_CHILD_IP' => '198.51.100.' . (130 + $hcI)] + getenv());
+}
+$hcPasswordPlaces = 0;
+foreach ($hcRacers as $hcI => $hcRacer) {
+    fclose($hcRacePipes[$hcI][0]);
+    $hcRaceAnswer = json_decode(trim((string) stream_get_contents($hcRacePipes[$hcI][1])), true);
+    fclose($hcRacePipes[$hcI][1]);
+    fclose($hcRacePipes[$hcI][2]);
+    proc_close($hcRacer);
+    if (is_array($hcRaceAnswer) && isset($hcRaceAnswer['passwordCheck']) && $hcRaceAnswer['passwordCheck'] === true) {
+        $hcPasswordPlaces++;
+    }
+}
+hcCheck('J', $hcPasswordPlaces === 3 && $hcCount("SELECT COUNT(*) FROM `tblNoScriptRequests` WHERE `purpose` = 'login_wrong'") === 3, 'third-round review Medium 1: twelve sign-ins at the same moment for ONE account (password checks a day set to 3): exactly 3 may have their password checked (' . $hcPasswordPlaces . ')');
 
 // ==============================================================================
 // 🧹 Clean up and report

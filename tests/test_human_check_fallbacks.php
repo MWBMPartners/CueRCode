@@ -400,7 +400,7 @@ assertEquals(1, $fbLogRows, '0037: fifty let-through sign-ins inside a minute wr
 // ==============================================================================
 
 $fbLimits = noScriptRouteSettings(fbGetter([]));
-assertEquals(['ipPerHour' => 5, 'emailPerDay' => 3, 'sitePerHour' => 30], $fbLimits, '0038: safe default limits: 5 an hour per visitor address, 3 a day per email address, 30 an hour for the whole site');
+assertEquals(['ipPerHour' => 5, 'emailPerDay' => 3, 'sitePerHour' => 30, 'passwordPerDay' => 10], $fbLimits, '0038: safe default limits: 5 an hour per visitor address, 3 a day per email address, 30 an hour for the whole site, and 10 wrong passwords checked a day per account (third-round review, Medium 1)');
 assertEquals(1, noScriptRouteSettings(fbGetter(['no_script_route_ip_per_hour' => '0']))['ipPerHour'], '0038: a limit of 0 is pulled up to 1 (never "no limit")');
 assertEquals(20, noScriptRouteSettings(fbGetter(['no_script_route_email_per_day' => '500']))['emailPerDay'], '0038: a huge per-address limit is pulled down to the most allowed (20)');
 assertEquals(30, noScriptRouteSettings(fbGetter(['no_script_route_site_per_hour' => 'many']))['sitePerHour'], '0038: text means the default');

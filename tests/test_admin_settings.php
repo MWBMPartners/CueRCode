@@ -146,9 +146,12 @@ assertTrue($asValidate('human_check_form_ip_per_hour', '1')['ok'] && $asValidate
 assertFalse($asValidate('human_check_form_ip_per_hour', '0')['ok'] || $asValidate('human_check_form_ip_per_hour', '1001')['ok'], 'human check: a form limit outside 1 to 1000 is refused');
 assertFalse($asValidate('no_script_route_email_per_day', '21')['ok'], 'no-JavaScript route: more than 20 emails a day to one address is refused');
 assertTrue($asValidate('no_script_route_site_per_hour', '30')['ok'], 'no-JavaScript route: the site-wide limit can be set');
+assertTrue($asValidate('no_script_route_password_per_day', '10')['ok'], 'no-JavaScript route: the per-account number of password checks can be set (third-round review, Medium 1)');
+assertFalse($asValidate('no_script_route_password_per_day', '101')['ok'], 'no-JavaScript route: more than 100 password checks a day for one account is refused');
+assertFalse($asValidate('no_script_route_password_per_day', '0')['ok'], 'no-JavaScript route: 0 password checks (no sign-in at all) is refused');
 assertTrue($asValidate('bot_protection_timeout_seconds', '2')['ok'] && $asValidate('bot_protection_timeout_seconds', '15')['ok'], 'human check: waiting time 2 to 15 seconds');
 assertFalse($asValidate('bot_protection_timeout_seconds', '1')['ok'] || $asValidate('bot_protection_timeout_seconds', '16')['ok'], 'human check: waiting time outside 2 to 15 is refused');
-assertEquals(['bot_protection_provider', 'bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour'], array_keys(adminSettingsFieldsForSection('bot')), 'human check: the section shows the choice, the two behaviour settings, the keys in provider order, the form limit, then the no-JavaScript route limits (#163)');
+assertEquals(['bot_protection_provider', 'bot_protection_when_unreachable', 'bot_protection_timeout_seconds', 'turnstile_site_key', 'turnstile_secret_key', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'human_check_form_ip_per_hour', 'no_script_route_ip_per_hour', 'no_script_route_email_per_day', 'no_script_route_site_per_hour', 'no_script_route_password_per_day'], array_keys(adminSettingsFieldsForSection('bot')), 'human check: the section shows the choice, the two behaviour settings, the keys in provider order, the form limit, then the no-JavaScript route limits (#163)');
 
 // 🔘 Switches.
 assertEquals('1', $asValidate('email_enabled', '1')['value'], 'a switch: 1 is on');
@@ -330,12 +333,13 @@ foreach ($asRegistry as $asKey => $asField) {
 }
 assertEquals(
     [
+        'no_script_route_password_per_day',
         'trusted_proxy_ips',
         'verification_resend_min_gap_seconds', 'verification_resend_daily_cap', 'verification_resend_ip_per_hour',
         'password_reset_request_min_gap_seconds', 'password_reset_request_daily_cap', 'password_reset_request_ip_per_hour',
     ],
     $asOptionalKeys,
-    'only trusted_proxy_ips and the six emailed-link limits may lack a seeded row'
+    'only trusted_proxy_ips, the no-JavaScript route\'s per-account password checks (third-round review, Medium 1) and the six emailed-link limits may lack a seeded row'
 );
 assertEquals(9, count(adminSettingsSections()), 'there are nine sections (plan §7.2, plus the website address section, #113 B9)');
 

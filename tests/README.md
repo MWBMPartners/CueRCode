@@ -98,8 +98,9 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_account_recovery.php` | 119 |
 | `test_account_ui.php` | 70 |
 | `test_admin_access.php` | 664 |
-| `test_admin_plans.php` | 651 |
-| `test_admin_settings.php` | 1346 |
+| `test_admin_csp.php` | 38 |
+| `test_admin_plans.php` | 652 |
+| `test_admin_settings.php` | 1354 |
 | `test_api_keys.php` | 130 |
 | `test_api_parity.php` | 76 |
 | `test_auth.php` | 62 |
@@ -115,9 +116,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_dynamic_redirect_s0.php` | 97 |
 | `test_dynamic_redirect_s1.php` | 41 |
 | `test_email.php` | 69 |
-| `test_email_queue_runner.php` | 479 |
+| `test_email_log_privacy.php` | 11 |
+| `test_email_queue_runner.php` | 485 |
 | `test_emoji_logo.php` | 123 |
 | `test_error_catalogue.php` | 144 |
+| `test_expiry_clock.php` | 6 |
 | `test_features.php` | 91 |
 | `test_full_notation.php` | 40 |
 | `test_human_check.php` | 411 |
@@ -130,7 +133,7 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_login_next_url.php` | 21 |
 | `test_migrations.php` | 551 |
 | `test_money.php` | 703 |
-| `test_no_script_route_review_fixes.php` | 76 |
+| `test_no_script_route_review_fixes.php` | 85 |
 | `test_oauth.php` | 136 |
 | `test_openapi_render.php` | 115 |
 | `test_payloads.php` | 138 |
@@ -148,9 +151,11 @@ Measured with `php tests/run.php` on PHP 8.5.12 (macOS), all passing. After roun
 | `test_resend_verification.php` | 71 |
 | `test_sessions_valid_from.php` | 83 |
 | `test_vendored_libraries.php` | 15 |
-| **Total** | **9198** |
+| **Total** | **9277** |
 
 Run `php tests/run.php` at any time to reproduce this table live.
+
+**Third-round review, Medium 1: the no-JavaScript route can no longer lock an account (2026-11-28)** added 10 checks to `test_no_script_route_review_fixes.php` (the per-account number of password checks and its bounds, the route checking passwords without counting a wrong one, the stand-in check past the number, the normal sign-in still counting), 3 to `test_admin_settings.php` (the new setting's bounds; it may lack a seeded row) and changed one in `test_human_check_fallbacks.php` (the defaults). `human_check_real_mysql.php` grew to 179 checks: new scenario R (five wrong route posts from one address, then the per-address limit, thirteen in all: never counted, never locked; only 10 checked; the right password through the NORMAL form then signs in; the normal form still locks after five) and a race in J (twelve sign-ins at once, password checks set to 3: exactly 3 checked); K, M and N now expect wrong route passwords NOT to be counted. On the code before the fix, on MySQL 8.0.36, K, N, R and J failed - the right password through the normal form got HTTP 200 "Invalid email or password" after five wrong route posts. Suite: **9277** in 58 files.
 
 **Admin status wording during an outage (2026-11-28)** added 6 checks to `test_human_check_fallbacks.php`: the status lines in both outage modes and the "refuse" choice say the email-confirmed route for visitors without JavaScript stays open (it asks no provider); 5 of them failed on the old wording. Suite: **9198**.
 

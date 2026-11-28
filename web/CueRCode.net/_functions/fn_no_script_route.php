@@ -32,14 +32,23 @@
  *       EMAILS each of the four forms sent through the route in an hour, so
  *       a flood on one form (for example sign-ups for made-up addresses)
  *       cannot use up another's (for example the real person's sign-in).
- *   Only an email that was really queued counts against the last two: a
+ *   - per account:          no_script_route_password_per_day (default 10, 1-100)
+ *       WRONG passwords the route checks for one mailbox in 24 hours
+ *       (third-round review, Medium 1). The route's wrong passwords do NOT
+ *       count toward the account's lock-out: the route has no human check
+ *       and its answer never says whether a password was right, so counting
+ *       them let anyone keep anyone locked out from one address. Past this
+ *       number the route stops checking passwords for that mailbox (a right
+ *       one too) until the day is over, with the same answer as always; the
+ *       normal form is not affected. A right password gives its place back.
+ *   Only an email that was really queued counts against the email limits: a
  *   forgot-password request for an address with no account, or a wrong
- *   password, uses up nothing (review L1, L2). Counted in
+ *   password, uses up no email (review L1, L2). Counted in
  *   tblNoScriptRequests under one database lock, so requests sent at the
  *   same moment are counted exactly. The email address is kept only as a
  *   keyed hash (HMAC with a key made from ENCRYPTION_KEY), never as text.
  *   The existing limits of each form (for example one reset link a minute
- *   per account, and the wrong-password lock-out) still apply.
+ *   per account) still apply, and a locked account is still refused.
  *
  * WHAT EACH FORM DOES ON THIS ROUTE:
  *   - sign up, forgot password, new link (noScriptRouteRunForm()): the form's
@@ -50,8 +59,9 @@
  *     exists and whether or not a limit stopped the email, and takes at
  *     least the same minimum time.
  *   - sign in: see noScriptSignInStart(). The per-address limit first, then
- *     the password (with the normal wrong-password counting and lock-out),
- *     then the email limits, and only for a right password an email with a
+ *     the password (within the per-account number of checks; a wrong one is
+ *     not counted toward the lock-out), then the email limits, and only for
+ *     a right password an email with a
  *     single-use link (stored only as a hash, 15 minutes). The answer, the
  *     page drawn afterwards, Continue and Start again are THE SAME for a
  *     right password, a wrong one, an unknown, locked or waiting account
@@ -77,8 +87,8 @@
  * @package     CueRCode
  * @subpackage  Security
  * @copyright   2025–2026 MWBM Partners Ltd
- * @version     1.1.0
- * @since       2026-11-27 (#163, decision 0038; merged review fixes 2026-11-28)
+ * @version     1.2.0
+ * @since       2026-11-27 (#163, decision 0038; merged review fixes 2026-11-28; third-round review Medium 1 2026-11-28)
  * @see         docs/decisions/0038-no-javascript-visitors-get-an-email-confirmed-fallback.md
  * @see         _functions/fn_human_check.php - humanCheckWidgetHtml(), humanCheckEmailRouteChosen()
  * @see         public_html/login/confirm/index.php - the page the email links to
@@ -130,6 +140,11 @@ if (!defined('CUERCODE_NO_SCRIPT_SESSION_KEY')) {
 /** @var int Seconds to wait for the route's counting lock. */
 if (!defined('CUERCODE_NO_SCRIPT_LOCK_SECONDS')) {
     define('CUERCODE_NO_SCRIPT_LOCK_SECONDS', 3);
+}
+
+/** @var string tblNoScriptRequests.purpose of a sign-in whose password was checked and was not right (third-round review, Medium 1). */
+if (!defined('CUERCODE_NO_SCRIPT_WRONG_PASSWORD_PURPOSE')) {
+    define('CUERCODE_NO_SCRIPT_WRONG_PASSWORD_PURPOSE', 'login_wrong');
 }
 
 /** @var int Seconds an approval made in another browser lasts before Continue must be pressed (review L6). */
@@ -193,15 +208,17 @@ function noScriptRouteBounds(): array
         'ip_per_hour'   => ['min' => 1, 'max' => 100,  'default' => 5],
         'email_per_day' => ['min' => 1, 'max' => 20,   'default' => 3],
         'site_per_hour' => ['min' => 1, 'max' => 1000, 'default' => 30],
+        // 🔑 Third-round review, Medium 1: wrong passwords checked per mailbox a day.
+        'password_per_day' => ['min' => 1, 'max' => 100, 'default' => 10],
     ];
 }
 
 /**
- * ⚙️ Read the three route limits (settings no_script_route_*), each kept in
+ * ⚙️ Read the four route limits (settings no_script_route_*), each kept in
  *    its safe range; a missing, non-numeric or failing value means the default.
  *
  * @param callable|null $getSetting (string $key, mixed $default): mixed; getConfig when null
- * @return array{ipPerHour: int, emailPerDay: int, sitePerHour: int}
+ * @return array{ipPerHour: int, emailPerDay: int, sitePerHour: int, passwordPerDay: int}
  */
 function noScriptRouteSettings(?callable $getSetting = null): array
 {
@@ -236,6 +253,7 @@ function noScriptRouteSettings(?callable $getSetting = null): array
         'ipPerHour'   => $values['ip_per_hour'],
         'emailPerDay' => $values['email_per_day'],
         'sitePerHour' => $values['site_per_hour'],
+        'passwordPerDay' => $values['password_per_day'],
     ];
 }
 
@@ -537,6 +555,29 @@ function noScriptRouteEmailCounts(string $purpose, string $emailHash): array
 }
 
 /**
+ * 🔢 Wrong passwords the route checked for one mailbox in 24 hours (third-round
+ *    review, Medium 1). A sign-in is recorded under
+ *    CUERCODE_NO_SCRIPT_WRONG_PASSWORD_PURPOSE when its password is to be
+ *    checked; a right password changes it back (noScriptRouteClaimEmail()).
+ *
+ * @param string $emailHash noScriptEmailHash()
+ * @return int
+ * @throws \Throwable On a database error
+ */
+function noScriptRouteWrongPasswordCount(string $emailHash): int
+{
+    $stmt = dbQuery(
+        'SELECT COUNT(*) AS `checks` FROM `tblNoScriptRequests` WHERE `emailHash` = ? AND `purpose` = ? AND `createdAt` >= DATE_SUB(NOW(), INTERVAL 24 HOUR)',
+        'ss',
+        [$emailHash, CUERCODE_NO_SCRIPT_WRONG_PASSWORD_PURPOSE]
+    );
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return (int) $row['checks'];
+}
+
+/**
  * 🚦 Count, decide and record ONE use of the route, inside the route's lock.
  *    Every problem (no database, the lock busy, an error) answers "not
  *    allowed": the route fails closed.
@@ -546,23 +587,29 @@ function noScriptRouteEmailCounts(string $purpose, string $emailHash): array
  *   2. With $reserveEmail: the per-mailbox and this form's site-wide email
  *      limits, and if both have room, one email place is RESERVED for this
  *      request (given back by noScriptRouteReleaseEmail() if no email goes).
- *   3. The use is recorded (it counts against the per-address limit).
+ *   3. With $reservePasswordCheck (sign-in): if this mailbox has had fewer
+ *      wrong passwords checked in 24 hours than its limit, one password
+ *      check is RESERVED (the use is recorded as a wrong password until a
+ *      right one gives the place back) - third-round review, Medium 1.
+ *   4. The use is recorded (it counts against the per-address limit).
  *
  * Sign-in asks with $reserveEmail false and reserves its email place only
  * after the password (noScriptRouteClaimEmail()), so a stranger guessing a
- * person's password uses up nothing of theirs (review L2).
+ * person's password uses up none of their emails (review L2).
  *
- * @param string $purpose      login | register | forgot | resend
- * @param string $email        The address typed into the form
- * @param string $ip           The visitor's address (getClientIP())
- * @param bool   $reserveEmail Also reserve an email place now
- * @return array{allowed: bool, reason: string, requestID: int, emailReserved: bool}
- *         allowed: the request may go ahead; emailReserved: it may send ONE email.
+ * @param string $purpose              login | register | forgot | resend
+ * @param string $email                The address typed into the form
+ * @param string $ip                   The visitor's address (getClientIP())
+ * @param bool   $reserveEmail         Also reserve an email place now
+ * @param bool   $reservePasswordCheck Also reserve a password check (sign-in only)
+ * @return array{allowed: bool, reason: string, requestID: int, emailReserved: bool, passwordCheck: bool}
+ *         allowed: the request may go ahead; emailReserved: it may send ONE email;
+ *         passwordCheck: its password may be checked.
  *         reason: ok | ip | email | site | busy | error
  */
-function noScriptRouteGate(string $purpose, string $email, string $ip, bool $reserveEmail = false): array
+function noScriptRouteGate(string $purpose, string $email, string $ip, bool $reserveEmail = false, bool $reservePasswordCheck = false): array
 {
-    $refused = ['allowed' => false, 'reason' => 'error', 'requestID' => 0, 'emailReserved' => false];
+    $refused = ['allowed' => false, 'reason' => 'error', 'requestID' => 0, 'emailReserved' => false, 'passwordCheck' => false];
 
     if (!function_exists('dbQuery')) {
         return $refused;
@@ -572,7 +619,7 @@ function noScriptRouteGate(string $purpose, string $email, string $ip, bool $res
     $emailHash   = noScriptEmailHash($email);
     $addressKey  = noScriptAddressKey($ip);
     $purposeText = mb_substr($purpose, 0, 16);
-    $overAddress = ['allowed' => false, 'reason' => 'ip', 'requestID' => 0, 'emailReserved' => false];
+    $overAddress = ['allowed' => false, 'reason' => 'ip', 'requestID' => 0, 'emailReserved' => false, 'passwordCheck' => false];
 
     // ⚡ Review I3: an address already over its limit is answered at once.
     try {
@@ -583,7 +630,7 @@ function noScriptRouteGate(string $purpose, string $email, string $ip, bool $res
         return $refused;
     }
 
-    $locked = noScriptRouteWithLock(static function () use ($limits, $emailHash, $addressKey, $purposeText, $reserveEmail, $overAddress): array {
+    $locked = noScriptRouteWithLock(static function () use ($limits, $emailHash, $addressKey, $purposeText, $reserveEmail, $reservePasswordCheck, $overAddress): array {
         if (noScriptRouteAddressCount($addressKey) >= $limits['ipPerHour']) {
             return $overAddress;
         }
@@ -602,10 +649,19 @@ function noScriptRouteGate(string $purpose, string $email, string $ip, bool $res
             $emailSent = 1;
         }
 
+        // 🔑 Third-round review, Medium 1: at most passwordPerDay wrong
+        //    passwords are checked for one mailbox a day.
+        $recordedPurpose = $purposeText;
+        $passwordCheck   = false;
+        if ($reservePasswordCheck && noScriptRouteWrongPasswordCount($emailHash) < $limits['passwordPerDay']) {
+            $recordedPurpose = CUERCODE_NO_SCRIPT_WRONG_PASSWORD_PURPOSE;
+            $passwordCheck   = true;
+        }
+
         $insertStmt = dbQuery(
             'INSERT INTO `tblNoScriptRequests` (`purpose`, `emailHash`, `requestIP`, `emailSent`) VALUES (?, ?, ?, ?)',
             'sssi',
-            [$purposeText, $emailHash, $addressKey, $emailSent]
+            [$recordedPurpose, $emailHash, $addressKey, $emailSent]
         );
         $requestID = (int) $insertStmt->insert_id;
         $insertStmt->close();
@@ -614,11 +670,11 @@ function noScriptRouteGate(string $purpose, string $email, string $ip, bool $res
         $tidyStmt = dbQuery('DELETE FROM `tblNoScriptRequests` WHERE `createdAt` < DATE_SUB(NOW(), INTERVAL 2 DAY) LIMIT 100', '', []);
         $tidyStmt->close();
 
-        return ['allowed' => true, 'reason' => $reason, 'requestID' => $requestID, 'emailReserved' => $reserved];
+        return ['allowed' => true, 'reason' => $reason, 'requestID' => $requestID, 'emailReserved' => $reserved, 'passwordCheck' => $passwordCheck];
     });
 
     if ($locked['state'] === 'busy') {
-        return ['allowed' => false, 'reason' => 'busy', 'requestID' => 0, 'emailReserved' => false];
+        return ['allowed' => false, 'reason' => 'busy', 'requestID' => 0, 'emailReserved' => false, 'passwordCheck' => false];
     }
     if ($locked['state'] !== 'done' || !is_array($locked['value'])) {
         return $refused;
@@ -631,7 +687,10 @@ function noScriptRouteGate(string $purpose, string $email, string $ip, bool $res
  * ✉️ After the password: reserve the one email place for a sign-in (review
  *    L1, L2). The lock is taken and the counts read WHETHER OR NOT $wanted,
  *    so a right and a wrong password take the same path (review M1); only a
- *    wanted claim within both limits reserves a place.
+ *    wanted claim within both limits reserves a place. A wanted claim (a
+ *    right password) first gives back the use's password-check place, so the
+ *    person's own sign-ins never count as wrong passwords (third-round
+ *    review, Medium 1).
  *
  * @param int    $requestID From noScriptRouteGate()
  * @param string $purpose
@@ -650,6 +709,15 @@ function noScriptRouteClaimEmail(int $requestID, string $purpose, string $email,
     $purposeText = mb_substr($purpose, 0, 16);
 
     $locked = noScriptRouteWithLock(static function () use ($limits, $emailHash, $purposeText, $requestID, $wanted): bool {
+        if ($wanted) {
+            $giveBackStmt = dbQuery(
+                'UPDATE `tblNoScriptRequests` SET `purpose` = ? WHERE `requestID` = ? AND `purpose` = ?',
+                'sis',
+                [$purposeText, $requestID, CUERCODE_NO_SCRIPT_WRONG_PASSWORD_PURPOSE]
+            );
+            $giveBackStmt->close();
+        }
+
         $counts   = noScriptRouteEmailCounts($purposeText, $emailHash);
         $decision = noScriptRouteDecide(['ip' => 0, 'email' => $counts['email'], 'site' => $counts['site']], $limits);
         if (!$wanted || !$decision['allowed']) {
@@ -811,8 +879,11 @@ function noScriptSignInContinueDecision(?array $row, bool $accountValid): string
  *      ("too many from your connection", "busy"), given before the password
  *      is looked at, so they say nothing about the account;
  *   2. the password, by the SAME check as normal sign-in
- *      (loginUserCheckPassword(): a wrong password is counted toward the
- *      lock-out, so guessing stays bounded);
+ *      (loginUserCheckPassword()), but only within the per-account number
+ *      of wrong-password checks a day, and a wrong one is NOT counted toward
+ *      the lock-out (third-round review, Medium 1: otherwise one address
+ *      could keep any account locked). Past that number the password is not
+ *      checked (the same time is spent on a stand-in check);
  *   3. the email limits (per mailbox, and sign-in's own site-wide limit),
  *      read the same way whatever the password;
  *   4. only for a right password within those limits: a single-use link
@@ -861,8 +932,9 @@ function noScriptSignInStartWork(string $email, #[\SensitiveParameter] string $p
         return $busy;
     }
 
-    // 1️⃣ The per-address limit and the lock, before the password.
-    $gate = noScriptRouteGate('login', $email, $ip, false);
+    // 1️⃣ The per-address limit and the lock, before the password (and a
+    //    password-check place, if this mailbox has one left today).
+    $gate = noScriptRouteGate('login', $email, $ip, false, true);
     if (!$gate['allowed']) {
         if ($gate['reason'] === 'ip') {
             return ['outcome' => 'limited', 'message' => CUERCODE_NO_SCRIPT_LIMIT_MESSAGE];
@@ -870,8 +942,17 @@ function noScriptSignInStartWork(string $email, #[\SensitiveParameter] string $p
         return $busy;
     }
 
-    // 2️⃣ The password, with every normal sign-in rule.
-    $check      = loginUserCheckPassword($email, $password);
+    // 2️⃣ The password, with every normal sign-in rule except the lock-out
+    //    counting (third-round review, Medium 1) - or, past the per-account
+    //    number of checks, not at all (the same time spent on a stand-in).
+    if (isset($gate['passwordCheck']) && $gate['passwordCheck'] === true) {
+        $check = loginUserCheckPassword($email, $password, false);
+    } else {
+        if (function_exists('verifyPassword') && function_exists('cuercodeDummyPasswordHash')) {
+            verifyPassword($password, cuercodeDummyPasswordHash());
+        }
+        $check = ['ok' => false, 'row' => null, 'sessionsValidFromSeen' => null];
+    }
     $passwordOk = ($check['ok'] === true);
 
     // 3️⃣ The email limits: the same lock and counts whatever the password.

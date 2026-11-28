@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security - Signing in without JavaScript can no longer keep someone locked out (third-round review, Medium 1, 2026-11-28)
+
+- **The fault:** the email-confirmed sign-in for visitors without JavaScript has no human check, and wrong passwords typed through it counted toward the account's lock-out. Five posts with wrong passwords from one internet address (inside its limit of 5 an hour) locked any account for 15 minutes, and one more post every quarter of an hour kept it locked.
+- **The fix:** wrong passwords typed through that route no longer count toward the lock-out. Guessing stays bounded per address (5 an hour, as before) and now also per account: the route checks at most 10 wrong passwords for one account in 24 hours (new setting "Most wrong passwords checked for one account in 24 hours", 1-100, on `/admin/settings/`, Human check section). After that it stops checking that account's passwords until the day is over, with the same answer as always. The normal sign-in form, its lock-out and the route's one answer are unchanged. No database upgrade.
+- Shown failing first over real HTTP (new scenario R in `human_check_real_mysql.php`, MySQL 8.0.36): after five wrong route posts the right password through the normal form was refused; now it signs in.
+
 ### Security - The admin area refuses inline scripts (#154, 2026-11-28)
 
 - The admin security policy (`public_html/admin/.htaccess`) no longer allows inline scripts: scripts may only come from files on this site and from cdn.jsdelivr.net. The admin pages also send the same script rule themselves, in case a host ignores `.htaccess`.
